@@ -1,0 +1,31 @@
+# Rust build output
+/target
+**/target
+
+# Editor / IDE
+.vscode/
+.idea/
+*.iml
+*.swp
+*.swo
+*~
+.zed/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+
+# Generated .glb outputs (keep curated examples)
+*.glb
+!examples/*.glb
+.claude
+generated

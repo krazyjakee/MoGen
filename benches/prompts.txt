@@ -1,0 +1,24 @@
+# mgen bench prompt suite.
+# One prompt per line. Lines starting with `#` and blank lines are ignored.
+# Target: ≥80% pass rate with default --max-repair-iters=2.
+
+a simple wooden chair with four legs
+a small round stool
+a rectangular dining table
+a basic sword with a crossguard
+a floor lamp with a cylindrical shade
+a wooden door in a rectangular frame
+a park bench with slatted seat
+a small wooden crate
+a barrel made of stacked rings
+a four-bladed propeller drone with a central body
+a windmill with a rotating blade assembly
+a signpost with a flat plank at the top
+a tiered layer cake with three tiers
+a simple house with walls, a roof, and a door
+a hammer with a cylindrical handle and rectangular head
+a telescope on a tripod
+a treasure chest with a hinged lid
+a garden gate that swings open
+a ceiling fan with four blades that spin
+a rowboat with oars sticking out both sides

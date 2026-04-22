@@ -1,0 +1,19 @@
+[package]
+name = "mgen"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "mgen"
+path = "src/main.rs"
+
+[dependencies]
+mgen-core = { workspace = true }
+mgen-dsl = { workspace = true }
+mgen-validate = { workspace = true }
+mgen-export = { workspace = true }
+mgen-llm = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+serde_json = { workspace = true }
+indicatif = "0.17"

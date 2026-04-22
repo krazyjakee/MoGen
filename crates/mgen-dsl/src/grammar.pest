@@ -1,0 +1,29 @@
+WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
+COMMENT    = _{ "//" ~ (!"\n" ~ ANY)* }
+
+file = { SOI ~ node* ~ EOI }
+
+node = { ident ~ name? ~ attr_list? ~ block? }
+
+name  = { string }
+block = { "{" ~ node* ~ "}" }
+
+attr_list = { "(" ~ (attr ~ ("," ~ attr)*)? ~ ","? ~ ")" }
+attr      = { ident ~ "=" ~ value }
+
+value = { vec3 | list | expr | string | ident }
+
+vec3      = { "[" ~ expr ~ "," ~ expr ~ "," ~ expr ~ "]" }
+list      = { "[" ~ (list_item ~ ("," ~ list_item)*)? ~ ","? ~ "]" }
+list_item = { vec3 | list | expr }
+
+expr   =  { term ~ (add_op ~ term)* }
+term   =  { factor ~ (mul_op ~ factor)* }
+factor =  { number | param_ref | "(" ~ expr ~ ")" }
+add_op =  { "+" | "-" }
+mul_op =  { "*" | "/" }
+
+number    = @{ "-"? ~ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+)? }
+string    = @{ "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
+ident     = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
+param_ref = @{ "$" ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }

@@ -1,0 +1,22 @@
+// Chair using `array` to place four legs and connectors marking attach points.
+material "wood"   (color=[0.55, 0.35, 0.18], metallic=0.0, roughness=0.75)
+material "fabric" (color=[0.20, 0.30, 0.55], metallic=0.0, roughness=0.95)
+
+scene {
+  group "chair" (role="furniture") {
+    box "seat" (pos=[0, 0.5, 0], size=[1.0, 0.1, 1.0], mat="fabric", role="seat") {
+      connector "top"    (at=[0,  0.05, 0], dir=[0,  1, 0], tag=seat_top)
+      connector "bottom" (at=[0, -0.05, 0], dir=[0, -1, 0], tag=seat_bottom)
+    }
+
+    box "back" (pos=[0, 1.0, -0.45], size=[1.0, 1.0, 0.1], mat="wood", role="back")
+
+    // Four legs arranged around Y at corners: each instance is rotated 90°,
+    // the leg itself is offset forward-right so rotation spreads it to four corners.
+    array "legs" (count=4, around=y) {
+      cylinder "leg" (pos=[0.45, 0.25, 0.45], radius=0.05, height=0.5, mat="wood", role="leg") {
+        connector "top" (at=[0, 0.25, 0], dir=[0, 1, 0], tag=leg_top)
+      }
+    }
+  }
+}

@@ -1,0 +1,8 @@
+[package]
+name = "mgen-core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+glam = { workspace = true }
+serde = { workspace = true }
