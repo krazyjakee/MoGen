@@ -6,8 +6,6 @@ use mogen_dsl::ast::{Node, Value};
 #[cfg(test)]
 use crate::image::DEFAULT_IMAGE_MODEL;
 use crate::image_cache::ImageCache;
-#[cfg(test)]
-use crate::pbr_maps::PbrMapOptions;
 
 use super::prompt::{build_prompt, collect_materials, parse_prompt_header};
 use super::splice::safe_filename_stem;
@@ -87,7 +85,6 @@ pub struct TexturesArgs {
     pub no_normal: bool,
     pub no_metallic_roughness: bool,
     pub no_occlusion: bool,
-    pub normal_strength: f32,
     /// Cap on the longer side of generated albedos, in pixels. `0` disables
     /// the downscale and keeps whatever Gemini returned. Derived maps (normal
     /// / metallic-roughness / AO) inherit this size.
@@ -114,7 +111,6 @@ impl TexturesArgs {
             no_normal: false,
             no_metallic_roughness: false,
             no_occlusion: false,
-            normal_strength: PbrMapOptions::default().normal_strength,
             texture_size: DEFAULT_TEXTURE_SIZE,
         }
     }

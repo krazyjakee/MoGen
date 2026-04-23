@@ -224,6 +224,27 @@ pub(super) fn format_inspector_scalar(v: f32) -> String {
     }
 }
 
+/// Locate the DSL source span for the authored `material "name" (...)`
+/// declaration. Materials can live at the top level or inside `scene { … }` —
+/// both are checked. Returns `None` if the source no longer parses or the
+/// material wasn't authored in the active file (e.g. it came from a module).
+pub(super) fn find_material_source_span(src: &str, name: &str) -> Option<mogen_core::Span> {
+    let ast = mogen_dsl::parse(src).ok()?;
+    for n in &ast {
+        if n.kind == "material" && n.name.as_deref() == Some(name) {
+            return Some(n.span);
+        }
+        if n.kind == "scene" {
+            for c in &n.children {
+                if c.kind == "material" && c.name.as_deref() == Some(name) {
+                    return Some(c.span);
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Locate the DSL source span for the `clip` (or procedural-template) node
 /// whose resulting clip has `clip_name`. Scans the parsed AST recursively so
 /// scene-nested clips are found alongside top-level ones. Returns `None` if
@@ -612,7 +633,6 @@ pub(super) fn run_llm_textures(
         no_normal: cfg.no_normal,
         no_metallic_roughness: cfg.no_metallic_roughness,
         no_occlusion: cfg.no_occlusion,
-        normal_strength: cfg.normal_strength,
         texture_size: cfg.texture_size,
     };
 
@@ -757,40 +777,59 @@ pub(super) fn run_prompt_enhance(
 ) -> Result<String, String> {
     let client = GeminiClient::new(api_key);
     let raw = raw_prompt.trim();
+    // Templates deliberately scope the rewrite to what the MoGen DSL can
+    // express — primitives, CSG, transforms/hierarchy, mirror/array, PBR,
+    // and the fixed animation templates — so the rewriter doesn't ask for
+    // UV/polygon/topology edits the pipeline can't perform.
     let user = match target {
         EnhanceTarget::Generate => format!(
-            "Rewrite the following 3D-asset prompt so a generative 3D model pipeline \
-             can build it. Make it vivid but compact (1–3 sentences). Preserve the \
-             subject — do not invent a different object. Mention shape, proportion, \
-             material or style cues where natural. Do NOT use any DSL, do NOT use \
-             code fences, do NOT prefix with \"Enhanced prompt:\" or similar. Reply \
-             with only the rewritten prompt.\n\nPrompt: {raw}",
+            "Rewrite the following asset prompt for a declarative scene-composition \
+             pipeline that builds objects from parametric primitives (box, cylinder, \
+             sphere, cone, capsule, torus, prism, pyramid, disc, plane, rounded box), \
+             combines them with CSG boolean ops (union, difference, intersect), \
+             arranges them with hierarchy, transforms, mirror, and array, and applies \
+             PBR materials. The pipeline does NOT sculpt polygons, edit UVs, or \
+             change mesh topology — stay at the level of shape composition, \
+             proportion, symmetry, and material/style cues. Make it vivid but \
+             compact (1–3 sentences). Preserve the subject — do not invent a \
+             different object. Do NOT use any DSL, do NOT use code fences, do NOT \
+             prefix with \"Enhanced prompt:\" or similar. Reply with only the \
+             rewritten prompt.\n\nPrompt: {raw}",
         ),
         EnhanceTarget::Modify => format!(
             "Rewrite the following instruction as a clear, specific edit request \
-             to an EXISTING 3D scene. Keep it imperative (\"make…\", \"replace…\", \
-             \"scale…\"), 1–3 sentences. Be precise about which part changes, in \
-             which axis, and by how much when possible. Do not describe a whole \
-             new object; assume the scene already exists. Do NOT use any DSL, do \
-             NOT use code fences, do NOT prefix with labels. Reply with only the \
-             rewritten instruction.\n\nInstruction: {raw}",
+             against an EXISTING scene graph. Valid edits are: translate / rotate / \
+             scale on named parts, swapping a primitive kind, adding or removing \
+             child nodes, tweaking a CSG combination, adjusting mirror / array \
+             counts or spacing, and changing material or colour. The pipeline \
+             cannot edit UVs, sculpt polygons, or alter topology — do not ask for \
+             any of that. Keep it imperative (\"make…\", \"replace…\", \"scale…\"), \
+             1–3 sentences, precise about which part changes, which axis, and by \
+             how much when possible. Assume the scene already exists; do not \
+             redesign the whole object. Do NOT use any DSL, do NOT use code \
+             fences, do NOT prefix with labels. Reply with only the rewritten \
+             instruction.\n\nInstruction: {raw}",
         ),
         EnhanceTarget::Animate => format!(
-            "Rewrite the following animation request for an EXISTING 3D scene. Be \
-             specific about which part moves, the motion type (spin / open-close / \
-             wave / flap / idle / custom), axis, amplitude, speed or duration, and \
-             whether it loops. 1–3 sentences, imperative tone. Do not redesign the \
-             object. Do NOT use any DSL, do NOT use code fences, do NOT prefix with \
-             labels. Reply with only the rewritten request.\n\nRequest: {raw}",
+            "Rewrite the following animation request for an EXISTING scene. \
+             Animation in this pipeline is node-transform tracks only, built from \
+             a fixed set of templates: spin, open_close, wave, flap, idle. There \
+             is no morph-target, vertex, or UV animation. Be specific about which \
+             named part moves, which template fits best, axis, amplitude, speed or \
+             duration, and whether it loops. 1–3 sentences, imperative tone. Do \
+             not redesign the object. Do NOT use any DSL, do NOT use code fences, \
+             do NOT prefix with labels. Reply with only the rewritten \
+             request.\n\nRequest: {raw}",
         ),
         EnhanceTarget::TextureStyle => format!(
             "Rewrite the following texture / material hint into a compact PBR \
-             material descriptor (colour palette, finish, microtexture, wear, era \
-             or setting cues). ≤ 20 words, comma-separated adjectives and short \
-             noun phrases, no full sentences, no leading label. This text is \
-             appended to every material's image-generation prompt, so it must \
-             read as style guidance, not as a scene description. Do NOT use any \
-             DSL, do NOT use code fences. Reply with only the rewritten \
+             style descriptor (colour palette, finish, wear, era or setting cues). \
+             This text is appended to every material's albedo-image generation \
+             prompt, so it must read as stylistic guidance for flat PBR \
+             materials — not as a scene description, and not as a UV layout or \
+             polygon-level instruction. ≤ 20 words, comma-separated adjectives \
+             and short noun phrases, no full sentences, no leading label. Do NOT \
+             use any DSL, do NOT use code fences. Reply with only the rewritten \
              hint.\n\nHint: {raw}",
         ),
     };

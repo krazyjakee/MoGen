@@ -47,24 +47,29 @@ pub enum TextureStage {
     Done,
 }
 
-fn pbr_opts(args: &TexturesArgs, material: &Node) -> PbrMapOptions {
-    let roughness = material.attr("roughness").and_then(|v| match v {
-        Value::Number(n) => Some(*n),
-        _ => None,
-    });
-    let metallic = material.attr("metallic").and_then(|v| match v {
-        Value::Number(n) => Some(*n),
-        _ => None,
-    });
+fn pbr_opts(_args: &TexturesArgs, material: &Node) -> PbrMapOptions {
+    let number_attr = |key: &str| {
+        material.attr(key).and_then(|v| match v {
+            Value::Number(n) => Some(*n),
+            _ => None,
+        })
+    };
     let mut opts = PbrMapOptions::default();
-    if let Some(r) = roughness {
+    if let Some(r) = number_attr("roughness") {
         opts.roughness_base = r.clamp(0.0, 1.0);
     }
-    if let Some(m) = metallic {
+    if let Some(m) = number_attr("metallic") {
         opts.metallic = m.clamp(0.0, 1.0);
     }
-    if args.normal_strength.is_finite() && args.normal_strength > 0.0 {
-        opts.normal_strength = args.normal_strength;
+    if let Some(n) = number_attr("normal_strength") {
+        if n.is_finite() && n > 0.0 {
+            opts.normal_strength = n;
+        }
+    }
+    if let Some(o) = number_attr("occlusion_strength") {
+        if o.is_finite() && o >= 0.0 {
+            opts.occlusion_strength = o.clamp(0.0, 1.0);
+        }
     }
     opts
 }

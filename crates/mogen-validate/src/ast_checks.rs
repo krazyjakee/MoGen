@@ -291,6 +291,7 @@ pub fn attrs_for_kind(kind: &str) -> &'static [&'static str] {
         ],
         "material" => &[
             "color", "alpha", "metallic", "roughness",
+            "normal_strength", "occlusion_strength",
             "alpha_mode", "alpha_cutoff",
             "emissive", "emissive_strength",
             "transmission",
@@ -415,6 +416,8 @@ fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         | ("material", "alpha")
         | ("material", "metallic")
         | ("material", "roughness")
+        | ("material", "normal_strength")
+        | ("material", "occlusion_strength")
         | ("material", "alpha_cutoff")
         | ("material", "emissive_strength")
         | ("material", "transmission")

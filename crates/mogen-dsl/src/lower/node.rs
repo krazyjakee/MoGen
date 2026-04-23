@@ -7,7 +7,9 @@ use crate::ast::{Node, Value};
 
 use super::connector::{add_aabb_connectors_if_missing, add_connector, default_connectors};
 use super::csg::lower_csg;
-use super::helpers::{anchor_for, apply_anchor_to_mesh, transform_from_attrs};
+use super::helpers::{
+    anchor_for, apply_anchor_to_mesh, inherit_material_from_ancestor, transform_from_attrs,
+};
 use super::layout::{apply_relative_placement, expand_grid, expand_replicator, expand_stack};
 use super::primitive::primitive_mesh;
 
@@ -61,6 +63,9 @@ pub(super) fn lower_into(
             .ok_or_else(|| anyhow!("unknown material: {mat_name}"))?;
         graph.set_material(id, mid);
     }
+    // Inherit from nearest ancestor when this node has no own `mat=`. Runs
+    // before uv_mode is read so primitive UVs reflect the inherited material.
+    inherit_material_from_ancestor(id, graph);
 
     let anchor = anchor_for(node);
     let mut anchor_shift = Vec3::ZERO;

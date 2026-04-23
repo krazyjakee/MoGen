@@ -1,4 +1,5 @@
 mod app;
+mod autocomplete;
 mod edit;
 mod gizmo;
 mod highlight;

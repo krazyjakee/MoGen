@@ -201,6 +201,12 @@ pub(super) enum MenuAction {
     Recheck,
     CloseActive,
     Quit,
+    Undo,
+    Redo,
+    Cut,
+    Copy,
+    Paste,
+    SelectAll,
     OpenOptions,
     Frame,
     OpenAbout,
@@ -299,6 +305,30 @@ pub(super) fn shortcut_menu_item(
     }
 }
 
+/// Render a menu item with a shortcut label that is NOT dispatched globally —
+/// the binding is handled natively by egui's `TextEdit` (undo/redo/cut/copy/
+/// paste/select-all). Clicking the menu item injects the corresponding event,
+/// so the action still works even when the user reaches for the menu instead
+/// of the keyboard.
+pub(super) fn native_shortcut_menu_item(
+    ui: &mut egui::Ui,
+    label: &str,
+    shortcut: egui::KeyboardShortcut,
+    tooltip: &str,
+    enabled: bool,
+) -> egui::Response {
+    let sc_text = ui.ctx().format_shortcut(&shortcut);
+    let resp = ui.add_enabled(
+        enabled,
+        egui::Button::new(label).shortcut_text(sc_text.clone()),
+    );
+    if tooltip.is_empty() {
+        resp.on_hover_text(sc_text)
+    } else {
+        resp.on_hover_text(format!("{tooltip}  ({sc_text})"))
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum LlmKind {
     Generate,
@@ -357,7 +387,6 @@ pub(super) struct EnhanceInFlight {
 pub(super) struct TextureUiConfig {
     pub(super) style: String,
     pub(super) texture_size: u32,
-    pub(super) normal_strength: f32,
     pub(super) no_normal: bool,
     pub(super) no_metallic_roughness: bool,
     pub(super) no_occlusion: bool,
@@ -373,7 +402,6 @@ impl Default for TextureUiConfig {
         Self {
             style: "photorealistic".to_string(),
             texture_size: DEFAULT_TEXTURE_SIZE,
-            normal_strength: 1.5,
             no_normal: false,
             no_metallic_roughness: false,
             no_occlusion: false,
@@ -382,6 +410,36 @@ impl Default for TextureUiConfig {
             expanded: false,
         }
     }
+}
+
+/// Transient state for the editor autocomplete popup. One instance lives on
+/// the app since only one editor is visible at a time — switching tabs or
+/// losing focus closes the popup, so there's no need to persist per-file.
+#[derive(Default)]
+pub(super) struct AutocompleteState {
+    pub(super) open: bool,
+    pub(super) selected: usize,
+    pub(super) candidates: Vec<crate::autocomplete::Candidate>,
+    /// Byte range in the active file's source that the selected candidate
+    /// replaces on accept.
+    pub(super) range: Option<std::ops::Range<usize>>,
+    /// Screen-space anchor point (below-left of the caret) for the popup.
+    pub(super) anchor: Option<egui::Pos2>,
+    /// When the user hits Esc we want the popup to stay closed even though
+    /// the caret is still in an identifier. Cleared the next time the source
+    /// changes (so typing another letter re-opens it).
+    pub(super) suppressed_for_source_len: Option<usize>,
+}
+
+/// Deferred action decoded from a popup key press. Applied after the TextEdit
+/// has rendered so we can mutate source/state without fighting the widget.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum AutocompleteKey {
+    None,
+    MoveUp,
+    MoveDown,
+    Accept,
+    Cancel,
 }
 
 /// Per-file state. Every open `.mog` owns its own buffer, compile result,

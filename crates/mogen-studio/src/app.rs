@@ -11,6 +11,7 @@ use crate::settings::Settings;
 use crate::theme::apply_theme;
 use crate::viewer::Viewer;
 
+mod autocomplete;
 mod build;
 mod compile;
 mod error_class;
@@ -26,8 +27,8 @@ mod ui_panels;
 mod util;
 
 use self::types::{
-    BuildOutcome, EnhanceInFlight, EnhanceTarget, FileState, SessionUsage, ThumbCache,
-    VIEWER_BG_COLOR,
+    AutocompleteState, BuildOutcome, EnhanceInFlight, EnhanceTarget, FileState, SessionUsage,
+    ThumbCache, VIEWER_BG_COLOR,
 };
 use self::util::locate_project_root;
 
@@ -109,6 +110,10 @@ pub struct MogenStudioApp {
     /// kicks off another enhance. `None` when the last call succeeded or
     /// nothing has been tried yet.
     enhance_error: Option<(EnhanceTarget, String)>,
+
+    /// Editor autocomplete popup state. One instance since only one editor is
+    /// on-screen at a time; it's reset on tab switch / focus loss.
+    autocomplete: AutocompleteState,
 }
 
 impl MogenStudioApp {
@@ -153,6 +158,7 @@ impl MogenStudioApp {
             thumb_cache: ThumbCache::new(),
             enhance_in_flight: None,
             enhance_error: None,
+            autocomplete: AutocompleteState::default(),
         };
 
         // Restore the last opened MOG when it still exists. Otherwise leave
@@ -237,6 +243,9 @@ impl eframe::App for MogenStudioApp {
                         egui::CollapsingHeader::new("Scene")
                             .default_open(false)
                             .show(ui, |ui| self.ui_summary(ui));
+                        egui::CollapsingHeader::new("Materials")
+                            .default_open(false)
+                            .show(ui, |ui| self.ui_materials(ui));
                         if !self.viewer.clips_snapshot().is_empty() {
                             egui::CollapsingHeader::new("Animation")
                                 .default_open(true)
@@ -307,6 +316,12 @@ impl eframe::App for MogenStudioApp {
         self.ui_close_confirm(ctx);
         self.ui_export_dialog(ctx);
         self.ui_about(ctx);
+
+        // Paint the autocomplete popup last so it floats above every panel.
+        // The editor panel updated state earlier in the frame; here we just
+        // draw what that state says.
+        let editor_id = egui::Id::new("mog_editor_textedit");
+        self.render_autocomplete_popup(ctx, editor_id);
 
         // Keep repainting while ANY file has an LLM call in flight so every
         // spinner ticks and completions land promptly regardless of which tab

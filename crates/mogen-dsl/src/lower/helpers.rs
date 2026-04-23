@@ -1,7 +1,28 @@
 use glam::{Quat, Vec3};
-use mogen_core::{Aabb, Mesh, Transform};
+use mogen_core::{Aabb, Mesh, NodeId, SceneGraph, Transform};
 
 use crate::ast::{Node, Value};
+
+/// Lexical material inheritance: if `id`'s own material is unset, walk up its
+/// parent chain and copy the nearest ancestor's material onto it.
+///
+/// Must be called during lowering *before* any code reads the node's material
+/// (e.g. to derive UV mode for primitive mesh generation). The inline walk is
+/// load-bearing because uv_mode is baked into the mesh at creation time — a
+/// post-lowering pass would arrive too late to fix the UVs.
+pub(super) fn inherit_material_from_ancestor(id: NodeId, graph: &mut SceneGraph) {
+    if graph.nodes[id.0 as usize].material.is_some() {
+        return;
+    }
+    let mut cur = graph.nodes[id.0 as usize].parent;
+    while let Some(p) = cur {
+        if let Some(m) = graph.nodes[p.0 as usize].material {
+            graph.set_material(id, m);
+            return;
+        }
+        cur = graph.nodes[p.0 as usize].parent;
+    }
+}
 
 pub(super) fn transform_from_attrs(node: &Node) -> Transform {
     let t = resolve_pos(node);

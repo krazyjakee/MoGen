@@ -349,6 +349,79 @@ mod tests {
     }
 
     #[test]
+    fn material_inherits_from_parent_to_unmarked_children() {
+        // Regression: setting `mat` on a `solid` (or any group) must apply to
+        // children that don't override it. Without this the merge pass groups
+        // them under None and the merged leaf renders untextured.
+        let g = lower_src(
+            r#"
+            material "wood" (color=[0.45, 0.28, 0.15])
+            scene {
+              solid "crate" (mat="wood") {
+                box "floor" (size=1)
+                group "walls" {
+                  box "left"  (pos=[-0.5, 0, 0], size=[0.1, 1, 1])
+                  box "right" (pos=[ 0.5, 0, 0], size=[0.1, 1, 1])
+                }
+              }
+            }
+            "#,
+        );
+        let wood = g.find_material("wood").expect("wood material");
+        for name in ["crate", "floor", "walls", "left", "right"] {
+            assert_eq!(
+                find_mesh_node(&g, name).material,
+                Some(wood),
+                "{name} should inherit wood from parent solid"
+            );
+        }
+    }
+
+    #[test]
+    fn inherited_material_drives_primitive_uv_mode() {
+        // Regression: uv_mode is baked into the mesh at primitive generation.
+        // When a child inherits its material from a parent, the primitive must
+        // see the inherited material's uv_mode — otherwise size=2 boxes render
+        // with tile-mode UVs [0, 2] when the author asked for fit-mode [0, 1].
+        let g = lower_src(
+            r#"
+            material "sign" (color=[1, 1, 1], uv_mode="fit")
+            scene {
+              group "billboard" (mat="sign") {
+                box "face" (size=2)
+              }
+            }
+            "#,
+        );
+        let mesh = find_mesh_node(&g, "face").mesh.as_ref().unwrap();
+        let max_uv = mesh.uvs.iter().flat_map(|u| u.iter().copied()).fold(f32::NEG_INFINITY, f32::max);
+        assert!(
+            max_uv <= 1.0 + 1e-5,
+            "expected fit-mode UVs capped at 1.0, got max={max_uv} — uv_mode didn't inherit"
+        );
+    }
+
+    #[test]
+    fn child_material_overrides_inherited_parent_material() {
+        let g = lower_src(
+            r#"
+            material "wood"  (color=[0.45, 0.28, 0.15])
+            material "metal" (color=[0.7, 0.7, 0.7])
+            scene {
+              group "g" (mat="wood") {
+                box "a" (size=1)
+                box "b" (size=1, mat="metal")
+              }
+            }
+            "#,
+        );
+        let wood = g.find_material("wood").expect("wood material");
+        let metal = g.find_material("metal").expect("metal material");
+        assert_eq!(find_mesh_node(&g, "a").material, Some(wood));
+        assert_eq!(find_mesh_node(&g, "b").material, Some(metal));
+    }
+
+    #[test]
     fn solid_lowers_as_tagged_group() {
         let g = lower_src(
             r#"

@@ -8,7 +8,7 @@ use mogen_geom::{
 use crate::ast::{Node, Value};
 
 use super::connector::{add_aabb_connectors_if_missing, add_connector};
-use super::helpers::transform_from_attrs;
+use super::helpers::{inherit_material_from_ancestor, transform_from_attrs};
 use super::node::apply_metadata;
 use super::primitive::primitive_mesh;
 
@@ -54,6 +54,10 @@ pub(super) fn lower_csg(
             }
         }
     }
+    // Fall back to lexical inheritance from the CSG node's parent chain when
+    // neither the CSG node nor any operand declared a material. Runs before
+    // uv_mode is read so operand UVs use the inherited material's convention.
+    inherit_material_from_ancestor(id, graph);
 
     // Evaluate operand meshes. Connectors are allowed on the CSG node itself
     // (captured below) but silently skipped inside operand bodies. All

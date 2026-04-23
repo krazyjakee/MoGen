@@ -58,6 +58,16 @@ pub struct Material {
     pub base_color: [f32; 4],
     pub metallic: f32,
     pub roughness: f32,
+    /// Slope multiplier baked into the derived normal map during texture
+    /// generation. Larger = more pronounced bumps. Default `1.5`. Only
+    /// affects the `mogen textures` pipeline — authored `normal_texture`s
+    /// are used as-is.
+    pub normal_strength: f32,
+    /// 0..1 multiplier on how dark the derived AO map can get during
+    /// texture generation. `0` = flat white (no darkening), `1` = cavities
+    /// reach black. Default `0.7`. Only affects the `mogen textures`
+    /// pipeline — authored `occlusion_texture`s are used as-is.
+    pub occlusion_strength: f32,
     pub alpha_mode: AlphaMode,
     pub alpha_cutoff: f32,
     pub emissive: [f32; 3],
@@ -124,6 +134,8 @@ impl Material {
             base_color: [0.8, 0.8, 0.8, 1.0],
             metallic: 0.0,
             roughness: 0.9,
+            normal_strength: 1.5,
+            occlusion_strength: 0.7,
             alpha_mode: AlphaMode::Opaque,
             alpha_cutoff: 0.5,
             emissive: [0.0, 0.0, 0.0],

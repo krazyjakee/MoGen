@@ -210,14 +210,6 @@ impl MogenStudioApp {
                         );
                         ui.end_row();
 
-                        ui.label("Normal strength")
-                            .on_hover_text("Slope multiplier for the derived normal map");
-                        ui.add(
-                            egui::DragValue::new(&mut cfg.normal_strength)
-                                .range(0.0..=8.0)
-                                .speed(0.05),
-                        );
-                        ui.end_row();
                     });
             }
 

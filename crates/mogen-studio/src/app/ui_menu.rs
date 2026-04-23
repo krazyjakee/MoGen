@@ -6,9 +6,25 @@ use crate::preview_shader::{preview_shader_label, PreviewShader, PREVIEW_SHADERS
 use crate::theme::{apply_theme, theme_label, Theme, THEMES};
 
 use super::types::{
-    shortcut_menu_item, MenuAction, ShortcutAction, DOCS_URL, GITHUB_REPO_URL, LICENSE_URL,
+    native_shortcut_menu_item, shortcut_menu_item, MenuAction, ShortcutAction, DOCS_URL,
+    GITHUB_REPO_URL, LICENSE_URL,
 };
 use super::MogenStudioApp;
+
+/// Push a synthetic key-press event into egui's input queue. Used by the Edit
+/// menu to drive undo/redo/select-all — egui's `TextEdit` consumes the event
+/// on the focused widget exactly as if the user had typed the shortcut.
+fn inject_key(ctx: &egui::Context, key: egui::Key, modifiers: egui::Modifiers) {
+    ctx.input_mut(|i| {
+        i.events.push(egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        });
+    });
+}
 
 impl MogenStudioApp {
     pub(super) fn ui_menu_bar(&mut self, ui: &mut egui::Ui) {
@@ -142,6 +158,90 @@ impl MogenStudioApp {
             });
 
             ui.menu_button("Edit", |ui| {
+                use egui::{Key, KeyboardShortcut, Modifiers};
+                let cmd = Modifiers::COMMAND;
+                let cmd_shift = Modifiers::COMMAND | Modifiers::SHIFT;
+                // Undo/redo/cut/copy/paste/select-all are handled natively by
+                // egui's TextEdit — these menu items are discoverability for
+                // the shortcuts and a click fallback. The actions are routed
+                // to the focused text widget via event injection in
+                // `dispatch_menu_action`, so clicking them works regardless of
+                // which TextEdit currently has focus.
+                if native_shortcut_menu_item(
+                    ui,
+                    "Undo",
+                    KeyboardShortcut::new(cmd, Key::Z),
+                    "Undo the last change in the focused text field",
+                    true,
+                )
+                .clicked()
+                {
+                    action = MenuAction::Undo;
+                    ui.close_menu();
+                }
+                if native_shortcut_menu_item(
+                    ui,
+                    "Redo",
+                    KeyboardShortcut::new(cmd_shift, Key::Z),
+                    "Redo the last undone change in the focused text field",
+                    true,
+                )
+                .clicked()
+                {
+                    action = MenuAction::Redo;
+                    ui.close_menu();
+                }
+                ui.separator();
+                if native_shortcut_menu_item(
+                    ui,
+                    "Cut",
+                    KeyboardShortcut::new(cmd, Key::X),
+                    "Cut the current selection to the clipboard",
+                    true,
+                )
+                .clicked()
+                {
+                    action = MenuAction::Cut;
+                    ui.close_menu();
+                }
+                if native_shortcut_menu_item(
+                    ui,
+                    "Copy",
+                    KeyboardShortcut::new(cmd, Key::C),
+                    "Copy the current selection to the clipboard",
+                    true,
+                )
+                .clicked()
+                {
+                    action = MenuAction::Copy;
+                    ui.close_menu();
+                }
+                if native_shortcut_menu_item(
+                    ui,
+                    "Paste",
+                    KeyboardShortcut::new(cmd, Key::V),
+                    "Paste the clipboard into the focused text field",
+                    true,
+                )
+                .clicked()
+                {
+                    action = MenuAction::Paste;
+                    ui.close_menu();
+                }
+                ui.separator();
+                if native_shortcut_menu_item(
+                    ui,
+                    "Select All",
+                    KeyboardShortcut::new(cmd, Key::A),
+                    "Select all text in the focused field",
+                    true,
+                )
+                .clicked()
+                {
+                    action = MenuAction::SelectAll;
+                    ui.close_menu();
+                }
+                ui.separator();
                 if shortcut_menu_item(
                     ui,
                     "Preferences…",
@@ -258,6 +358,29 @@ impl MogenStudioApp {
             MenuAction::Quit => {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
+            MenuAction::Undo => inject_key(ctx, egui::Key::Z, egui::Modifiers::COMMAND),
+            MenuAction::Redo => inject_key(
+                ctx,
+                egui::Key::Z,
+                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+            ),
+            MenuAction::Cut => {
+                ctx.input_mut(|i| i.events.push(egui::Event::Cut));
+            }
+            MenuAction::Copy => {
+                ctx.input_mut(|i| i.events.push(egui::Event::Copy));
+            }
+            MenuAction::Paste => {
+                // Read synchronously so the injected event carries the
+                // clipboard payload in the same frame.
+                let clip = arboard::Clipboard::new()
+                    .and_then(|mut c| c.get_text())
+                    .unwrap_or_default();
+                if !clip.is_empty() {
+                    ctx.input_mut(|i| i.events.push(egui::Event::Paste(clip)));
+                }
+            }
+            MenuAction::SelectAll => inject_key(ctx, egui::Key::A, egui::Modifiers::COMMAND),
             MenuAction::OpenOptions => {
                 self.options_api_key_draft = self.settings.gemini_api_key.clone();
                 self.show_options = true;

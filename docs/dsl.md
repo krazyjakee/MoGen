@@ -256,6 +256,13 @@ Declared at the top of the file or inside `scene { ... }`. Attributes:
   without an explicit `alpha_mode` auto-selects `"blend"`.
 - `metallic` — `0.0`–`1.0`, default `0.0`.
 - `roughness` — `0.0`–`1.0`, default `0.9`.
+- `normal_strength` — slope multiplier baked into the *derived* normal map
+  by `mogen textures`. Larger = more pronounced bumps. Range `~0..8`, default
+  `1.5`. Has no effect if `normal_texture` is authored directly.
+- `occlusion_strength` — `0.0`–`1.0` ceiling on how dark the *derived* AO
+  map can get. `0` emits flat white (no darkening), `1` lets cavities reach
+  black. Default `0.7`. Has no effect if `occlusion_texture` is authored
+  directly.
 - `alpha_mode` — `"opaque"` (default), `"blend"` (translucent), or `"mask"`
   (1-bit cutout, e.g. foliage).
 - `alpha_cutoff` — threshold for `alpha_mode="mask"`, default `0.5`.

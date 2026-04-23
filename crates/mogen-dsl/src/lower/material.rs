@@ -39,6 +39,12 @@ fn register_material(node: &Node, graph: &mut SceneGraph) -> Result<()> {
     if let Some(r) = node.attr_number("roughness") {
         mat.roughness = r;
     }
+    if let Some(n) = node.attr_number("normal_strength") {
+        mat.normal_strength = n;
+    }
+    if let Some(o) = node.attr_number("occlusion_strength") {
+        mat.occlusion_strength = o;
+    }
 
     let mode_attr = node
         .attr("alpha_mode")

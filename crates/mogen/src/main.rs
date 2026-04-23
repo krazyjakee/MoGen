@@ -322,9 +322,6 @@ enum Cmd {
         /// Skip the derived ambient-occlusion map.
         #[arg(long)]
         no_occlusion: bool,
-        /// Multiplier on normal-map slope intensity (>0). Larger = bumpier.
-        #[arg(long, default_value_t = 1.5)]
-        normal_strength: f32,
         /// Cap (in pixels) on the longer side of every generated albedo.
         /// Derived PBR maps inherit this size, so this is the single lever
         /// for embedded-texture footprint. `0` keeps the model's native
@@ -505,7 +502,6 @@ fn main() -> ExitCode {
             no_normal,
             no_metallic_roughness,
             no_occlusion,
-            normal_strength,
             texture_size,
         } => textures_cmd(mogen_llm::textures::TexturesArgs {
             textures_dir: textures_dir
@@ -524,7 +520,6 @@ fn main() -> ExitCode {
             no_normal,
             no_metallic_roughness,
             no_occlusion,
-            normal_strength,
             texture_size,
         }),
         Cmd::Bench {

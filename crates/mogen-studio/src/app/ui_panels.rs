@@ -9,8 +9,9 @@ use crate::pipeline::Stage;
 
 use super::types::{ShortcutAction, TEX_EXISTS_TTL};
 use super::util::{
-    delete_texture_group, ellipsize_path, find_clip_source_span, format_inspector_scalar,
-    gather_texture_refs, offset_to_line_col, resolve_for_check, scan_unused_textures,
+    delete_texture_group, ellipsize_path, find_clip_source_span, find_material_source_span,
+    format_inspector_scalar, gather_texture_refs, offset_to_line_col, resolve_for_check,
+    scan_unused_textures,
 };
 use super::MogenStudioApp;
 
@@ -18,6 +19,12 @@ impl MogenStudioApp {
     pub(super) fn ui_editor(&mut self, ui: &mut egui::Ui) {
         let mut changed = false;
         let i = self.active;
+        let editor_id = egui::Id::new("mog_editor_textedit");
+
+        // Consume popup navigation keys BEFORE the TextEdit is rendered — Up /
+        // Down / Tab / Enter / Esc are only intercepted when the popup is
+        // open, so normal editing isn't affected.
+        let popup_key = self.autocomplete_key(ui);
 
         let font_id = egui::TextStyle::Monospace.resolve(ui.style());
         let palette = crate::highlight::Palette::for_visuals(&ui.style().visuals);
@@ -41,6 +48,8 @@ impl MogenStudioApp {
         // for that so the last visible row doesn't clip.
         let available_height = (ui.available_height() - 4.0).max(row_height);
         let visible_rows = ((available_height / row_height).floor() as usize).max(1);
+
+        let mut textedit_output: Option<egui::widgets::text_edit::TextEditOutput> = None;
 
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
@@ -72,29 +81,53 @@ impl MogenStudioApp {
                         });
 
                     let pending_caret = self.files[i].pending_caret.take();
-                    let editor_id = egui::Id::new("mog_editor_textedit");
 
-                    let resp = super::text_menu::text_edit_with_menu(
-                        ui,
-                        editor_id,
-                        &mut self.files[i].source,
-                        |ui, text| {
-                            ui.add_sized(
-                                [ui.available_width(), 0.0],
-                                egui::TextEdit::multiline(text)
-                                    // code_editor() implies lock_focus(true), so Tab inserts
-                                    // a tab character instead of moving focus out of the
-                                    // editor — the right behavior for a code surface.
-                                    .code_editor()
-                                    .desired_rows(visible_rows)
-                                    .desired_width(f32::INFINITY)
-                                    .font(egui::TextStyle::Monospace)
-                                    .layouter(&mut layouter)
-                                    .id(editor_id),
-                            )
-                        },
-                    );
+                    // Snapshot the cursor range before the widget runs so the
+                    // right-click menu has something to restore — egui
+                    // collapses the selection on any secondary press.
+                    let prior = egui::TextEdit::load_state(ui.ctx(), editor_id)
+                        .and_then(|s| s.cursor.char_range());
+
+                    let output = egui::TextEdit::multiline(&mut self.files[i].source)
+                        // code_editor() implies lock_focus(true), so Tab inserts
+                        // a tab character instead of moving focus out of the
+                        // editor — the right behavior for a code surface.
+                        .code_editor()
+                        .desired_rows(visible_rows)
+                        .desired_width(f32::INFINITY)
+                        .font(egui::TextStyle::Monospace)
+                        .layouter(&mut layouter)
+                        .id(editor_id)
+                        .show(ui);
+
+                    let resp = output.response.clone();
                     if resp.changed() {
+                        changed = true;
+                    }
+
+                    // Re-assert the pre-press selection on secondary press
+                    // so the right-click menu can see what the user had
+                    // highlighted.
+                    if resp.hovered() && ui.input(|i| i.pointer.secondary_pressed()) {
+                        if let Some(range) = prior {
+                            if range.primary.index != range.secondary.index {
+                                if let Some(mut st) =
+                                    egui::TextEdit::load_state(ui.ctx(), editor_id)
+                                {
+                                    st.cursor.set_char_range(Some(range));
+                                    st.store(ui.ctx(), editor_id);
+                                }
+                            }
+                        }
+                    }
+                    let mut menu_changed = false;
+                    let source_ref = &mut self.files[i].source;
+                    resp.context_menu(|ui| {
+                        if super::text_menu::show_context_menu(ui, editor_id, source_ref) {
+                            menu_changed = true;
+                        }
+                    });
+                    if menu_changed {
                         changed = true;
                     }
 
@@ -115,8 +148,18 @@ impl MogenStudioApp {
                             ui.ctx().memory_mut(|m| m.request_focus(editor_id));
                         }
                     }
+
+                    textedit_output = Some(output);
                 });
             });
+
+        if let Some(ref output) = textedit_output {
+            // Refresh candidate list + popup anchor after the TextEdit has
+            // rendered. Keyboard navigation decoded before the widget is
+            // applied here so the selection/accept lands on the current
+            // candidates.
+            self.update_autocomplete_after_textedit(ui, output, editor_id, popup_key);
+        }
 
         if changed {
             self.files[i].dirty = self.files[i].source != self.files[i].last_saved_source;
@@ -432,55 +475,403 @@ impl MogenStudioApp {
         if !scene.joints.is_empty() {
             ui.label(format!("joints: {}", scene.joints.len()));
         }
+    }
 
-        // Texture roster. Listing each path (resolved against the .mog dir)
-        // with a green ✓ / red ✗ lets users verify their files exist without
-        // waiting for the export failure. Existence is cached for ~1.5s so
-        // we don't stat every PNG every frame.
-        // Own `source_dir` so the existence-cache call below can take
-        // `&mut self` without overlapping borrows from `self.files[i].path`.
+    /// Per-material editor panel. Each authored material gets a collapsing
+    /// group exposing its PBR values (colour, metallic, roughness, emissive,
+    /// transmission, alpha, uv) plus its texture slots with ✓/✗ existence
+    /// marks. Edits are spliced straight into the `.mog` source via span-aware
+    /// `edit::set_attr`, then an immediate recompile keeps the viewport + the
+    /// widgets' bound values in sync with the compiled scene (same pattern
+    /// the gizmo commits use — debouncing would flicker during drags).
+    ///
+    /// Also houses the "unused textures" cleanup list: PNGs sitting in
+    /// `./textures/` that no material references.
+    pub(super) fn ui_materials(&mut self, ui: &mut egui::Ui) {
+        use crate::edit;
+        use mogen_core::{AlphaMode, UvMode};
+
+        let i = self.active;
+        let Some(result) = &self.files[i].last_result else {
+            ui.label("(no build yet)");
+            return;
+        };
+        let Some(scene) = &result.scene else {
+            ui.label("(no scene — fix errors first)");
+            return;
+        };
+        if scene.materials.is_empty() {
+            ui.label("(no materials declared)");
+            return;
+        }
+
+        // Clone so the `&scene` borrow can end before we mutate source.
+        let materials: Vec<mogen_core::Material> = scene.materials.clone();
+        let texture_slots = gather_texture_refs(scene);
+
         let source_dir: Option<PathBuf> = self.files[i]
             .path
             .as_deref()
             .and_then(|p| p.parent())
             .map(|p| p.to_path_buf());
-        let texture_slots = gather_texture_refs(scene);
-        // Set of referenced PNG absolute paths — used to decide which files
-        // sitting in ./textures/ are dead weight the user can sweep out.
         let referenced_abs: std::collections::HashSet<PathBuf> = texture_slots
             .iter()
             .map(|(_, _, rel)| resolve_for_check(rel, source_dir.as_deref()))
             .collect();
-        if !texture_slots.is_empty() {
-            ui.add_space(8.0);
-            ui.label(format!("textures: {}", texture_slots.len()));
-            // Pre-resolve and check existence once before the ScrollArea so
-            // we don't double-borrow self in the closure.
-            let rows: Vec<(String, &'static str, PathBuf, bool)> = texture_slots
-                .into_iter()
-                .map(|(mat, slot, rel)| {
-                    let resolved = resolve_for_check(&rel, source_dir.as_deref());
-                    let exists = self.cached_exists(&resolved);
-                    (mat, slot, rel, exists)
-                })
-                .collect();
-            egui::ScrollArea::vertical()
-                .auto_shrink([false, true])
-                .max_height(140.0)
+
+        // Edits collected during the UI scan, applied in a second pass so we
+        // don't clash with the material clone borrow. Each entry spans a
+        // single attr rewrite on the named material.
+        let mut pending: Vec<(String, &'static str, String)> = Vec::new();
+
+        for mat in &materials {
+            let header_id = egui::Id::new(("mat_editor", mat.name.as_str()));
+            egui::CollapsingHeader::new(&mat.name)
+                .id_salt(header_id)
+                .default_open(false)
                 .show(ui, |ui| {
-                    for (mat_name, slot, rel_path, exists) in &rows {
-                        let (mark, color) = if *exists {
-                            ("✓", egui::Color32::from_rgb(80, 200, 120))
-                        } else {
-                            ("✗", egui::Color32::from_rgb(230, 100, 100))
-                        };
-                        ui.horizontal_wrapped(|ui| {
-                            ui.colored_label(color, mark);
-                            ui.label(format!("{mat_name}.{slot}"));
-                            let display = ellipsize_path(rel_path, 36);
-                            ui.label(display)
-                                .on_hover_text(rel_path.to_string_lossy());
-                        });
+                    // Colour + alpha
+                    ui.horizontal(|ui| {
+                        ui.label("Color");
+                        let mut rgb = [
+                            mat.base_color[0],
+                            mat.base_color[1],
+                            mat.base_color[2],
+                        ];
+                        if ui.color_edit_button_rgb(&mut rgb).changed() {
+                            pending.push((
+                                mat.name.clone(),
+                                "color",
+                                format!(
+                                    "[{}, {}, {}]",
+                                    format_inspector_scalar(rgb[0]),
+                                    format_inspector_scalar(rgb[1]),
+                                    format_inspector_scalar(rgb[2]),
+                                ),
+                            ));
+                        }
+                        let mut alpha = mat.base_color[3];
+                        if ui
+                            .add(
+                                egui::DragValue::new(&mut alpha)
+                                    .speed(0.01)
+                                    .range(0.0..=1.0)
+                                    .prefix("α "),
+                            )
+                            .changed()
+                        {
+                            pending.push((
+                                mat.name.clone(),
+                                "alpha",
+                                format_inspector_scalar(alpha),
+                            ));
+                        }
+                    });
+
+                    // Metallic / Roughness
+                    ui.horizontal(|ui| {
+                        let mut metallic = mat.metallic;
+                        if ui
+                            .add(
+                                egui::Slider::new(&mut metallic, 0.0..=1.0)
+                                    .text("metallic")
+                                    .fixed_decimals(2),
+                            )
+                            .changed()
+                        {
+                            pending.push((
+                                mat.name.clone(),
+                                "metallic",
+                                format_inspector_scalar(metallic),
+                            ));
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        let mut rough = mat.roughness;
+                        if ui
+                            .add(
+                                egui::Slider::new(&mut rough, 0.0..=1.0)
+                                    .text("roughness")
+                                    .fixed_decimals(2),
+                            )
+                            .changed()
+                        {
+                            pending.push((
+                                mat.name.clone(),
+                                "roughness",
+                                format_inspector_scalar(rough),
+                            ));
+                        }
+                    });
+
+                    // Normal / AO strength — apply when the textures pipeline
+                    // derives PBR maps for this material. Authored normal/AO
+                    // textures ignore these.
+                    ui.horizontal(|ui| {
+                        let mut ns = mat.normal_strength;
+                        if ui
+                            .add(
+                                egui::Slider::new(&mut ns, 0.0..=8.0)
+                                    .text("normal strength")
+                                    .fixed_decimals(2),
+                            )
+                            .on_hover_text(
+                                "Slope multiplier baked into the derived normal map \
+                                 by `mogen textures`. Larger = more pronounced bumps. \
+                                 Ignored when `normal_texture` is authored directly.",
+                            )
+                            .changed()
+                        {
+                            pending.push((
+                                mat.name.clone(),
+                                "normal_strength",
+                                format_inspector_scalar(ns),
+                            ));
+                        }
+                    });
+                    ui.horizontal(|ui| {
+                        let mut os = mat.occlusion_strength;
+                        if ui
+                            .add(
+                                egui::Slider::new(&mut os, 0.0..=1.0)
+                                    .text("AO strength")
+                                    .fixed_decimals(2),
+                            )
+                            .on_hover_text(
+                                "How dark the derived ambient-occlusion map can get. \
+                                 0 = flat white (no darkening), 1 = cavities reach black. \
+                                 Ignored when `occlusion_texture` is authored directly.",
+                            )
+                            .changed()
+                        {
+                            pending.push((
+                                mat.name.clone(),
+                                "occlusion_strength",
+                                format_inspector_scalar(os),
+                            ));
+                        }
+                    });
+
+                    // Emissive colour + HDR strength
+                    ui.horizontal(|ui| {
+                        ui.label("Emissive");
+                        let mut em = mat.emissive;
+                        if ui.color_edit_button_rgb(&mut em).changed() {
+                            pending.push((
+                                mat.name.clone(),
+                                "emissive",
+                                format!(
+                                    "[{}, {}, {}]",
+                                    format_inspector_scalar(em[0]),
+                                    format_inspector_scalar(em[1]),
+                                    format_inspector_scalar(em[2]),
+                                ),
+                            ));
+                        }
+                        let mut strength = mat.emissive_strength;
+                        if ui
+                            .add(
+                                egui::DragValue::new(&mut strength)
+                                    .speed(0.05)
+                                    .range(0.0..=64.0)
+                                    .prefix("×"),
+                            )
+                            .on_hover_text(
+                                "HDR emissive multiplier — values > 1 drive bloom in renderers \
+                                 that honour KHR_materials_emissive_strength",
+                            )
+                            .changed()
+                        {
+                            pending.push((
+                                mat.name.clone(),
+                                "emissive_strength",
+                                format_inspector_scalar(strength),
+                            ));
+                        }
+                    });
+
+                    // Transmission
+                    ui.horizontal(|ui| {
+                        let mut trans = mat.transmission;
+                        if ui
+                            .add(
+                                egui::Slider::new(&mut trans, 0.0..=1.0)
+                                    .text("transmission")
+                                    .fixed_decimals(2),
+                            )
+                            .on_hover_text(
+                                "Fraction of light passing through the surface \
+                                 (KHR_materials_transmission) — glass and water",
+                            )
+                            .changed()
+                        {
+                            pending.push((
+                                mat.name.clone(),
+                                "transmission",
+                                format_inspector_scalar(trans),
+                            ));
+                        }
+                    });
+
+                    // Alpha mode + cutoff
+                    ui.horizontal(|ui| {
+                        ui.label("Alpha mode");
+                        let mut mode = mat.alpha_mode;
+                        let mode_id = egui::Id::new(("alpha_mode", mat.name.as_str()));
+                        egui::ComboBox::from_id_salt(mode_id)
+                            .selected_text(match mode {
+                                AlphaMode::Opaque => "opaque",
+                                AlphaMode::Blend => "blend",
+                                AlphaMode::Mask => "mask",
+                            })
+                            .show_ui(ui, |ui| {
+                                let mut changed = false;
+                                changed |= ui
+                                    .selectable_value(&mut mode, AlphaMode::Opaque, "opaque")
+                                    .changed();
+                                changed |= ui
+                                    .selectable_value(&mut mode, AlphaMode::Blend, "blend")
+                                    .changed();
+                                changed |= ui
+                                    .selectable_value(&mut mode, AlphaMode::Mask, "mask")
+                                    .changed();
+                                if changed {
+                                    let v = match mode {
+                                        AlphaMode::Opaque => "\"opaque\"",
+                                        AlphaMode::Blend => "\"blend\"",
+                                        AlphaMode::Mask => "\"mask\"",
+                                    };
+                                    pending.push((
+                                        mat.name.clone(),
+                                        "alpha_mode",
+                                        v.to_string(),
+                                    ));
+                                }
+                            });
+                        if matches!(mode, AlphaMode::Mask) {
+                            let mut cutoff = mat.alpha_cutoff;
+                            if ui
+                                .add(
+                                    egui::DragValue::new(&mut cutoff)
+                                        .speed(0.01)
+                                        .range(0.0..=1.0)
+                                        .prefix("cutoff "),
+                                )
+                                .changed()
+                            {
+                                pending.push((
+                                    mat.name.clone(),
+                                    "alpha_cutoff",
+                                    format_inspector_scalar(cutoff),
+                                ));
+                            }
+                        }
+                    });
+
+                    // Double-sided
+                    {
+                        let mut ds = mat.double_sided;
+                        if ui
+                            .checkbox(&mut ds, "Double sided")
+                            .on_hover_text(
+                                "Draw both triangle faces (glTF doubleSided). \
+                                 Use for leaves, fins, flags, cloth",
+                            )
+                            .changed()
+                        {
+                            pending.push((
+                                mat.name.clone(),
+                                "double_sided",
+                                if ds { "1".into() } else { "0".into() },
+                            ));
+                        }
+                    }
+
+                    // UV mode + scale
+                    ui.horizontal(|ui| {
+                        ui.label("UV");
+                        let mut uv = mat.uv_mode;
+                        let uv_id = egui::Id::new(("uv_mode", mat.name.as_str()));
+                        egui::ComboBox::from_id_salt(uv_id)
+                            .selected_text(match uv {
+                                UvMode::Tile => "tile",
+                                UvMode::Fit => "fit",
+                            })
+                            .show_ui(ui, |ui| {
+                                let mut changed = false;
+                                changed |= ui
+                                    .selectable_value(&mut uv, UvMode::Tile, "tile")
+                                    .changed();
+                                changed |= ui
+                                    .selectable_value(&mut uv, UvMode::Fit, "fit")
+                                    .changed();
+                                if changed {
+                                    let v = match uv {
+                                        UvMode::Tile => "\"tile\"",
+                                        UvMode::Fit => "\"fit\"",
+                                    };
+                                    pending.push((
+                                        mat.name.clone(),
+                                        "uv_mode",
+                                        v.to_string(),
+                                    ));
+                                }
+                            });
+                        let mut us = mat.uv_scale[0];
+                        let mut vs = mat.uv_scale[1];
+                        let mut uv_changed = false;
+                        if ui
+                            .add(egui::DragValue::new(&mut us).speed(0.05).prefix("u "))
+                            .changed()
+                        {
+                            uv_changed = true;
+                        }
+                        if ui
+                            .add(egui::DragValue::new(&mut vs).speed(0.05).prefix("v "))
+                            .changed()
+                        {
+                            uv_changed = true;
+                        }
+                        if uv_changed {
+                            pending.push((
+                                mat.name.clone(),
+                                "uv_scale",
+                                format!(
+                                    "[{}, {}]",
+                                    format_inspector_scalar(us),
+                                    format_inspector_scalar(vs),
+                                ),
+                            ));
+                        }
+                    });
+
+                    // Texture slot roster for this material — same ✓/✗
+                    // existence check as before, nested under its owner so
+                    // the relationship is obvious.
+                    let mat_slots: Vec<(String, &'static str, PathBuf)> = texture_slots
+                        .iter()
+                        .filter(|(m, _, _)| m == &mat.name)
+                        .cloned()
+                        .collect();
+                    if !mat_slots.is_empty() {
+                        ui.add_space(4.0);
+                        ui.label(egui::RichText::new("textures").weak());
+                        for (_, slot, rel_path) in &mat_slots {
+                            let resolved = resolve_for_check(rel_path, source_dir.as_deref());
+                            let exists = self.cached_exists(&resolved);
+                            let (mark, color) = if exists {
+                                ("✓", egui::Color32::from_rgb(80, 200, 120))
+                            } else {
+                                ("✗", egui::Color32::from_rgb(230, 100, 100))
+                            };
+                            ui.horizontal_wrapped(|ui| {
+                                ui.colored_label(color, mark);
+                                ui.label(*slot);
+                                let display = ellipsize_path(rel_path, 30);
+                                ui.label(display)
+                                    .on_hover_text(rel_path.to_string_lossy());
+                            });
+                        }
                     }
                 });
         }
@@ -531,10 +922,39 @@ impl MogenStudioApp {
         }
         if let Some(path) = to_delete {
             let outcome = delete_texture_group(&path);
-            // Invalidate the existence cache so the ✓/✗ list refreshes
-            // without waiting for the 1.5s TTL.
             self.tex_exists_cache.clear();
             self.active_mut().status = outcome;
+        }
+
+        // Apply material edits. Re-parse between each one so the splice
+        // offsets stay valid after prior inserts shift later attrs. A
+        // material without a locatable span (e.g. coming from an imported
+        // module) silently skips — the widget state rolls back on the next
+        // frame when the compiled scene is re-read.
+        if !pending.is_empty() {
+            let mut source = self.files[i].source.clone();
+            let mut any_applied = false;
+            for (mat_name, attr, value) in pending {
+                let Some(span) = find_material_source_span(&source, &mat_name) else {
+                    continue;
+                };
+                source = edit::set_attr(&source, span, attr, &value);
+                any_applied = true;
+            }
+            if any_applied {
+                {
+                    let f = &mut self.files[i];
+                    f.source = source;
+                    f.dirty = f.source != f.last_saved_source;
+                    f.needs_compile = true;
+                    f.last_edit_at = Some(Instant::now());
+                }
+                // Immediate recompile so the widgets read the updated
+                // material on the very next frame (matches the gizmo-commit
+                // pattern in `drain_viewport_edits`). Debouncing causes
+                // DragValue drags to snap back to the old value mid-drag.
+                self.compile_active();
+            }
         }
     }
 
