@@ -254,13 +254,15 @@ fn attrs_for_kind(kind: &str) -> &'static [&'static str] {
             "emissive", "emissive_strength",
             "transmission",
             "double_sided",
+            "base_color_texture", "metallic_roughness_texture",
+            "normal_texture", "occlusion_texture", "emissive_texture",
         ],
         "connector" => &["at", "dir", "tag", "radius"],
         "mirror" => &["axis"],
         "array" => &["count", "around", "start_angle"],
         "joint" => &["type", "axis", "limits", "pivot"],
         "clip" => &["seconds"],
-        "track" => &["prop", "from", "to"],
+        "track" => &["prop", "axis", "from", "to", "keys"],
         "spin" => &["target", "axis", "rpm"],
         "open_close" => &["target", "axis", "angle", "seconds"],
         "wave" | "flap" => &["target", "axis", "amplitude", "hz"],
@@ -356,6 +358,11 @@ fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         | ("material", "double_sided") => "number",
         ("material", "color") | ("material", "emissive") => "vec3",
         ("material", "alpha_mode") => "string",
+        ("material", "base_color_texture")
+        | ("material", "metallic_roughness_texture")
+        | ("material", "normal_texture")
+        | ("material", "occlusion_texture")
+        | ("material", "emissive_texture") => "string",
         ("connector", "at") | ("connector", "dir") => "vec3",
         ("connector", "tag") => "string",
         ("connector", "radius") => "number",
@@ -368,6 +375,8 @@ fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         ("clip", "seconds") => "number",
         ("track", "prop") => "string",
         ("track", "from") | ("track", "to") => "number",
+        ("track", "axis") => "vec3",
+        ("track", "keys") => "list",
         ("spin", "target") | ("open_close", "target") | ("wave", "target") | ("flap", "target")
         | ("idle", "target") => "string",
         ("spin", "axis") | ("open_close", "axis") | ("wave", "axis") | ("flap", "axis") => "vec3",
@@ -540,10 +549,13 @@ fn check_anim_required(n: &Node, diags: &mut Vec<Diagnostic>) {
                     .with_span(n.span),
                 );
             }
-            if n.attr("to").is_none() {
+            if n.attr("to").is_none() && n.attr("keys").is_none() {
                 diags.push(
-                    Diagnostic::error("E0414", "track requires `to=` scalar")
-                        .with_span(n.span),
+                    Diagnostic::error(
+                        "E0414",
+                        "track requires either `to=` scalar or `keys=[[t,v], ...]`",
+                    )
+                    .with_span(n.span),
                 );
             }
         }

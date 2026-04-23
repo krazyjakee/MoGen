@@ -1,12 +1,5 @@
-// A four-rotor quadcopter drone.
-//
-// The central body is a flattened rounded_box; four arms extend to the corners
-// with motor cylinders at their tips; each motor is a `rotor` group carrying a
-// two-bladed propeller. A single `spin` template drives every propeller by
-// targeting the shared array wrapper.
-//
-// The propellers ride as children of each rotor, so a rotor spin rotates both
-// blades together.
+// mgen-generate seed=1776897266398223000
+// prompt: spin all four rotors at 600 rpm
 
 material "carbon" (color=[0.08, 0.08, 0.10], metallic=0.2, roughness=0.55)
 material "motor"  (color=[0.55, 0.55, 0.60], metallic=0.9, roughness=0.25)
@@ -41,3 +34,5 @@ scene {
     }
   }
 }
+
+spin "rotor_spin" (target="rotor", axis=[0, 1, 0], rpm=600)

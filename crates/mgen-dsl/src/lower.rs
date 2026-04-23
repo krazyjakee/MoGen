@@ -3,7 +3,7 @@ use std::f32::consts::TAU;
 use anyhow::{anyhow, bail, Result};
 use glam::{Quat, Vec3};
 
-use mgen_core::{AlphaMode, Connector, Material, Mesh, NodeId, SceneGraph, Transform};
+use mgen_core::{AlphaMode, Connector, Material, Mesh, NodeId, SceneGraph, TextureRef, Transform};
 use mgen_geom::{
     box_mesh, capsule_mesh, clean_csg_output, cone_mesh, curved_plane_mesh, cylinder_mesh,
     difference_many, disc_mesh, ellipsoid_mesh, frustum_mesh, half_cylinder_mesh, hemisphere_mesh,
@@ -180,8 +180,23 @@ fn register_material(node: &Node, graph: &mut SceneGraph) -> Result<()> {
     if let Some(d) = node.attr_number("double_sided") {
         mat.double_sided = d != 0.0;
     }
+
+    mat.base_color_texture = texture_ref_attr(node, "base_color_texture");
+    mat.metallic_roughness_texture = texture_ref_attr(node, "metallic_roughness_texture");
+    mat.normal_texture = texture_ref_attr(node, "normal_texture");
+    mat.occlusion_texture = texture_ref_attr(node, "occlusion_texture");
+    mat.emissive_texture = texture_ref_attr(node, "emissive_texture");
+
     graph.add_material(mat);
     Ok(())
+}
+
+fn texture_ref_attr(node: &Node, key: &str) -> Option<TextureRef> {
+    let path = match node.attr(key)? {
+        Value::String(s) | Value::Ident(s) => s.clone(),
+        _ => return None,
+    };
+    Some(TextureRef::new(path))
 }
 
 fn lower_into(node: &Node, parent: Option<NodeId>, graph: &mut SceneGraph) -> Result<NodeId> {

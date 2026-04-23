@@ -137,7 +137,14 @@ from a validator failure.
 6. For unspecified \"animate it\" prompts, prefer a procedural template \
    (`spin`, `open_close`, `wave`, `flap`, `idle`) over hand-authored \
    `joint` + `clip` + `track`. Reach for the full joint/clip machinery only \
-   when the prompt demands specific keyframed motion.";
+   when the prompt demands specific keyframed motion.
+7. Organic subjects that bend — humanoids, creatures, arms, tails — need a \
+   `skeleton { bone ... }` rig with mesh parts bound via `skin=\"<rig>\"`. \
+   Drive multi-limb cycles (walk, wave, idle flex) with a **single** `clip` \
+   containing one `keys=[[t, deg], ...]` `track` per bone so limbs stay in \
+   phase. Mechanical/architectural subjects (chairs, cars, buildings) \
+   stay as rigid `attach`-joined primitives with per-part procedural \
+   animation — do not rig them.";
 
 const GRAMMAR_REFERENCE: &str = "\
 A `.mg` file is a sequence of nodes. Each node is:
@@ -177,7 +184,25 @@ A `.mg` file is a sequence of nodes. Each node is:
   seconds), `wave` (axis, amplitude, hz), `flap` (axis, amplitude, hz), \
   `idle` (amplitude, hz — breathing scale, no axis/angle). Each takes \
   `target=\"node\"`. For a gentle sway (trees in wind, flags) use `wave` \
-  with a small amplitude, not `idle`.";
+  with a small amplitude, not `idle`.
+- `track` has two forms. `from=A, to=B` emits a 2-keyframe linear track \
+  from 0s to the clip's `seconds=`. `keys=[[t, v], [t, v], ...]` emits \
+  one keyframe per pair — `t` is absolute seconds, `v` is degrees (for \
+  `prop=rotation`), meters (`prop=translation`), or a uniform scale \
+  factor (`prop=scale`). Use `keys=` for cyclical motion and to \
+  coordinate multiple bones in one clip — end the cycle on the same \
+  value as the start (`[0, -25], [0.5, 25], [1.0, -25]`) so the loop \
+  is seamless. `axis=[x,y,z]` picks the rotation axis for direct-node \
+  tracks (hips usually rotate around `[1, 0, 0]`).
+- Rigging: `skeleton \"rig\" { bone \"root\" (pos=[...], envelope=0.2) \
+  { bone \"child\" (pos=[...]) } }`. Bones nest; each child bone's \
+  `pos` is the offset **from its parent bone's joint**, not from the \
+  skeleton root. Mesh primitives carry `skin=\"rig\"` to be bound by \
+  nearest-bone + linear envelope falloff (max 4 influences per vertex); \
+  envelope is the binding radius in meters — roughly the limb's width \
+  (0.15–0.25 for a humanoid limb on a 1.7m figure). A skinned mesh's \
+  own transform is baked into world space at bind time, so place the \
+  mesh in its final world position and let the rig take over from there.";
 
 const CONVENTIONS: &str = "\
 **Frame.** +Y up, -Z forward (the direction something faces), +X right. So \
@@ -284,7 +309,9 @@ const KINDS_REFERENCE: &str = "\
 | `union`, `difference`, `intersect` | — | children are operands |
 | `joint` | name, `type`, `pivot` | `axis`, `limits=[lo,hi]` |
 | `clip` | name, `seconds` | `track` children |
-| `track` | name (joint/node), `to` | `from` (default 0), `prop` |
+| `track` | name (joint/node/bone) | `prop=\"translation\\|rotation\\|scale\"`, `axis=[x,y,z]`, `from`/`to` **or** `keys=[[t,v], ...]` |
+| `skeleton` | name | contains `bone` children; accepts `pos`/`rot`/`scale` to place the rig |
+| `bone` | name | `pos` (parent-relative offset), `rot`, `envelope` (default 0.75, meters); may nest `bone` children |
 | `spin` | `target` | `axis`, `rpm` (60) |
 | `open_close` | `target` | `axis`, `angle` (90°), `seconds` (1.0) |
 | `wave` | `target` | `axis`, `amplitude` (15°), `hz` (1.0) |
@@ -410,6 +437,48 @@ scene {
     }
   }
   attach (parent=\"pot\", child=\"hub\", socket=\"top\", plug=\"bottom\")
+}
+
+### Prompt: \"a person walking\"
+### Output:
+material \"skin_m\" (color=[0.82, 0.64, 0.55], roughness=0.7)
+material \"shirt\"  (color=[0.22, 0.38, 0.62], roughness=0.75)
+material \"pants\"  (color=[0.15, 0.16, 0.2],  roughness=0.8)
+
+scene {
+  skeleton \"rig\" {
+    bone \"hip\" (pos=[0, 0.95, 0], envelope=0.28) {
+      bone \"spine\" (pos=[0, 0.3, 0], envelope=0.32) {
+        bone \"neck\" (pos=[0, 0.2, 0], envelope=0.15)
+        bone \"shoulder_l\" (pos=[ 0.2, 0.18, 0], envelope=0.2) {
+          bone \"elbow_l\" (pos=[0, -0.25, 0], envelope=0.15)
+        }
+        bone \"shoulder_r\" (pos=[-0.2, 0.18, 0], envelope=0.2) {
+          bone \"elbow_r\" (pos=[0, -0.25, 0], envelope=0.15)
+        }
+      }
+      bone \"hip_l\" (pos=[ 0.1, 0, 0], envelope=0.22) {
+        bone \"knee_l\" (pos=[0, -0.45, 0], envelope=0.2)
+      }
+      bone \"hip_r\" (pos=[-0.1, 0, 0], envelope=0.22) {
+        bone \"knee_r\" (pos=[0, -0.45, 0], envelope=0.2)
+      }
+    }
+  }
+
+  sphere   \"head\"  (pos=[0, 1.6, 0],  radius=0.12, mat=\"skin_m\", skin=\"rig\")
+  cylinder \"torso\" (pos=[0, 1.2, 0],  radius=0.18, height=0.55, mat=\"shirt\", skin=\"rig\")
+  cylinder \"arm_l\" (pos=[ 0.27, 1.1, 0], radius=0.06, height=0.5, mat=\"skin_m\", skin=\"rig\")
+  cylinder \"arm_r\" (pos=[-0.27, 1.1, 0], radius=0.06, height=0.5, mat=\"skin_m\", skin=\"rig\")
+  cylinder \"leg_l\" (pos=[ 0.1, 0.5, 0], radius=0.08, height=0.9, mat=\"pants\",  skin=\"rig\")
+  cylinder \"leg_r\" (pos=[-0.1, 0.5, 0], radius=0.08, height=0.9, mat=\"pants\",  skin=\"rig\")
+}
+
+clip \"walk\" (seconds=1.0) {
+  track \"hip_l\"      (prop=rotation, axis=[1, 0, 0], keys=[[0, -25], [0.5,  25], [1.0, -25]])
+  track \"hip_r\"      (prop=rotation, axis=[1, 0, 0], keys=[[0,  25], [0.5, -25], [1.0,  25]])
+  track \"shoulder_l\" (prop=rotation, axis=[1, 0, 0], keys=[[0,  20], [0.5, -20], [1.0,  20]])
+  track \"shoulder_r\" (prop=rotation, axis=[1, 0, 0], keys=[[0, -20], [0.5,  20], [1.0, -20]])
 }";
 
 const OUTPUT_CONTRACT: &str = "\n\n## Output contract\n\n\
@@ -431,6 +500,10 @@ Before you emit, silently verify:
    together — pick transmission for glass, alpha for tints/gels, not both.
 7. The scene stays compact — a handful of primitives or a small number of \
    modules, not hundreds of shapes.
+8. Every `skin=\"X\"` names a declared `skeleton \"X\" { ... }` in the same \
+   file. Rigged scenes have all limb cycles inside one `clip` with \
+   coordinated `keys=` tracks, not a scatter of one-clip-per-limb \
+   procedural templates.
 
 If the prompt is ambiguous, make a reasonable choice and commit to it.\n";
 
@@ -528,6 +601,29 @@ mod tests {
     }
 
     #[test]
+    fn exposes_rigging_and_multi_keyframe_tracks() {
+        // The skinning path: the model won't emit rigs unless it sees them
+        // in the grammar reference, the kinds table, and a fewshot.
+        let s = system_instruction(&StdlibIndex::default());
+        assert!(s.contains("`skeleton`"), "kinds table missing skeleton row");
+        assert!(s.contains("`bone`"), "kinds table missing bone row");
+        assert!(s.contains("skin=\"rig\""), "grammar reference missing skin= example");
+        assert!(s.contains("parent-relative"), "conventions missing bone-pos-is-parent-relative rule");
+        assert!(s.contains("envelope"), "conventions missing envelope guidance");
+        // Multi-keyframe tracks:
+        assert!(s.contains("keys=[[t, v]"), "grammar reference missing keys=[[t,v]] form");
+        // The humanoid fewshot is the concrete demonstration.
+        assert!(
+            s.contains("Prompt: \"a person walking\""),
+            "humanoid walk fewshot missing"
+        );
+        assert!(
+            s.contains("clip \"walk\" (seconds=1.0)"),
+            "humanoid walk clip missing"
+        );
+    }
+
+    #[test]
     fn is_materially_shorter_than_legacy() {
         // Guard against regressions. Pre-consolidation (separate EXAMPLES and
         // ANTI_PATTERN sections) the assembly was ~15 KB with an empty stdlib
@@ -543,11 +639,13 @@ mod tests {
         // avoidance added ~0.4 KB; steering the model away from using
         // `attach` on concentric parts (pane-in-frame, core-in-shell) and
         // from stacking `transmission` with `alpha_mode="blend"` on glass
-        // added ~0.75 KB; the cap now sits at 17.9 KB — still tight enough
-        // to catch a revived long-form section.
+        // added ~0.75 KB. Exposing skinning (skeleton/bone/skin=, multi-
+        // keyframe `keys=` tracks, and a humanoid walk fewshot) added ~4 KB;
+        // the cap now sits at 22.1 KB — still tight enough to catch a
+        // revived long-form section.
         let s = system_instruction(&StdlibIndex::default());
         assert!(
-            s.len() < 17_900,
+            s.len() < 22_100,
             "system instruction grew to {} bytes — did a section come back?",
             s.len()
         );

@@ -15,15 +15,23 @@ and GLB export works. Most of the original ambitions in [`PLAN.md`](PLAN.md) hav
 Supported:
 
 - Primitives: `box`, `plane`, `quad`, `cylinder`, `cone`, `sphere`, `capsule`, `torus`,
-  `prism`, `pyramid`, `disc`, `icosphere`, `rounded_box`
-- CSG: `union`, `difference`, `intersect`
+  `prism`, `pyramid`, `disc`, `icosphere`, `rounded_box`, `wedge`, `frustum`, `tube`,
+  `hemisphere`, `half_cylinder`, `torus_arc`, `ellipsoid`, `superellipsoid`,
+  `curved_plane`, `lathe`, `spline_tube` — each emits `TEXCOORD_0` UVs
+- CSG: `union`, `difference`, `intersect`, with post-op triplanar UVs so booleans stay
+  texturable
 - Hierarchy: `group` containers; reusable `module` definitions with `instance`
 - Repetition and symmetry: `array`, `mirror`
 - Connectors for attachment points between parts
 - Skeletons, skinning, and animation templates (`spin`, `open_close`, `wave`, `flap`, `idle`)
-- Materials (base color, metallic, roughness, alpha), per-node transforms, `role` and `tags`
+- Materials: base color, metallic, roughness, alpha, transmission, emissive + HDR
+  strength, `double_sided`, per-node transforms, `role` and `tags`
+- PBR textures: `base_color_texture`, `metallic_roughness_texture`, `normal_texture`,
+  `occlusion_texture`, `emissive_texture`. PNGs and JPEGs are embedded in the output
+  GLB, so `.glb` files remain self-contained and portable.
 - Validation layer with human-readable and JSON diagnostics
-- LLM-driven generation via Gemini (`mgen generate`) with automatic repair on failures
+- LLM-driven generation, modification, and animation via Gemini (`mgen generate` /
+  `mgen modify` / `mgen animate`) with automatic repair on failures
 
 ## Install
 
@@ -83,6 +91,25 @@ scene {
 }
 ```
 
+With textures:
+
+```mg
+material "oak" (
+  color=[1, 1, 1],
+  roughness=0.8,
+  base_color_texture="textures/oak_albedo.png",
+  normal_texture="textures/oak_normal.png"
+)
+
+scene {
+  box "table_top" (pos=[0, 0.75, 0], size=[2, 0.05, 1], mat="oak")
+}
+```
+
+Texture paths are resolved relative to the `.mg` file and the image bytes are embedded
+into the output `.glb`, so the result is a single portable file with no external
+dependencies.
+
 Two more examples live in [`examples/`](examples/): `hierarchy_test.mg` exercises nested
 groups with rotation and scale, `chair_mat.mg` shows the full material flow.
 
@@ -93,19 +120,24 @@ Coordinate system is glTF-standard: right-handed, +Y up, -Z forward.
 ```
 mgen build    <file.mg> --out <file.glb>         # compile DSL to GLB
 mgen generate "a wooden stool" --out out.glb     # generate DSL via Gemini, then compile
+mgen modify   <file.mg> "make the legs taller"   # LLM edit of an existing .mg, then recompile
+mgen animate  <file.mg> "spin the rotor at 120 rpm"  # LLM edit limited to animations
 mgen check    <file.mg>                          # validate a DSL file
 mgen inspect  <file.glb>                         # summarize a GLB
 ```
 
-`generate` needs `GEMINI_API_KEY` in the environment (or `--api-key`). There are a few
-more developer-facing subcommands (`parse`, `dump-scene`, `bench`) — run `mgen --help`
+`generate`, `modify`, and `animate` need `GEMINI_API_KEY` in the environment (or
+`--api-key`). `animate` is scoped to top-level animation declarations only (`joint`,
+`clip`/`track`, and the `spin` / `open_close` / `wave` / `flap` / `idle` templates) —
+it leaves geometry, materials, and hierarchy untouched. There are a few more
+developer-facing subcommands (`parse`, `dump-scene`, `bench`) — run `mgen --help`
 for the full list.
 
 ### Controlling generation latency
 
 Gemini 2.5 Pro does dynamic internal "thinking" before emitting a token — at full budget
 that can push a single `generate` call past two minutes. `mgen` exposes a `--thinking`
-flag on `generate`, `modify`, and `bench` that caps the budget:
+flag on `generate`, `modify`, `animate`, and `bench` that caps the budget:
 
 | level    | budget tokens | when to use                                                  |
 |----------|---------------|--------------------------------------------------------------|
@@ -128,6 +160,19 @@ while deterministic Rust code handles *how* to build it. Small outputs, cheap it
 no hallucinated triangles.
 
 The long-form design goals live in [`PLAN.md`](PLAN.md).
+
+## GUI
+
+A minimal desktop GUI ships alongside the CLI — it combines the DSL editor, a live
+3D preview, diagnostics, and one-click Gemini generate/modify/animate calls. Build
+and run it with:
+
+```sh
+cargo run --release -p mgen-gui
+```
+
+The inspector panel shows a texture roster for the current scene with a ✓/✗ marker
+per texture path, so missing image files are visible before you hit "Build GLB".
 
 ## Contributing
 

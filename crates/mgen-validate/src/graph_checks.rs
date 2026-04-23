@@ -146,8 +146,21 @@ fn check_connectivity(graph: &SceneGraph) -> Vec<Diagnostic> {
     }
 
     // Union-find over the entries. Two entries merge if their inflated AABBs
-    // intersect.
+    // intersect, OR if they're bound to the same skin — skinned meshes are
+    // rigidly linked through their shared skeleton, so the geometric gap
+    // between e.g. an arm mesh and the torso is not a real disconnection.
     let mut parent: Vec<usize> = (0..entries.len()).collect();
+    let mut first_for_skin: std::collections::HashMap<u32, usize> =
+        std::collections::HashMap::new();
+    for (i, (id, _)) in entries.iter().enumerate() {
+        if let Some(skin) = graph.nodes[id.0 as usize].skin {
+            if let Some(&first) = first_for_skin.get(&skin.0) {
+                union(&mut parent, first, i);
+            } else {
+                first_for_skin.insert(skin.0, i);
+            }
+        }
+    }
     for i in 0..entries.len() {
         for j in (i + 1)..entries.len() {
             if entries[i].1.intersects(&entries[j].1) {

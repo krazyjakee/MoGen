@@ -210,6 +210,18 @@ impl GeminiClient {
         Ok(Self::new(key))
     }
 
+    pub(crate) fn http(&self) -> &reqwest::blocking::Client {
+        &self.http
+    }
+
+    pub(crate) fn api_key(&self) -> &str {
+        &self.api_key
+    }
+
+    pub(crate) fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
     pub fn generate(&self, cfg: &GenerateConfig) -> Result<GenerateResponse, GeminiError> {
         let url = format!(
             "{}/models/{}:generateContent?key={}",
@@ -377,7 +389,7 @@ fn format_source_chain(err: &reqwest::Error) -> String {
     out
 }
 
-fn parse_error_message(bytes: &[u8]) -> String {
+pub(crate) fn parse_error_message(bytes: &[u8]) -> String {
     if let Ok(v) = serde_json::from_slice::<serde_json::Value>(bytes) {
         if let Some(msg) = v
             .get("error")

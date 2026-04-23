@@ -177,6 +177,29 @@ Declared at the top of the file or inside `scene { ... }`. Attributes:
   geometry — mirroring a bent `curved_plane` along its bend axis does **not**
   produce a double-sided surface; it produces two sheets curling away from
   each other.
+- `base_color_texture` — string path to an `.png`/`.jpg` file on disk,
+  resolved relative to the `.mg` file. Multiplied against `color`. sRGB.
+- `metallic_roughness_texture` — packed metal/rough map (glTF convention:
+  green = roughness, blue = metallic). Linear.
+- `normal_texture` — tangent-space normal map. Linear.
+- `occlusion_texture` — ambient occlusion (red channel). Linear.
+- `emissive_texture` — emissive colour map, multiplied against `emissive`.
+  sRGB.
+
+Example:
+
+```
+material "oak" (
+  color=[1, 1, 1],
+  roughness=0.8,
+  base_color_texture="textures/oak_albedo.png",
+  normal_texture="textures/oak_normal.png"
+)
+```
+
+Texture files are embedded in the output GLB, so the resulting `.glb` is
+self-contained and can be moved without the source images. Missing files
+are a hard error at export.
 
 Reference a material on any geometry or group via `mat="wood"`. The lookup is
 by exact string match; unknown names are a hard error at lowering.

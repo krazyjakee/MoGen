@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use serde::{Deserialize, Serialize};
 
 use glam::Mat4;
@@ -107,6 +109,23 @@ impl SceneGraph {
             .map(|i| MaterialId(i as u32))
     }
 
+    /// Rewrite every relative texture path on every material so it's anchored
+    /// at `base` (typically the directory containing the source `.mg` file).
+    /// Absolute paths are left untouched. Callers invoke this after lowering
+    /// but before export so the exporter only ever sees paths it can resolve
+    /// from process cwd.
+    pub fn resolve_texture_paths(&mut self, base: &Path) {
+        for mat in &mut self.materials {
+            for slot in mat.texture_slots_mut() {
+                if let Some(t) = slot {
+                    if !t.path.is_absolute() {
+                        t.path = base.join(&t.path);
+                    }
+                }
+            }
+        }
+    }
+
     pub fn get(&self, id: NodeId) -> &SceneNode {
         &self.nodes[id.0 as usize]
     }
@@ -116,6 +135,26 @@ impl SceneGraph {
             .iter()
             .position(|n| n.name == name)
             .map(|i| NodeId(i as u32))
+    }
+
+    /// All nodes whose `name` equals `name`. Used by animation templates so a
+    /// single `target="rotor"` expands to every replicated rotor produced by
+    /// an `array`/`mirror`.
+    pub fn find_nodes_by_name(&self, name: &str) -> Vec<NodeId> {
+        self.nodes
+            .iter()
+            .enumerate()
+            .filter_map(|(i, n)| (n.name == name).then_some(NodeId(i as u32)))
+            .collect()
+    }
+
+    /// All nodes whose `role` equals `role`.
+    pub fn find_nodes_by_role(&self, role: &str) -> Vec<NodeId> {
+        self.nodes
+            .iter()
+            .enumerate()
+            .filter_map(|(i, n)| (n.role.as_deref() == Some(role)).then_some(NodeId(i as u32)))
+            .collect()
     }
 
     /// Find a node by name within the descendants of `root` (inclusive).

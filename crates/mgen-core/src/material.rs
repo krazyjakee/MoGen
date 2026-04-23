@@ -77,6 +77,19 @@ pub struct Material {
 }
 
 impl Material {
+    /// Mutable handles to every texture slot, in a fixed order. Lets callers
+    /// iterate slots generically (e.g. to resolve relative paths) without
+    /// having to enumerate each field by name.
+    pub fn texture_slots_mut(&mut self) -> [&mut Option<TextureRef>; 5] {
+        [
+            &mut self.base_color_texture,
+            &mut self.metallic_roughness_texture,
+            &mut self.normal_texture,
+            &mut self.occlusion_texture,
+            &mut self.emissive_texture,
+        ]
+    }
+
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),

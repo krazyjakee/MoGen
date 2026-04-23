@@ -1,15 +1,15 @@
 use std::collections::HashMap;
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::Serialize;
 use serde_json::{json, Value};
 
 use mgen_core::{
-    AlphaMode, Clip, Interpolation, Material, Mesh, NodeId, SceneGraph, SceneNode, Skin, Track,
-    TrackProperty,
+    AlphaMode, Clip, Interpolation, Material, Mesh, NodeId, SceneGraph, SceneNode, Skin,
+    TextureRef, Track, TrackProperty,
 };
 
 const GLB_MAGIC: u32 = 0x46546C67;
@@ -49,6 +49,12 @@ pub fn write_glb(scene: &SceneGraph, out: &Path) -> Result<()> {
     let mut meshes: Vec<Value> = Vec::new();
     let mut nodes: Vec<Value> = Vec::with_capacity(scene.nodes.len());
 
+    // Textures get packed first so `images[]` and `textures[]` indices are
+    // known by the time we emit materials. Each unique on-disk path produces
+    // one image + bufferView in the BIN chunk and one shared glTF texture
+    // (sampler is constant and shared across all textures).
+    let texture_table = pack_textures(&scene.materials, &mut bin, &mut buffer_views)?;
+
     let mut mesh_index_for_node: Vec<Option<usize>> = vec![None; scene.nodes.len()];
     // Dedupe identical (geometry, material) pairs so left/right-mirrored parts
     // like shoulders and elbows share one mesh entry + one copy of the buffer
@@ -73,6 +79,10 @@ pub fn write_glb(scene: &SceneGraph, out: &Path) -> Result<()> {
                 let mut attributes = serde_json::Map::new();
                 attributes.insert("POSITION".into(), json!(pos_acc));
                 attributes.insert("NORMAL".into(), json!(nrm_acc));
+                if mesh.has_uvs() {
+                    let uv_acc = push_uvs(&mut bin, &mut buffer_views, &mut accessors, mesh);
+                    attributes.insert("TEXCOORD_0".into(), json!(uv_acc));
+                }
 
                 let mut primitive = json!({
                     "attributes": Value::Object(attributes),
@@ -94,6 +104,10 @@ pub fn write_glb(scene: &SceneGraph, out: &Path) -> Result<()> {
                 let mut attributes = serde_json::Map::new();
                 attributes.insert("POSITION".into(), json!(pos_acc));
                 attributes.insert("NORMAL".into(), json!(nrm_acc));
+                if mesh.has_uvs() {
+                    let uv_acc = push_uvs(&mut bin, &mut buffer_views, &mut accessors, mesh);
+                    attributes.insert("TEXCOORD_0".into(), json!(uv_acc));
+                }
                 let j_acc = push_joints(&mut bin, &mut buffer_views, &mut accessors, mesh);
                 let w_acc = push_weights(&mut bin, &mut buffer_views, &mut accessors, mesh);
                 attributes.insert("JOINTS_0".into(), json!(j_acc));
@@ -124,7 +138,11 @@ pub fn write_glb(scene: &SceneGraph, out: &Path) -> Result<()> {
         nodes.push(emit_node(n, mesh_index_for_node[i]));
     }
 
-    let materials: Vec<Value> = scene.materials.iter().map(emit_material).collect();
+    let materials: Vec<Value> = scene
+        .materials
+        .iter()
+        .map(|m| emit_material(m, &texture_table))
+        .collect();
     let extensions_used = collect_material_extensions(&scene.materials);
 
     let animations: Vec<Value> = scene
@@ -155,6 +173,11 @@ pub fn write_glb(scene: &SceneGraph, out: &Path) -> Result<()> {
     if !skins_json.is_empty() {
         gltf["skins"] = Value::Array(skins_json);
     }
+    if !texture_table.images.is_empty() {
+        gltf["images"] = Value::Array(texture_table.images.clone());
+        gltf["textures"] = Value::Array(texture_table.textures.clone());
+        gltf["samplers"] = Value::Array(texture_table.samplers.clone());
+    }
     if !extensions_used.is_empty() {
         gltf["extensionsUsed"] = json!(extensions_used);
     }
@@ -181,17 +204,31 @@ pub fn write_glb(scene: &SceneGraph, out: &Path) -> Result<()> {
     Ok(())
 }
 
-fn emit_material(m: &Material) -> Value {
+fn emit_material(m: &Material, textures: &TextureTable) -> Value {
     let mut obj = serde_json::Map::new();
     obj.insert("name".into(), Value::String(m.name.clone()));
-    obj.insert(
-        "pbrMetallicRoughness".into(),
-        json!({
-            "baseColorFactor": m.base_color,
-            "metallicFactor": m.metallic,
-            "roughnessFactor": m.roughness,
-        }),
-    );
+
+    let mut pbr = serde_json::Map::new();
+    pbr.insert("baseColorFactor".into(), json!(m.base_color));
+    pbr.insert("metallicFactor".into(), json!(m.metallic));
+    pbr.insert("roughnessFactor".into(), json!(m.roughness));
+    if let Some(idx) = textures.index_of(&m.base_color_texture) {
+        pbr.insert("baseColorTexture".into(), json!({ "index": idx }));
+    }
+    if let Some(idx) = textures.index_of(&m.metallic_roughness_texture) {
+        pbr.insert("metallicRoughnessTexture".into(), json!({ "index": idx }));
+    }
+    obj.insert("pbrMetallicRoughness".into(), Value::Object(pbr));
+
+    if let Some(idx) = textures.index_of(&m.normal_texture) {
+        obj.insert("normalTexture".into(), json!({ "index": idx }));
+    }
+    if let Some(idx) = textures.index_of(&m.occlusion_texture) {
+        obj.insert("occlusionTexture".into(), json!({ "index": idx }));
+    }
+    if let Some(idx) = textures.index_of(&m.emissive_texture) {
+        obj.insert("emissiveTexture".into(), json!({ "index": idx }));
+    }
 
     match m.alpha_mode {
         AlphaMode::Opaque => {}
@@ -344,6 +381,31 @@ fn push_normals(
     accessors.len() - 1
 }
 
+fn push_uvs(
+    bin: &mut Vec<u8>,
+    views: &mut Vec<BufferView>,
+    accessors: &mut Vec<Accessor>,
+    mesh: &Mesh,
+) -> usize {
+    let offset = align_up(bin, 4);
+    for uv in &mesh.uvs {
+        for c in uv {
+            bin.extend_from_slice(&c.to_le_bytes());
+        }
+    }
+    let byte_length = mesh.uvs.len() * 8;
+    views.push(BufferView { buffer: 0, byte_offset: offset, byte_length, target: Some(34962) });
+    accessors.push(Accessor {
+        buffer_view: views.len() - 1,
+        component_type: 5126,
+        count: mesh.uvs.len(),
+        ty: "VEC2",
+        min: None,
+        max: None,
+    });
+    accessors.len() - 1
+}
+
 fn push_indices(
     bin: &mut Vec<u8>,
     views: &mut Vec<BufferView>,
@@ -382,6 +444,7 @@ struct MeshKey {
     // bit-for-bit, which is fine for dedup.
     positions: Vec<[u32; 3]>,
     normals: Vec<[u32; 3]>,
+    uvs: Vec<[u32; 2]>,
     indices: Vec<u32>,
     material: Option<u32>,
 }
@@ -398,12 +461,127 @@ impl MeshKey {
             .iter()
             .map(|v| [v[0].to_bits(), v[1].to_bits(), v[2].to_bits()])
             .collect();
+        let uvs = mesh
+            .uvs
+            .iter()
+            .map(|v| [v[0].to_bits(), v[1].to_bits()])
+            .collect();
         MeshKey {
             positions,
             normals,
+            uvs,
             indices: mesh.indices.clone(),
             material,
         }
+    }
+}
+
+/// Packed image + texture metadata, indexed by canonical file path. Built
+/// before material emission so `emit_material` can resolve texture slots to
+/// glTF indices.
+#[derive(Default)]
+struct TextureTable {
+    /// glTF `images[]` entries — each points at a bufferView holding the raw
+    /// PNG bytes.
+    images: Vec<Value>,
+    /// glTF `textures[]` entries — paired with the shared sampler.
+    textures: Vec<Value>,
+    /// glTF `samplers[]` — currently always one shared sampler.
+    samplers: Vec<Value>,
+    /// path → index into `textures[]`.
+    by_path: HashMap<PathBuf, usize>,
+}
+
+impl TextureTable {
+    fn index_of(&self, tex: &Option<TextureRef>) -> Option<usize> {
+        let t = tex.as_ref()?;
+        self.by_path.get(&t.path).copied()
+    }
+}
+
+/// Read every unique texture file referenced by materials, embed the raw PNG
+/// bytes into the BIN chunk, and fill out the glTF image / texture / sampler
+/// tables. Returns the populated table plus side-effects on `bin` and
+/// `buffer_views`.
+fn pack_textures(
+    materials: &[Material],
+    bin: &mut Vec<u8>,
+    buffer_views: &mut Vec<BufferView>,
+) -> Result<TextureTable> {
+    let mut table = TextureTable::default();
+
+    // Collect every texture reference in authored order so indices are stable
+    // across rebuilds.
+    let mut slots: Vec<&TextureRef> = Vec::new();
+    for m in materials {
+        for slot in [
+            &m.base_color_texture,
+            &m.metallic_roughness_texture,
+            &m.normal_texture,
+            &m.occlusion_texture,
+            &m.emissive_texture,
+        ] {
+            if let Some(t) = slot {
+                slots.push(t);
+            }
+        }
+    }
+    if slots.is_empty() {
+        return Ok(table);
+    }
+
+    // One shared sampler: linear mipmapping, linear mag, repeat on both axes.
+    // Matches Godot's default texture import and is the right choice for
+    // tileable PBR maps. Per-texture sampler overrides can come later.
+    table.samplers.push(json!({
+        "magFilter": 9729,        // LINEAR
+        "minFilter": 9987,        // LINEAR_MIPMAP_LINEAR
+        "wrapS": 10497,           // REPEAT
+        "wrapT": 10497,
+    }));
+
+    for t in slots {
+        if table.by_path.contains_key(&t.path) {
+            continue;
+        }
+        let bytes = fs::read(&t.path).with_context(|| {
+            format!("reading texture file {}", t.path.display())
+        })?;
+        let mime = mime_type_for(&t.path).unwrap_or("image/png");
+
+        let offset = align_up(bin, 4);
+        let byte_length = bytes.len();
+        bin.extend_from_slice(&bytes);
+        buffer_views.push(BufferView {
+            buffer: 0,
+            byte_offset: offset,
+            byte_length,
+            target: None,
+        });
+
+        let image_idx = table.images.len();
+        table.images.push(json!({
+            "bufferView": buffer_views.len() - 1,
+            "mimeType": mime,
+            "name": t.path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default(),
+        }));
+
+        let texture_idx = table.textures.len();
+        table.textures.push(json!({
+            "source": image_idx,
+            "sampler": 0,
+        }));
+        table.by_path.insert(t.path.clone(), texture_idx);
+    }
+
+    Ok(table)
+}
+
+fn mime_type_for(path: &Path) -> Option<&'static str> {
+    match path.extension().and_then(|e| e.to_str()).map(|s| s.to_ascii_lowercase()) {
+        Some(ref s) if s == "png" => Some("image/png"),
+        Some(ref s) if s == "jpg" || s == "jpeg" => Some("image/jpeg"),
+        _ => None,
     }
 }
 
@@ -641,7 +819,7 @@ mod tests {
     #[test]
     fn opaque_material_omits_extensions_and_alpha_mode() {
         let m = mat("base");
-        let v = emit_material(&m);
+        let v = emit_material(&m, &TextureTable::default());
         assert!(v.get("alphaMode").is_none());
         assert!(v.get("emissiveFactor").is_none());
         assert!(v.get("extensions").is_none());
@@ -652,7 +830,7 @@ mod tests {
         let mut m = mat("gel");
         m.alpha_mode = AlphaMode::Blend;
         m.base_color[3] = 0.3;
-        let v = emit_material(&m);
+        let v = emit_material(&m, &TextureTable::default());
         assert_eq!(v["alphaMode"], json!("BLEND"));
         assert!(v.get("alphaCutoff").is_none());
     }
@@ -662,7 +840,7 @@ mod tests {
         let mut m = mat("leaf");
         m.alpha_mode = AlphaMode::Mask;
         m.alpha_cutoff = 0.25;
-        let v = emit_material(&m);
+        let v = emit_material(&m, &TextureTable::default());
         assert_eq!(v["alphaMode"], json!("MASK"));
         assert_eq!(v["alphaCutoff"], json!(0.25));
     }
@@ -672,14 +850,14 @@ mod tests {
         // `doubleSided` is a core glTF property — no extension to register.
         let mut m = mat("leaf");
         m.double_sided = true;
-        let v = emit_material(&m);
+        let v = emit_material(&m, &TextureTable::default());
         assert_eq!(v["doubleSided"], json!(true));
         assert!(v.get("extensions").is_none());
         assert!(collect_material_extensions(std::slice::from_ref(&m)).is_empty());
 
         // Default stays off, and off materials omit the field entirely.
         let off = mat("wood");
-        let v_off = emit_material(&off);
+        let v_off = emit_material(&off, &TextureTable::default());
         assert!(v_off.get("doubleSided").is_none());
     }
 
@@ -687,7 +865,7 @@ mod tests {
     fn transmission_triggers_extension_and_extensions_used() {
         let mut m = mat("glass");
         m.transmission = 0.8;
-        let v = emit_material(&m);
+        let v = emit_material(&m, &TextureTable::default());
         let got = v["extensions"]["KHR_materials_transmission"]["transmissionFactor"]
             .as_f64()
             .unwrap();
@@ -705,7 +883,7 @@ mod tests {
 
         // With a real emissive colour, the extension should ship.
         m.emissive = [1.0, 0.2, 1.0];
-        let v = emit_material(&m);
+        let v = emit_material(&m, &TextureTable::default());
         assert!(v.get("emissiveFactor").is_some());
         let got = v["extensions"]["KHR_materials_emissive_strength"]["emissiveStrength"]
             .as_f64()
@@ -718,7 +896,7 @@ mod tests {
         let mut m = mat("dim_glow");
         m.emissive = [0.1, 0.1, 0.1];
         // strength stays at the 1.0 default
-        let v = emit_material(&m);
+        let v = emit_material(&m, &TextureTable::default());
         assert!(v.get("emissiveFactor").is_some());
         assert!(v.get("extensions").is_none());
     }

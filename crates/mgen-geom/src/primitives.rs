@@ -22,16 +22,22 @@ pub fn box_mesh(size: [f32; 3]) -> Mesh {
 
     let mut positions = Vec::with_capacity(24);
     let mut normals = Vec::with_capacity(24);
+    let mut uvs = Vec::with_capacity(24);
     let mut indices = Vec::with_capacity(36);
+    // Each face occupies the full [0,1]² in UV space. Quad corners are wound
+    // [0,1,2,3] → [0,0],[1,0],[1,1],[0,1] so U and V align with the first
+    // edge and its perpendicular respectively.
+    const QUAD_UVS: [[f32; 2]; 4] = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
     for (normal, verts) in faces {
         let base = positions.len() as u32;
-        for v in verts {
+        for (i, v) in verts.into_iter().enumerate() {
             positions.push(v);
             normals.push(normal);
+            uvs.push(QUAD_UVS[i]);
         }
         indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
-    Mesh { positions, normals, indices, ..Default::default() }
+    Mesh { positions, normals, uvs, indices, ..Default::default() }
 }
 
 /// XZ plane centered at origin, facing +Y.
@@ -42,6 +48,8 @@ pub fn plane_mesh(size: [f32; 2]) -> Mesh {
     Mesh {
         positions: vec![[-hx, 0.0, -hz], [hx, 0.0, -hz], [hx, 0.0, hz], [-hx, 0.0, hz]],
         normals: vec![n; 4],
+        // U follows +X, V follows +Z so "up" in texture space matches "back" in world space.
+        uvs: vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
         indices: vec![0, 3, 2, 0, 2, 1],
         ..Default::default()
     }
@@ -56,6 +64,7 @@ pub fn quad_mesh(size: [f32; 2]) -> Mesh {
     Mesh {
         positions: vec![[-hx, -hy, 0.0], [hx, -hy, 0.0], [hx, hy, 0.0], [-hx, hy, 0.0]],
         normals: vec![n; 4],
+        uvs: vec![[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]],
         indices: vec![0, 1, 2, 0, 2, 3],
         ..Default::default()
     }
@@ -67,9 +76,13 @@ pub fn cylinder_mesh(radius: f32, height: f32, segments: u32) -> Mesh {
     let hy = height * 0.5;
     let mut positions = Vec::new();
     let mut normals = Vec::new();
+    let mut uvs = Vec::new();
     let mut indices = Vec::new();
 
-    // Side wall — duplicated ring verts so side normals are radial.
+    // Side wall — duplicated ring verts so side normals are radial. U wraps
+    // around the cylinder (0..1 over the full circumference); V = 0 at the
+    // bottom ring, V = 1 at the top. Duplicated seam vert at i=segments has
+    // U=1 so the texture closes without mirroring.
     let side_start = positions.len() as u32;
     for i in 0..=segments {
         let t = i as f32 / segments as f32;
@@ -78,8 +91,10 @@ pub fn cylinder_mesh(radius: f32, height: f32, segments: u32) -> Mesh {
         let n = [ca, 0.0, sa];
         positions.push([ca * radius, -hy, sa * radius]);
         normals.push(n);
+        uvs.push([t, 0.0]);
         positions.push([ca * radius,  hy, sa * radius]);
         normals.push(n);
+        uvs.push([t, 1.0]);
     }
     for i in 0..segments {
         let base = side_start + i * 2;
@@ -88,14 +103,18 @@ pub fn cylinder_mesh(radius: f32, height: f32, segments: u32) -> Mesh {
         indices.extend_from_slice(&[base, base + 1, base + 3, base, base + 3, base + 2]);
     }
 
-    // Top cap (fan around center, CCW from +Y).
+    // Top cap (fan around center, CCW from +Y). UV is a planar projection
+    // onto the disc: centre = (0.5, 0.5), rim = unit circle.
     let top_center = positions.len() as u32;
     positions.push([0.0, hy, 0.0]);
     normals.push([0.0, 1.0, 0.0]);
+    uvs.push([0.5, 0.5]);
     for i in 0..=segments {
         let a = (i as f32 / segments as f32) * TAU;
-        positions.push([a.cos() * radius, hy, a.sin() * radius]);
+        let (sa, ca) = (a.sin(), a.cos());
+        positions.push([ca * radius, hy, sa * radius]);
         normals.push([0.0, 1.0, 0.0]);
+        uvs.push([ca * 0.5 + 0.5, sa * 0.5 + 0.5]);
     }
     for i in 0..segments {
         indices.extend_from_slice(&[top_center, top_center + 2 + i, top_center + 1 + i]);
@@ -105,16 +124,19 @@ pub fn cylinder_mesh(radius: f32, height: f32, segments: u32) -> Mesh {
     let bot_center = positions.len() as u32;
     positions.push([0.0, -hy, 0.0]);
     normals.push([0.0, -1.0, 0.0]);
+    uvs.push([0.5, 0.5]);
     for i in 0..=segments {
         let a = (i as f32 / segments as f32) * TAU;
-        positions.push([a.cos() * radius, -hy, a.sin() * radius]);
+        let (sa, ca) = (a.sin(), a.cos());
+        positions.push([ca * radius, -hy, sa * radius]);
         normals.push([0.0, -1.0, 0.0]);
+        uvs.push([ca * 0.5 + 0.5, sa * 0.5 + 0.5]);
     }
     for i in 0..segments {
         indices.extend_from_slice(&[bot_center, bot_center + 1 + i, bot_center + 2 + i]);
     }
 
-    Mesh { positions, normals, indices, ..Default::default() }
+    Mesh { positions, normals, uvs, indices, ..Default::default() }
 }
 
 /// Cone with apex at +height/2 and base at -height/2, aligned to Y.
@@ -123,6 +145,7 @@ pub fn cone_mesh(radius: f32, height: f32, segments: u32) -> Mesh {
     let hy = height * 0.5;
     let mut positions = Vec::new();
     let mut normals = Vec::new();
+    let mut uvs = Vec::new();
     let mut indices = Vec::new();
 
     let slant = (radius * radius + height * height).sqrt();
@@ -137,8 +160,10 @@ pub fn cone_mesh(radius: f32, height: f32, segments: u32) -> Mesh {
         // Unique apex per segment so side normals can differ around the cone.
         positions.push([ca * radius, -hy, sa * radius]);
         normals.push([ca * nh_side, ny_side, sa * nh_side]);
+        uvs.push([t, 0.0]);
         positions.push([0.0, hy, 0.0]);
         normals.push([ca * nh_side, ny_side, sa * nh_side]);
+        uvs.push([t, 1.0]);
     }
     for i in 0..segments {
         let base = side_start + i * 2;
@@ -147,20 +172,23 @@ pub fn cone_mesh(radius: f32, height: f32, segments: u32) -> Mesh {
         indices.extend_from_slice(&[base, base + 1, base + 2]);
     }
 
-    // Bottom cap (CCW from -Y so face normal is -Y).
+    // Bottom cap (CCW from -Y so face normal is -Y). Disc UV projection.
     let bot_center = positions.len() as u32;
     positions.push([0.0, -hy, 0.0]);
     normals.push([0.0, -1.0, 0.0]);
+    uvs.push([0.5, 0.5]);
     for i in 0..=segments {
         let a = (i as f32 / segments as f32) * TAU;
-        positions.push([a.cos() * radius, -hy, a.sin() * radius]);
+        let (sa, ca) = (a.sin(), a.cos());
+        positions.push([ca * radius, -hy, sa * radius]);
         normals.push([0.0, -1.0, 0.0]);
+        uvs.push([ca * 0.5 + 0.5, sa * 0.5 + 0.5]);
     }
     for i in 0..segments {
         indices.extend_from_slice(&[bot_center, bot_center + 1 + i, bot_center + 2 + i]);
     }
 
-    Mesh { positions, normals, indices, ..Default::default() }
+    Mesh { positions, normals, uvs, indices, ..Default::default() }
 }
 
 /// UV sphere centered at origin.
@@ -169,6 +197,7 @@ pub fn sphere_mesh(radius: f32, rings: u32, segments: u32) -> Mesh {
     let segments = segments.max(3);
     let mut positions = Vec::new();
     let mut normals = Vec::new();
+    let mut uvs = Vec::new();
     let mut indices = Vec::new();
 
     for ring in 0..=rings {
@@ -183,6 +212,8 @@ pub fn sphere_mesh(radius: f32, rings: u32, segments: u32) -> Mesh {
             let z = r * theta.sin();
             positions.push([x * radius, y * radius, z * radius]);
             normals.push([x, y, z]);
+            // Equirectangular: U wraps longitudinally, V = 0 at north pole.
+            uvs.push([u, v]);
         }
     }
 
@@ -195,7 +226,7 @@ pub fn sphere_mesh(radius: f32, rings: u32, segments: u32) -> Mesh {
         }
     }
 
-    Mesh { positions, normals, indices, ..Default::default() }
+    Mesh { positions, normals, uvs, indices, ..Default::default() }
 }
 
 /// Capsule aligned to Y: cylindrical body of length `height` with hemispherical
@@ -207,38 +238,52 @@ pub fn capsule_mesh(radius: f32, height: f32, rings: u32, segments: u32) -> Mesh
     let hy = height * 0.5;
     let mut positions = Vec::new();
     let mut normals = Vec::new();
+    let mut uvs = Vec::new();
     let mut indices = Vec::new();
 
     let row = segments + 1;
     let rows_per_hemi = rings + 1;
+    // Arc-length fraction occupied by each hemisphere vs the cylinder body —
+    // keeps V continuous (no pinch at the equator) when the body is short or
+    // long. Shared denominator = 2r*(π/2) + height.
+    let hemi_arc = radius * PI * 0.5;
+    let total_arc = (2.0 * hemi_arc + height).max(1e-6);
+    let v_top_equator = hemi_arc / total_arc;
+    let v_bottom_equator = (hemi_arc + height) / total_arc;
 
     // Top hemisphere: phi in [0, PI/2]. y_unit = cos(phi), r_unit = sin(phi).
     // Shift verts up by +hy so the hemisphere sits on top of the cylinder body.
     // Spherical normals at the equator (phi=PI/2) are radial, matching the
     // cylinder body's normals automatically.
     for r in 0..rows_per_hemi {
-        let phi = (r as f32 / rings as f32) * (PI * 0.5);
+        let frac = r as f32 / rings as f32;
+        let phi = frac * (PI * 0.5);
         let y_unit = phi.cos();
         let r_unit = phi.sin();
         for s in 0..=segments {
-            let theta = (s as f32 / segments as f32) * TAU;
+            let u = s as f32 / segments as f32;
+            let theta = u * TAU;
             let cx = theta.cos();
             let sz = theta.sin();
             positions.push([cx * r_unit * radius, y_unit * radius + hy, sz * r_unit * radius]);
             normals.push([cx * r_unit, y_unit, sz * r_unit]);
+            uvs.push([u, frac * v_top_equator]);
         }
     }
     // Bottom hemisphere: phi in [PI/2, PI], shifted down by -hy.
     for r in 0..rows_per_hemi {
-        let phi = (PI * 0.5) + (r as f32 / rings as f32) * (PI * 0.5);
+        let frac = r as f32 / rings as f32;
+        let phi = (PI * 0.5) + frac * (PI * 0.5);
         let y_unit = phi.cos();
         let r_unit = phi.sin();
         for s in 0..=segments {
-            let theta = (s as f32 / segments as f32) * TAU;
+            let u = s as f32 / segments as f32;
+            let theta = u * TAU;
             let cx = theta.cos();
             let sz = theta.sin();
             positions.push([cx * r_unit * radius, y_unit * radius - hy, sz * r_unit * radius]);
             normals.push([cx * r_unit, y_unit, sz * r_unit]);
+            uvs.push([u, v_bottom_equator + frac * (1.0 - v_bottom_equator)]);
         }
     }
 
@@ -253,7 +298,7 @@ pub fn capsule_mesh(radius: f32, height: f32, rings: u32, segments: u32) -> Mesh
         }
     }
 
-    Mesh { positions, normals, indices, ..Default::default() }
+    Mesh { positions, normals, uvs, indices, ..Default::default() }
 }
 
 /// Torus lying flat in the XZ plane. `major_radius` is the distance from the
@@ -268,6 +313,7 @@ pub fn torus_mesh(
     let minor_segments = minor_segments.max(3);
     let mut positions = Vec::new();
     let mut normals = Vec::new();
+    let mut uvs = Vec::new();
     let mut indices = Vec::new();
 
     let v_row = minor_segments + 1;
@@ -286,6 +332,7 @@ pub fn torus_mesh(
             let rx = major_radius + minor_radius * ct;
             positions.push([cp * rx, ny * minor_radius, sp * rx]);
             normals.push([nx, ny, nz]);
+            uvs.push([u, v]);
         }
     }
     // Wind (a, b, c, a, c, d) with b along +v, d along +u, so triangle normals
@@ -300,7 +347,7 @@ pub fn torus_mesh(
         }
     }
 
-    Mesh { positions, normals, indices, ..Default::default() }
+    Mesh { positions, normals, uvs, indices, ..Default::default() }
 }
 
 /// Symmetric isoceles triangular prism. `size = [width_x, height_y, depth_z]`.
@@ -311,59 +358,67 @@ pub fn prism_mesh(size: [f32; 3]) -> Mesh {
     let hz = size[2] * 0.5;
     let mut positions: Vec<[f32; 3]> = Vec::new();
     let mut normals: Vec<[f32; 3]> = Vec::new();
+    let mut uvs: Vec<[f32; 2]> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
 
     let slant_len = ((2.0 * hy).powi(2) + hx.powi(2)).sqrt().max(1e-6);
     let n_left = [-(2.0 * hy) / slant_len, hx / slant_len, 0.0];
     let n_right = [(2.0 * hy) / slant_len, hx / slant_len, 0.0];
 
-    // Each face: push its verts with per-face normals, then fan-triangulate.
-    let push_face = |verts: &[[f32; 3]], n: [f32; 3],
+    // Each face: push its verts with per-face normals and UVs, then fan-triangulate.
+    let push_face = |verts: &[[f32; 3]], n: [f32; 3], face_uvs: &[[f32; 2]],
                          positions: &mut Vec<[f32; 3]>,
                          normals: &mut Vec<[f32; 3]>,
+                         uvs: &mut Vec<[f32; 2]>,
                          indices: &mut Vec<u32>| {
         let base = positions.len() as u32;
-        for v in verts {
+        for (v, uv) in verts.iter().zip(face_uvs.iter()) {
             positions.push(*v);
             normals.push(n);
+            uvs.push(*uv);
         }
         for i in 1..(verts.len() as u32 - 1) {
             indices.extend_from_slice(&[base, base + i, base + i + 1]);
         }
     };
 
-    // Back triangle (normal -Z), CCW viewed from -Z.
+    // Back triangle (normal -Z). Triangle apex at (0.5, 1.0).
     push_face(
         &[[-hx, -hy, -hz], [0.0, hy, -hz], [hx, -hy, -hz]],
         [0.0, 0.0, -1.0],
-        &mut positions, &mut normals, &mut indices,
+        &[[0.0, 0.0], [0.5, 1.0], [1.0, 0.0]],
+        &mut positions, &mut normals, &mut uvs, &mut indices,
     );
-    // Front triangle (normal +Z), CCW viewed from +Z.
+    // Front triangle (normal +Z).
     push_face(
         &[[-hx, -hy, hz], [hx, -hy, hz], [0.0, hy, hz]],
         [0.0, 0.0, 1.0],
-        &mut positions, &mut normals, &mut indices,
+        &[[0.0, 0.0], [1.0, 0.0], [0.5, 1.0]],
+        &mut positions, &mut normals, &mut uvs, &mut indices,
     );
     // Bottom quad (normal -Y).
     push_face(
         &[[-hx, -hy, -hz], [hx, -hy, -hz], [hx, -hy, hz], [-hx, -hy, hz]],
         [0.0, -1.0, 0.0],
-        &mut positions, &mut normals, &mut indices,
+        &[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+        &mut positions, &mut normals, &mut uvs, &mut indices,
     );
-    // Left slant quad (outward normal has -X, +Y components).
+    // Left slant quad.
     push_face(
         &[[-hx, -hy, -hz], [-hx, -hy, hz], [0.0, hy, hz], [0.0, hy, -hz]],
         n_left,
-        &mut positions, &mut normals, &mut indices,
+        &[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+        &mut positions, &mut normals, &mut uvs, &mut indices,
     );
-    // Right slant quad (outward normal has +X, +Y components).
+    // Right slant quad.
     push_face(
         &[[hx, -hy, -hz], [0.0, hy, -hz], [0.0, hy, hz], [hx, -hy, hz]],
         n_right,
-        &mut positions, &mut normals, &mut indices,
+        &[[0.0, 0.0], [0.0, 1.0], [1.0, 1.0], [1.0, 0.0]],
+        &mut positions, &mut normals, &mut uvs, &mut indices,
     );
 
-    Mesh { positions, normals, indices, ..Default::default() }
+    Mesh { positions, normals, uvs, indices, ..Default::default() }
 }
 
 /// Regular N-sided pyramid: base polygon on -Y circumscribed by `radius`,
@@ -373,6 +428,7 @@ pub fn pyramid_mesh(radius: f32, height: f32, sides: u32) -> Mesh {
     let hy = height * 0.5;
     let mut positions: Vec<[f32; 3]> = Vec::new();
     let mut normals: Vec<[f32; 3]> = Vec::new();
+    let mut uvs: Vec<[f32; 2]> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
 
     let mut base_verts: Vec<[f32; 3]> = Vec::with_capacity(sides as usize);
@@ -381,19 +437,20 @@ pub fn pyramid_mesh(radius: f32, height: f32, sides: u32) -> Mesh {
         base_verts.push([a.cos() * radius, -hy, a.sin() * radius]);
     }
 
-    // Base face (normal -Y). Fan triangulation in the order the verts were
-    // generated — confirmed by cross product to produce a -Y face normal.
+    // Base face (normal -Y) with disc UV projection.
     let base_start = positions.len() as u32;
-    for v in &base_verts {
+    for (i, v) in base_verts.iter().enumerate() {
         positions.push(*v);
         normals.push([0.0, -1.0, 0.0]);
+        let a = (i as f32 / sides as f32) * TAU;
+        uvs.push([a.cos() * 0.5 + 0.5, a.sin() * 0.5 + 0.5]);
     }
     for i in 1..(sides - 1) {
         indices.extend_from_slice(&[base_start, base_start + i, base_start + i + 1]);
     }
 
-    // Side faces. For each edge [i, i+1] wind (base[i], apex, base[i+1]) so the
-    // face normal points outward. Per-face normals — flat-shade the sides.
+    // Side faces: each triangular face gets its own [0,1] square, with the apex
+    // at U=0.5 and the two base corners at U=0 and U=1.
     let apex = [0.0, hy, 0.0];
     for i in 0..sides {
         let j = (i + 1) % sides;
@@ -410,13 +467,13 @@ pub fn pyramid_mesh(radius: f32, height: f32, sides: u32) -> Mesh {
         let n = [n[0] / len, n[1] / len, n[2] / len];
 
         let base_idx = positions.len() as u32;
-        positions.push(v0); normals.push(n);
-        positions.push(apex); normals.push(n);
-        positions.push(v1); normals.push(n);
+        positions.push(v0); normals.push(n); uvs.push([0.0, 0.0]);
+        positions.push(apex); normals.push(n); uvs.push([0.5, 1.0]);
+        positions.push(v1); normals.push(n); uvs.push([1.0, 0.0]);
         indices.extend_from_slice(&[base_idx, base_idx + 1, base_idx + 2]);
     }
 
-    Mesh { positions, normals, indices, ..Default::default() }
+    Mesh { positions, normals, uvs, indices, ..Default::default() }
 }
 
 /// Flat disc lying on the XZ plane, facing +Y. One-sided; CSG on a disc alone
@@ -425,23 +482,27 @@ pub fn disc_mesh(radius: f32, segments: u32) -> Mesh {
     let segments = segments.max(3);
     let mut positions = Vec::new();
     let mut normals = Vec::new();
+    let mut uvs = Vec::new();
     let mut indices = Vec::new();
     let n = [0.0, 1.0, 0.0];
 
     let center = positions.len() as u32;
     positions.push([0.0, 0.0, 0.0]);
     normals.push(n);
+    uvs.push([0.5, 0.5]);
     for i in 0..=segments {
         let a = (i as f32 / segments as f32) * TAU;
-        positions.push([a.cos() * radius, 0.0, a.sin() * radius]);
+        let (sa, ca) = (a.sin(), a.cos());
+        positions.push([ca * radius, 0.0, sa * radius]);
         normals.push(n);
+        uvs.push([ca * 0.5 + 0.5, sa * 0.5 + 0.5]);
     }
     // Winding matches cylinder's +Y cap: centre → next_ring → this_ring.
     for i in 0..segments {
         indices.extend_from_slice(&[center, center + 2 + i, center + 1 + i]);
     }
 
-    Mesh { positions, normals, indices, ..Default::default() }
+    Mesh { positions, normals, uvs, indices, ..Default::default() }
 }
 
 /// Geodesic sphere built by subdividing an icosahedron. Produces more uniform
@@ -483,10 +544,21 @@ pub fn icosphere_mesh(radius: f32, subdivisions: u32) -> Mesh {
 
     let positions: Vec<[f32; 3]> =
         verts.iter().map(|v| [v[0] * radius, v[1] * radius, v[2] * radius]).collect();
-    let normals = verts;
+    let normals = verts.clone();
+    // Equirectangular UVs derived from per-vertex unit normals. Has a known
+    // seam at theta=0 and pole pinching at y=±1 — standard for a UV sphere
+    // and acceptable for a first-pass texture pipeline.
+    let uvs: Vec<[f32; 2]> = verts
+        .iter()
+        .map(|v| {
+            let u = v[2].atan2(v[0]) / TAU + 0.5;
+            let vv = v[1].clamp(-1.0, 1.0).acos() / PI;
+            [u, vv]
+        })
+        .collect();
     let indices: Vec<u32> = faces.into_iter().flat_map(|f| f.into_iter()).collect();
 
-    Mesh { positions, normals, indices, ..Default::default() }
+    Mesh { positions, normals, uvs, indices, ..Default::default() }
 }
 
 fn icosphere_midpoint(
@@ -624,7 +696,37 @@ pub fn rounded_box_mesh(size: [f32; 3], radius: f32, segments: u32) -> Mesh {
         push_patch(&mut mesh, &patch_pos, &patch_n, rows, cols);
     }
 
+    // Triplanar UV projection: each vertex picks the dominant normal axis and
+    // projects its position onto the remaining two. Box-like surfaces get
+    // predictable per-face unwraps; rounded edges and corners blend smoothly
+    // because neighbouring verts pick the same axis until the normal crosses
+    // 45°.
+    mesh.uvs = triplanar_uvs_for_box(&mesh.positions, &mesh.normals, [sx, sy, sz]);
     mesh
+}
+
+/// Compute triplanar UVs mapped into [0, 1]² based on the bounding extent of
+/// each axis. For a vertex whose normal is dominantly +X or -X, project onto
+/// (Z, Y) normalized by (`size_z`, `size_y`); likewise for Y and Z dominance.
+fn triplanar_uvs_for_box(positions: &[[f32; 3]], normals: &[[f32; 3]], size: [f32; 3]) -> Vec<[f32; 2]> {
+    let [sx, sy, sz] = size;
+    let ix = if sx > 1e-6 { 1.0 / sx } else { 1.0 };
+    let iy = if sy > 1e-6 { 1.0 / sy } else { 1.0 };
+    let iz = if sz > 1e-6 { 1.0 / sz } else { 1.0 };
+    positions
+        .iter()
+        .zip(normals.iter())
+        .map(|(p, n)| {
+            let (ax, ay, az) = (n[0].abs(), n[1].abs(), n[2].abs());
+            if ax >= ay && ax >= az {
+                [(p[2] * iz) + 0.5, (p[1] * iy) + 0.5]
+            } else if ay >= az {
+                [(p[0] * ix) + 0.5, (p[2] * iz) + 0.5]
+            } else {
+                [(p[0] * ix) + 0.5, (p[1] * iy) + 0.5]
+            }
+        })
+        .collect()
 }
 
 /// Right triangular prism ("doorstop" wedge). `size = [x, y, z]`: bottom
@@ -638,16 +740,19 @@ pub fn wedge_mesh(size: [f32; 3]) -> Mesh {
     let hz = size[2] * 0.5;
     let mut positions: Vec<[f32; 3]> = Vec::new();
     let mut normals: Vec<[f32; 3]> = Vec::new();
+    let mut uvs: Vec<[f32; 2]> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
 
-    let push_face = |verts: &[[f32; 3]], n: [f32; 3],
+    let push_face = |verts: &[[f32; 3]], n: [f32; 3], face_uvs: &[[f32; 2]],
                      positions: &mut Vec<[f32; 3]>,
                      normals: &mut Vec<[f32; 3]>,
+                     uvs: &mut Vec<[f32; 2]>,
                      indices: &mut Vec<u32>| {
         let base = positions.len() as u32;
-        for v in verts {
+        for (v, uv) in verts.iter().zip(face_uvs.iter()) {
             positions.push(*v);
             normals.push(n);
+            uvs.push(*uv);
         }
         for i in 1..(verts.len() as u32 - 1) {
             indices.extend_from_slice(&[base, base + i, base + i + 1]);
@@ -658,25 +763,29 @@ pub fn wedge_mesh(size: [f32; 3]) -> Mesh {
     push_face(
         &[[-hx, -hy, -hz], [-hx, hy, -hz], [hx, hy, -hz], [hx, -hy, -hz]],
         [0.0, 0.0, -1.0],
-        &mut positions, &mut normals, &mut indices,
+        &[[0.0, 0.0], [0.0, 1.0], [1.0, 1.0], [1.0, 0.0]],
+        &mut positions, &mut normals, &mut uvs, &mut indices,
     );
     // Bottom (rectangle, normal -Y).
     push_face(
         &[[-hx, -hy, -hz], [hx, -hy, -hz], [hx, -hy, hz], [-hx, -hy, hz]],
         [0.0, -1.0, 0.0],
-        &mut positions, &mut normals, &mut indices,
+        &[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]],
+        &mut positions, &mut normals, &mut uvs, &mut indices,
     );
-    // Left triangle (normal -X): back-bottom, front-bottom, back-top.
+    // Left triangle (normal -X).
     push_face(
         &[[-hx, -hy, -hz], [-hx, -hy, hz], [-hx, hy, -hz]],
         [-1.0, 0.0, 0.0],
-        &mut positions, &mut normals, &mut indices,
+        &[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
+        &mut positions, &mut normals, &mut uvs, &mut indices,
     );
-    // Right triangle (normal +X): back-bottom, back-top, front-bottom.
+    // Right triangle (normal +X).
     push_face(
         &[[hx, -hy, -hz], [hx, hy, -hz], [hx, -hy, hz]],
         [1.0, 0.0, 0.0],
-        &mut positions, &mut normals, &mut indices,
+        &[[0.0, 0.0], [0.0, 1.0], [1.0, 0.0]],
+        &mut positions, &mut normals, &mut uvs, &mut indices,
     );
     // Slope (the hypotenuse face). Normal has +Y and +Z components.
     let slant_len = ((2.0 * hy).powi(2) + (2.0 * hz).powi(2)).sqrt().max(1e-6);
@@ -684,10 +793,11 @@ pub fn wedge_mesh(size: [f32; 3]) -> Mesh {
     push_face(
         &[[-hx, hy, -hz], [-hx, -hy, hz], [hx, -hy, hz], [hx, hy, -hz]],
         n_slope,
-        &mut positions, &mut normals, &mut indices,
+        &[[0.0, 1.0], [0.0, 0.0], [1.0, 0.0], [1.0, 1.0]],
+        &mut positions, &mut normals, &mut uvs, &mut indices,
     );
 
-    Mesh { positions, normals, indices, ..Default::default() }
+    Mesh { positions, normals, uvs, indices, ..Default::default() }
 }
 
 /// Tapered box (rectangular frustum). Bottom rectangle `bottom = [x, z]` sits
@@ -710,16 +820,20 @@ pub fn frustum_mesh(bottom: [f32; 2], top: [f32; 2], height: f32) -> Mesh {
 
     let mut positions: Vec<[f32; 3]> = Vec::new();
     let mut normals: Vec<[f32; 3]> = Vec::new();
+    let mut uvs: Vec<[f32; 2]> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
 
     let push_quad = |quad: [[f32; 3]; 4], n: [f32; 3],
                      positions: &mut Vec<[f32; 3]>,
                      normals: &mut Vec<[f32; 3]>,
+                     uvs: &mut Vec<[f32; 2]>,
                      indices: &mut Vec<u32>| {
         let base = positions.len() as u32;
-        for v in quad.iter() {
+        const UVS: [[f32; 2]; 4] = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
+        for (i, v) in quad.iter().enumerate() {
             positions.push(*v);
             normals.push(n);
+            uvs.push(UVS[i]);
         }
         indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     };
@@ -731,30 +845,30 @@ pub fn frustum_mesh(bottom: [f32; 2], top: [f32; 2], height: f32) -> Mesh {
 
     // Top cap (+Y).
     push_quad([t_fl, t_fr, t_br, t_bl], [0.0, 1.0, 0.0],
-              &mut positions, &mut normals, &mut indices);
+              &mut positions, &mut normals, &mut uvs, &mut indices);
     // Bottom cap (-Y), wound opposite.
     push_quad([b_bl, b_br, b_fr, b_fl], [0.0, -1.0, 0.0],
-              &mut positions, &mut normals, &mut indices);
+              &mut positions, &mut normals, &mut uvs, &mut indices);
 
     // Right (+X) slant: face spans from base x=bx to top x=tx over height in y.
     // Outward normal has +X from height, and -(tx-bx) in y (if top narrows).
     let n_right = normalize([height, -(tx - bx), 0.0]);
     push_quad([t_br, t_fr, b_fr, b_br], n_right,
-              &mut positions, &mut normals, &mut indices);
+              &mut positions, &mut normals, &mut uvs, &mut indices);
     // Left (-X) slant.
     let n_left = normalize([-height, -(tx - bx), 0.0]);
     push_quad([t_fl, t_bl, b_bl, b_fl], n_left,
-              &mut positions, &mut normals, &mut indices);
+              &mut positions, &mut normals, &mut uvs, &mut indices);
     // Front (+Z) slant.
     let n_front = normalize([0.0, -(tz - bz), height]);
     push_quad([t_fr, t_fl, b_fl, b_fr], n_front,
-              &mut positions, &mut normals, &mut indices);
+              &mut positions, &mut normals, &mut uvs, &mut indices);
     // Back (-Z) slant.
     let n_back = normalize([0.0, -(tz - bz), -height]);
     push_quad([t_bl, t_br, b_br, b_bl], n_back,
-              &mut positions, &mut normals, &mut indices);
+              &mut positions, &mut normals, &mut uvs, &mut indices);
 
-    Mesh { positions, normals, indices, ..Default::default() }
+    Mesh { positions, normals, uvs, indices, ..Default::default() }
 }
 
 /// Hollow cylinder (pipe) aligned to Y, centered at origin. `outer` is the
@@ -769,34 +883,42 @@ pub fn tube_mesh(outer: f32, inner: f32, height: f32, segments: u32) -> Mesh {
     let hy = height * 0.5;
     let mut positions = Vec::new();
     let mut normals = Vec::new();
+    let mut uvs = Vec::new();
     let mut indices = Vec::new();
 
-    // Outer wall (normals point +radial).
+    // Outer wall (normals point +radial). U wraps, V goes bottom→top.
     let o_start = positions.len() as u32;
     for i in 0..=segments {
-        let a = (i as f32 / segments as f32) * TAU;
+        let t = i as f32 / segments as f32;
+        let a = t * TAU;
         let (sa, ca) = (a.sin(), a.cos());
         let n = [ca, 0.0, sa];
         positions.push([ca * outer, -hy, sa * outer]);
         normals.push(n);
+        uvs.push([t, 0.0]);
         positions.push([ca * outer,  hy, sa * outer]);
         normals.push(n);
+        uvs.push([t, 1.0]);
     }
     for i in 0..segments {
         let base = o_start + i * 2;
         indices.extend_from_slice(&[base, base + 1, base + 3, base, base + 3, base + 2]);
     }
 
-    // Inner wall (normals point -radial).
+    // Inner wall (normals point -radial). Same U wrap; V flipped so textures
+    // don't mirror between the two walls.
     let i_start = positions.len() as u32;
     for i in 0..=segments {
-        let a = (i as f32 / segments as f32) * TAU;
+        let t = i as f32 / segments as f32;
+        let a = t * TAU;
         let (sa, ca) = (a.sin(), a.cos());
         let n = [-ca, 0.0, -sa];
         positions.push([ca * inner, -hy, sa * inner]);
         normals.push(n);
+        uvs.push([t, 0.0]);
         positions.push([ca * inner,  hy, sa * inner]);
         normals.push(n);
+        uvs.push([t, 1.0]);
     }
     // Wind inner wall opposite of outer so triangles face the bore centre.
     for i in 0..segments {
@@ -804,15 +926,18 @@ pub fn tube_mesh(outer: f32, inner: f32, height: f32, segments: u32) -> Mesh {
         indices.extend_from_slice(&[base, base + 3, base + 1, base, base + 2, base + 3]);
     }
 
-    // Top annular cap (+Y).
+    // Top annular cap (+Y). Disc projection; inner rim lands on a shrunken circle.
+    let outer_s = if outer > 1e-6 { 0.5 / outer } else { 0.0 };
     let t_start = positions.len() as u32;
     for i in 0..=segments {
         let a = (i as f32 / segments as f32) * TAU;
         let (sa, ca) = (a.sin(), a.cos());
         positions.push([ca * outer, hy, sa * outer]);
         normals.push([0.0, 1.0, 0.0]);
+        uvs.push([ca * outer * outer_s + 0.5, sa * outer * outer_s + 0.5]);
         positions.push([ca * inner, hy, sa * inner]);
         normals.push([0.0, 1.0, 0.0]);
+        uvs.push([ca * inner * outer_s + 0.5, sa * inner * outer_s + 0.5]);
     }
     for i in 0..segments {
         let o0 = t_start + i * 2;
@@ -830,8 +955,10 @@ pub fn tube_mesh(outer: f32, inner: f32, height: f32, segments: u32) -> Mesh {
         let (sa, ca) = (a.sin(), a.cos());
         positions.push([ca * outer, -hy, sa * outer]);
         normals.push([0.0, -1.0, 0.0]);
+        uvs.push([ca * outer * outer_s + 0.5, sa * outer * outer_s + 0.5]);
         positions.push([ca * inner, -hy, sa * inner]);
         normals.push([0.0, -1.0, 0.0]);
+        uvs.push([ca * inner * outer_s + 0.5, sa * inner * outer_s + 0.5]);
     }
     for i in 0..segments {
         let o0 = b_start + i * 2;
@@ -841,7 +968,7 @@ pub fn tube_mesh(outer: f32, inner: f32, height: f32, segments: u32) -> Mesh {
         indices.extend_from_slice(&[o0, o1, i1, o0, i1, i0]);
     }
 
-    Mesh { positions, normals, indices, ..Default::default() }
+    Mesh { positions, normals, uvs, indices, ..Default::default() }
 }
 
 /// Half-sphere with flat base on the XZ plane at y=0 and dome rising to y=+radius.
@@ -852,6 +979,7 @@ pub fn hemisphere_mesh(radius: f32, rings: u32, segments: u32) -> Mesh {
     let segments = segments.max(3);
     let mut positions = Vec::new();
     let mut normals = Vec::new();
+    let mut uvs = Vec::new();
     let mut indices = Vec::new();
 
     // Dome: phi in [0, PI/2]. ring=0 at apex (+Y), ring=rings at equator (y=0).
@@ -867,6 +995,7 @@ pub fn hemisphere_mesh(radius: f32, rings: u32, segments: u32) -> Mesh {
             let z = r * theta.sin();
             positions.push([x * radius, y * radius, z * radius]);
             normals.push([x, y, z]);
+            uvs.push([u, v]);
         }
     }
     let row = segments + 1;
@@ -882,17 +1011,20 @@ pub fn hemisphere_mesh(radius: f32, rings: u32, segments: u32) -> Mesh {
     let center = positions.len() as u32;
     positions.push([0.0, 0.0, 0.0]);
     normals.push([0.0, -1.0, 0.0]);
+    uvs.push([0.5, 0.5]);
     for i in 0..=segments {
         let a = (i as f32 / segments as f32) * TAU;
-        positions.push([a.cos() * radius, 0.0, a.sin() * radius]);
+        let (sa, ca) = (a.sin(), a.cos());
+        positions.push([ca * radius, 0.0, sa * radius]);
         normals.push([0.0, -1.0, 0.0]);
+        uvs.push([ca * 0.5 + 0.5, sa * 0.5 + 0.5]);
     }
     for i in 0..segments {
         // CCW from -Y (looking +Y): centre → ring_i → ring_{i+1}.
         indices.extend_from_slice(&[center, center + 1 + i, center + 2 + i]);
     }
 
-    Mesh { positions, normals, indices, ..Default::default() }
+    Mesh { positions, normals, uvs, indices, ..Default::default() }
 }
 
 /// Half of a cylinder (D-shape extrusion). Axis along Y, `height` runs along Y.
@@ -904,6 +1036,7 @@ pub fn half_cylinder_mesh(radius: f32, height: f32, segments: u32) -> Mesh {
     let hy = height * 0.5;
     let mut positions = Vec::new();
     let mut normals = Vec::new();
+    let mut uvs = Vec::new();
     let mut indices = Vec::new();
 
     // Curved wall, sweeping theta in [-PI/2, +PI/2] around +X.
@@ -915,8 +1048,10 @@ pub fn half_cylinder_mesh(radius: f32, height: f32, segments: u32) -> Mesh {
         let n = [ca, 0.0, sa];
         positions.push([ca * radius, -hy, sa * radius]);
         normals.push(n);
+        uvs.push([t, 0.0]);
         positions.push([ca * radius,  hy, sa * radius]);
         normals.push(n);
+        uvs.push([t, 1.0]);
     }
     for i in 0..segments {
         let base = side_start + i * 2;
@@ -929,24 +1064,29 @@ pub fn half_cylinder_mesh(radius: f32, height: f32, segments: u32) -> Mesh {
         [0.0, -hy,  radius], [0.0,  hy,  radius],
         [0.0,  hy, -radius], [0.0, -hy, -radius],
     ];
-    for v in flat_quad {
+    const FLAT_UVS: [[f32; 2]; 4] = [[0.0, 0.0], [0.0, 1.0], [1.0, 1.0], [1.0, 0.0]];
+    for (i, v) in flat_quad.into_iter().enumerate() {
         positions.push(v);
         normals.push([-1.0, 0.0, 0.0]);
+        uvs.push(FLAT_UVS[i]);
     }
     indices.extend_from_slice(&[
         flat_base, flat_base + 1, flat_base + 2,
         flat_base, flat_base + 2, flat_base + 3,
     ]);
 
-    // Top semicircle cap (+Y).
+    // Top semicircle cap (+Y). Maps D-shape into the upper half of [0,1]².
     let top_center = positions.len() as u32;
     positions.push([0.0, hy, 0.0]);
     normals.push([0.0, 1.0, 0.0]);
+    uvs.push([0.5, 0.5]);
     for i in 0..=segments {
         let t = i as f32 / segments as f32;
         let a = -PI * 0.5 + t * PI;
-        positions.push([a.cos() * radius, hy, a.sin() * radius]);
+        let (sa, ca) = (a.sin(), a.cos());
+        positions.push([ca * radius, hy, sa * radius]);
         normals.push([0.0, 1.0, 0.0]);
+        uvs.push([sa * 0.5 + 0.5, ca * 0.5 + 0.5]);
     }
     // Sweep goes -Z→+X→+Z (theta -PI/2 to +PI/2). Viewed from +Y, that's CW
     // in (x, z); CCW from +Y requires the reverse order.
@@ -958,17 +1098,20 @@ pub fn half_cylinder_mesh(radius: f32, height: f32, segments: u32) -> Mesh {
     let bot_center = positions.len() as u32;
     positions.push([0.0, -hy, 0.0]);
     normals.push([0.0, -1.0, 0.0]);
+    uvs.push([0.5, 0.5]);
     for i in 0..=segments {
         let t = i as f32 / segments as f32;
         let a = -PI * 0.5 + t * PI;
-        positions.push([a.cos() * radius, -hy, a.sin() * radius]);
+        let (sa, ca) = (a.sin(), a.cos());
+        positions.push([ca * radius, -hy, sa * radius]);
         normals.push([0.0, -1.0, 0.0]);
+        uvs.push([sa * 0.5 + 0.5, ca * 0.5 + 0.5]);
     }
     for i in 0..segments {
         indices.extend_from_slice(&[bot_center, bot_center + 1 + i, bot_center + 2 + i]);
     }
 
-    Mesh { positions, normals, indices, ..Default::default() }
+    Mesh { positions, normals, uvs, indices, ..Default::default() }
 }
 
 /// Partial torus sweeping `arc` radians around +Y, starting from phi=0 (which
@@ -988,6 +1131,7 @@ pub fn torus_arc_mesh(
     let closed = (TAU - arc).abs() < 1e-4;
     let mut positions = Vec::new();
     let mut normals = Vec::new();
+    let mut uvs = Vec::new();
     let mut indices = Vec::new();
 
     let v_row = minor_segments + 1;
@@ -1005,6 +1149,7 @@ pub fn torus_arc_mesh(
             let rx = major_radius + minor_radius * ct;
             positions.push([cp * rx, ny * minor_radius, sp * rx]);
             normals.push([nx, ny, nz]);
+            uvs.push([u, v]);
         }
     }
     for i in 0..major_segments {
@@ -1018,15 +1163,17 @@ pub fn torus_arc_mesh(
     }
 
     if !closed {
-        // End cap at phi=0 (lies on +X axis; face normal -tangent = -Z).
+        // End cap at phi=0 (lies on +X axis; face normal -tangent = -Z). Disc UV projection.
         let start_center = positions.len() as u32;
         positions.push([major_radius, 0.0, 0.0]);
         normals.push([0.0, 0.0, -1.0]);
+        uvs.push([0.5, 0.5]);
         for j in 0..=minor_segments {
             let theta = (j as f32 / minor_segments as f32) * TAU;
             let (st, ct) = (theta.sin(), theta.cos());
             positions.push([major_radius + minor_radius * ct, minor_radius * st, 0.0]);
             normals.push([0.0, 0.0, -1.0]);
+            uvs.push([ct * 0.5 + 0.5, st * 0.5 + 0.5]);
         }
         for j in 0..minor_segments {
             // CCW from -Z side (outward cap): centre → ring_{j+1} → ring_j.
@@ -1039,19 +1186,21 @@ pub fn torus_arc_mesh(
         positions.push([cp * major_radius, 0.0, sp * major_radius]);
         // Cap normal = +tangent direction at phi=arc, which is (-sin phi, 0, cos phi).
         normals.push([-sp, 0.0, cp]);
+        uvs.push([0.5, 0.5]);
         for j in 0..=minor_segments {
             let theta = (j as f32 / minor_segments as f32) * TAU;
             let (st, ct) = (theta.sin(), theta.cos());
             let rx = major_radius + minor_radius * ct;
             positions.push([cp * rx, minor_radius * st, sp * rx]);
             normals.push([-sp, 0.0, cp]);
+            uvs.push([ct * 0.5 + 0.5, st * 0.5 + 0.5]);
         }
         for j in 0..minor_segments {
             indices.extend_from_slice(&[end_center, end_center + 1 + j, end_center + 2 + j]);
         }
     }
 
-    Mesh { positions, normals, indices, ..Default::default() }
+    Mesh { positions, normals, uvs, indices, ..Default::default() }
 }
 
 /// Axis-aligned ellipsoid with independent radii along X/Y/Z. `size = [x,y,z]`
@@ -1066,6 +1215,7 @@ pub fn ellipsoid_mesh(size: [f32; 3], rings: u32, segments: u32) -> Mesh {
     let segments = segments.max(3);
     let mut positions = Vec::new();
     let mut normals = Vec::new();
+    let mut uvs = Vec::new();
     let mut indices = Vec::new();
 
     // Inverse-squared radii for implicit-surface gradient normals:
@@ -1097,6 +1247,7 @@ pub fn ellipsoid_mesh(size: [f32; 3], rings: u32, segments: u32) -> Mesh {
             nz /= nl;
             positions.push([px, py, pz]);
             normals.push([nx, ny, nz]);
+            uvs.push([u, v]);
         }
     }
 
@@ -1109,7 +1260,7 @@ pub fn ellipsoid_mesh(size: [f32; 3], rings: u32, segments: u32) -> Mesh {
         }
     }
 
-    Mesh { positions, normals, indices, ..Default::default() }
+    Mesh { positions, normals, uvs, indices, ..Default::default() }
 }
 
 /// Add a row×col patch to `mesh`, triangulating into quads. The winding of
@@ -1199,6 +1350,7 @@ pub fn superellipsoid_mesh(size: [f32; 3], ew: f32, ns: f32, rings: u32, segment
     let eps_ew = 1.0 / ew.max(0.05);
     let mut positions = Vec::new();
     let mut normals = Vec::new();
+    let mut uvs = Vec::new();
     let mut indices = Vec::new();
 
     let inv_rx = 1.0 / rx.max(1e-12);
@@ -1238,6 +1390,7 @@ pub fn superellipsoid_mesh(size: [f32; 3], ew: f32, ns: f32, rings: u32, segment
 
             positions.push([px, py, pz]);
             normals.push([nx, ny, nz]);
+            uvs.push([u, v]);
         }
     }
 
@@ -1250,7 +1403,7 @@ pub fn superellipsoid_mesh(size: [f32; 3], ew: f32, ns: f32, rings: u32, segment
         }
     }
 
-    Mesh { positions, normals, indices, ..Default::default() }
+    Mesh { positions, normals, uvs, indices, ..Default::default() }
 }
 
 /// Bent-plane patch, useful for petals, leaves, fish fins, roof tiles. The
@@ -1272,6 +1425,7 @@ pub fn curved_plane_mesh(
     let su = segments_u.max(1);
     let sv = segments_v.max(1);
     let mut positions: Vec<[f32; 3]> = Vec::new();
+    let mut uvs: Vec<[f32; 2]> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
 
     // Arc-length parameterization: when bend is non-zero, the radius R = s / θ
@@ -1285,10 +1439,13 @@ pub fn curved_plane_mesh(
     };
 
     for iv in 0..=sv {
-        let tv = iv as f32 / sv as f32 - 0.5;
+        let tv = iv as f32 / sv as f32;
+        let centered_v = tv - 0.5;
         for iu in 0..=su {
-            let tu = iu as f32 / su as f32 - 0.5;
-            positions.push(pos_for(tu, tv));
+            let tu = iu as f32 / su as f32;
+            let centered_u = tu - 0.5;
+            positions.push(pos_for(centered_u, centered_v));
+            uvs.push([tu, tv]);
         }
     }
     let cols = su + 1;
@@ -1303,7 +1460,13 @@ pub fn curved_plane_mesh(
     }
 
     // Face-normal averaging yields correct smooth normals regardless of bend.
-    let mesh = Mesh { positions, normals: vec![[0.0, 1.0, 0.0]; ((su + 1) * (sv + 1)) as usize], indices, ..Default::default() };
+    let mesh = Mesh {
+        positions,
+        normals: vec![[0.0, 1.0, 0.0]; ((su + 1) * (sv + 1)) as usize],
+        uvs,
+        indices,
+        ..Default::default()
+    };
     recompute_normals(&mesh)
 }
 
@@ -1330,36 +1493,42 @@ pub fn lathe_mesh(profile: &[[f32; 2]], segments: u32, cap_ends: bool) -> Mesh {
     let segments = segments.max(3);
     let mut positions: Vec<[f32; 3]> = Vec::new();
     let normals: Vec<[f32; 3]> = Vec::new();
+    let mut uvs: Vec<[f32; 2]> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
     if profile.len() < 2 {
-        return Mesh { positions, normals, indices, ..Default::default() };
+        return Mesh { positions, normals, uvs, indices, ..Default::default() };
     }
 
-    // Build a ring of verts per profile row. A pole (r=0) collapses to one
-    // vertex — indexed identically across all theta so the strip degenerates
-    // at the tip without producing zero-area quads downstream.
+    // V runs bottom→top along the profile; U wraps around. This keeps textures
+    // continuous across lathed surfaces regardless of profile density.
+    let row_count = profile.len() as f32 - 1.0;
     let ring_start: Vec<u32> = profile
         .iter()
-        .map(|p| {
+        .enumerate()
+        .map(|(idx, p)| {
             let start = positions.len() as u32;
+            let v = idx as f32 / row_count;
             let r = p[0].max(0.0);
             let y = p[1];
             if r < 1e-6 {
                 positions.push([0.0, y, 0.0]);
-                for _ in 1..=segments {
+                uvs.push([0.0, v]);
+                for s in 1..=segments {
                     positions.push([0.0, y, 0.0]);
+                    uvs.push([s as f32 / segments as f32, v]);
                 }
             } else {
                 for s in 0..=segments {
-                    let a = (s as f32 / segments as f32) * TAU;
+                    let t = s as f32 / segments as f32;
+                    let a = t * TAU;
                     positions.push([a.cos() * r, y, a.sin() * r]);
+                    uvs.push([t, v]);
                 }
             }
             start
         })
         .collect();
 
-    let row = segments + 1;
     for i in 0..profile.len() - 1 {
         let ra = ring_start[i];
         let rb = ring_start[i + 1];
@@ -1371,7 +1540,6 @@ pub fn lathe_mesh(profile: &[[f32; 2]], segments: u32, cap_ends: bool) -> Mesh {
             // CCW when viewed from outside — winding matches cylinder_mesh.
             indices.extend_from_slice(&[a, d, c, a, c, b]);
         }
-        let _ = row;
     }
 
     if cap_ends {
@@ -1379,9 +1547,12 @@ pub fn lathe_mesh(profile: &[[f32; 2]], segments: u32, cap_ends: bool) -> Mesh {
             // Bottom cap (normal -Y).
             let center = positions.len() as u32;
             positions.push([0.0, profile[0][1], 0.0]);
+            uvs.push([0.5, 0.5]);
             for s in 0..=segments {
                 let a = (s as f32 / segments as f32) * TAU;
-                positions.push([a.cos() * profile[0][0], profile[0][1], a.sin() * profile[0][0]]);
+                let (sa, ca) = (a.sin(), a.cos());
+                positions.push([ca * profile[0][0], profile[0][1], sa * profile[0][0]]);
+                uvs.push([ca * 0.5 + 0.5, sa * 0.5 + 0.5]);
             }
             for s in 0..segments {
                 // CCW from -Y.
@@ -1393,9 +1564,12 @@ pub fn lathe_mesh(profile: &[[f32; 2]], segments: u32, cap_ends: bool) -> Mesh {
                 // Top cap (normal +Y).
                 let center = positions.len() as u32;
                 positions.push([0.0, last[1], 0.0]);
+                uvs.push([0.5, 0.5]);
                 for s in 0..=segments {
                     let a = (s as f32 / segments as f32) * TAU;
-                    positions.push([a.cos() * last[0], last[1], a.sin() * last[0]]);
+                    let (sa, ca) = (a.sin(), a.cos());
+                    positions.push([ca * last[0], last[1], sa * last[0]]);
+                    uvs.push([ca * 0.5 + 0.5, sa * 0.5 + 0.5]);
                 }
                 for s in 0..segments {
                     // CCW from +Y.
@@ -1406,7 +1580,13 @@ pub fn lathe_mesh(profile: &[[f32; 2]], segments: u32, cap_ends: bool) -> Mesh {
     }
 
     let verts = positions.len();
-    let mesh = Mesh { positions, normals: vec![[0.0, 1.0, 0.0]; verts], indices, ..Default::default() };
+    let mesh = Mesh {
+        positions,
+        normals: vec![[0.0, 1.0, 0.0]; verts],
+        uvs,
+        indices,
+        ..Default::default()
+    };
     recompute_normals(&mesh)
 }
 
@@ -1512,9 +1692,12 @@ pub fn spline_tube_mesh(
 
     let mut positions: Vec<[f32; 3]> = Vec::new();
     let mut normals: Vec<[f32; 3]> = Vec::new();
+    let mut uvs: Vec<[f32; 2]> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
 
+    let total_samples = (samples.len() as f32 - 1.0).max(1.0);
     for (i, center) in samples.iter().enumerate() {
+        let v = i as f32 / total_samples;
         let t_cur = tangent_at(i);
         // Rotate previous normal by the minimal rotation from t_prev to t_cur.
         let dot = t_prev.dot(t_cur).clamp(-1.0, 1.0);
@@ -1534,12 +1717,14 @@ pub fn spline_tube_mesh(
 
         let r = radius_at(i);
         for s in 0..=radial_segments {
-            let a = (s as f32 / radial_segments as f32) * TAU;
+            let u = s as f32 / radial_segments as f32;
+            let a = u * TAU;
             let (sa, ca) = (a.sin(), a.cos());
             let offset = n_cur * ca + b_cur * sa;
             let p = *center + offset * r;
             positions.push([p.x, p.y, p.z]);
             normals.push([offset.x, offset.y, offset.z]);
+            uvs.push([u, v]);
         }
         n_prev = n_cur;
         t_prev = t_cur;
@@ -1557,17 +1742,21 @@ pub fn spline_tube_mesh(
     }
 
     if cap_ends {
-        // Start cap: normal = -t0. Fan around the first ring.
+        // Start cap: normal = -t0. Fan around the first ring. Disc UV projection
+        // in the local frame.
         let start_center = positions.len() as u32;
         let c0 = samples[0];
         positions.push([c0.x, c0.y, c0.z]);
         let n_start = -t0;
         normals.push([n_start.x, n_start.y, n_start.z]);
+        uvs.push([0.5, 0.5]);
         for s in 0..=radial_segments {
             let src = s as u32;
             let p = positions[src as usize];
             positions.push(p);
             normals.push([n_start.x, n_start.y, n_start.z]);
+            let a = (s as f32 / radial_segments as f32) * TAU;
+            uvs.push([a.cos() * 0.5 + 0.5, a.sin() * 0.5 + 0.5]);
         }
         for s in 0..radial_segments {
             // CCW viewed along -t0 = ccw from outside.
@@ -1581,17 +1770,20 @@ pub fn spline_tube_mesh(
         let end_center = positions.len() as u32;
         positions.push([c_end.x, c_end.y, c_end.z]);
         normals.push([t_end.x, t_end.y, t_end.z]);
+        uvs.push([0.5, 0.5]);
         for s in 0..=radial_segments {
             let p = positions[(end_first + s) as usize];
             positions.push(p);
             normals.push([t_end.x, t_end.y, t_end.z]);
+            let a = (s as f32 / radial_segments as f32) * TAU;
+            uvs.push([a.cos() * 0.5 + 0.5, a.sin() * 0.5 + 0.5]);
         }
         for s in 0..radial_segments {
             indices.extend_from_slice(&[end_center, end_center + 1 + s, end_center + 2 + s]);
         }
     }
 
-    Mesh { positions, normals, indices, ..Default::default() }
+    Mesh { positions, normals, uvs, indices, ..Default::default() }
 }
 
 #[inline]

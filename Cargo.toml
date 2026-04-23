@@ -9,6 +9,7 @@ members = [
     "crates/mgen-export",
     "crates/mgen-llm",
     "crates/mgen",
+    "crates/mgen-gui",
 ]
 
 [workspace.package]

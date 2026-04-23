@@ -15,7 +15,7 @@ use mgen_llm::gemini::{GeminiClient, GenerateConfig, DEFAULT_MODEL};
 use mgen_llm::{
     default_cache_path, embed_seed_header, generate_with_repair, parse_seed_header,
     resolve_or_create_cache, system_instruction, RepairConfig, StdlibIndex, ThinkingLevel,
-    DEFAULT_TTL_SECONDS,
+    DEFAULT_IMAGE_MODEL, DEFAULT_TTL_SECONDS,
 };
 
 /// CLI-facing mirror of [`ThinkingLevel`]. Kept separate so we don't leak
@@ -325,6 +325,119 @@ enum Cmd {
         #[arg(long, value_enum, default_value_t = ThinkingArg::High)]
         thinking: ThinkingArg,
     },
+    /// Add or edit animations on an existing DSL file via Gemini, then
+    /// validate and recompile the GLB. The LLM is restricted to animation
+    /// top-level declarations (`joint`, `clip`/`track`, and the procedural
+    /// templates `spin`, `open_close`, `wave`, `flap`, `idle`).
+    Animate {
+        /// Existing .mg file whose animations should be edited.
+        input: PathBuf,
+        /// Natural-language description of the animation, e.g.
+        /// "make the door swing open" or "spin the top wheel at 120 rpm".
+        prompt: String,
+        /// Output GLB path. Defaults to `<input>.glb`. Ignored with --dry-run.
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+        /// Where to write the updated DSL. Defaults to modifying `input` in place.
+        #[arg(long)]
+        dsl_out: Option<PathBuf>,
+        /// Seed embedded in the DSL header. Defaults to the seed parsed from
+        /// the input's header, or a random seed if absent.
+        #[arg(long)]
+        seed: Option<u64>,
+        /// Gemini model name.
+        #[arg(long, default_value = DEFAULT_MODEL)]
+        model: String,
+        /// Print the updated DSL but skip compilation and file writes.
+        #[arg(long)]
+        dry_run: bool,
+        /// Abort if total prompt+response token count exceeds this value.
+        #[arg(long)]
+        budget_tokens: Option<u32>,
+        /// Max number of repair iterations after the first attempt.
+        #[arg(long, default_value_t = 2)]
+        max_repair_iters: u32,
+        /// Override GEMINI_API_KEY.
+        #[arg(long)]
+        api_key: Option<String>,
+        /// `cachedContents/...` resource name to use for the system instruction.
+        #[arg(long)]
+        cached_content: Option<String>,
+        /// Disable the automatic system-instruction cache (see `--no-cache`
+        /// on `generate` for details).
+        #[arg(long)]
+        no_cache: bool,
+        /// Sampling temperature. Gemini default is used when omitted.
+        #[arg(long)]
+        temperature: Option<f32>,
+        /// Cap on server-side reasoning. See `generate --thinking`.
+        #[arg(long, value_enum, default_value_t = ThinkingArg::High)]
+        thinking: ThinkingArg,
+    },
+    /// Generate PBR textures for every material in a .mg file: an LLM-drawn
+    /// albedo via Gemini 2.5 Flash Image, plus locally-derived normal,
+    /// metallic-roughness, and occlusion maps (Sobel-from-luminance,
+    /// variance-based, cavity-based). PNGs are written next to the .mg and
+    /// the matching `*_texture="…"` attrs are spliced into each material.
+    ///
+    /// Per-slot, materials that already declare a given `*_texture` attr are
+    /// skipped unless `--force` is passed.
+    Textures {
+        /// Input .mg file to augment.
+        input: PathBuf,
+        /// Where to write the modified .mg. Defaults to editing `input` in place.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// GLB output path. Defaults to `<input>.glb`.
+        #[arg(long)]
+        glb: Option<PathBuf>,
+        /// Directory (relative to the .mg) where PNGs are written.
+        #[arg(long, default_value = "textures")]
+        textures_dir: PathBuf,
+        /// Style hint appended to each image prompt.
+        #[arg(long, default_value = "photorealistic")]
+        style: String,
+        /// Gemini image model name.
+        #[arg(long, default_value = DEFAULT_IMAGE_MODEL)]
+        model: String,
+        /// Regenerate slots whose attr is already declared in the .mg.
+        #[arg(long)]
+        force: bool,
+        /// Print the plan and skip all API calls and file writes.
+        #[arg(long)]
+        dry_run: bool,
+        /// Stop after rewriting the .mg; don't run build.
+        #[arg(long)]
+        no_build: bool,
+        /// Disable the local image cache under `$MGEN_CACHE_DIR/images/`.
+        #[arg(long)]
+        no_cache: bool,
+        /// Override GEMINI_API_KEY.
+        #[arg(long)]
+        api_key: Option<String>,
+        /// Skip every derived PBR map (normal / metallic-roughness / AO).
+        /// Albedo is still generated.
+        #[arg(long)]
+        no_pbr: bool,
+        /// Skip the derived normal map.
+        #[arg(long)]
+        no_normal: bool,
+        /// Skip the derived metallic-roughness map.
+        #[arg(long)]
+        no_metallic_roughness: bool,
+        /// Skip the derived ambient-occlusion map.
+        #[arg(long)]
+        no_occlusion: bool,
+        /// Multiplier on normal-map slope intensity (>0). Larger = bumpier.
+        #[arg(long, default_value_t = 1.5)]
+        normal_strength: f32,
+        /// Cap (in pixels) on the longer side of every generated albedo.
+        /// Derived PBR maps inherit this size, so this is the single lever
+        /// for embedded-texture footprint. `0` keeps the model's native
+        /// resolution (typically 1024²).
+        #[arg(long, default_value_t = mgen_llm::textures::DEFAULT_TEXTURE_SIZE)]
+        texture_size: u32,
+    },
     /// Run a suite of prompts through `generate` and report success rate and
     /// mean token cost. Does not write GLBs.
     Bench {
@@ -420,6 +533,74 @@ fn main() -> ExitCode {
             temperature,
             thinking: thinking.into(),
         }),
+        Cmd::Animate {
+            input,
+            prompt,
+            out,
+            dsl_out,
+            seed,
+            model,
+            dry_run,
+            budget_tokens,
+            max_repair_iters,
+            api_key,
+            cached_content,
+            no_cache,
+            temperature,
+            thinking,
+        } => animate(AnimateArgs {
+            input,
+            prompt,
+            out,
+            dsl_out,
+            seed,
+            model,
+            dry_run,
+            budget_tokens,
+            max_repair_iters,
+            api_key,
+            cached_content,
+            no_cache,
+            temperature,
+            thinking: thinking.into(),
+        }),
+        Cmd::Textures {
+            input,
+            out,
+            glb,
+            textures_dir,
+            style,
+            model,
+            force,
+            dry_run,
+            no_build,
+            no_cache,
+            api_key,
+            no_pbr,
+            no_normal,
+            no_metallic_roughness,
+            no_occlusion,
+            normal_strength,
+            texture_size,
+        } => textures_cmd(mgen_llm::textures::TexturesArgs {
+            input,
+            out,
+            glb,
+            textures_dir,
+            style,
+            model,
+            force,
+            dry_run,
+            no_build,
+            no_cache,
+            api_key,
+            no_pbr,
+            no_normal,
+            no_metallic_roughness,
+            no_occlusion,
+            normal_strength,
+            texture_size,
+        }),
         Cmd::Bench {
             prompts,
             model,
@@ -490,7 +671,7 @@ fn build(input: PathBuf, out: PathBuf) -> Result<()> {
     }
 
     spinner.set_message(format!("build {label}: lowering scene"));
-    let scene = match mgen_dsl::lower(&ast) {
+    let mut scene = match mgen_dsl::lower(&ast) {
         Ok(s) => s,
         Err(e) => {
             spinner.abandon_with_message(format!("build {label}: lowering failed"));
@@ -509,6 +690,13 @@ fn build(input: PathBuf, out: PathBuf) -> Result<()> {
         spinner.handle().pb.suspend(|| {
             mgen_validate::render_human(&filename, &src, &graph_diags);
         });
+    }
+
+    // Texture paths in the DSL are authored relative to the source `.mg` file,
+    // not the process cwd. Resolve them here so the exporter sees absolute
+    // paths regardless of how mgen was invoked.
+    if let Some(base) = input.parent() {
+        scene.resolve_texture_paths(base);
     }
 
     spinner.set_message(format!("build {label}: writing GLB"));
@@ -1129,6 +1317,161 @@ Existing file:\n\n{existing}",
     build(dsl_path, out_path)
 }
 
+struct AnimateArgs {
+    input: PathBuf,
+    prompt: String,
+    out: Option<PathBuf>,
+    dsl_out: Option<PathBuf>,
+    seed: Option<u64>,
+    model: String,
+    dry_run: bool,
+    budget_tokens: Option<u32>,
+    max_repair_iters: u32,
+    api_key: Option<String>,
+    cached_content: Option<String>,
+    no_cache: bool,
+    temperature: Option<f32>,
+    thinking: ThinkingLevel,
+}
+
+fn animate(args: AnimateArgs) -> Result<()> {
+    let existing = fs::read_to_string(&args.input)
+        .with_context(|| format!("reading {}", args.input.display()))?;
+
+    let seed = args
+        .seed
+        .or_else(|| parse_seed_header(&existing))
+        .unwrap_or_else(pick_default_seed);
+
+    let resolved_dsl_out = args.dsl_out.clone().unwrap_or_else(|| args.input.clone());
+    let resolved_out = args
+        .out
+        .clone()
+        .unwrap_or_else(|| args.input.with_extension("glb"));
+    if !args.dry_run {
+        ensure_parent_dir(&resolved_dsl_out)?;
+        ensure_parent_dir(&resolved_out)?;
+    }
+
+    let api_key = resolve_api_key(args.api_key)?;
+    let client = GeminiClient::new(api_key);
+
+    let user_prompt = format!(
+        "You are editing an existing mgen DSL file. Add or update ONLY animation \
+declarations to satisfy this request:\n\n\
+    {anim_prompt}\n\n\
+Animation in mgen lives at the top level of the file (outside `scene {{ … }}`) \
+and uses these node kinds:\n\
+  • `joint \"name\" (type=hinge|slider|ball|rotor, axis=[x,y,z], pivot=\"node\", limits=[lo,hi])`\n\
+  • `clip \"name\" (seconds=N) {{ track \"joint_or_node\" (from=0, to=V, prop=\"rotation\"|\"translation\"|\"scale\") }}`\n\
+  • procedural templates (one-liners): `spin`, `open_close`, `wave`, `flap`, `idle`\n\
+    e.g. `spin \"rotor_spin\" (target=\"rotor\", axis=[0,0,1], rpm=30)`\n\
+         `open_close \"door_swing\" (target=\"door_hinge\", angle=90, seconds=1.2)`\n\
+         `wave \"antenna_wave\" (target=\"antenna\", axis=[1,0,0], amplitude=15, hz=1.0)`\n\
+         `flap \"wing_flap\" (target=\"wing\", axis=[0,0,1], amplitude=30, hz=2.0)`\n\
+         `idle \"body_idle\" (target=\"body\", amplitude=0.02, hz=0.5)`\n\
+When a template targets a scene node directly (not a joint), it MUST pass an \
+explicit `axis` (except `idle`, which is a scale breathe with no axis).\n\n\
+Do not touch geometry. Preserve every `scene`, `material`, `mesh`, `primitive`, \
+`group`, `array`, `mirror`, `attach`, `connector`, `socket`, `plug`, `use`, and \
+`module` exactly as written — same names, same order, same attributes. Your \
+edits are limited to adding, removing, or tweaking top-level `joint`, `clip`, \
+`spin`, `open_close`, `wave`, `flap`, and `idle` declarations.\n\n\
+Every animation `target=` and `joint pivot=` must reference a node that already \
+exists in the scene. If the request needs a new articulation, reuse existing \
+node names — do not invent or rename nodes. If the scene lacks a suitable \
+target for the requested motion, emit the closest reasonable animation on the \
+existing nodes and keep going.\n\n\
+Reply with ONLY the full updated DSL — no commentary, no markdown fences, no \
+diff markers. Emit the entire file, not just the animation section. Do not \
+include the `// mgen-generate` header comments; the caller re-adds them.\n\n\
+Existing file:\n\n{existing}",
+        existing = existing.trim_end(),
+        anim_prompt = args.prompt.trim(),
+    );
+
+    let mut cfg = GenerateConfig::new(user_prompt);
+    cfg.model = args.model;
+    cfg.budget_tokens = args.budget_tokens;
+    if let Some(t) = args.temperature {
+        cfg.temperature = Some(t);
+    }
+    cfg.seed = Some(seed);
+    cfg.thinking_level = Some(args.thinking);
+    attach_system_instruction(&mut cfg, &client, args.cached_content, args.no_cache, "animate");
+
+    let total_attempts = args.max_repair_iters + 1;
+    let mut pb = Spinner::new(
+        &format!("animate: calling Gemini (attempt 1/{total_attempts})"),
+        GEMINI_FLAVORS,
+    );
+
+    let pb_cb = pb.handle();
+    let repair = RepairConfig {
+        max_iters: args.max_repair_iters,
+        on_iteration: Some(Box::new(move |iter, diags| {
+            let summary = summarize_repair_errors(diags);
+            let attempt = iter + 1;
+            pb_cb.set_message(format!(
+                "animate: repair {attempt}/{total_attempts} — fixing {summary}"
+            ));
+        })),
+    };
+
+    let outcome = match generate_with_repair(&client, cfg, &repair) {
+        Ok(o) => o,
+        Err(e) => {
+            pb.abandon_with_message(format!("animate: Gemini error — {e}"));
+            return Err(anyhow!("gemini: {e}"));
+        }
+    };
+
+    let wrapped = embed_seed_header(&outcome.dsl, seed, &args.prompt);
+
+    if !outcome.is_ok() {
+        pb.abandon_with_message(format!(
+            "animate: DSL still invalid after {} call{} ({} tokens)",
+            outcome.call_count,
+            if outcome.call_count == 1 { "" } else { "s" },
+            outcome.usage.total_tokens
+        ));
+        let filename = args.input.to_string_lossy().to_string();
+        if args.dry_run {
+            eprintln!(
+                "{}",
+                mgen_validate::render_json(&filename, &outcome.diagnostics)
+            );
+            println!("{}", wrapped);
+        } else {
+            mgen_validate::render_human(&filename, &wrapped, &outcome.diagnostics);
+        }
+        bail!("refusing to build: validation errors in animated DSL");
+    }
+
+    pb.finish_with_message(format!(
+        "animate: DSL ready — {} call{}, {} tokens (prompt={}, response={}{})",
+        outcome.call_count,
+        if outcome.call_count == 1 { "" } else { "s" },
+        outcome.usage.total_tokens,
+        outcome.usage.prompt_tokens,
+        outcome.usage.response_tokens,
+        format_cached_tokens(&outcome.usage),
+    ));
+
+    if args.dry_run {
+        println!("{}", wrapped);
+        return Ok(());
+    }
+
+    let dsl_path = resolved_dsl_out;
+    let out_path = resolved_out;
+
+    fs::write(&dsl_path, &wrapped)
+        .with_context(|| format!("writing {}", dsl_path.display()))?;
+
+    build(dsl_path, out_path)
+}
+
 fn bench(
     prompts_path: PathBuf,
     model: String,
@@ -1248,4 +1591,130 @@ fn bench(
         bail!("bench target not met: {:.1}% < 80% success", success_rate);
     }
     Ok(())
+}
+
+fn textures_cmd(args: mgen_llm::textures::TexturesArgs) -> Result<()> {
+    let src = fs::read_to_string(&args.input)
+        .with_context(|| format!("reading {}", args.input.display()))?;
+    let ast = mgen_dsl::parse(&src)?;
+
+    let cache = mgen_llm::textures::maybe_cache(args.no_cache);
+    let plans = mgen_llm::textures::build_plan(&src, &ast, &args, cache.as_ref());
+
+    if plans.is_empty() {
+        println!("textures: no `material` declarations found in {}", args.input.display());
+        return Ok(());
+    }
+
+    // Summary line first so users see what's about to happen.
+    let mut to_gen = 0usize;
+    let mut to_hit = 0usize;
+    let mut to_derive = 0usize;
+    let mut to_skip = 0usize;
+    for p in &plans {
+        match p.action {
+            mgen_llm::textures::PlanAction::Generate => to_gen += 1,
+            mgen_llm::textures::PlanAction::CacheHit => to_hit += 1,
+            mgen_llm::textures::PlanAction::Derive => to_derive += 1,
+            mgen_llm::textures::PlanAction::Skip(_) => to_skip += 1,
+        }
+    }
+    println!(
+        "textures: {} slot{} · {} to generate · {} cache-hit · {} to derive · {} skipped",
+        plans.len(),
+        if plans.len() == 1 { "" } else { "s" },
+        to_gen,
+        to_hit,
+        to_derive,
+        to_skip,
+    );
+    for p in &plans {
+        let tag = match p.action {
+            mgen_llm::textures::PlanAction::Generate => "gen",
+            mgen_llm::textures::PlanAction::CacheHit => "hit",
+            mgen_llm::textures::PlanAction::Derive => "drv",
+            mgen_llm::textures::PlanAction::Skip(reason) => reason,
+        };
+        println!(
+            "  [{tag:>4}] {:<16} {:<10}  →  {}",
+            p.material,
+            p.kind.short_name(),
+            p.rel_path.display()
+        );
+    }
+
+    if args.dry_run {
+        return Ok(());
+    }
+
+    // Only bring up a client if we'll actually need one. Cache-only and
+    // derive-only runs don't need a key.
+    let client = if to_gen > 0 {
+        let api_key = resolve_api_key(args.api_key.clone())?;
+        Some(GeminiClient::new(api_key))
+    } else {
+        None
+    };
+
+    let base_dir = args
+        .input
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."));
+
+    let start = Instant::now();
+    let mut spinner = Spinner::new(
+        &format!(
+            "textures: {to_gen} albedo image{}, {to_derive} derived map{}",
+            if to_gen == 1 { "" } else { "s" },
+            if to_derive == 1 { "" } else { "s" },
+        ),
+        &[
+            "fetching from Gemini",
+            "decoding PNG",
+            "deriving normals",
+            "deriving roughness",
+            "deriving occlusion",
+            "writing texture files",
+        ],
+    );
+
+    let edits = match mgen_llm::textures::run_plan(
+        client.as_ref(),
+        &args.model,
+        &args,
+        &ast,
+        &plans,
+        &base_dir,
+        cache.as_ref(),
+    ) {
+        Ok(e) => e,
+        Err(e) => {
+            spinner.abandon_with_message(format!("textures: failed — {e}"));
+            return Err(e);
+        }
+    };
+
+    spinner.set_message(format!("textures: splicing {} attribute{}", edits.len(), if edits.len() == 1 { "" } else { "s" }));
+    let new_src = mgen_llm::textures::splice_textures(&src, &edits)?;
+
+    let dsl_out = args.out.clone().unwrap_or_else(|| args.input.clone());
+    ensure_parent_dir(&dsl_out)?;
+    fs::write(&dsl_out, &new_src)
+        .with_context(|| format!("writing {}", dsl_out.display()))?;
+
+    spinner.finish_with_message(format!(
+        "textures: wrote {} PNG{}, updated {} in {}",
+        edits.len(),
+        if edits.len() == 1 { "" } else { "s" },
+        dsl_out.display(),
+        format_duration(start.elapsed()),
+    ));
+
+    if args.no_build {
+        return Ok(());
+    }
+
+    let glb_out = args.glb.clone().unwrap_or_else(|| args.input.with_extension("glb"));
+    build(dsl_out, glb_out)
 }

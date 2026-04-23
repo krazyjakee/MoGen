@@ -14,10 +14,13 @@ const WELD_EPS: f32 = 1e-4;
 /// canonical vertex for each cluster.
 pub fn weld_vertices(mesh: &Mesh, eps: f32) -> Mesh {
     let scale = 1.0 / eps.max(1e-9);
+    let has_uvs = mesh.has_uvs();
     let mut buckets: HashMap<[i64; 3], Vec<u32>> = HashMap::new();
     let mut remap = vec![u32::MAX; mesh.positions.len()];
     let mut new_positions: Vec<[f32; 3]> = Vec::new();
     let mut new_normals: Vec<Vec3> = Vec::new();
+    let mut new_uvs: Vec<[f32; 2]> = Vec::new();
+    let mut new_uv_sums: Vec<[f32; 2]> = Vec::new();
     let mut new_counts: Vec<u32> = Vec::new();
 
     for (i, p) in mesh.positions.iter().enumerate() {
@@ -44,6 +47,9 @@ pub fn weld_vertices(mesh: &Mesh, eps: f32) -> Mesh {
                 new_positions.push(*p);
                 new_normals.push(Vec3::ZERO);
                 new_counts.push(0);
+                if has_uvs {
+                    new_uv_sums.push([0.0, 0.0]);
+                }
                 list.push(idx);
                 idx
             }
@@ -52,6 +58,11 @@ pub fn weld_vertices(mesh: &Mesh, eps: f32) -> Mesh {
         let n = Vec3::from_array(mesh.normals[i]);
         new_normals[merged_id as usize] += n;
         new_counts[merged_id as usize] += 1;
+        if has_uvs {
+            let uv = mesh.uvs[i];
+            new_uv_sums[merged_id as usize][0] += uv[0];
+            new_uv_sums[merged_id as usize][1] += uv[1];
+        }
     }
 
     let normals: Vec<[f32; 3]> = new_normals
@@ -63,8 +74,25 @@ pub fn weld_vertices(mesh: &Mesh, eps: f32) -> Mesh {
         })
         .collect();
 
+    if has_uvs {
+        new_uvs = new_uv_sums
+            .iter()
+            .zip(new_counts.iter())
+            .map(|(sum, count)| {
+                let c = (*count).max(1) as f32;
+                [sum[0] / c, sum[1] / c]
+            })
+            .collect();
+    }
+
     let indices: Vec<u32> = mesh.indices.iter().map(|i| remap[*i as usize]).collect();
-    Mesh { positions: new_positions, normals, indices, ..Default::default() }
+    Mesh {
+        positions: new_positions,
+        normals,
+        uvs: new_uvs,
+        indices,
+        ..Default::default()
+    }
 }
 
 /// Drop triangles with (near) zero area, as well as any triangle whose indices
@@ -88,6 +116,7 @@ pub fn cull_degenerate(mesh: &Mesh) -> Mesh {
     Mesh {
         positions: mesh.positions.clone(),
         normals: mesh.normals.clone(),
+        uvs: mesh.uvs.clone(),
         indices,
         ..Default::default()
     }
@@ -117,16 +146,55 @@ pub fn recompute_normals(mesh: &Mesh) -> Mesh {
     Mesh {
         positions: mesh.positions.clone(),
         normals,
+        uvs: mesh.uvs.clone(),
         indices: mesh.indices.clone(),
         ..Default::default()
     }
 }
 
-/// Apply the standard post-CSG cleanup: weld → cull → recompute normals.
+/// Apply the standard post-CSG cleanup: weld → cull → recompute normals →
+/// triplanar UV projection. CSG booleans (union/difference/intersect) don't
+/// carry UVs through the BSP, so we assign them here based on surface position
+/// and normal.
 pub fn clean_csg_output(mesh: &Mesh) -> Mesh {
     let welded = weld_vertices(mesh, WELD_EPS);
     let culled = cull_degenerate(&welded);
-    recompute_normals(&culled)
+    let with_normals = recompute_normals(&culled);
+    assign_triplanar_uvs(&with_normals)
+}
+
+/// Assign UVs by triplanar projection: for each vertex, pick the dominant
+/// normal axis and project the position onto the remaining two axes. Produces
+/// one UV unit per world-space meter. Tiling frequency is then controlled by
+/// the texture itself or an explicit tiling factor (future work).
+///
+/// Compared with per-triangle projection, per-vertex projection costs a
+/// texture seam when adjacent verts pick different axes — but it preserves
+/// the indexed-mesh layout, which matters for the exporter.
+pub fn assign_triplanar_uvs(mesh: &Mesh) -> Mesh {
+    let uvs: Vec<[f32; 2]> = mesh
+        .positions
+        .iter()
+        .zip(mesh.normals.iter())
+        .map(|(p, n)| {
+            let (ax, ay, az) = (n[0].abs(), n[1].abs(), n[2].abs());
+            if ax >= ay && ax >= az {
+                [p[2], p[1]]
+            } else if ay >= az {
+                [p[0], p[2]]
+            } else {
+                [p[0], p[1]]
+            }
+        })
+        .collect();
+    Mesh {
+        positions: mesh.positions.clone(),
+        normals: mesh.normals.clone(),
+        uvs,
+        indices: mesh.indices.clone(),
+        joints: mesh.joints.clone(),
+        weights: mesh.weights.clone(),
+    }
 }
 
 #[cfg(test)]

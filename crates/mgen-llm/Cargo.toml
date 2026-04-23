@@ -14,6 +14,9 @@ mgen-dsl.workspace = true
 mgen-validate.workspace = true
 
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+base64 = "0.22"
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 [dev-dependencies]
 tiny_http = "0.12"
+base64 = "0.22"

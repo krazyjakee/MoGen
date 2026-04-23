@@ -29,6 +29,7 @@ pub fn transform_mesh(mesh: &Mesh, m: Mat4) -> Mesh {
         positions,
         normals,
         indices: mesh.indices.clone(),
+        uvs: mesh.uvs.clone(),
         joints: mesh.joints.clone(),
         weights: mesh.weights.clone(),
     }
