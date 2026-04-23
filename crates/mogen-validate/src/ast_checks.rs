@@ -108,6 +108,12 @@ fn collect_material_names(ast: &[Node], diags: &mut Vec<Diagnostic>) -> HashSet<
 fn collect_module_names(ast: &[Node], diags: &mut Vec<Diagnostic>) -> HashSet<String> {
     let mut seen: HashMap<String, usize> = HashMap::new();
     let mut names = HashSet::new();
+    // Seed with stdlib modules so `use "humanoid_torso" (...)` validates
+    // without the user needing to redeclare them. lower() merges these
+    // into the live registry too — keep the two in sync.
+    for name in mogen_dsl::stdlib_registry().names() {
+        names.insert(name.clone());
+    }
     for n in ast {
         if n.kind != "module" {
             continue;
@@ -313,6 +319,9 @@ pub fn attrs_for_kind(kind: &str) -> &'static [&'static str] {
         "skeleton" => &[],
         "bone" => &["envelope"],
         "attach" => &["parent", "child", "socket", "plug", "offset", "twist"],
+        // `smooth` blends limb-to-torso seams for organic shapes.
+        // `difference`/`intersect` reject it via attr_type below.
+        "union" => &["smooth"],
         _ => &[],
     }
 }
@@ -413,6 +422,7 @@ fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         | ("spline_tube", "samples")
         | ("spline_tube", "cap_ends")
         | ("frustum", "height")
+        | ("union", "smooth")
         | ("material", "alpha")
         | ("material", "metallic")
         | ("material", "roughness")

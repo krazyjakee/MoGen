@@ -1,0 +1,11 @@
+// summary: Smooth-blended humanoid head (cranium + jaw). Connector "neck" at the underside.
+module "humanoid_head" (size=0.11, jaw=0.7) {
+  union "head" (smooth=0.04) {
+    sphere "cranium" (radius=$size, rings=12, segments=18)
+    ellipsoid "jaw" (
+      pos=[0, $size * -0.55, $size * 0.15],
+      size=[$size * 1.2, $size * $jaw, $size * 1.0]
+    )
+    connector "neck" (at=[0, $size * -0.95, 0], dir=[0, -1, 0], tag=neck)
+  }
+}

@@ -42,7 +42,7 @@ impl StdlibIndex {
                             (p.name.clone(), default)
                         })
                         .collect(),
-                    doc: None,
+                    doc: def.doc.clone(),
                 }
             })
             .collect();
@@ -197,7 +197,21 @@ from a validator failure.
    containing one `keys=[[t, deg], ...]` `track` per bone so limbs stay in \
    phase. Mechanical/architectural subjects (chairs, cars, buildings) \
    stay as rigid `attach`-joined primitives with per-part procedural \
-   animation — do not rig them.";
+   animation — do not rig them.
+8. **Organic shapes** (people, animals, plants): prefer `use \"humanoid_*\"` \
+   / `use \"quadruped_*\"` / `use \"branch\"` / `use \"leaf\"` from the \
+   stdlib over rebuilding limbs and foliage from raw primitives — the \
+   stdlib parts already smin-blend their internal joints (no shoulder or \
+   knee crease). When two parts of one body must visually merge into one \
+   surface — neck-into-torso, hip-cap-into-leg, jaw-into-skull — wrap them \
+   in `union \"joint\" (smooth=K) { ... }` with `K ≈ 0.04–0.10` for \
+   human-scale parts (`K` is a fillet radius in metres; too large and the \
+   parts melt together, too small and the seam stays visible). Allow \
+   ±3 % asymmetry on paired parts (one ear/leg slightly different) — \
+   biology is never perfectly mirrored. Material naming: \
+   `<creature>_<region>_<surface>` (e.g. `tiger_back_fur`, `oak_bark`, \
+   `koi_belly_scales`) so the texture pipeline picks anatomical priors \
+   when generating the albedo.";
 
 const GRAMMAR_REFERENCE: &str = "\
 A `.mog` file is a sequence of nodes. Each node is:
@@ -434,8 +448,8 @@ const KINDS_REFERENCE: &str = "\
 | `torus_arc` | `top`, `bottom`, `start` (cap at phi=0, -Z), `end` (cap at phi=arc) |";
 
 const FEWSHOT: &str = "\
-Five prompt / output pairs. The user message will be a single short phrase \
-like these.
+Ten prompt / output pairs spanning mechanical, architectural, and organic \
+subjects. The user message will be a single short phrase like these.
 
 ### Prompt: \"a simple wooden stool\"
 ### Output:
@@ -589,6 +603,64 @@ clip \"walk\" (seconds=1.0) {
   track \"hip_r\"      (prop=rotation, axis=[1, 0, 0], keys=[[0,  25], [0.5, -25], [1.0,  25]])
   track \"shoulder_l\" (prop=rotation, axis=[1, 0, 0], keys=[[0,  20], [0.5, -20], [1.0,  20]])
   track \"shoulder_r\" (prop=rotation, axis=[1, 0, 0], keys=[[0, -20], [0.5,  20], [1.0, -20]])
+}
+
+### Prompt: \"a crouching tiger\"
+### Output:
+material \"tiger_back_fur\"  (color=[0.85, 0.45, 0.15], roughness=0.85)
+material \"tiger_belly_fur\" (color=[0.96, 0.92, 0.85], roughness=0.85)
+
+scene {
+  group \"body\" (y=0.4, mat=\"tiger_back_fur\") {
+    use \"quadruped_torso\" (length=0.95, height=0.32, width=0.32)
+  }
+  group \"head\" (pos=[0, 0.5, 0.55], mat=\"tiger_back_fur\") {
+    use \"humanoid_head\" (size=0.13, jaw=0.5)
+  }
+  capsule \"leg_fl\" (pos=[ 0.13, 0.16,  0.32], radius=0.05, height=0.32, mat=\"tiger_back_fur\")
+  capsule \"leg_fr\" (pos=[-0.13, 0.16,  0.32], radius=0.05, height=0.32, mat=\"tiger_back_fur\")
+  capsule \"leg_bl\" (pos=[ 0.13, 0.18, -0.32], radius=0.05, height=0.28, mat=\"tiger_back_fur\")
+  capsule \"leg_br\" (pos=[-0.13, 0.18, -0.32], radius=0.05, height=0.28, mat=\"tiger_back_fur\")
+  group \"tail\" (pos=[0, 0.45, -0.45], mat=\"tiger_back_fur\") { use \"tail\" () }
+}
+
+### Prompt: \"a person mid-stride\"
+### Output:
+material \"skin\"  (color=[0.92, 0.78, 0.65], roughness=0.7)
+material \"shirt\" (color=[0.20, 0.45, 0.75], roughness=0.85)
+material \"pants\" (color=[0.18, 0.20, 0.25], roughness=0.85)
+
+scene {
+  group \"body\" (y=1.05, mat=\"shirt\") {
+    use \"humanoid_torso\" (height=0.55, width=0.36, depth=0.22)
+  }
+  group \"head\" (pos=[0, 1.4, 0], mat=\"skin\") {
+    use \"humanoid_head\" (size=0.11, jaw=0.55)
+  }
+  group \"leg_r\" (pos=[-0.1, 1.0,  0.05], rot=[ 20, 0, 0], mat=\"pants\") { use \"humanoid_leg\" (length=0.9, radius=0.07) }
+  group \"leg_l\" (pos=[ 0.1, 1.0, -0.05], rot=[-20, 0, 0], mat=\"pants\") { use \"humanoid_leg\" (length=0.9, radius=0.07) }
+  group \"arm_l\" (pos=[ 0.22, 1.45, -0.05], rot=[ 15, 0, 0], mat=\"skin\") { use \"humanoid_arm\" (length=0.55, radius=0.05) }
+  group \"arm_r\" (pos=[-0.22, 1.45,  0.05], rot=[-15, 0, 0], mat=\"skin\") { use \"humanoid_arm\" (length=0.55, radius=0.05) }
+}
+
+### Prompt: \"a young oak tree\"
+### Output:
+material \"oak_bark\" (color=[0.36, 0.25, 0.15], roughness=0.95)
+material \"oak_leaf\" (color=[0.18, 0.45, 0.20], roughness=0.65, double_sided=1)
+
+scene {
+  group \"trunk\" (mat=\"oak_bark\", scale=2.5) { use \"branch\" () }
+
+  group \"limb_a\" (pos=[0, 1.5, 0], rot=[0,   0, 35], mat=\"oak_bark\") { use \"branch\" () }
+  group \"limb_b\" (pos=[0, 1.5, 0], rot=[0, 120, 35], mat=\"oak_bark\") { use \"branch\" () }
+  group \"limb_c\" (pos=[0, 1.5, 0], rot=[0, 240, 35], mat=\"oak_bark\") { use \"branch\" () }
+
+  group \"leaves_a\"  (pos=[ 0.5, 2.0,  0.0],                  tags=\"floating\", mat=\"oak_leaf\") { use \"leaf\" () }
+  group \"leaves_b\"  (pos=[-0.25, 2.0,  0.43],                tags=\"floating\", mat=\"oak_leaf\") { use \"leaf\" () }
+  group \"leaves_c\"  (pos=[-0.25, 2.0, -0.43],                tags=\"floating\", mat=\"oak_leaf\") { use \"leaf\" () }
+  group \"leaves_a2\" (pos=[ 0.45, 1.95, 0.15], rot=[0,  60, 0], tags=\"floating\", mat=\"oak_leaf\") { use \"leaf\" () }
+  group \"leaves_b2\" (pos=[-0.18, 1.95, 0.36], rot=[0,  30, 0], tags=\"floating\", mat=\"oak_leaf\") { use \"leaf\" () }
+  group \"leaves_c2\" (pos=[-0.18, 1.95,-0.36], rot=[0, -30, 0], tags=\"floating\", mat=\"oak_leaf\") { use \"leaf\" () }
 }";
 
 const OUTPUT_CONTRACT: &str = "\n\n## Output contract\n\n\
@@ -806,11 +878,15 @@ mod tests {
         // Emitting the validator's `attrs_for_kind` table as an authoritative
         // closed allowlist (so the model stops hallucinating attrs like
         // `from=` on `open_close`) plus the intro paragraph that re-states
-        // which kinds accept common attrs added ~3.5 KB. The cap now sits at
-        // ~30.5 KB — still tight enough to catch a revived long-form section.
+        // which kinds accept common attrs added ~3.5 KB. Three organic
+        // fewshots (tiger / humanoid mid-stride / oak tree) and the new
+        // organic-shapes preamble rule added ~3.6 KB — they're what makes
+        // the LLM reach for the body-part stdlib instead of rebuilding
+        // limbs from raw primitives. The cap now sits at ~36 KB — still
+        // small enough to catch a revived long-form section.
         let s = system_instruction(&StdlibIndex::default());
         assert!(
-            s.len() < 30_500,
+            s.len() < 36_000,
             "system instruction grew to {} bytes — did a section come back?",
             s.len()
         );

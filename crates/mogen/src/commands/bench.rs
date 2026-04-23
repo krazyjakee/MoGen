@@ -36,7 +36,9 @@ pub(crate) fn bench(
 
     // Resolve the cache once up front — every prompt in the batch shares the
     // same system instruction, so a single cache entry serves the whole run.
-    let system = system_instruction(&StdlibIndex::default());
+    let system = system_instruction(&StdlibIndex::from_registry(
+        mogen_dsl::stdlib_registry(),
+    ));
     let cached_name: Option<String> = if no_cache {
         None
     } else if let Some(cache_path) = default_cache_path() {

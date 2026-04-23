@@ -18,6 +18,9 @@ pub struct ModuleDef {
     pub params: Vec<Param>,
     pub body: Vec<Node>,
     pub span: Span,
+    /// One-line description, populated by the stdlib loader from a leading
+    /// `// summary:` comment. User-declared modules leave this `None`.
+    pub doc: Option<String>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -36,6 +39,25 @@ impl ModuleRegistry {
 
     pub fn names(&self) -> impl Iterator<Item = &String> {
         self.modules.keys()
+    }
+
+    /// Insert or overwrite a single module definition.
+    pub fn insert(&mut self, def: ModuleDef) {
+        self.modules.insert(def.name.clone(), def);
+    }
+
+    /// Pop a module out of the registry by name.
+    pub fn remove(&mut self, name: &str) -> Option<ModuleDef> {
+        self.modules.remove(name)
+    }
+
+    /// Merge `other` into `self`. On name collision `other`'s definition
+    /// wins — used to overlay user modules on top of the stdlib so a
+    /// scene can shadow a stdlib name.
+    pub fn extend_overlay(&mut self, other: ModuleRegistry) {
+        for (name, def) in other.modules {
+            self.modules.insert(name, def);
+        }
     }
 }
 
@@ -83,7 +105,7 @@ pub fn collect_modules(ast: &[Node]) -> Result<ModuleRegistry> {
         }
         reg.modules.insert(
             name.clone(),
-            ModuleDef { name, params, body: n.children.clone(), span: n.span },
+            ModuleDef { name, params, body: n.children.clone(), span: n.span, doc: None },
         );
     }
     Ok(reg)

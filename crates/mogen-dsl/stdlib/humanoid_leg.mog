@@ -1,0 +1,15 @@
+// summary: Humanoid leg — thigh + shin capsules smoothly joined at the knee. hip/ankle connectors.
+module "humanoid_leg" (length=0.9, radius=0.07) {
+  union "leg" (smooth=0.04) {
+    capsule "thigh" (
+      pos=[0, $length * -0.25, 0],
+      radius=$radius, height=$length * 0.5, rings=4, segments=16
+    )
+    capsule "shin" (
+      pos=[0, $length * -0.75, 0],
+      radius=$radius * 0.8, height=$length * 0.5, rings=4, segments=16
+    )
+    connector "hip"   (at=[0, 0,              0], dir=[0, 1, 0],  tag=hip)
+    connector "ankle" (at=[0, $length * -1.0, 0], dir=[0, -1, 0], tag=ankle)
+  }
+}

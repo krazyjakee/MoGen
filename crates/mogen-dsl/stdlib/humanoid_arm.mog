@@ -1,0 +1,15 @@
+// summary: Humanoid arm — upper arm + forearm capsules smoothly joined at the elbow. shoulder/wrist connectors.
+module "humanoid_arm" (length=0.55, radius=0.05) {
+  union "arm" (smooth=0.03) {
+    capsule "upper" (
+      pos=[0, $length * -0.25, 0],
+      radius=$radius, height=$length * 0.5, rings=4, segments=14
+    )
+    capsule "fore" (
+      pos=[0, $length * -0.75, 0],
+      radius=$radius * 0.85, height=$length * 0.5, rings=4, segments=14
+    )
+    connector "shoulder" (at=[0, 0,             0], dir=[0, 1, 0],  tag=shoulder)
+    connector "wrist"    (at=[0, $length * -1.0, 0], dir=[0, -1, 0], tag=wrist)
+  }
+}
