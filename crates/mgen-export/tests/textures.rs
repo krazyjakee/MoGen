@@ -1,46 +1,80 @@
 //! End-to-end coverage of the texture export path: DSL-lowered materials with
 //! `base_color_texture` pointing at an on-disk PNG should round-trip into a
 //! valid GLB with populated `images[]` / `textures[]` / `samplers[]` tables
-//! and material references wired to the right indices.
+//! and material references wired to the right indices. Also verifies the
+//! per-slot encoding policy: colour slots transcode to JPEG, linear slots
+//! stay PNG, and colour-with-alpha stays PNG.
 
 use std::fs;
 use std::path::PathBuf;
 use std::process::id;
 
+use image::{ImageBuffer, Rgb, Rgba};
 use serde_json::Value;
 
 use mgen_core::{Material, Mesh, MaterialId, SceneGraph, TextureRef, Transform};
 use mgen_geom::box_mesh;
 
-/// 1×1 all-white PNG — smallest valid PNG we can hand-craft so tests don't
-/// need a committed fixture. Bytes verified against `pngcheck`.
-const WHITE_PNG_1X1: &[u8] = &[
-    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
-    0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
-    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
-    0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
-    0xDE, 0x00, 0x00, 0x00, 0x0C, 0x49, 0x44, 0x41,
-    0x54, 0x08, 0x99, 0x63, 0xF8, 0xFF, 0xFF, 0x3F,
-    0x00, 0x05, 0xFE, 0x02, 0xFE, 0xDC, 0xCC, 0x59,
-    0xE7, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E,
-    0x44, 0xAE, 0x42, 0x60, 0x82,
-];
+/// Build a solid-colour RGB PNG at the requested size. Re-encoded fresh by
+/// `image` so tests don't depend on a hand-crafted byte blob with correct
+/// CRCs — the exporter now decodes every texture before embedding.
+fn rgb_png(size: u32, color: [u8; 3]) -> Vec<u8> {
+    let img: ImageBuffer<Rgb<u8>, Vec<u8>> =
+        ImageBuffer::from_pixel(size, size, Rgb(color));
+    let mut out = Vec::new();
+    img.write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+        .expect("encoding rgb png fixture");
+    out
+}
+
+/// Build an RGBA PNG where at least one pixel has alpha < 255, forcing the
+/// "meaningful alpha" branch in the exporter.
+fn rgba_png_with_transparency(size: u32) -> Vec<u8> {
+    let mut img: ImageBuffer<Rgba<u8>, Vec<u8>> =
+        ImageBuffer::from_pixel(size, size, Rgba([255, 255, 255, 255]));
+    // One translucent pixel is enough.
+    img.put_pixel(0, 0, Rgba([255, 255, 255, 128]));
+    let mut out = Vec::new();
+    img.write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+        .expect("encoding rgba png fixture");
+    out
+}
 
 fn unique_tmp(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!("mgen-texture-export-{}-{name}", id()))
 }
 
+fn read_glb(bytes: &[u8]) -> (Value, Vec<u8>) {
+    assert_eq!(&bytes[0..4], b"glTF", "not a GLB");
+    let json_len = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
+    let json_bytes = &bytes[20..20 + json_len];
+    let js: Value = serde_json::from_slice(json_bytes).expect("invalid GLB JSON chunk");
+
+    // BIN chunk follows: [length: u32][type: u32][data…]
+    let bin_start = 20 + json_len;
+    let bin_len = u32::from_le_bytes(bytes[bin_start..bin_start + 4].try_into().unwrap()) as usize;
+    let bin = bytes[bin_start + 8..bin_start + 8 + bin_len].to_vec();
+    (js, bin)
+}
+
 fn read_gltf_json(glb: &[u8]) -> Value {
-    assert_eq!(&glb[0..4], b"glTF", "not a GLB");
-    let json_len = u32::from_le_bytes(glb[12..16].try_into().unwrap()) as usize;
-    let json_bytes = &glb[20..20 + json_len];
-    serde_json::from_slice(json_bytes).expect("invalid GLB JSON chunk")
+    read_glb(glb).0
+}
+
+/// Extract the embedded bytes for an image at `images[image_idx]` by
+/// following its bufferView offset/length into the BIN chunk.
+fn image_bytes(js: &Value, bin: &[u8], image_idx: usize) -> Vec<u8> {
+    let bv_idx = js["images"][image_idx]["bufferView"].as_u64().unwrap() as usize;
+    let bv = &js["bufferViews"][bv_idx];
+    let offset = bv["byteOffset"].as_u64().unwrap_or(0) as usize;
+    let length = bv["byteLength"].as_u64().unwrap() as usize;
+    bin[offset..offset + length].to_vec()
 }
 
 #[test]
 fn base_color_texture_writes_image_texture_sampler_and_material_ref() {
     let png_path = unique_tmp("albedo.png");
-    fs::write(&png_path, WHITE_PNG_1X1).expect("writing fixture png");
+    fs::write(&png_path, rgb_png(4, [200, 180, 140])).expect("writing fixture png");
 
     let mut scene = SceneGraph::new();
     let mut mat = Material::new("painted");
@@ -59,7 +93,8 @@ fn base_color_texture_writes_image_texture_sampler_and_material_ref() {
     // Texture scaffolding.
     let images = js["images"].as_array().expect("images[] should be present");
     assert_eq!(images.len(), 1, "one image per distinct texture path");
-    assert_eq!(images[0]["mimeType"], "image/png");
+    assert_eq!(images[0]["mimeType"], "image/jpeg",
+        "opaque colour sources transcode to JPEG for size");
     assert!(images[0].get("bufferView").is_some(), "image must reference a bufferView");
 
     let textures = js["textures"].as_array().expect("textures[] should be present");
@@ -88,7 +123,7 @@ fn base_color_texture_writes_image_texture_sampler_and_material_ref() {
 #[test]
 fn duplicate_texture_paths_dedupe_to_one_image() {
     let png_path = unique_tmp("shared.png");
-    fs::write(&png_path, WHITE_PNG_1X1).expect("writing fixture png");
+    fs::write(&png_path, rgb_png(4, [128, 128, 128])).expect("writing fixture png");
 
     let mut scene = SceneGraph::new();
     let mut a = Material::new("a");
@@ -147,7 +182,7 @@ fn dsl_material_with_texture_lowers_and_exports() {
     // regressions where lowering silently drops the attribute or the exporter
     // stops honouring `base_color_texture` on materials built via the DSL.
     let png_path = unique_tmp("dsl-albedo.png");
-    fs::write(&png_path, WHITE_PNG_1X1).expect("writing fixture png");
+    fs::write(&png_path, rgb_png(4, [255, 255, 255])).expect("writing fixture png");
 
     let src = format!(
         r#"
@@ -201,5 +236,157 @@ fn mesh_without_uvs_omits_texcoord_0() {
     assert!(attrs.get("TEXCOORD_0").is_none());
     assert!(js.get("images").is_none(), "no images table when no textures authored");
 
+    let _ = fs::remove_file(&out);
+}
+
+#[test]
+fn normal_texture_stays_png_and_is_embedded_as_png_bytes() {
+    // Normal maps carry numeric data per channel — JPEG would corrupt the
+    // decoded normal vectors. Verify the exporter preserves PNG for this
+    // slot and that the embedded bytes still decode as a PNG.
+    let png_path = unique_tmp("normal.png");
+    // A non-trivial pattern so oxipng has filter choices to make — all-solid
+    // buffers compress the same way under any filter.
+    let mut img: ImageBuffer<Rgb<u8>, Vec<u8>> = ImageBuffer::new(8, 8);
+    for (x, y, p) in img.enumerate_pixels_mut() {
+        *p = Rgb([(x * 32) as u8, (y * 32) as u8, 255]);
+    }
+    let mut png_bytes = Vec::new();
+    img.write_to(&mut std::io::Cursor::new(&mut png_bytes), image::ImageFormat::Png)
+        .unwrap();
+    fs::write(&png_path, &png_bytes).unwrap();
+
+    let mut scene = SceneGraph::new();
+    let mut mat = Material::new("bumpy");
+    mat.normal_texture = Some(TextureRef::new(png_path.clone()));
+    let mat_id = scene.add_material(mat);
+    let id = scene.add_root("b", "box", Transform::IDENTITY);
+    scene.set_mesh(id, box_mesh([1.0, 1.0, 1.0]));
+    scene.set_material(id, mat_id);
+
+    let out = unique_tmp("normal.glb");
+    mgen_export::write_glb(&scene, &out).unwrap();
+    let bytes = fs::read(&out).unwrap();
+    let (js, bin) = read_glb(&bytes);
+    assert_eq!(js["images"][0]["mimeType"], "image/png");
+
+    let embedded = image_bytes(&js, &bin, 0);
+    // PNG magic.
+    assert_eq!(&embedded[0..8], &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
+    // And `image` can round-trip it.
+    image::load_from_memory_with_format(&embedded, image::ImageFormat::Png)
+        .expect("embedded normal map should be a valid PNG");
+
+    let _ = fs::remove_file(&png_path);
+    let _ = fs::remove_file(&out);
+}
+
+#[test]
+fn base_color_with_transparency_stays_png() {
+    // JPEG has no alpha channel, so a base-colour texture whose alpha is
+    // actually used (e.g. a pierced leaf or cut-out decal) must stay PNG.
+    let png_path = unique_tmp("leaf.png");
+    fs::write(&png_path, rgba_png_with_transparency(8)).unwrap();
+
+    let mut scene = SceneGraph::new();
+    let mut mat = Material::new("leaf");
+    mat.base_color_texture = Some(TextureRef::new(png_path.clone()));
+    let mat_id = scene.add_material(mat);
+    let id = scene.add_root("b", "box", Transform::IDENTITY);
+    scene.set_mesh(id, box_mesh([1.0, 1.0, 1.0]));
+    scene.set_material(id, mat_id);
+
+    let out = unique_tmp("leaf.glb");
+    mgen_export::write_glb(&scene, &out).unwrap();
+    let bytes = fs::read(&out).unwrap();
+    let js = read_gltf_json(&bytes);
+    assert_eq!(js["images"][0]["mimeType"], "image/png",
+        "alpha-bearing colour texture must stay PNG — JPEG has no alpha channel");
+
+    let _ = fs::remove_file(&png_path);
+    let _ = fs::remove_file(&out);
+}
+
+#[test]
+fn emissive_texture_transcodes_to_jpeg() {
+    let png_path = unique_tmp("emissive.png");
+    fs::write(&png_path, rgb_png(8, [255, 80, 20])).unwrap();
+
+    let mut scene = SceneGraph::new();
+    let mut mat = Material::new("glow");
+    mat.emissive_texture = Some(TextureRef::new(png_path.clone()));
+    let mat_id = scene.add_material(mat);
+    let id = scene.add_root("b", "box", Transform::IDENTITY);
+    scene.set_mesh(id, box_mesh([1.0, 1.0, 1.0]));
+    scene.set_material(id, mat_id);
+
+    let out = unique_tmp("emissive.glb");
+    mgen_export::write_glb(&scene, &out).unwrap();
+    let bytes = fs::read(&out).unwrap();
+    let js = read_gltf_json(&bytes);
+    assert_eq!(js["images"][0]["mimeType"], "image/jpeg");
+
+    let _ = fs::remove_file(&png_path);
+    let _ = fs::remove_file(&out);
+}
+
+#[test]
+fn same_path_used_as_color_and_linear_embeds_twice() {
+    // Pathological but legal: the same file is referenced as both base_color
+    // (colour, becomes JPEG) and occlusion (linear, stays PNG). The exporter
+    // must embed it twice so each slot gets a format appropriate to its role.
+    let png_path = unique_tmp("dual.png");
+    fs::write(&png_path, rgb_png(4, [120, 120, 120])).unwrap();
+
+    let mut scene = SceneGraph::new();
+    let mut mat = Material::new("dual");
+    mat.base_color_texture = Some(TextureRef::new(png_path.clone()));
+    mat.occlusion_texture = Some(TextureRef::new(png_path.clone()));
+    let mat_id = scene.add_material(mat);
+    let id = scene.add_root("b", "box", Transform::IDENTITY);
+    scene.set_mesh(id, box_mesh([1.0, 1.0, 1.0]));
+    scene.set_material(id, mat_id);
+
+    let out = unique_tmp("dual.glb");
+    mgen_export::write_glb(&scene, &out).unwrap();
+    let bytes = fs::read(&out).unwrap();
+    let js = read_gltf_json(&bytes);
+
+    let images = js["images"].as_array().unwrap();
+    assert_eq!(images.len(), 2, "same path in two slot kinds embeds twice");
+    let mimes: Vec<&str> = images.iter().map(|i| i["mimeType"].as_str().unwrap()).collect();
+    assert!(mimes.contains(&"image/jpeg"), "colour side should be JPEG: {mimes:?}");
+    assert!(mimes.contains(&"image/png"), "linear side should be PNG: {mimes:?}");
+
+    let _ = fs::remove_file(&png_path);
+    let _ = fs::remove_file(&out);
+}
+
+#[test]
+fn jpeg_source_for_color_slot_passes_through_as_jpeg() {
+    // A user-supplied JPEG stays JPEG — we decode and re-encode, but the
+    // output is still JPEG q=90. The important bit is the mime type.
+    let jpeg_path = unique_tmp("source.jpg");
+    let rgb: ImageBuffer<Rgb<u8>, Vec<u8>> = ImageBuffer::from_pixel(8, 8, Rgb([200, 100, 50]));
+    let mut jpeg_bytes = Vec::new();
+    rgb.write_to(&mut std::io::Cursor::new(&mut jpeg_bytes), image::ImageFormat::Jpeg)
+        .unwrap();
+    fs::write(&jpeg_path, &jpeg_bytes).unwrap();
+
+    let mut scene = SceneGraph::new();
+    let mut mat = Material::new("m");
+    mat.base_color_texture = Some(TextureRef::new(jpeg_path.clone()));
+    let mat_id = scene.add_material(mat);
+    let id = scene.add_root("b", "box", Transform::IDENTITY);
+    scene.set_mesh(id, box_mesh([1.0, 1.0, 1.0]));
+    scene.set_material(id, mat_id);
+
+    let out = unique_tmp("jpgsrc.glb");
+    mgen_export::write_glb(&scene, &out).unwrap();
+    let bytes = fs::read(&out).unwrap();
+    let js = read_gltf_json(&bytes);
+    assert_eq!(js["images"][0]["mimeType"], "image/jpeg");
+
+    let _ = fs::remove_file(&jpeg_path);
     let _ = fs::remove_file(&out);
 }

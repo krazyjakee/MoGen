@@ -1,12 +1,16 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Receiver;
+use std::sync::Arc;
+use std::time::{Duration, Instant, SystemTime};
 
 use eframe::egui;
 use mgen_core::{Diagnostic, Severity};
 use mgen_llm::gemini::{GeminiClient, GenerateConfig, DEFAULT_MODEL};
 use mgen_llm::textures::{
     build_plan, maybe_cache, run_plan, splice_textures, PlanAction, TexturesArgs,
+    DEFAULT_TEXTURE_SIZE,
 };
 use mgen_llm::{
     embed_seed_header, generate_with_repair, parse_seed_header, system_instruction, RepairConfig,
@@ -15,7 +19,16 @@ use mgen_llm::{
 
 use crate::pipeline::{compile, write_glb_with_source, CompileResult, Stage};
 use crate::settings::{thinking_level_key, thinking_level_label, Settings, THINKING_LEVELS};
-use crate::viewer::Viewer;
+use crate::viewer::{CameraSnapshot, Viewer};
+
+/// Debounce window before a keystroke triggers a recompile. Long enough that
+/// holding a key (or pasting) doesn't recompile mid-word; short enough that
+/// the diagnostics panel feels live.
+const COMPILE_DEBOUNCE: Duration = Duration::from_millis(180);
+
+/// TTL on the texture-existence cache. Texture roster runs every paint and
+/// would otherwise stat every PNG every frame.
+const TEX_EXISTS_TTL: Duration = Duration::from_millis(1500);
 
 /// Result from a background LLM call. Always includes the DSL we tried to
 /// compile so the UI can drop it into the editor even when validation failed.
@@ -36,6 +49,50 @@ enum LlmKind {
     Textures,
 }
 
+impl LlmKind {
+    fn label(self) -> &'static str {
+        match self {
+            LlmKind::Generate => "generate",
+            LlmKind::Modify => "modify",
+            LlmKind::Animate => "animate",
+            LlmKind::Textures => "textures",
+        }
+    }
+}
+
+/// User-tweakable knobs on the texture pipeline. Mirrors the CLI's
+/// `mgen textures` flags so the GUI is not silently more restrictive.
+#[derive(Clone)]
+struct TextureUiConfig {
+    style: String,
+    texture_size: u32,
+    normal_strength: f32,
+    no_normal: bool,
+    no_metallic_roughness: bool,
+    no_occlusion: bool,
+    force: bool,
+    no_cache: bool,
+    /// Whether the "Advanced" expander is open. Persisted per-file so users
+    /// can leave it open on the file they're iterating on.
+    expanded: bool,
+}
+
+impl Default for TextureUiConfig {
+    fn default() -> Self {
+        Self {
+            style: "photorealistic".to_string(),
+            texture_size: DEFAULT_TEXTURE_SIZE,
+            normal_strength: 1.5,
+            no_normal: false,
+            no_metallic_roughness: false,
+            no_occlusion: false,
+            force: false,
+            no_cache: false,
+            expanded: false,
+        }
+    }
+}
+
 /// Per-file state. Every open `.mg` owns its own buffer, compile result,
 /// prompts, and in-flight LLM job, so switching files while Gemini is running
 /// does not clobber the other file — you can generate on several models at
@@ -50,9 +107,21 @@ struct FileState {
     gen_prompt: String,
     mod_prompt: String,
     anim_prompt: String,
+    texture_cfg: TextureUiConfig,
 
     llm_rx: Option<Receiver<LlmOutcome>>,
     llm_in_flight: Option<LlmKind>,
+
+    /// Captured camera so switching tabs doesn't snap the user's framing.
+    /// Restored on `activate` when present, refreshed every frame for the
+    /// active tab.
+    camera: Option<CameraSnapshot>,
+
+    /// Wall-clock time of the last edit. Drives the compile debounce so the
+    /// AST isn't re-built on every keystroke.
+    last_edit_at: Option<Instant>,
+    /// Edits since the last successful compile that haven't been processed.
+    needs_compile: bool,
 
     status: String,
 }
@@ -68,8 +137,12 @@ impl FileState {
             gen_prompt: String::new(),
             mod_prompt: String::new(),
             anim_prompt: String::new(),
+            texture_cfg: TextureUiConfig::default(),
             llm_rx: None,
             llm_in_flight: None,
+            camera: None,
+            last_edit_at: None,
+            needs_compile: false,
             status: "new scene".into(),
         }
     }
@@ -85,8 +158,12 @@ impl FileState {
             gen_prompt: String::new(),
             mod_prompt: String::new(),
             anim_prompt: String::new(),
+            texture_cfg: TextureUiConfig::default(),
             llm_rx: None,
             llm_in_flight: None,
+            camera: None,
+            last_edit_at: None,
+            needs_compile: false,
             status,
         }
     }
@@ -108,6 +185,7 @@ impl FileState {
             && !self.dirty
             && self.llm_in_flight.is_none()
     }
+
 }
 
 pub struct MgenApp {
@@ -123,6 +201,14 @@ pub struct MgenApp {
     options_api_key_draft: String,
 
     viewer: Viewer,
+
+    /// Computed once: the system instruction grows with stdlib + grammar
+    /// and is shared by every text-LLM call.
+    system_instruction_cache: Option<Arc<String>>,
+
+    /// `(path, mtime)` -> exists, with last-checked timestamp. Avoids stat'ing
+    /// every texture path on every frame.
+    tex_exists_cache: HashMap<PathBuf, (Option<SystemTime>, bool, Instant)>,
 }
 
 impl MgenApp {
@@ -153,10 +239,21 @@ impl MgenApp {
             show_options: false,
             options_api_key_draft,
             viewer,
+            system_instruction_cache: None,
+            tex_exists_cache: HashMap::new(),
         };
 
-        // Auto-load chair.mg as a reasonable starting point.
-        if let Some(p) = app.examples.iter().find(|p| {
+        // Restore the last opened file when it still exists; otherwise fall
+        // back to the chair example so the welcome state isn't blank.
+        let last = app
+            .settings
+            .last_opened
+            .as_ref()
+            .map(PathBuf::from)
+            .filter(|p| p.is_file());
+        if let Some(p) = last {
+            app.open_path(&p);
+        } else if let Some(p) = app.examples.iter().find(|p| {
             p.file_name()
                 .and_then(|n| n.to_str())
                 .map(|n| n == "chair.mg")
@@ -199,6 +296,7 @@ impl MgenApp {
                     let i = self.files.len() - 1;
                     self.activate(i);
                 }
+                self.remember_last_opened();
             }
             Err(e) => {
                 self.active_mut().status = format!("open failed: {e}");
@@ -206,13 +304,38 @@ impl MgenApp {
         }
     }
 
+    /// Save the active file's path as `last_opened` so the next launch picks
+    /// up where the user left off. Quietly ignores save errors — this is a
+    /// nice-to-have, not load-bearing.
+    fn remember_last_opened(&mut self) {
+        let path_str = self
+            .active()
+            .path
+            .as_ref()
+            .map(|p| p.display().to_string());
+        if self.settings.last_opened == path_str {
+            return;
+        }
+        self.settings.last_opened = path_str;
+        let _ = self.settings.save();
+    }
+
     fn activate(&mut self, i: usize) {
+        // Snapshot the previous tab's camera so we can restore it on return.
+        let prev = self.active;
+        if prev < self.files.len() {
+            self.files[prev].camera = Some(self.viewer.camera_snapshot());
+        }
         self.active = i;
-        self.viewer.reset_view();
         if self.active().last_result.is_none() {
             self.compile_active();
         } else {
             self.refresh_viewer_from_active();
+        }
+        // Restore stored camera if we have one; otherwise leave Viewer's
+        // freshly-fitted view in place.
+        if let Some(snap) = self.files[self.active].camera {
+            self.viewer.restore_camera(snap);
         }
     }
 
@@ -248,6 +371,7 @@ impl MgenApp {
             }
         }
         self.files[i].last_result = Some(r);
+        self.files[i].needs_compile = false;
     }
 
     /// Close the tab at `i`. If it's the only open tab, replace it with a
@@ -271,6 +395,9 @@ impl MgenApp {
             } else {
                 self.refresh_viewer_from_active();
             }
+            if let Some(snap) = self.files[self.active].camera {
+                self.viewer.restore_camera(snap);
+            }
         } else if i < self.active {
             self.active -= 1;
         }
@@ -288,6 +415,7 @@ impl MgenApp {
         f.dirty = false;
         f.status = format!("saved {}", path.display());
         self.refresh_file_lists();
+        self.remember_last_opened();
     }
 
     fn refresh_file_lists(&mut self) {
@@ -423,12 +551,13 @@ impl MgenApp {
     }
 
     fn start_llm_textures(&mut self, ctx: egui::Context) {
-        let (src_empty, path_opt, src) = {
+        let (src_empty, path_opt, src, cfg) = {
             let f = self.active();
             (
                 f.source.trim().is_empty(),
                 f.path.clone(),
                 f.source.clone(),
+                f.texture_cfg.clone(),
             )
         };
         if src_empty {
@@ -456,10 +585,24 @@ impl MgenApp {
         af.status = "generating textures with Gemini Image…".into();
 
         std::thread::spawn(move || {
-            let outcome = run_llm_textures(src, path, api_key);
+            let outcome = run_llm_textures(src, path, api_key, cfg);
             let _ = tx.send(outcome);
             ctx.request_repaint();
         });
+    }
+
+    /// Drop the receiver for the active file's in-flight LLM call. The worker
+    /// thread keeps running but its result is discarded silently — there's no
+    /// portable way to abort an in-progress HTTP request through reqwest's
+    /// blocking client.
+    fn cancel_active_llm(&mut self) {
+        let f = self.active_mut();
+        if f.llm_in_flight.is_none() {
+            return;
+        }
+        f.llm_rx = None;
+        f.llm_in_flight = None;
+        f.status = "llm: cancelled (background call may still finish but result is dropped)".into();
     }
 
     /// Prefer a key saved in Options; fall back to the `GEMINI_API_KEY` env
@@ -472,6 +615,18 @@ impl MgenApp {
             .ok()
             .map(|v| v.trim().to_string())
             .filter(|v| !v.is_empty())
+    }
+
+    /// Build (or reuse) the LLM system instruction. It pulls in the full
+    /// stdlib + grammar so it isn't free; cache the string and clone the Arc
+    /// across spawns instead of regenerating per call.
+    fn cached_system_instruction(&mut self) -> Arc<String> {
+        if self.system_instruction_cache.is_none() {
+            self.system_instruction_cache = Some(Arc::new(system_instruction(
+                &StdlibIndex::default(),
+            )));
+        }
+        self.system_instruction_cache.as_ref().unwrap().clone()
     }
 
     fn spawn_llm(
@@ -491,6 +646,7 @@ impl MgenApp {
         };
 
         let thinking = self.settings.thinking_level();
+        let sys_instr = self.cached_system_instruction();
 
         let (tx, rx) = std::sync::mpsc::channel();
         let f = self.active_mut();
@@ -506,7 +662,7 @@ impl MgenApp {
         };
 
         std::thread::spawn(move || {
-            let outcome = run_llm(kind, prompt, existing, api_key, thinking);
+            let outcome = run_llm(kind, prompt, existing, api_key, thinking, sys_instr);
             let _ = tx.send(outcome);
             ctx.request_repaint();
         });
@@ -522,9 +678,16 @@ impl MgenApp {
                 rx.try_recv().ok().map(|o| (i, o))
             })
             .collect();
+        if pending.is_empty() {
+            return;
+        }
         for (i, outcome) in pending {
             self.apply_llm_outcome(i, outcome);
         }
+        // Generate / Modify / Animate / Textures may have written DSL or PNGs
+        // to disk; refresh the sidebar so the user sees them without a
+        // manual save round-trip.
+        self.refresh_file_lists();
     }
 
     fn apply_llm_outcome(&mut self, i: usize, outcome: LlmOutcome) {
@@ -537,17 +700,14 @@ impl MgenApp {
             return;
         }
 
-        let kind_label = match outcome.kind {
-            LlmKind::Generate => "generate",
-            LlmKind::Modify => "modify",
-            LlmKind::Animate => "animate",
-            LlmKind::Textures => "textures",
-        };
+        let kind_label = outcome.kind.label();
 
         // Drop the returned DSL into the file's buffer so the user can inspect
         // / save it even when validation later fails.
         f.source = outcome.dsl;
         f.dirty = f.source != f.last_saved_source;
+        f.needs_compile = true;
+        f.last_edit_at = Some(Instant::now());
 
         // Textures wrote PNG files next to the .mg; persist the spliced DSL
         // there too so the texture paths resolve on the next GLB export.
@@ -605,26 +765,80 @@ impl MgenApp {
         self.files.iter().any(|f| f.llm_in_flight.is_some())
     }
 
+    fn count_in_flight(&self) -> usize {
+        self.files
+            .iter()
+            .filter(|f| f.llm_in_flight.is_some())
+            .count()
+    }
+
+    /// Trigger a compile if the active buffer's debounce window has elapsed.
+    /// Also keeps repainting while the window is open so the UI lands on the
+    /// recompile naturally.
+    fn drive_compile_debounce(&mut self, ctx: &egui::Context) {
+        let i = self.active;
+        let f = &self.files[i];
+        if !f.needs_compile {
+            return;
+        }
+        if let Some(t) = f.last_edit_at {
+            let elapsed = t.elapsed();
+            if elapsed >= COMPILE_DEBOUNCE {
+                self.compile_active();
+            } else {
+                ctx.request_repaint_after(COMPILE_DEBOUNCE - elapsed);
+            }
+        }
+    }
+
     fn ui_toolbar(&mut self, ui: &mut egui::Ui) {
         egui::menu::bar(ui, |ui| {
-            if ui.button("New").clicked() {
+            if ui
+                .button("New")
+                .on_hover_text("Create a fresh untitled .mg buffer")
+                .clicked()
+            {
                 self.new_untitled();
             }
-            if ui.button("Open…").clicked() {
+            if ui
+                .button("Open…")
+                .on_hover_text("Open a .mg file from disk")
+                .clicked()
+            {
                 self.open_dialog();
             }
-            if ui.button("Save").clicked() {
+            if ui
+                .button("Save")
+                .on_hover_text("Save the active buffer")
+                .clicked()
+            {
                 self.save();
             }
             if ui.button("Save As…").clicked() {
                 self.save_as();
             }
             ui.separator();
-            if ui.button("Build GLB").clicked() {
+            if ui
+                .button("Build GLB")
+                .on_hover_text("Compile and export .glb next to the source")
+                .clicked()
+            {
                 self.build_and_export();
             }
-            if ui.button("Re-check").clicked() {
+            if ui
+                .button("Re-check")
+                .on_hover_text("Re-run validate without exporting")
+                .clicked()
+            {
                 self.compile_active();
+            }
+            ui.separator();
+            if ui
+                .button("Frame")
+                .on_hover_text("Re-fit the camera to the scene")
+                .clicked()
+            {
+                self.viewer.frame_view();
             }
             ui.separator();
             if ui.button("Options…").clicked() {
@@ -679,50 +893,54 @@ impl MgenApp {
                 ui.add_space(12.0);
                 let mut to_open: Option<PathBuf> = None;
 
-                ui.heading("Examples");
-                ui.separator();
-                for ex in &self.examples {
-                    let name = ex
-                        .file_name()
-                        .map(|n| n.to_string_lossy().into_owned())
-                        .unwrap_or_else(|| ex.to_string_lossy().into_owned());
-                    let loaded_idx = self.file_index_by_path(ex);
-                    let selected = loaded_idx == Some(self.active);
-                    let mut label = name;
-                    if let Some(idx) = loaded_idx {
-                        if self.files[idx].llm_in_flight.is_some() {
-                            label.push_str(" ⟳");
-                        }
-                    }
-                    if ui.selectable_label(selected, label).clicked() {
-                        to_open = Some(ex.clone());
-                    }
-                }
-
-                ui.add_space(12.0);
-                ui.heading("Generated");
-                ui.separator();
-                if self.generated.is_empty() {
-                    ui.label("(none yet)");
-                } else {
-                    for gen in &self.generated {
-                        let name = gen
-                            .file_name()
-                            .map(|n| n.to_string_lossy().into_owned())
-                            .unwrap_or_else(|| gen.to_string_lossy().into_owned());
-                        let loaded_idx = self.file_index_by_path(gen);
-                        let selected = loaded_idx == Some(self.active);
-                        let mut label = name;
-                        if let Some(idx) = loaded_idx {
-                            if self.files[idx].llm_in_flight.is_some() {
-                                label.push_str(" ⟳");
+                egui::CollapsingHeader::new("Examples")
+                    .default_open(true)
+                    .show(ui, |ui| {
+                        for ex in &self.examples {
+                            let name = ex
+                                .file_name()
+                                .map(|n| n.to_string_lossy().into_owned())
+                                .unwrap_or_else(|| ex.to_string_lossy().into_owned());
+                            let loaded_idx = self.file_index_by_path(ex);
+                            let selected = loaded_idx == Some(self.active);
+                            let mut label = name;
+                            if let Some(idx) = loaded_idx {
+                                if self.files[idx].llm_in_flight.is_some() {
+                                    label.push_str(" ⟳");
+                                }
+                            }
+                            if ui.selectable_label(selected, label).clicked() {
+                                to_open = Some(ex.clone());
                             }
                         }
-                        if ui.selectable_label(selected, label).clicked() {
-                            to_open = Some(gen.clone());
+                    });
+
+                ui.add_space(8.0);
+                egui::CollapsingHeader::new("Generated")
+                    .default_open(true)
+                    .show(ui, |ui| {
+                        if self.generated.is_empty() {
+                            ui.label("(none yet)");
+                        } else {
+                            for gen in &self.generated {
+                                let name = gen
+                                    .file_name()
+                                    .map(|n| n.to_string_lossy().into_owned())
+                                    .unwrap_or_else(|| gen.to_string_lossy().into_owned());
+                                let loaded_idx = self.file_index_by_path(gen);
+                                let selected = loaded_idx == Some(self.active);
+                                let mut label = name;
+                                if let Some(idx) = loaded_idx {
+                                    if self.files[idx].llm_in_flight.is_some() {
+                                        label.push_str(" ⟳");
+                                    }
+                                }
+                                if ui.selectable_label(selected, label).clicked() {
+                                    to_open = Some(gen.clone());
+                                }
+                            }
                         }
-                    }
-                }
+                    });
 
                 if let Some(p) = to_open {
                     self.open_path(&p);
@@ -738,6 +956,9 @@ impl MgenApp {
                 let resp = ui.add_sized(
                     [ui.available_width(), 0.0],
                     egui::TextEdit::multiline(&mut self.files[self.active].source)
+                        // code_editor() implies lock_focus(true), so Tab inserts
+                        // a tab character instead of moving focus out of the
+                        // editor — the right behavior for a code surface.
                         .code_editor()
                         .desired_rows(20)
                         .desired_width(f32::INFINITY)
@@ -747,17 +968,19 @@ impl MgenApp {
                     changed = true;
                 }
             });
+
         if changed {
             let i = self.active;
             self.files[i].dirty = self.files[i].source != self.files[i].last_saved_source;
-            self.compile_active();
+            self.files[i].needs_compile = true;
+            self.files[i].last_edit_at = Some(Instant::now());
+            // Compilation itself is gated by `drive_compile_debounce` so a
+            // burst of keystrokes only re-parses once the user pauses.
         }
     }
 
-    fn ui_diagnostics(&self, ui: &mut egui::Ui) {
-        ui.heading("Diagnostics");
-        ui.separator();
-        let f = self.active();
+    fn ui_diagnostics(&mut self, ui: &mut egui::Ui) {
+        let f = &self.files[self.active];
         let Some(result) = &f.last_result else {
             ui.label("(no build yet)");
             return;
@@ -790,11 +1013,9 @@ impl MgenApp {
         }
     }
 
-    fn ui_summary(&self, ui: &mut egui::Ui) {
-        ui.heading("Scene");
-        ui.separator();
-        let f = self.active();
-        let Some(result) = &f.last_result else {
+    fn ui_summary(&mut self, ui: &mut egui::Ui) {
+        let i = self.active;
+        let Some(result) = &self.files[i].last_result else {
             ui.label("(no build yet)");
             return;
         };
@@ -829,19 +1050,35 @@ impl MgenApp {
 
         // Texture roster. Listing each path (resolved against the .mg dir)
         // with a green ✓ / red ✗ lets users verify their files exist without
-        // waiting for the export failure.
-        let source_dir = f.path.as_deref().and_then(|p| p.parent());
+        // waiting for the export failure. Existence is cached for ~1.5s so
+        // we don't stat every PNG every frame.
+        // Own `source_dir` so the existence-cache call below can take
+        // `&mut self` without overlapping borrows from `self.files[i].path`.
+        let source_dir: Option<PathBuf> = self.files[i]
+            .path
+            .as_deref()
+            .and_then(|p| p.parent())
+            .map(|p| p.to_path_buf());
         let texture_slots = gather_texture_refs(scene);
         if !texture_slots.is_empty() {
             ui.add_space(8.0);
             ui.label(format!("textures: {}", texture_slots.len()));
+            // Pre-resolve and check existence once before the ScrollArea so
+            // we don't double-borrow self in the closure.
+            let rows: Vec<(String, &'static str, PathBuf, bool)> = texture_slots
+                .into_iter()
+                .map(|(mat, slot, rel)| {
+                    let resolved = resolve_for_check(&rel, source_dir.as_deref());
+                    let exists = self.cached_exists(&resolved);
+                    (mat, slot, rel, exists)
+                })
+                .collect();
             egui::ScrollArea::vertical()
                 .auto_shrink([false, true])
-                .max_height(120.0)
+                .max_height(140.0)
                 .show(ui, |ui| {
-                    for (mat_name, slot, rel_path) in &texture_slots {
-                        let resolved = resolve_for_check(rel_path, source_dir);
-                        let (mark, color) = if resolved.exists() {
+                    for (mat_name, slot, rel_path, exists) in &rows {
+                        let (mark, color) = if *exists {
                             ("✓", egui::Color32::from_rgb(80, 200, 120))
                         } else {
                             ("✗", egui::Color32::from_rgb(230, 100, 100))
@@ -849,17 +1086,30 @@ impl MgenApp {
                         ui.horizontal_wrapped(|ui| {
                             ui.colored_label(color, mark);
                             ui.label(format!("{mat_name}.{slot}"));
-                            ui.label(
-                                rel_path
-                                    .to_string_lossy()
-                                    .chars()
-                                    .take(40)
-                                    .collect::<String>(),
-                            );
+                            let display = ellipsize_path(rel_path, 36);
+                            ui.label(display)
+                                .on_hover_text(rel_path.to_string_lossy());
                         });
                     }
                 });
         }
+    }
+
+    /// Stat-cached existence check. The texture-roster paint runs every frame
+    /// so a naive `Path::exists()` would hit the FS once per slot per frame.
+    fn cached_exists(&mut self, path: &Path) -> bool {
+        let now = Instant::now();
+        if let Some((_mtime, exists, checked)) = self.tex_exists_cache.get(path) {
+            if now.duration_since(*checked) < TEX_EXISTS_TTL {
+                return *exists;
+            }
+        }
+        let meta = fs::metadata(path);
+        let exists = meta.is_ok();
+        let mtime = meta.ok().and_then(|m| m.modified().ok());
+        self.tex_exists_cache
+            .insert(path.to_path_buf(), (mtime, exists, now));
+        exists
     }
 
     fn ui_animation(&mut self, ui: &mut egui::Ui) {
@@ -867,46 +1117,86 @@ impl MgenApp {
         if clips.is_empty() {
             return;
         }
-        ui.heading("Animation");
-        ui.separator();
 
         let mut active = self.viewer.active_clips();
+        let mut times = self.viewer.anim_times();
         // A fresh compile can briefly desync the snapshot lengths; pad so
         // iteration below is safe.
         if active.len() != clips.len() {
             active.resize(clips.len(), false);
         }
+        if times.len() != clips.len() {
+            times.resize(clips.len(), 0.0);
+        }
 
         let playing = self.viewer.is_playing();
         ui.horizontal(|ui| {
             let label = if playing { "⏸ Pause" } else { "▶ Play" };
-            if ui.button(label).clicked() {
+            if ui
+                .button(label)
+                .on_hover_text("Toggle clip playback")
+                .clicked()
+            {
                 self.viewer.set_playing(!playing);
             }
-            if ui.button("Reset").clicked() {
+            if ui
+                .button("Reset")
+                .on_hover_text("Rewind every clip to t = 0")
+                .clicked()
+            {
                 self.viewer.reset_anim_times();
             }
-            if ui.button("All").clicked() {
+            if ui
+                .button("All")
+                .on_hover_text("Activate every clip")
+                .clicked()
+            {
                 self.viewer.set_all_clips_active(true);
             }
-            if ui.button("None").clicked() {
+            if ui
+                .button("None")
+                .on_hover_text("Deactivate every clip")
+                .clicked()
+            {
                 self.viewer.set_all_clips_active(false);
             }
         });
 
         ui.add_space(4.0);
         for (i, c) in clips.iter().enumerate() {
-            let mut on = active[i];
-            let label = format!("{}  ·  {:.2}s", c.name, c.duration);
-            if ui.checkbox(&mut on, label).changed() {
-                self.viewer.set_clip_active(i, on);
-            }
+            ui.group(|ui| {
+                ui.horizontal(|ui| {
+                    let mut on = active[i];
+                    if ui
+                        .checkbox(&mut on, "")
+                        .on_hover_text("Include this clip in the active pose")
+                        .changed()
+                    {
+                        self.viewer.set_clip_active(i, on);
+                    }
+                    ui.label(egui::RichText::new(&c.name).strong());
+                    ui.label(
+                        egui::RichText::new(format!("{:.2}s", c.duration))
+                            .small()
+                            .weak(),
+                    );
+                });
+                let dur = c.duration.max(0.001);
+                let mut t = times[i].clamp(0.0, dur);
+                let resp = ui.add(
+                    egui::Slider::new(&mut t, 0.0..=dur)
+                        .text("t")
+                        .clamping(egui::SliderClamping::Always)
+                        .fixed_decimals(2),
+                );
+                if resp.changed() {
+                    self.viewer.seek_clip(i, t);
+                }
+            });
         }
     }
 
     fn ui_llm(&mut self, ui: &mut egui::Ui) {
-        ui.heading("LLM");
-        ui.separator();
         let has_key = self.resolve_api_key().is_some();
         if !has_key {
             ui.colored_label(
@@ -914,36 +1204,6 @@ impl MgenApp {
                 "no Gemini API key — set one in Options…",
             );
         }
-
-        let current = self.settings.thinking_level();
-        ui.horizontal(|ui| {
-            ui.label("Thinking:");
-            egui::ComboBox::from_id_salt("llm_thinking_level")
-                .selected_text(thinking_level_label(current))
-                .show_ui(ui, |ui| {
-                    for level in THINKING_LEVELS {
-                        let selected = level == current;
-                        if ui
-                            .selectable_label(selected, thinking_level_label(level))
-                            .clicked()
-                            && !selected
-                        {
-                            self.settings.thinking_level = thinking_level_key(level).to_string();
-                            match self.settings.save() {
-                                Ok(()) => {
-                                    self.active_mut().status =
-                                        format!("thinking level: {}", thinking_level_key(level));
-                                }
-                                Err(e) => {
-                                    self.active_mut().status =
-                                        format!("options: save failed: {e}");
-                                }
-                            }
-                        }
-                    }
-                });
-        });
-        ui.add_space(4.0);
 
         // Gate buttons on *this file's* in-flight state only — other files can
         // still have jobs running in parallel and the user can kick off a new
@@ -960,10 +1220,14 @@ impl MgenApp {
                 .desired_width(f32::INFINITY),
         );
         let gen_enabled = has_key && !busy;
-        if ui
+        let gen_btn = ui
             .add_enabled(gen_enabled, egui::Button::new("Generate"))
-            .clicked()
-        {
+            .on_hover_text(
+                "Ask Gemini to write a fresh .mg from your prompt. \
+                 If the active buffer has content you'll be asked whether \
+                 to overwrite or open in a new tab.",
+            );
+        if gen_btn.clicked() {
             let ctx = ui.ctx().clone();
             self.start_llm_generate(ctx);
         }
@@ -979,6 +1243,7 @@ impl MgenApp {
         let mod_enabled = has_key && !busy && !src_empty;
         if ui
             .add_enabled(mod_enabled, egui::Button::new("Modify"))
+            .on_hover_text("Smallest-edit rewrite of the current buffer")
             .clicked()
         {
             let ctx = ui.ctx().clone();
@@ -996,6 +1261,7 @@ impl MgenApp {
         let anim_enabled = has_key && !busy && !src_empty;
         if ui
             .add_enabled(anim_enabled, egui::Button::new("Animate"))
+            .on_hover_text("Append joints/clips/skeleton to the current buffer")
             .clicked()
         {
             let ctx = ui.ctx().clone();
@@ -1003,19 +1269,75 @@ impl MgenApp {
         }
 
         ui.add_space(8.0);
-        ui.label("Textures (albedo only):");
+        ui.label("Textures:");
         ui.label(
             egui::RichText::new(
                 "generates a base_color PNG per material using Gemini Image, \
-                 writes to ./textures/ next to the .mg, and splices base_color_texture \
-                 into each material",
+                 writes to ./textures/ next to the .mg, and splices the \
+                 resulting paths into each material",
             )
             .small()
             .weak(),
         );
+
+        // Advanced texture knobs — the CLI exposes all of these and the GUI
+        // used to silently pin them to defaults. Persisted per-file so users
+        // can iterate.
+        let cfg_open = self.active().texture_cfg.expanded;
+        let header = egui::CollapsingHeader::new("Texture options")
+            .default_open(cfg_open)
+            .id_salt(("tex_opts", self.active));
+        let resp = header.show(ui, |ui| {
+            let cfg = &mut self.files[self.active].texture_cfg;
+            egui::Grid::new("tex_opts_grid")
+                .num_columns(2)
+                .spacing([8.0, 4.0])
+                .show(ui, |ui| {
+                    ui.label("Style").on_hover_text(
+                        "Free-form prompt suffix appended to every material's image prompt",
+                    );
+                    ui.add(
+                        egui::TextEdit::singleline(&mut cfg.style)
+                            .hint_text("photorealistic")
+                            .desired_width(f32::INFINITY),
+                    );
+                    ui.end_row();
+
+                    ui.label("Texture size")
+                        .on_hover_text("Cap on the longer side, in pixels (0 = keep native)");
+                    ui.add(
+                        egui::DragValue::new(&mut cfg.texture_size)
+                            .range(0..=4096)
+                            .speed(8.0),
+                    );
+                    ui.end_row();
+
+                    ui.label("Normal strength")
+                        .on_hover_text("Slope multiplier for the derived normal map");
+                    ui.add(
+                        egui::DragValue::new(&mut cfg.normal_strength)
+                            .range(0.0..=8.0)
+                            .speed(0.05),
+                    );
+                    ui.end_row();
+                });
+
+            ui.checkbox(&mut cfg.no_normal, "Skip normal map");
+            ui.checkbox(&mut cfg.no_metallic_roughness, "Skip metallic/roughness");
+            ui.checkbox(&mut cfg.no_occlusion, "Skip occlusion (AO)");
+            ui.checkbox(&mut cfg.force, "Re-generate even if texture file exists");
+            ui.checkbox(&mut cfg.no_cache, "Bypass on-disk image cache");
+        });
+        // Persist whether the expander is open so it survives recompiles.
+        self.files[self.active].texture_cfg.expanded = resp.openness > 0.5;
+
         let tex_enabled = has_key && !busy && !src_empty && has_path;
         if ui
             .add_enabled(tex_enabled, egui::Button::new("Generate Textures"))
+            .on_hover_text(
+                "Run the textures pipeline with the options above. \
+                 Writes PNGs to ./textures/ next to the .mg.",
+            )
             .clicked()
         {
             let ctx = ui.ctx().clone();
@@ -1033,8 +1355,49 @@ impl MgenApp {
             ui.horizontal(|ui| {
                 ui.spinner();
                 ui.label("waiting for Gemini…");
+                if ui
+                    .button("Cancel")
+                    .on_hover_text(
+                        "Stop waiting and discard the result. \
+                         The background call may finish but its output is dropped.",
+                    )
+                    .clicked()
+                {
+                    self.cancel_active_llm();
+                }
             });
         }
+    }
+
+    /// Floating overlay buttons drawn on top of the viewport. Keeps the
+    /// camera controls within the user's eye line instead of forcing a trip
+    /// to the toolbar.
+    fn ui_viewport_overlay(&mut self, ctx: &egui::Context, viewport_rect: egui::Rect) {
+        egui::Area::new(egui::Id::new("viewport_overlay"))
+            .fixed_pos(viewport_rect.left_top() + egui::vec2(8.0, 8.0))
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                egui::Frame::popup(ui.style())
+                    .fill(ui.visuals().window_fill().linear_multiply(0.85))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            if ui
+                                .small_button("Frame")
+                                .on_hover_text("Re-fit the camera to the scene")
+                                .clicked()
+                            {
+                                self.viewer.frame_view();
+                            }
+                            ui.label(
+                                egui::RichText::new(
+                                    "drag: orbit · shift+drag/middle/right: pan · scroll: zoom",
+                                )
+                                .small()
+                                .weak(),
+                            );
+                        });
+                    });
+            });
     }
 
     fn ui_options(&mut self, ctx: &egui::Context) {
@@ -1052,8 +1415,8 @@ impl MgenApp {
             .show(ctx, |ui| {
                 ui.heading("Gemini API key");
                 ui.label(
-                    "Used by Generate / Modify / Animate. Stored in your user config \
-                     directory and persists between sessions.",
+                    "Used by Generate / Modify / Animate / Textures. Stored in your user \
+                     config directory and persists between sessions.",
                 );
                 ui.add_space(6.0);
                 ui.add(
@@ -1075,6 +1438,30 @@ impl MgenApp {
                 }
 
                 ui.add_space(12.0);
+                ui.heading("Thinking budget");
+                ui.label(
+                    "Cap on Gemini's hidden reasoning tokens per call. Higher = better DSL on \
+                     hard prompts but slower and more expensive.",
+                );
+                ui.add_space(6.0);
+                let current = self.settings.thinking_level();
+                egui::ComboBox::from_id_salt("opts_thinking_level")
+                    .selected_text(thinking_level_label(current))
+                    .show_ui(ui, |ui| {
+                        for level in THINKING_LEVELS {
+                            let selected = level == current;
+                            if ui
+                                .selectable_label(selected, thinking_level_label(level))
+                                .clicked()
+                                && !selected
+                            {
+                                self.settings.thinking_level =
+                                    thinking_level_key(level).to_string();
+                            }
+                        }
+                    });
+
+                ui.add_space(12.0);
                 ui.horizontal(|ui| {
                     if ui.button("Save").clicked() {
                         self.settings.gemini_api_key =
@@ -1084,7 +1471,7 @@ impl MgenApp {
                                 let msg = if self.settings.gemini_api_key.is_empty() {
                                     "options: cleared saved Gemini API key".to_string()
                                 } else {
-                                    "options: Gemini API key saved".to_string()
+                                    "options: settings saved".to_string()
                                 };
                                 self.active_mut().status = msg;
                                 close_after = true;
@@ -1107,44 +1494,76 @@ impl MgenApp {
 
 impl eframe::App for MgenApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Drain LLM completions and run any pending compile from the editor's
+        // debounce window before painting.
         self.poll_llm();
+        self.drive_compile_debounce(ctx);
 
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| self.ui_toolbar(ui));
         egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.label(&self.active().status);
+                let n = self.count_in_flight();
+                if n > 0 {
+                    ui.separator();
+                    ui.spinner();
+                    ui.label(format!(
+                        "{n} llm call{} in flight",
+                        if n == 1 { "" } else { "s" }
+                    ));
+                }
             });
         });
         egui::SidePanel::left("sidebar")
             .default_width(190.0)
             .show(ctx, |ui| self.ui_sidebar(ui));
         egui::SidePanel::right("inspector")
-            .default_width(320.0)
+            .default_width(340.0)
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        self.ui_diagnostics(ui);
-                        ui.add_space(12.0);
-                        self.ui_summary(ui);
-                        ui.add_space(12.0);
-                        self.ui_animation(ui);
-                        ui.add_space(12.0);
-                        self.ui_llm(ui);
+                        // CollapsingHeader so users can fold what they don't
+                        // need; keeps the most-actioned section (LLM) reachable
+                        // without scrolling past three other groups.
+                        egui::CollapsingHeader::new("Diagnostics")
+                            .default_open(true)
+                            .show(ui, |ui| self.ui_diagnostics(ui));
+                        egui::CollapsingHeader::new("Scene")
+                            .default_open(true)
+                            .show(ui, |ui| self.ui_summary(ui));
+                        if !self.viewer.clips_snapshot().is_empty() {
+                            egui::CollapsingHeader::new("Animation")
+                                .default_open(true)
+                                .show(ui, |ui| self.ui_animation(ui));
+                        }
+                        egui::CollapsingHeader::new("LLM")
+                            .default_open(true)
+                            .show(ui, |ui| self.ui_llm(ui));
                     });
             });
 
         egui::TopBottomPanel::top("editor")
             .resizable(true)
-            .default_height(300.0)
+            .default_height(260.0)
             .min_height(80.0)
             .show(ctx, |ui| self.ui_editor(ui));
 
+        let mut viewport_rect: Option<egui::Rect> = None;
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::Frame::canvas(ui.style()).show(ui, |ui| {
-                self.viewer.show(ui);
+                let resp = self.viewer.show(ui);
+                viewport_rect = Some(resp.rect);
             });
         });
+        if let Some(r) = viewport_rect {
+            self.ui_viewport_overlay(ctx, r);
+        }
+
+        // After the editor has rendered for the active tab, snapshot its
+        // camera back into the FileState so future tab switches restore it.
+        let snap = self.viewer.camera_snapshot();
+        self.files[self.active].camera = Some(snap);
 
         self.ui_options(ctx);
 
@@ -1232,6 +1651,33 @@ fn resolve_for_check(path: &Path, base: Option<&Path>) -> PathBuf {
     }
 }
 
+/// Show "…/dir/filename.png", keeping the filename intact and ellipsizing
+/// the directory prefix from the left if the whole thing is too long.
+fn ellipsize_path(path: &Path, max_chars: usize) -> String {
+    let s = path.to_string_lossy();
+    let n = s.chars().count();
+    if n <= max_chars {
+        return s.into_owned();
+    }
+    // Always keep the filename intact — that's the part the user actually
+    // recognizes. Trim the prefix and prepend an ellipsis.
+    let file_chars = path
+        .file_name()
+        .map(|f| f.to_string_lossy().chars().count())
+        .unwrap_or(0);
+    if file_chars + 1 >= max_chars {
+        // Filename alone is too long; keep its tail.
+        let tail: String = s.chars().rev().take(max_chars.saturating_sub(1)).collect();
+        let tail: String = tail.chars().rev().collect();
+        return format!("…{tail}");
+    }
+    let keep = max_chars.saturating_sub(file_chars + 1); // 1 for ellipsis
+    let prefix_chars = n.saturating_sub(file_chars);
+    let drop = prefix_chars.saturating_sub(keep);
+    let visible: String = s.chars().skip(drop).collect();
+    format!("…{visible}")
+}
+
 fn offset_to_line_col(src: &str, offset: usize) -> (usize, usize) {
     let mut line = 1usize;
     let mut col = 1usize;
@@ -1255,6 +1701,7 @@ fn run_llm(
     existing: Option<String>,
     api_key: String,
     thinking: ThinkingLevel,
+    sys_instr: Arc<String>,
 ) -> LlmOutcome {
     let client = GeminiClient::new(api_key);
     let seed = existing
@@ -1345,7 +1792,7 @@ fn run_llm(
     cfg.model = DEFAULT_MODEL.to_string();
     cfg.seed = Some(seed);
     cfg.thinking_level = Some(thinking);
-    cfg.system_instruction = Some(system_instruction(&StdlibIndex::default()));
+    cfg.system_instruction = Some((*sys_instr).clone());
 
     let repair = RepairConfig {
         max_iters: 2,
@@ -1379,7 +1826,16 @@ fn run_llm(
 /// thread and shape the result into an [`LlmOutcome`] so it rides the same
 /// channel as the text-LLM paths. Reports "PNGs written" in the `calls` slot
 /// so `poll_llm` can display a counter without adding a new field.
-fn run_llm_textures(src: String, mg_path: PathBuf, api_key: String) -> LlmOutcome {
+///
+/// Note: parsing and `build_plan` happen on this thread too — the previous
+/// version did them on the UI thread before spawning, which stalled the
+/// frame for big scenes.
+fn run_llm_textures(
+    src: String,
+    mg_path: PathBuf,
+    api_key: String,
+    cfg: TextureUiConfig,
+) -> LlmOutcome {
     let ast = match mgen_dsl::parse(&src) {
         Ok(a) => a,
         Err(e) => {
@@ -1399,22 +1855,22 @@ fn run_llm_textures(src: String, mg_path: PathBuf, api_key: String) -> LlmOutcom
         out: None,
         glb: None,
         textures_dir: PathBuf::from("textures"),
-        style: "photorealistic".to_string(),
+        style: cfg.style.clone(),
         model: DEFAULT_IMAGE_MODEL.to_string(),
-        force: false,
+        force: cfg.force,
         dry_run: false,
         no_build: true,
-        no_cache: false,
+        no_cache: cfg.no_cache,
         api_key: Some(api_key.clone()),
         no_pbr: false,
-        no_normal: false,
-        no_metallic_roughness: false,
-        no_occlusion: false,
-        normal_strength: 1.5,
-        texture_size: mgen_llm::textures::DEFAULT_TEXTURE_SIZE,
+        no_normal: cfg.no_normal,
+        no_metallic_roughness: cfg.no_metallic_roughness,
+        no_occlusion: cfg.no_occlusion,
+        normal_strength: cfg.normal_strength,
+        texture_size: cfg.texture_size,
     };
 
-    let cache = maybe_cache(false);
+    let cache = maybe_cache(cfg.no_cache);
     let plans = build_plan(&src, &ast, &args, cache.as_ref());
 
     // If nothing needs generating *or* deriving, leave the source untouched so

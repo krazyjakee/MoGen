@@ -1,8 +1,9 @@
 // mgen-generate seed=1776903446478943000
-// prompt: fix the arm animations
+// prompt: add a face
 
 material "skin"  (color=[0.90, 0.75, 0.62], roughness=0.7, base_color_texture="textures/skin_albedo.png", normal_texture="textures/skin_normal.png", metallic_roughness_texture="textures/skin_metallicRoughness.png", occlusion_texture="textures/skin_ao.png")
 material "cloth" (color=[0.25, 0.35, 0.60], roughness=0.9, base_color_texture="textures/cloth_albedo.png", normal_texture="textures/cloth_normal.png", metallic_roughness_texture="textures/cloth_metallicRoughness.png", occlusion_texture="textures/cloth_ao.png")
+material "black" (color=[0.1, 0.1, 0.1], roughness=0.8)
 
 scene {
   // Torso has custom hip connectors on its bottom face so the two legs
@@ -15,7 +16,14 @@ scene {
   }
 
   cylinder "neck"  (radius=0.06, height=0.15, mat="skin")
-  sphere   "head"  (radius=0.25, mat="skin")
+  sphere   "head"  (radius=0.25, mat="skin") {
+    connector "eye_l_pos" (at=[-0.1, 0.08, -0.22], dir=[0, 0, -1])
+    connector "eye_r_pos" (at=[ 0.1, 0.08, -0.22], dir=[0, 0, -1])
+    connector "mouth_pos" (at=[0, -0.08, -0.23], dir=[0, 0, -1])
+  }
+  sphere   "eye_l" (radius=0.03, mat="black")
+  sphere   "eye_r" (radius=0.03, mat="black")
+  rounded_box "mouth" (size=[0.08, 0.02, 0.02], radius=0.005, mat="black")
   capsule  "arm_l" (radius=0.08, height=0.8, mat="skin")
   capsule  "arm_r" (radius=0.08, height=0.8, mat="skin")
   sphere   "hand_l" (radius=0.09, mat="skin")
@@ -32,6 +40,9 @@ scene {
   // Head tops the body (default socket=top, plug=bottom).
   attach (parent="body", child="neck")
   attach (parent="neck", child="head")
+  attach (parent="head", child="eye_l", socket="eye_l_pos", plug="back")
+  attach (parent="head", child="eye_r", socket="eye_r_pos", plug="back")
+  attach (parent="head", child="mouth", socket="mouth_pos", plug="back")
 
   // Arms hang down from the custom shoulder connectors.
   attach (parent="body", child="arm_l", socket="shoulder_l", plug="top")

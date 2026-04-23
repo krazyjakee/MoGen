@@ -13,6 +13,10 @@ pub struct Settings {
     /// unknown falls back to the library default at read time.
     #[serde(default)]
     pub thinking_level: String,
+    /// Absolute path of the last `.mg` opened in the GUI. Used at startup to
+    /// reopen the previous file instead of always falling back to chair.mg.
+    #[serde(default)]
+    pub last_opened: Option<String>,
 }
 
 impl Settings {

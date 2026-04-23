@@ -462,6 +462,17 @@ pub struct OrbitCamera {
     pub target: Vec3,
 }
 
+/// Lightweight snapshot of camera pose, suitable for persisting per-file so
+/// that switching tabs preserves the user's framing.
+#[derive(Clone, Copy, Debug)]
+pub struct CameraSnapshot {
+    pub yaw: f32,
+    pub pitch: f32,
+    pub zoom: f32,
+    pub target: Vec3,
+    pub fit_distance: f32,
+}
+
 impl Default for OrbitCamera {
     fn default() -> Self {
         Self {
@@ -480,6 +491,42 @@ impl OrbitCamera {
     pub fn fit(&mut self, mesh: &FlatMesh) {
         self.target = mesh.center;
         self.fit_distance = mesh.radius * 2.8;
+    }
+
+    pub fn snapshot(&self) -> CameraSnapshot {
+        CameraSnapshot {
+            yaw: self.yaw,
+            pitch: self.pitch,
+            zoom: self.zoom,
+            target: self.target,
+            fit_distance: self.fit_distance,
+        }
+    }
+
+    pub fn restore(&mut self, snap: CameraSnapshot) {
+        self.yaw = snap.yaw;
+        self.pitch = snap.pitch;
+        self.zoom = snap.zoom;
+        self.target = snap.target;
+        self.fit_distance = snap.fit_distance;
+    }
+
+    /// Translate the orbit target along the camera's right/up axes by the
+    /// given screen-space delta in pixels. Scales by `fit_distance` so the
+    /// pan feels consistent across models of wildly different sizes.
+    pub fn pan(&mut self, delta_px: egui::Vec2, viewport_height: f32) {
+        // World units per pixel at the focal plane, derived from the FOV used
+        // in `view_proj`. Same heuristic as Blender's middle-button pan.
+        let dist = self.distance().max(0.001);
+        let height = viewport_height.max(1.0);
+        let world_per_px = 2.0 * dist * (45.0_f32.to_radians() * 0.5).tan() / height;
+        let eye = self.eye();
+        let forward = (self.target - eye).normalize_or_zero();
+        // Right-handed: right = forward × up; recompute up so it stays planar.
+        let right = forward.cross(Vec3::Y).normalize_or_zero();
+        let up = right.cross(forward).normalize_or_zero();
+        self.target -= right * delta_px.x * world_per_px;
+        self.target += up * delta_px.y * world_per_px;
     }
 
     pub fn distance(&self) -> f32 {
@@ -1558,6 +1605,11 @@ pub struct ViewerState {
     /// with themselves (not with each other).
     pub anim_times: Vec<f32>,
     pub anim_playing: bool,
+    /// Static-pose bounding sphere captured at `set_scene` time. The Frame
+    /// button refits the camera against this so the view doesn't bounce with
+    /// active animations.
+    pub static_center: Vec3,
+    pub static_radius: f32,
 }
 
 impl ViewerState {
@@ -1611,6 +1663,8 @@ impl Viewer {
         let base_mesh = flatten(scene, base_dir);
         let mut st = self.state.lock().unwrap();
         st.camera.fit(&base_mesh);
+        st.static_center = base_mesh.center;
+        st.static_radius = base_mesh.radius;
         st.base_dir = base_dir.map(|p| p.to_path_buf());
 
         // Carry the previous active set across a recompile by matching on
@@ -1725,12 +1779,71 @@ impl Viewer {
         st.rebuild_mesh();
     }
 
+    /// Snapshot of the current per-clip playhead times, parallel to
+    /// `clips_snapshot()`.
+    pub fn anim_times(&self) -> Vec<f32> {
+        self.state.lock().unwrap().anim_times.clone()
+    }
+
+    /// Move a single clip's playhead. The mesh is re-flattened only when the
+    /// clip is currently active so paused/inactive clips don't pay any cost.
+    pub fn seek_clip(&self, idx: usize, t: f32) {
+        let mut st = self.state.lock().unwrap();
+        if idx >= st.anim_times.len() {
+            return;
+        }
+        let duration = st
+            .scene
+            .as_ref()
+            .and_then(|s| s.clips.get(idx))
+            .map(|c| c.duration)
+            .unwrap_or(0.0);
+        let clamped = if duration > 0.0 {
+            t.rem_euclid(duration)
+        } else {
+            0.0
+        };
+        if (st.anim_times[idx] - clamped).abs() < 1e-5 {
+            return;
+        }
+        st.anim_times[idx] = clamped;
+        let active = *st.clip_active.get(idx).unwrap_or(&false);
+        if active {
+            st.rebuild_mesh();
+        }
+    }
+
     /// Reset the user zoom multiplier back to 1.0 so the next `set_scene`
     /// renders the model at the uniform fit distance. Call this when loading
     /// a different file, so a previous model's zoom doesn't carry over.
     pub fn reset_view(&self) {
         let mut st = self.state.lock().unwrap();
         st.camera.zoom = 1.0;
+    }
+
+    /// Re-fit the camera to the captured static-pose bounding sphere and
+    /// reset orbit/zoom to defaults — i.e. "frame all".
+    pub fn frame_view(&self) {
+        let mut st = self.state.lock().unwrap();
+        let center = st.static_center;
+        let radius = st.static_radius.max(0.001);
+        st.camera.target = center;
+        st.camera.fit_distance = radius * 2.8;
+        st.camera.zoom = 1.0;
+        st.camera.yaw = std::f32::consts::FRAC_PI_4;
+        st.camera.pitch = 0.5;
+    }
+
+    /// Capture the current camera pose so callers can restore it later
+    /// (e.g. when switching back to a tab). Pose is independent of the
+    /// scene's bounding sphere, but `fit_distance` rides along so a snapshot
+    /// taken before `set_scene` doesn't reframe arbitrarily on restore.
+    pub fn camera_snapshot(&self) -> CameraSnapshot {
+        self.state.lock().unwrap().camera.snapshot()
+    }
+
+    pub fn restore_camera(&self, snap: CameraSnapshot) {
+        self.state.lock().unwrap().camera.restore(snap);
     }
 
     pub fn destroy(&self, gl: &glow::Context) {
@@ -1748,16 +1861,22 @@ impl Viewer {
 
         // Drive camera from input before dispatching the paint callback.
         let dt = ui.input(|i| i.stable_dt);
+        let shift_held = ui.input(|i| i.modifiers.shift);
         let mut needs_repaint = false;
         {
             let mut st = self.state.lock().unwrap();
-            if response.dragged_by(egui::PointerButton::Primary)
-                || response.dragged_by(egui::PointerButton::Middle)
-            {
+            // Middle-mouse, secondary, or Shift+primary pans the orbit target.
+            // Plain primary still orbits — keeps the existing default working
+            // for users who never learned the chord.
+            let panning = response.dragged_by(egui::PointerButton::Middle)
+                || response.dragged_by(egui::PointerButton::Secondary)
+                || (shift_held && response.dragged_by(egui::PointerButton::Primary));
+            if panning {
+                st.camera.pan(response.drag_delta(), rect.height());
+            } else if response.dragged_by(egui::PointerButton::Primary) {
                 let d = response.drag_delta();
                 st.camera.yaw -= d.x * 0.01;
-                st.camera.pitch = (st.camera.pitch - d.y * 0.01)
-                    .clamp(-1.54, 1.54);
+                st.camera.pitch = (st.camera.pitch - d.y * 0.01).clamp(-1.54, 1.54);
             }
             if response.hovered() {
                 let scroll = ui.input(|i| i.smooth_scroll_delta.y);

@@ -25,6 +25,8 @@ pest_derive = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 glam = { version = "0.30", features = ["serde"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+oxipng = { version = "9", default-features = false, features = ["parallel"] }
 
 mgen-core = { path = "crates/mgen-core" }
 mgen-dsl = { path = "crates/mgen-dsl" }
