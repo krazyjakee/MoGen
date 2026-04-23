@@ -341,7 +341,9 @@ pub fn superellipsoid_mesh(
         for seg in 0..segments {
             let a = ring * row + seg;
             let b = a + row;
-            indices.extend_from_slice(&[a, a + 1, b + 1, a, b + 1, b]);
+            // Ring 0 is south (eta=-π/2), ring=rings is north, so b is the
+            // ring *above* a — winding is the mirror of sphere_mesh/ellipsoid_mesh.
+            indices.extend_from_slice(&[a, b + 1, a + 1, a, b, b + 1]);
         }
     }
 

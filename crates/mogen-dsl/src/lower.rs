@@ -251,6 +251,40 @@ mod tests {
     }
 
     #[test]
+    fn superellipsoid_faces_wind_outward() {
+        // Face winding must match vertex normals so back-face culling shows the
+        // outside. Regression: ring 0 sits at the south pole, so the sphere's
+        // north-first winding would flip every triangle.
+        let g = lower_src(
+            r#"scene { superellipsoid "s" (size=[1.0, 1.0, 1.0], ew=1.0, ns=1.0, rings=12, segments=16) }"#,
+        );
+        let mesh = find_mesh_node(&g, "s").mesh.as_ref().unwrap();
+        let mut checked = 0usize;
+        let mut aligned = 0usize;
+        for tri in mesh.indices.chunks_exact(3) {
+            let (ia, ib, ic) = (tri[0] as usize, tri[1] as usize, tri[2] as usize);
+            let a = Vec3::from(mesh.positions[ia]);
+            let b = Vec3::from(mesh.positions[ib]);
+            let c = Vec3::from(mesh.positions[ic]);
+            let face = (b - a).cross(c - a);
+            // Polar caps collapse to a point — skip those degenerate tris.
+            if face.length_squared() < 1e-12 {
+                continue;
+            }
+            checked += 1;
+            let avg = (Vec3::from(mesh.normals[ia])
+                + Vec3::from(mesh.normals[ib])
+                + Vec3::from(mesh.normals[ic]))
+                / 3.0;
+            if face.dot(avg) > 0.0 {
+                aligned += 1;
+            }
+        }
+        assert!(checked > 0, "expected non-degenerate superellipsoid faces");
+        assert_eq!(aligned, checked, "all non-degenerate superellipsoid faces should wind outward");
+    }
+
+    #[test]
     fn curved_plane_bends_toward_positive_y() {
         // Positive bend_u lifts the left/right edges. The centre stays near y=0;
         // the edges sit well above y=0.
