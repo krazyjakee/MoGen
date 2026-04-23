@@ -345,9 +345,7 @@ impl MogenStudioApp {
                     draw_kind_pill(ui, kind, accent);
                     ui.add_space(6.0);
                     ui.spinner();
-                    ui.label(
-                        egui::RichText::new(stage_headline(&progress, kind)).strong(),
-                    );
+                    ui.label(egui::RichText::new(stage_headline(&progress, kind)));
                     ui.with_layout(
                         egui::Layout::right_to_left(egui::Align::Center),
                         |ui| {
