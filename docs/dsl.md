@@ -1,6 +1,6 @@
-# `mgen` DSL reference
+# MoGen DSL reference
 
-`mgen` reads `.mg` source files, lowers them to an intermediate scene graph,
+`mogen` reads `.mog` source files, lowers them to an intermediate scene graph,
 and exports glTF 2.0 GLB. This document is the authoritative reference for
 the surface language: every node kind, every attribute, and the little bits of
 grammar that sit between them. For a conceptual overview of the whole
@@ -10,11 +10,12 @@ modules, see [`modules.md`](./modules.md).
 - [Grammar at a glance](#grammar-at-a-glance)
 - [Values and expressions](#values-and-expressions)
 - [Common attributes](#common-attributes)
+- [Placement shortcuts](#placement-shortcuts)
 - [Scene structure](#scene-structure-scene-group)
 - [Primitives](#primitives)
 - [Materials](#materials)
 - [Connectors](#connectors)
-- [Replicators: `mirror` and `array`](#replicators-mirror-and-array)
+- [Replicators: `mirror`, `array`, `stack`, `grid`](#replicators-mirror-array-stack-grid)
 - [CSG: `union` / `difference` / `intersect`](#csg-union--difference--intersect)
 - [Modules: `module` and `use`](#modules-module-and-use)
 - [Animation: `joint`, `clip`, templates](#animation-joint-clip-templates)
@@ -24,7 +25,7 @@ modules, see [`modules.md`](./modules.md).
 
 ## Grammar at a glance
 
-A `.mg` file is a sequence of nodes. Every node shares the same shape:
+A `.mog` file is a sequence of nodes. Every node shares the same shape:
 
 ```
 kind ["optional name"] [(attr=value, ...)] [{ child_nodes... }]
@@ -80,6 +81,78 @@ in glTF.
 
 ---
 
+## Placement shortcuts
+
+Every node accepts a family of ergonomic shortcuts on top of the classic
+`pos`/`rot`/`size` vec3s. They exist for one reason: an LLM should never need
+to do arithmetic that the DSL can do for it. Mix and match freely.
+
+### Per-component shortcuts
+
+| shortcut | replaces / overrides | notes |
+|---|---|---|
+| `x=`, `y=`, `z=` | individual components of `pos` | missing axes default to `pos`'s value, or `0` |
+| `rx=`, `ry=`, `rz=` | individual components of `rot` (degrees) | same fallback; great for single-axis spins |
+| `w=`, `h=`, `d=` | individual components of `size` (X, Y, Z) | for 2D primitives, `w`/`d` are used on `plane`/`curved_plane` (XZ) and `w`/`h` on `quad` (XY) |
+
+```
+box (y=1.5, size=1)            // equivalent to pos=[0, 1.5, 0], size=[1,1,1]
+box (size=[2, 2, 0.1], h=3)    // h overrides the middle component — width=2, height=3, depth=0.1
+cylinder (rx=90, radius=0.2, height=1)   // lay a cylinder on its side
+```
+
+### Scalar `size` (cube shorthand)
+
+Any primitive that takes `size=[…]` also accepts `size=<number>`, which
+expands to a uniform vec3. `box (size=0.5)` is a half-metre cube.
+
+### `from` / `to` — axis-aligned box by corners
+
+On any primitive that uses `size`, `from=[x1,y1,z1]` + `to=[x2,y2,z2]` sets
+`size` to `|to − from|` and `pos` to their midpoint. No "shift by half" math:
+
+```
+box (from=[-2, 0, -1.5], to=[2, 2.8, -1.4], mat="wall")
+// equivalent to: box (pos=[0, 1.4, -1.45], size=[4.0, 2.8, 0.1])
+```
+
+### `anchor` — place by face, not centre
+
+Every primitive's `pos` controls where its **anchor point** lands, not where
+its centre lands. The default anchor is `center`; `anchor=bottom` puts the
+primitive's bottom face at `pos`, which is usually what "sit on the ground"
+means. Values are underscore-joined tokens drawn from
+`center`, `top`, `bottom`, `left`, `right`, `front`, `back`:
+
+```
+box (y=0,  size=[1, 2, 1], anchor=bottom)           // bottom face on y=0
+box (xyz, size=2,           anchor=bottom_left_front) // corner at the origin
+```
+
+Internally the anchor shifts the mesh vertices so the chosen point is at the
+local origin. The six default face connectors (`top`, `bottom`, `left`, …)
+move with the shift, so attach/connector math stays correct.
+
+### Relative placement: `above`, `below`, `left_of`, `right_of`, `in_front_of`, `behind`
+
+Set one of these to the name of a **prior sibling** in the same parent; the
+node is translated so its matching face is flush against the sibling's
+opposite face, optionally plus `gap`. At most one may be set per node.
+
+```
+group "chests" {
+  box "chest_lo" (size=[0.8, 0.6, 0.5])
+  box "chest_hi" (above="chest_lo", gap=0.02, size=[0.8, 0.6, 0.5])
+}
+```
+
+Resolution happens after the target's subtree is fully lowered, so nested
+geometry is included in the AABB. Lookup is scoped to siblings in the same
+parent, so replicated subtrees (`array`, `grid`) don't collide with
+identically named nodes elsewhere.
+
+---
+
 ## Scene structure: `scene`, `group`
 
 ```
@@ -92,6 +165,7 @@ scene {
 
 - `scene` is the root container. Exactly one per file is expected in practice; top-level nodes outside any `scene` are also lowered and become extra roots.
 - `group` is a transform-only container — no geometry of its own, used to compose children and receive `pos`/`rot`/`scale`.
+- `solid` behaves like `group` in the scene tree, but its same-material leaf children are CSG-unioned into a single mesh at export time. See [Solid groups](#solid-groups-solid) below.
 
 ---
 
@@ -120,6 +194,10 @@ All primitives accept the common attributes above (`pos`, `rot`, `scale`,
 | `curved_plane` | `size=[x,z]` or `vec3` | `bend_u`, `bend_v` (degrees; arc angle along X/Z), `segments_u`/`segments_v` (12) |
 | `lathe` | `profile=[[r,y], …]` | `segments` (24), `cap_ends` (1 = capped); profile authored bottom-to-top in `(radius, y)` pairs |
 | `spline_tube` | `points=[[x,y,z], …]` | `radius` (scalar) or `radii=[…]` (per-point), `segments` (12), `samples` (8), `cap_ends` (1) |
+| `slab` | `size=[x,y,z]` | box alias; default anchor `bottom` (sits on ground) |
+| `post` | `size=[x,y,z]` | box alias; default anchor `bottom` (pillar/leg) |
+| `panel` | `size=[x,y,z]` | box alias; default anchor `back` (flat panel flush to a surface) |
+| `wall` | `size=[x,y,z]` | `holes=[[x,y,w,h], …]` — rectangular cutouts through the Z axis |
 
 `plane` and `quad` are both flat single-quad meshes; `plane` is XZ-aligned,
 `quad` is XY-aligned (useful for UI-style panels).
@@ -135,6 +213,26 @@ lists must be constant (no `$param`) — parameterise the whole node via a
 module wrapper instead. `spline_tube` runs a Catmull–Rom curve through its
 control points and uses a parallel-transport frame so the cross-section
 doesn't flip at inflection points.
+
+`slab`, `post`, and `panel` are box aliases that exist only to change the
+**default anchor** — their geometry is identical to `box`. Use them to make
+"this sits on the ground" or "this is a wall-hung panel" the one-line thing
+it should be, without `anchor=…` on every row. You can still override
+`anchor=` explicitly if you need something different.
+
+`wall` is a box with rectangular cutouts along Z. Each hole is a 4-element
+sublist `[cx, cy, w, h]` in the wall's local frame (X/Y are the face plane;
+the Z thickness axis is cut all the way through). Cutouts are applied via
+CSG `difference` at lowering time and the result is welded/cleaned, so a
+single `wall` node becomes one watertight mesh — no nested `difference`
+idiom needed:
+
+```
+wall "barracks" (size=[3, 3, 0.1], holes=[
+  [-0.75, -0.4, 0.9, 2.0],   // door
+  [ 0.9,  0.3, 0.8, 0.8],    // window
+])
+```
 
 Default values mean that `cylinder "leg"` with no attrs is a 1 m unit-radius
 cylinder centered on the origin. Every primitive is authored in its local
@@ -177,8 +275,25 @@ Declared at the top of the file or inside `scene { ... }`. Attributes:
   geometry — mirroring a bent `curved_plane` along its bend axis does **not**
   produce a double-sided surface; it produces two sheets curling away from
   each other.
+- `uv_mode` — `"tile"` (default) or `"fit"`. Controls how textures map onto
+  the geometry. `"tile"` emits world-space UVs so 1 world unit = 1 texture
+  tile (scaled by `uv_scale`). Texel density is identical across every
+  primitive that uses the material — the right choice for repeating surfaces
+  like stone walls, wood planks, fabric, ground, and roof shingles. `"fit"`
+  falls back to per-face `[0, 1]²` UVs so every face of the primitive shows
+  the full image once — the right choice when the texture *is* the picture:
+  signs, paintings, decals, stained-glass panes, anything whose image must
+  land at a specific place on a specific face. Pick `"fit"` for
+  image-as-texture; leave the default for material-as-texture.
+- `uv_scale` — `1.0` (default), a scalar (`uv_scale=2`), or a vec2
+  (`uv_scale=[2, 1]`). In `tile` mode this is "tiles per world unit": `2`
+  doubles the tiling density (smaller bricks), `0.5` halves it (bigger
+  bricks). In `fit` mode it multiplies the `[0, 1]` coords — `> 1` repeats
+  the image inside a face, `< 1` zooms into a sub-region. Per-axis vec2
+  form lets you stretch a texture asymmetrically (planks on a floor, bands
+  on a column).
 - `base_color_texture` — string path to an `.png`/`.jpg` file on disk,
-  resolved relative to the `.mg` file. Multiplied against `color`. sRGB.
+  resolved relative to the `.mog` file. Multiplied against `color`. sRGB.
 - `metallic_roughness_texture` — packed metal/rough map (glTF convention:
   green = roughness, blue = metallic). Linear.
 - `normal_texture` — tangent-space normal map. Linear.
@@ -233,10 +348,11 @@ leg top shares `tag=leg_top`) so downstream fitting logic can pair them.
 
 ---
 
-## Replicators: `mirror` and `array`
+## Replicators: `mirror`, `array`, `stack`, `grid`
 
-Both are "wrapper" nodes: they create one parent group and replicate their
-children under it.
+Wrapper nodes that create one parent group and either replicate or lay out
+their children. All four accept the usual transform attributes so the whole
+cluster can be positioned as a unit.
 
 ### `mirror`
 
@@ -271,6 +387,54 @@ The children are cloned `count` times; the i-th copy is rotated by
 `group` (as above) to place the first copy off the rotation axis; the array
 then fans it into a ring.
 
+### `stack`
+
+Lay children out along one axis, using each child's computed AABB as its
+"slot". No half-size math, no accumulated offsets to maintain by hand.
+
+```
+stack "cake" (axis=y, gap=0.02) {
+  slab "tier_a" (size=[1.4, 0.25, 1.4])
+  slab "tier_b" (size=[1.0, 0.20, 1.0])
+  slab "tier_c" (size=[0.6, 0.15, 0.6])
+}
+```
+
+Attributes:
+
+| attribute | value | default | effect |
+|---|---|---|---|
+| `axis` | `x`, `y`, `z` | `y` | stacking direction |
+| `gap` | number | `0` | spacing between consecutive children |
+| `align` | `center`, `start`, `end` | `center` | alignment on the two perpendicular axes |
+| `pack` | `start`, `center`, `end` | `start` | where the whole stack sits along `axis`: `start` keeps the first child at origin; `center` centres the stack; `end` puts the last child's far face at origin |
+
+Each child keeps its own declared `pos`/`x`/`y`/`z` as an **additive**
+offset inside its slot — `stack` computes the slot position, your `pos`
+nudges within it.
+
+### `grid`
+
+N-dimensional replicator. Creates `count[0] × count[1] × count[2]` copies of
+the body, each offset by `step[0..3] * [i, j, k]`:
+
+```
+grid "tiles" (count=[5, 1, 3], step=[0.6, 0, 0.6], center=1) {
+  slab "tile" (size=[0.55, 0.05, 0.55])
+}
+```
+
+Attributes:
+
+| attribute | value | default |
+|---|---|---|
+| `count` | vec3, list, or scalar | `[1, 1, 1]` |
+| `step` | vec3, list, or scalar | `[0, 0, 0]` |
+| `center` | `0` / `1` | `0` — when `1`, the grid is centred on the wrapper origin |
+
+A scalar `count`/`step` applies to X only (useful for 1D rows); a 2-element
+list applies to X/Z (floor patterns). For 3D, pass a vec3.
+
 ---
 
 ## CSG: `union` / `difference` / `intersect`
@@ -296,6 +460,45 @@ apply; any on operand children are ignored.
 
 The output is cleaned (vertex welding, degenerate-tri cull, normal recompute)
 to give the exporter a watertight mesh.
+
+---
+
+## Solid groups: `solid`
+
+`solid { … }` is a group-like container that defers CSG union to export time.
+Its same-material, non-skinned leaf children are merged into a single mesh,
+so overlapping or touching primitives of the same material read as one hollow
+shape — interior faces where pieces meet get eliminated.
+
+```
+solid "shell" (mat="stone", cleanup="coplanar") {
+  box "floor"   (pos=[0, 0.1, 0],   size=[6.2, 0.2, 4.2])
+  box "north"   (pos=[0, 1.7, 2.0], size=[6.0, 3.0, 0.2])
+  box "south"   (pos=[0, 1.7,-2.0], size=[6.0, 3.0, 0.2])
+  box "east"    (pos=[ 3.0, 1.7, 0], size=[0.2, 3.0, 4.0])
+  box "west"    (pos=[-3.0, 1.7, 0], size=[0.2, 3.0, 4.0])
+}
+```
+
+- Children lower as normal scene nodes — you can still `attach` to them, put
+  modules inside, author connectors, and so on. The merge is *export-time*,
+  scoped to that subtree. The in-memory scene graph the editor sees keeps
+  every child as a distinct, editable node.
+- Only same-material leaf siblings merge together. Different-material
+  children (`mat="glass"` next to `mat="stone"`) stay as separate nodes so
+  textures and PBR factors are preserved.
+- Skinned meshes, joint-referenced nodes, and groups are never merged; they
+  pass through unchanged.
+
+### `cleanup="coplanar"`
+
+When set, the merged output gets one extra pass that drops triangle pairs
+which share a plane and have opposite-facing normals. This catches the case
+CSG union can't resolve on its own: two boxes that *touch* along a face
+without overlapping — e.g. perpendicular walls meeting at a corner. Without
+the cleanup, both sides of the seam survive; with it, they cancel.
+
+Values: `"coplanar"` (enable) or `"none"` (default).
 
 ---
 
@@ -433,15 +636,15 @@ clip "open" (seconds=1.2) {
 }
 ```
 
-Compile with `mgen build examples/<file>.mg -o out.glb` and open in Godot
+Compile with `mogen build examples/<file>.mog -o out.glb` and open in Godot
 4.x or any glTF-2.0 viewer.
 
 ---
 
 ## Diagnostics and tooling
 
-- `mgen check <file>.mg` validates without building. Pass `--json` for machine-readable diagnostics (the format the LLM repair loop consumes).
-- `mgen dump-scene <file>.mg --json` prints the lowered graph for debugging.
-- `mgen inspect <file>.glb` reads back a GLB and prints its top-level structure.
+- `mogen check <file>.mog` validates without building. Pass `--json` for machine-readable diagnostics (the format the LLM repair loop consumes).
+- `mogen dump-scene <file>.mog --json` prints the lowered graph for debugging.
+- `mogen inspect <file>.glb` reads back a GLB and prints its top-level structure.
 
 See [`ROADMAP.md`](./ROADMAP.md) §8 for the full diagnostic catalog.

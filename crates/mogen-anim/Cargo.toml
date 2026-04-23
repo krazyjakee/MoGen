@@ -1,0 +1,8 @@
+[package]
+name = "mogen-anim"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+mogen-core = { workspace = true }
+glam = { workspace = true }

@@ -1,8 +1,0 @@
-[package]
-name = "mgen-anim"
-version.workspace = true
-edition.workspace = true
-
-[dependencies]
-mgen-core = { workspace = true }
-glam = { workspace = true }

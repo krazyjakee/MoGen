@@ -1,0 +1,14 @@
+[package]
+name = "mogen-dsl"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+mogen-core = { workspace = true }
+mogen-geom = { workspace = true }
+mogen-anim = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+pest = { workspace = true }
+pest_derive = { workspace = true }
+glam = { workspace = true }

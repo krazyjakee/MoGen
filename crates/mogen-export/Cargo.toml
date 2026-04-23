@@ -1,0 +1,17 @@
+[package]
+name = "mogen-export"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+mogen-core = { workspace = true }
+mogen-geom = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+glam = { workspace = true }
+image = { workspace = true }
+oxipng = { workspace = true }
+
+[dev-dependencies]
+mogen-dsl = { workspace = true }

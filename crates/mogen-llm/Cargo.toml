@@ -1,0 +1,22 @@
+[package]
+name = "mogen-llm"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+mogen-core.workspace = true
+mogen-dsl.workspace = true
+mogen-validate.workspace = true
+
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+base64 = "0.22"
+image.workspace = true
+
+[dev-dependencies]
+tiny_http = "0.12"
+base64 = "0.22"

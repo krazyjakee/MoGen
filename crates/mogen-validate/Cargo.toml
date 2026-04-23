@@ -1,0 +1,11 @@
+[package]
+name = "mogen-validate"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+mogen-core = { workspace = true }
+mogen-dsl = { workspace = true }
+codespan-reporting = "0.12"
+serde = { workspace = true }
+serde_json = { workspace = true }

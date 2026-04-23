@@ -1,4 +1,4 @@
-# `mgen` module catalog
+# MoGen module catalog
 
 Modules are parametric sub-graphs: reusable snippets of DSL that take scalar
 parameters, expand to a tree of primitives, and can expose connectors for
@@ -16,16 +16,16 @@ use.
 
 ## Status of the stdlib
 
-The roadmap (§M5) reserves `crates/mgen-modules/stdlib/*.mg` for a shipped
+The roadmap (§M5) reserves `crates/mogen-modules/stdlib/*.mog` for a shipped
 library of common parts — `wall`, `door`, `window`, `limb`, `rotor`, `roof`,
 `chassis` seeds, etc. That shared library is **not yet populated**; modules
 currently live inline in the example files that use them.
 
 Treat this page as the canonical list of module shapes that have been
-validated in the test suite. Copy them verbatim into new `.mg` files until
+validated in the test suite. Copy them verbatim into new `.mog` files until
 the shared stdlib lands and resolution falls back to the per-file copy.
 
-The `mgen generate` prompt assembly (`StdlibIndex`) looks modules up from a
+The `mogen generate` prompt assembly (`StdlibIndex`) looks modules up from a
 shared `ModuleRegistry`, so the same module names will become globally
 resolvable once a stdlib path is wired through.
 
@@ -85,7 +85,7 @@ slab attaches.
 
 **Connectors:** `top` at `[0, height/2, 0]`, dir `+Y`, tag `leg_top`.
 
-**Source (from `examples/chair_module.mg`):**
+**Source (from `examples/chair_module.mog`):**
 
 ```
 module "leg" (height=0.5, radius=0.05) {
@@ -96,8 +96,8 @@ module "leg" (height=0.5, radius=0.05) {
 }
 ```
 
-**Usage:** see `examples/chair_module.mg` (0.5 m leg, 4× via `array`) and
-`examples/table.mg` (0.9 m leg, 4× via `array`).
+**Usage:** see `examples/chair_module.mog` (0.5 m leg, 4× via `array`) and
+`examples/table.mog` (0.9 m leg, 4× via `array`).
 
 ---
 
@@ -115,7 +115,7 @@ back panels.
 **Connectors:** none; wrap a `slab` in a `group` to position it and attach
 connectors to the group if needed.
 
-**Source (from `examples/chair_module.mg`):**
+**Source (from `examples/chair_module.mog`):**
 
 ```
 module "slab" (width=1.0, depth=1.0, thickness=0.1) {
@@ -123,7 +123,7 @@ module "slab" (width=1.0, depth=1.0, thickness=0.1) {
 }
 ```
 
-**Usage:** `examples/chair_module.mg` uses one `slab` for the seat and
+**Usage:** `examples/chair_module.mog` uses one `slab` for the seat and
 another (rotated) for the back.
 
 ---
@@ -149,9 +149,9 @@ corners of the airframe.
 
 **Connectors:** none. The `rotor` group can be targeted by name in a `spin`
 template to drive all four propellers off a single array wrapper — see
-`examples/drone.mg`.
+`examples/drone.mog`.
 
-**Source (from `examples/drone.mg`):**
+**Source (from `examples/drone.mog`):**
 
 ```
 module "arm_with_rotor" (length=0.35, arm_thickness=0.02, motor_radius=0.04) {
@@ -182,11 +182,11 @@ have a starting point:
 
 | proposed | source pattern | parameters likely wanted |
 |---|---|---|
-| `wall` | `examples/simple_house.mg` (difference of box + door gap) | `width`, `height`, `thickness`, optional `door_width`, `door_height` |
-| `roof_gable` | `examples/simple_house.mg` (two tilted pitches) | `span`, `depth`, `pitch_deg`, `thickness` |
-| `door` | `examples/door_open.mg` + `simple_house.mg` | `width`, `height`, `thickness`; expose a `hinge` connector |
-| `window` | `examples/simple_house.mg` | `width`, `height`, `pane_thickness` |
-| `rotor` | `examples/windmill.mg` + `drone.mg` | `blade_count`, `blade_length`, `blade_thickness`, `hub_radius` |
+| `wall` | `examples/simple_house.mog` (difference of box + door gap) | `width`, `height`, `thickness`, optional `door_width`, `door_height` |
+| `roof_gable` | `examples/simple_house.mog` (two tilted pitches) | `span`, `depth`, `pitch_deg`, `thickness` |
+| `door` | `examples/door_open.mog` + `simple_house.mog` | `width`, `height`, `thickness`; expose a `hinge` connector |
+| `window` | `examples/simple_house.mog` | `width`, `height`, `pane_thickness` |
+| `rotor` | `examples/windmill.mog` + `drone.mog` | `blade_count`, `blade_length`, `blade_thickness`, `hub_radius` |
 
 The pattern for each: copy the snippet from the example, parameterize the
 hard-coded numbers, and expose the connectors that make the part composable

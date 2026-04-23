@@ -2082,124 +2082,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "mgen"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "indicatif",
- "mgen-core",
- "mgen-dsl",
- "mgen-export",
- "mgen-llm",
- "mgen-validate",
- "serde_json",
-]
-
-[[package]]
-name = "mgen-anim"
-version = "0.1.0"
-dependencies = [
- "glam",
- "mgen-core",
-]
-
-[[package]]
-name = "mgen-core"
-version = "0.1.0"
-dependencies = [
- "glam",
- "serde",
-]
-
-[[package]]
-name = "mgen-dsl"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "glam",
- "mgen-anim",
- "mgen-core",
- "mgen-geom",
- "pest",
- "pest_derive",
- "thiserror 1.0.69",
-]
-
-[[package]]
-name = "mgen-export"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "glam",
- "image",
- "mgen-core",
- "mgen-dsl",
- "mgen-geom",
- "oxipng",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "mgen-geom"
-version = "0.1.0"
-dependencies = [
- "glam",
- "mgen-core",
-]
-
-[[package]]
-name = "mgen-gui"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "dirs",
- "eframe",
- "egui",
- "egui_glow",
- "glam",
- "glow 0.14.2",
- "image",
- "mgen-core",
- "mgen-dsl",
- "mgen-export",
- "mgen-llm",
- "mgen-validate",
- "rfd",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "mgen-llm"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64",
- "image",
- "mgen-core",
- "mgen-dsl",
- "mgen-validate",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tiny_http",
-]
-
-[[package]]
-name = "mgen-validate"
-version = "0.1.0"
-dependencies = [
- "codespan-reporting 0.12.0",
- "mgen-core",
- "mgen-dsl",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "miniz_oxide"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2218,6 +2100,125 @@ dependencies = [
  "libc",
  "wasi",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "mogen"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "indicatif",
+ "mogen-core",
+ "mogen-dsl",
+ "mogen-export",
+ "mogen-llm",
+ "mogen-validate",
+ "serde_json",
+]
+
+[[package]]
+name = "mogen-anim"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "mogen-core",
+]
+
+[[package]]
+name = "mogen-core"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "serde",
+]
+
+[[package]]
+name = "mogen-dsl"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "glam",
+ "mogen-anim",
+ "mogen-core",
+ "mogen-geom",
+ "pest",
+ "pest_derive",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "mogen-export"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "glam",
+ "image",
+ "mogen-core",
+ "mogen-dsl",
+ "mogen-geom",
+ "oxipng",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "mogen-geom"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "mogen-core",
+]
+
+[[package]]
+name = "mogen-llm"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64",
+ "image",
+ "mogen-core",
+ "mogen-dsl",
+ "mogen-validate",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tiny_http",
+]
+
+[[package]]
+name = "mogen-studio"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arboard",
+ "dirs",
+ "eframe",
+ "egui",
+ "egui_glow",
+ "glam",
+ "glow 0.14.2",
+ "image",
+ "mogen-core",
+ "mogen-dsl",
+ "mogen-export",
+ "mogen-llm",
+ "mogen-validate",
+ "rfd",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "mogen-validate"
+version = "0.1.0"
+dependencies = [
+ "codespan-reporting 0.12.0",
+ "mogen-core",
+ "mogen-dsl",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -1,0 +1,8 @@
+[package]
+name = "mogen-geom"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+mogen-core = { workspace = true }
+glam = { workspace = true }

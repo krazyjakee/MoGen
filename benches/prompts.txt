@@ -1,4 +1,4 @@
-# mgen bench prompt suite.
+# mogen bench prompt suite.
 # One prompt per line. Lines starting with `#` and blank lines are ignored.
 # Target: ≥80% pass rate with default --max-repair-iters=2.
 

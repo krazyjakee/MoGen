@@ -1,15 +1,15 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/mgen-core",
-    "crates/mgen-dsl",
-    "crates/mgen-geom",
-    "crates/mgen-validate",
-    "crates/mgen-anim",
-    "crates/mgen-export",
-    "crates/mgen-llm",
-    "crates/mgen",
-    "crates/mgen-gui",
+    "crates/mogen-core",
+    "crates/mogen-dsl",
+    "crates/mogen-geom",
+    "crates/mogen-validate",
+    "crates/mogen-anim",
+    "crates/mogen-export",
+    "crates/mogen-llm",
+    "crates/mogen",
+    "crates/mogen-studio",
 ]
 
 [workspace.package]
@@ -28,10 +28,10 @@ glam = { version = "0.30", features = ["serde"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 oxipng = { version = "9", default-features = false, features = ["parallel"] }
 
-mgen-core = { path = "crates/mgen-core" }
-mgen-dsl = { path = "crates/mgen-dsl" }
-mgen-geom = { path = "crates/mgen-geom" }
-mgen-validate = { path = "crates/mgen-validate" }
-mgen-anim = { path = "crates/mgen-anim" }
-mgen-export = { path = "crates/mgen-export" }
-mgen-llm = { path = "crates/mgen-llm" }
+mogen-core = { path = "crates/mogen-core" }
+mogen-dsl = { path = "crates/mogen-dsl" }
+mogen-geom = { path = "crates/mogen-geom" }
+mogen-validate = { path = "crates/mogen-validate" }
+mogen-anim = { path = "crates/mogen-anim" }
+mogen-export = { path = "crates/mogen-export" }
+mogen-llm = { path = "crates/mogen-llm" }

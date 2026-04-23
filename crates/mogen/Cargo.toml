@@ -1,0 +1,19 @@
+[package]
+name = "mogen"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "mogen"
+path = "src/main.rs"
+
+[dependencies]
+mogen-core = { workspace = true }
+mogen-dsl = { workspace = true }
+mogen-validate = { workspace = true }
+mogen-export = { workspace = true }
+mogen-llm = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+serde_json = { workspace = true }
+indicatif = "0.17"

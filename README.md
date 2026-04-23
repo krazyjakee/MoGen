@@ -1,8 +1,8 @@
-# mgen — procedural 3D model generator
+# MoGen — procedural 3D model generator
 
-`mgen` turns a compact, declarative DSL into `.glb` assets. It is designed to be the
+`mogen` turns a compact, declarative DSL into `.glb` assets. It is designed to be the
 deterministic backend of an LLM-driven 3D generation pipeline: the language model writes
-high-level structured scenes, `mgen` expands them into real geometry.
+high-level structured scenes, `mogen` expands them into real geometry.
 
 Written in Rust. No runtime, no graph editor, no dependencies on a game engine — just a
 small parser, a scene graph, a mesh library, and a glTF exporter.
@@ -30,8 +30,8 @@ Supported:
   `occlusion_texture`, `emissive_texture`. PNGs and JPEGs are embedded in the output
   GLB, so `.glb` files remain self-contained and portable.
 - Validation layer with human-readable and JSON diagnostics
-- LLM-driven generation, modification, and animation via Gemini (`mgen generate` /
-  `mgen modify` / `mgen animate`) with automatic repair on failures
+- LLM-driven generation, modification, and animation via Gemini (`mogen generate` /
+  `mogen modify` / `mogen animate`) with automatic repair on failures
 
 ## Install
 
@@ -39,24 +39,24 @@ Requires a recent stable Rust toolchain.
 
 ```sh
 git clone <this-repo>
-cd godot-model-gen
+cd mogen
 ./build.sh         # cargo build --release --workspace
 ```
 
-The release binary is at `target/release/mgen`. The `./mgen.sh` wrapper runs it via
+The release binary is at `target/release/mogen`. The `./mogen.sh` wrapper runs it via
 `cargo run --release` if you'd rather not add it to `$PATH`.
 
 ## Quick start
 
 ```sh
-./mgen.sh build examples/chair.mg --out chair.glb
+./mogen.sh build examples/chair.mog --out chair.glb
 ```
 
 Drop `chair.glb` into Godot, Blender, three.js, or anything else that reads glTF 2.0.
 
 ## The DSL
 
-Files use the `.mg` extension. The shape of every statement is the same:
+Files use the `.mog` extension. The shape of every statement is the same:
 
 ```
 kind "optional name" (attr=value, attr=value, ...) {
@@ -66,7 +66,7 @@ kind "optional name" (attr=value, attr=value, ...) {
 
 A minimal scene:
 
-```mg
+```mogen
 scene {
   box "seat" (pos=[0, 0.5, 0], size=[1.0, 0.1, 1.0])
   box "back" (pos=[0, 1.0, -0.45], size=[1.0, 1.0, 0.1])
@@ -75,7 +75,7 @@ scene {
 
 With materials, grouping, and metadata:
 
-```mg
+```mogen
 material "wood"   (color=[0.55, 0.35, 0.18], metallic=0.0, roughness=0.75)
 material "fabric" (color=[0.20, 0.30, 0.55], metallic=0.0, roughness=0.95)
 
@@ -93,7 +93,7 @@ scene {
 
 With textures:
 
-```mg
+```mogen
 material "oak" (
   color=[1, 1, 1],
   roughness=0.8,
@@ -106,37 +106,37 @@ scene {
 }
 ```
 
-Texture paths are resolved relative to the `.mg` file and the image bytes are embedded
+Texture paths are resolved relative to the `.mog` file and the image bytes are embedded
 into the output `.glb`, so the result is a single portable file with no external
 dependencies.
 
-Two more examples live in [`examples/`](examples/): `hierarchy_test.mg` exercises nested
-groups with rotation and scale, `chair_mat.mg` shows the full material flow.
+Two more examples live in [`examples/`](examples/): `hierarchy_test.mog` exercises nested
+groups with rotation and scale, `chair_mat.mog` shows the full material flow.
 
 Coordinate system is glTF-standard: right-handed, +Y up, -Z forward.
 
 ## CLI
 
 ```
-mgen build    <file.mg> --out <file.glb>         # compile DSL to GLB
-mgen generate "a wooden stool" --out out.glb     # generate DSL via Gemini, then compile
-mgen modify   <file.mg> "make the legs taller"   # LLM edit of an existing .mg, then recompile
-mgen animate  <file.mg> "spin the rotor at 120 rpm"  # LLM edit limited to animations
-mgen check    <file.mg>                          # validate a DSL file
-mgen inspect  <file.glb>                         # summarize a GLB
+mogen build    <file.mog> --out <file.glb>         # compile DSL to GLB
+mogen generate "a wooden stool" --out out.glb      # generate DSL via Gemini, then compile
+mogen modify   <file.mog> "make the legs taller"   # LLM edit of an existing .mog, then recompile
+mogen animate  <file.mog> "spin the rotor at 120 rpm"  # LLM edit limited to animations
+mogen check    <file.mog>                          # validate a DSL file
+mogen inspect  <file.glb>                          # summarize a GLB
 ```
 
 `generate`, `modify`, and `animate` need `GEMINI_API_KEY` in the environment (or
 `--api-key`). `animate` is scoped to top-level animation declarations only (`joint`,
 `clip`/`track`, and the `spin` / `open_close` / `wave` / `flap` / `idle` templates) —
 it leaves geometry, materials, and hierarchy untouched. There are a few more
-developer-facing subcommands (`parse`, `dump-scene`, `bench`) — run `mgen --help`
+developer-facing subcommands (`parse`, `dump-scene`, `bench`) — run `mogen --help`
 for the full list.
 
 ### Controlling generation latency
 
 Gemini 2.5 Pro does dynamic internal "thinking" before emitting a token — at full budget
-that can push a single `generate` call past two minutes. `mgen` exposes a `--thinking`
+that can push a single `generate` call past two minutes. `mogen` exposes a `--thinking`
 flag on `generate`, `modify`, `animate`, and `bench` that caps the budget:
 
 | level    | budget tokens | when to use                                                  |
@@ -147,9 +147,9 @@ flag on `generate`, `modify`, `animate`, and `bench` that caps the budget:
 | `xhigh`  | 24576         | near-max quality; expect ~2 min on Pro                       |
 
 ```sh
-./mgen.sh generate "a wooden stool" --out stool.glb                  # high (default)
-./mgen.sh generate "a simple cube"   --thinking low                  # cheaper, faster
-./mgen.sh generate "a clockwork dragon" --thinking xhigh             # slower, most careful
+./mogen.sh generate "a wooden stool" --out stool.glb                  # high (default)
+./mogen.sh generate "a simple cube"   --thinking low                  # cheaper, faster
+./mogen.sh generate "a clockwork dragon" --thinking xhigh             # slower, most careful
 ```
 
 ## Why
@@ -161,14 +161,14 @@ no hallucinated triangles.
 
 The long-form design goals live in [`PLAN.md`](PLAN.md).
 
-## GUI
+## MoGen Studio
 
-A minimal desktop GUI ships alongside the CLI — it combines the DSL editor, a live
-3D preview, diagnostics, and one-click Gemini generate/modify/animate calls. Build
-and run it with:
+A minimal desktop GUI ships alongside the CLI — **MoGen Studio** combines the DSL
+editor, a live 3D preview, diagnostics, and one-click Gemini generate/modify/animate
+calls. Build and run it with:
 
 ```sh
-cargo run --release -p mgen-gui
+cargo run --release -p mogen-studio
 ```
 
 The inspector panel shows a texture roster for the current scene with a ✓/✗ marker
@@ -178,8 +178,8 @@ per texture path, so missing image files are visible before you hit "Build GLB".
 
 Issues and PRs welcome. Good first targets:
 
-- more primitives or parameterized modules in `mgen-geom`
-- validation passes in `mgen-dsl/src/lower.rs` (unknown attrs, out-of-range values)
+- more primitives or parameterized modules in `mogen-geom`
+- validation passes in `mogen-dsl/src/lower.rs` (unknown attrs, out-of-range values)
 - a second exporter alongside GLB
 - snapshot/round-trip tests for the example scenes
 
