@@ -1,0 +1,10 @@
+// summary: Tapered tail (~0.4m, base radius ~0.04m), spline_tube curving down then up. Wrap in a group + scale to resize. Connector "base" at the trunk end.
+module "tail" () {
+  spline_tube "tail" (
+    points=[[0, 0, 0], [0, -0.06, -0.16], [0, 0.0, -0.34], [0, 0.06, -0.4]],
+    radii=[0.04, 0.028, 0.016, 0.006],
+    samples=10, segments=10
+  ) {
+    connector "base" (at=[0, 0, 0], dir=[0, 0, 1], tag=tail)
+  }
+}

@@ -89,7 +89,9 @@ pub(crate) fn attach_system_instruction(
     no_cache: bool,
     label: &str,
 ) {
-    let system_text = system_instruction(&StdlibIndex::default());
+    let system_text = system_instruction(&StdlibIndex::from_registry(
+        mogen_dsl::stdlib_registry(),
+    ));
 
     if let Some(name) = pinned {
         cfg.cached_content = Some(name);

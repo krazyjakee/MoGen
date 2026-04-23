@@ -1,0 +1,11 @@
+// summary: Quadruped torso — elongated soft body. Connectors for head, tail, and four legs.
+module "quadruped_torso" (length=0.9, height=0.32, width=0.3) {
+  superellipsoid "torso" (size=[$width, $height, $length], ew=1.2, ns=1.1, rings=14, segments=20) {
+    connector "neck"    (at=[0, $height * 0.2,  $length * 0.5],  dir=[0, 0, 1],  tag=neck)
+    connector "tail"    (at=[0, $height * 0.15, $length * -0.5], dir=[0, 0, -1], tag=tail)
+    connector "leg_fl"  (at=[$width *  0.4, $height * -0.5, $length *  0.35], dir=[0, -1, 0], tag=hip)
+    connector "leg_fr"  (at=[$width * -0.4, $height * -0.5, $length *  0.35], dir=[0, -1, 0], tag=hip)
+    connector "leg_bl"  (at=[$width *  0.4, $height * -0.5, $length * -0.35], dir=[0, -1, 0], tag=hip)
+    connector "leg_br"  (at=[$width * -0.4, $height * -0.5, $length * -0.35], dir=[0, -1, 0], tag=hip)
+  }
+}

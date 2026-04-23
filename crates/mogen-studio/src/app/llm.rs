@@ -359,7 +359,7 @@ impl MogenStudioApp {
     pub(super) fn cached_system_instruction(&mut self) -> Arc<String> {
         if self.system_instruction_cache.is_none() {
             self.system_instruction_cache = Some(Arc::new(system_instruction(
-                &StdlibIndex::default(),
+                &StdlibIndex::from_registry(mogen_dsl::stdlib_registry()),
             )));
         }
         self.system_instruction_cache.as_ref().unwrap().clone()

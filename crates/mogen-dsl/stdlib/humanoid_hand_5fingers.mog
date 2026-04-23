@@ -1,0 +1,17 @@
+// summary: Five-fingered hand — palm with 4 fingers + thumb, smoothly blended.
+module "humanoid_hand_5fingers" (size=0.09) {
+  union "hand" (smooth=0.012) {
+    rounded_box "palm" (size=[$size, $size * 0.3, $size * 0.7], radius=$size * 0.15, segments=2)
+    capsule "thumb"  (pos=[ $size * 0.55, 0,             $size * 0.2],
+                      radius=$size * 0.16, height=$size * 0.55, rings=2, segments=10)
+    capsule "index"  (pos=[ $size * 0.35, $size * 0.05, $size * -0.55],
+                      radius=$size * 0.13, height=$size * 0.6,  rings=2, segments=10)
+    capsule "middle" (pos=[ $size * 0.10, $size * 0.05, $size * -0.6],
+                      radius=$size * 0.13, height=$size * 0.65, rings=2, segments=10)
+    capsule "ring"   (pos=[$size * -0.15, $size * 0.05, $size * -0.55],
+                      radius=$size * 0.13, height=$size * 0.6,  rings=2, segments=10)
+    capsule "pinky"  (pos=[$size * -0.40, $size * 0.05, $size * -0.45],
+                      radius=$size * 0.11, height=$size * 0.5,  rings=2, segments=10)
+    connector "wrist" (at=[$size * 0.5, 0, 0], dir=[1, 0, 0], tag=wrist)
+  }
+}

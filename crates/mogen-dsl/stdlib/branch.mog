@@ -1,0 +1,11 @@
+// summary: Tapered branch (~0.6m, base 0.04m → tip 0.008m), gentle S-curve. Wrap in a group + scale/rotate to compose trees, antlers, vines.
+module "branch" () {
+  spline_tube "branch" (
+    points=[[0, 0, 0], [0.03, 0.24, 0], [-0.03, 0.45, 0], [0, 0.6, 0]],
+    radii=[0.04, 0.024, 0.012, 0.008],
+    samples=10, segments=10
+  ) {
+    connector "base" (at=[0, 0,   0], dir=[0, -1, 0], tag=branch_base)
+    connector "tip"  (at=[0, 0.6, 0], dir=[0,  1, 0], tag=branch_tip)
+  }
+}

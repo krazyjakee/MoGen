@@ -1,3 +1,5 @@
+use std::collections::{BTreeSet, HashMap};
+
 use mogen_dsl::ast::{Node, Value};
 
 /// A single material the AST reports — name + full node span + attrs.
@@ -25,8 +27,17 @@ pub fn collect_materials<'a>(ast: &'a [Node]) -> Vec<MaterialHit<'a>> {
 ///   - material name (strongest signal — "oak" vs "denim" drives the output),
 ///   - authored color as an RGB hex hint (preserves artist intent),
 ///   - a rough/polished word from `roughness`,
-///   - an optional subject hint parsed from the DSL's `// prompt:` header.
-pub fn build_prompt(hit: &MaterialHit<'_>, style: &str, subject: Option<&str>) -> String {
+///   - an optional subject hint parsed from the DSL's `// prompt:` header,
+///   - an optional anatomy hint (de-duped `role=`/`tags=` values from primitives
+///     that reference this material) — disambiguates fur on a tiger's
+///     shoulder vs. its belly when both share the same `<creature>_fur`
+///     style but want different patterns.
+pub fn build_prompt(
+    hit: &MaterialHit<'_>,
+    style: &str,
+    subject: Option<&str>,
+    anatomy: Option<&str>,
+) -> String {
     let color = hit.node.attr("color").and_then(|v| match v {
         Value::Vec3([r, g, b]) => Some([*r, *g, *b]),
         _ => None,
@@ -60,7 +71,59 @@ pub fn build_prompt(hit: &MaterialHit<'_>, style: &str, subject: Option<&str>) -
             s.push_str(&format!("Subject context (for mood/era only): {trimmed}\n"));
         }
     }
+    if let Some(hint) = anatomy {
+        let trimmed = hint.trim();
+        if !trimmed.is_empty() {
+            s.push_str(&format!("Anatomy / role hints: {trimmed}\n"));
+        }
+    }
     s
+}
+
+/// Walk every node in `ast` and build a map from material-name → comma
+/// separated anatomical hint string sourced from each user's `role=` and
+/// `tags=` attrs. Used by the texture pipeline to enrich the per-material
+/// albedo prompt — e.g. a tiger's `tiger_back_fur` material referenced by a
+/// torso with `role="back", tags="dorsal"` gets `Anatomy / role hints:
+/// back, dorsal` appended to the image prompt, steering the LLM toward
+/// rosette patterns rather than flat colour.
+pub fn collect_material_anatomy(ast: &[Node]) -> HashMap<String, String> {
+    let mut hints: HashMap<String, BTreeSet<String>> = HashMap::new();
+    fn walk(n: &Node, hints: &mut HashMap<String, BTreeSet<String>>) {
+        if let Some(mat_name) = string_attr(n, "mat") {
+            let bag = hints.entry(mat_name).or_default();
+            for key in &["role", "tags"] {
+                if let Some(s) = string_attr(n, key) {
+                    for piece in s.split(|c: char| c == ',' || c.is_whitespace()) {
+                        let p = piece.trim();
+                        if !p.is_empty() && p != "floating" {
+                            bag.insert(p.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        for c in &n.children {
+            walk(c, hints);
+        }
+    }
+    for n in ast {
+        walk(n, &mut hints);
+    }
+    hints
+        .into_iter()
+        .map(|(k, set)| {
+            let joined = set.into_iter().collect::<Vec<_>>().join(", ");
+            (k, joined)
+        })
+        .collect()
+}
+
+fn string_attr(n: &Node, key: &str) -> Option<String> {
+    match n.attr(key)? {
+        Value::String(s) | Value::Ident(s) => Some(s.clone()),
+        _ => None,
+    }
 }
 
 fn rgb_to_hex(r: f32, g: f32, b: f32) -> String {
@@ -123,11 +186,39 @@ scene { box "b" (size=[1,1,1]) }"#;
         let src = r#"material "oak" (color=[0.55, 0.35, 0.18], roughness=0.75)"#;
         let ast = parse_or_panic(src);
         let hits = collect_materials(&ast);
-        let p = build_prompt(&hits[0], "photorealistic", None);
+        let p = build_prompt(&hits[0], "photorealistic", None, None);
         assert!(p.contains("Material name: oak"));
         assert!(p.contains("#8C592E"));
         assert!(p.contains("rough, matte"));
         assert!(p.contains("photorealistic"));
+    }
+
+    #[test]
+    fn anatomy_hint_appears_when_provided() {
+        let src = r#"material "fur" (color=[0.5, 0.3, 0.1], roughness=0.85)"#;
+        let ast = parse_or_panic(src);
+        let hits = collect_materials(&ast);
+        let p = build_prompt(&hits[0], "photorealistic", None, Some("back, shoulder"));
+        assert!(p.contains("Anatomy / role hints: back, shoulder"));
+    }
+
+    #[test]
+    fn collect_material_anatomy_dedups_role_and_tags() {
+        let src = r#"
+            material "fur" (color=[0.5,0.3,0.1])
+            scene {
+              capsule "leg_l" (mat="fur", role="leg", tags="left,limb", radius=0.05, height=0.4)
+              capsule "leg_r" (mat="fur", role="leg", tags="right,limb", radius=0.05, height=0.4)
+            }
+        "#;
+        let ast = parse_or_panic(src);
+        let hints = collect_material_anatomy(&ast);
+        let fur = hints.get("fur").expect("fur hint present");
+        // Set-based de-dup → "leg, left, limb, right" alphabetical.
+        assert!(fur.contains("leg"));
+        assert!(fur.contains("left"));
+        assert!(fur.contains("right"));
+        assert!(fur.contains("limb"));
     }
 
     #[test]

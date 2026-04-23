@@ -7,7 +7,9 @@ use mogen_dsl::ast::{Node, Value};
 use crate::image::DEFAULT_IMAGE_MODEL;
 use crate::image_cache::ImageCache;
 
-use super::prompt::{build_prompt, collect_materials, parse_prompt_header};
+use super::prompt::{
+    build_prompt, collect_material_anatomy, collect_materials, parse_prompt_header,
+};
 use super::splice::safe_filename_stem;
 
 /// Default `textures_dir` for a given input `.mog` — `textures/<stem>` so
@@ -155,6 +157,7 @@ pub fn build_plan(
 ) -> Vec<Plan> {
     let subject = parse_prompt_header(src);
     let hits = collect_materials(ast);
+    let anatomy = collect_material_anatomy(ast);
     let mut plans = Vec::new();
 
     for h in hits {
@@ -166,7 +169,12 @@ pub fn build_plan(
         let (albedo_action, albedo_prompt) = if existing_albedo.is_some() && !args.force {
             (PlanAction::Skip("already has base_color_texture"), String::new())
         } else {
-            let prompt = build_prompt(&h, &args.style, subject.as_deref());
+            let prompt = build_prompt(
+                &h,
+                &args.style,
+                subject.as_deref(),
+                anatomy.get(&h.name).map(|s| s.as_str()),
+            );
             let cached = cache
                 .map(|c| c.lookup(&ImageCache::key(&args.model, &prompt)).is_some())
                 .unwrap_or(false);

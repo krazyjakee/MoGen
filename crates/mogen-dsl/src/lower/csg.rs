@@ -2,7 +2,7 @@ use anyhow::{bail, Result};
 
 use mogen_core::{Mesh, NodeId, SceneGraph, UvMode};
 use mogen_geom::{
-    clean_csg_output, difference_many, intersect_many, transform_mesh, union_many,
+    clean_csg_output, difference_many, intersect_many, transform_mesh, union_many, union_smooth,
 };
 
 use crate::ast::{Node, Value};
@@ -83,7 +83,10 @@ pub(super) fn lower_csg(
             if operand_meshes.is_empty() {
                 bail!("`union` requires at least one operand");
             }
-            union_many(&operand_meshes)
+            match node.attr_number("smooth") {
+                Some(k) if k > 0.0 => union_smooth(&operand_meshes, k),
+                _ => union_many(&operand_meshes),
+            }
         }
         "difference" => {
             if operand_meshes.is_empty() {
@@ -137,7 +140,10 @@ fn eval_mesh(node: &Node, bake_transform: bool, uv_mode: UvMode) -> Result<Mesh>
                     if operands.is_empty() {
                         bail!("`union` requires at least one operand");
                     }
-                    union_many(&operands)
+                    match node.attr_number("smooth") {
+                        Some(k) if k > 0.0 => union_smooth(&operands, k),
+                        _ => union_many(&operands),
+                    }
                 }
                 "difference" => {
                     if operands.is_empty() {

@@ -1,0 +1,10 @@
+// summary: Curved-plane leaf, slight cup along the length. Set leaf material double_sided=1.
+module "leaf" (length=0.12, width=0.05) {
+  curved_plane "leaf" (
+    size=[$width, $length],
+    bend_u=30, bend_v=8,
+    segments_u=6, segments_v=10
+  ) {
+    connector "stem" (at=[0, 0, $length * -0.5], dir=[0, 0, -1], tag=stem)
+  }
+}

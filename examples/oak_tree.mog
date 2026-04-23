@@ -1,0 +1,37 @@
+// A young oak tree built from the organic stdlib.
+//
+// One trunk + a few branches at the top + scattered leaves. Branches are
+// stdlib `branch` modules rotated to spread out from the trunk; leaves are
+// stdlib `leaf` modules clustered near each branch tip. Demonstrates how
+// recursive-looking organic forms compose from a small set of stdlib parts.
+
+material "oak_bark"  (color=[0.36, 0.25, 0.15], roughness=0.95)
+material "oak_leaf"  (color=[0.18, 0.45, 0.20], roughness=0.65, double_sided=1)
+
+scene {
+  // Trunk — a tapered spline_tube via stdlib branch, scaled up for size.
+  group "trunk" (mat="oak_bark", scale=2.5) {
+    use "branch" ()
+  }
+
+  // Three primary limbs spreading from the crown (~1.5 m up).
+  group "limb_a" (pos=[0, 1.5, 0], rot=[0, 0, 35], mat="oak_bark") {
+    use "branch" ()
+  }
+  group "limb_b" (pos=[0, 1.5, 0], rot=[0, 120, 35], mat="oak_bark") {
+    use "branch" ()
+  }
+  group "limb_c" (pos=[0, 1.5, 0], rot=[0, 240, 35], mat="oak_bark") {
+    use "branch" ()
+  }
+
+  // Leaf cloud — small curved planes scattered around the canopy. Tagged
+  // floating because individual leaves don't structurally touch limbs;
+  // visually they read as foliage above the branches.
+  group "leaves_a"  (pos=[ 0.5, 2.0,  0.0],  tags="floating", mat="oak_leaf") { use "leaf" () }
+  group "leaves_a2" (pos=[ 0.45, 1.95, 0.15], rot=[0, 60, 0], tags="floating", mat="oak_leaf") { use "leaf" () }
+  group "leaves_b"  (pos=[-0.25, 2.0,  0.43], tags="floating", mat="oak_leaf") { use "leaf" () }
+  group "leaves_b2" (pos=[-0.18, 1.95, 0.36], rot=[0, 30, 0], tags="floating", mat="oak_leaf") { use "leaf" () }
+  group "leaves_c"  (pos=[-0.25, 2.0, -0.43], tags="floating", mat="oak_leaf") { use "leaf" () }
+  group "leaves_c2" (pos=[-0.18, 1.95,-0.36], rot=[0, -30, 0], tags="floating", mat="oak_leaf") { use "leaf" () }
+}

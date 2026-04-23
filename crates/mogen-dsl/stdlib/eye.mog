@@ -1,0 +1,6 @@
+// summary: Spherical eyeball. Connector "back" at the socket-facing pole.
+module "eye" (radius=0.022) {
+  sphere "eye" (radius=$radius, rings=10, segments=14) {
+    connector "back" (at=[0, 0, $radius * -1.0], dir=[0, 0, -1], tag=eye_socket)
+  }
+}

@@ -28,8 +28,12 @@ fn is_anim_decl(kind: &str) -> bool {
 pub fn lower(ast: &[Node]) -> Result<SceneGraph> {
     // Expand modules first: collect every `module` declaration, then substitute
     // `use` calls into concrete node trees. The result has no `module`/`use`
-    // nodes and no `$param` references.
-    let reg = collect_modules(ast)?;
+    // nodes and no `$param` references. Stdlib modules (humanoid_torso, leaf,
+    // …) are merged into the registry first so any scene can `use` them; a
+    // user module of the same name shadows the stdlib version.
+    let mut reg = crate::stdlib::stdlib_registry().clone();
+    let user = collect_modules(ast)?;
+    reg.extend_overlay(user);
     let expanded = expand_modules(ast, &reg)?;
 
     let mut graph = SceneGraph::new();

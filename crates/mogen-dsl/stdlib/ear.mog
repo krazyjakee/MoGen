@@ -1,0 +1,10 @@
+// summary: Curved-plane ear (animal-style triangular pinna). Connector "base" at the head-side edge.
+module "ear" (size=0.06) {
+  curved_plane "ear" (
+    size=[$size, $size * 1.4],
+    bend_u=35, bend_v=10,
+    segments_u=6, segments_v=8
+  ) {
+    connector "base" (at=[0, 0, $size * -0.7], dir=[0, -1, 0], tag=ear_base)
+  }
+}
