@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "agentsdb": {
+      "type": "stdio",
+      "command": "agentsdb",
+      "args": [
+        "serve",
+        "--base",
+        "/Users/jake/GitHub/godot-projects/godot-model-gen/AGENTS.db",
+        "--local",
+        "/Users/jake/GitHub/godot-projects/godot-model-gen/AGENTS.local.db",
+        "--delta",
+        "/Users/jake/GitHub/godot-projects/godot-model-gen/AGENTS.delta.db"
+      ],
+      "env": {}
+    }
+  }
+}

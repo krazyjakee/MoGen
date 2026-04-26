@@ -1,0 +1,39 @@
+// Procedural tree built from the recursive `branch` node + alpha-cutout
+// `leaf_card` foliage. One declaration generates the whole tree: trunk +
+// recursive forks (Catmull-Rom swept tubes via spline_tube) + leaves at the
+// tips. Tweak `seed` to regrow a different tree from the same params.
+
+material "bark" (
+    color=[0.36, 0.25, 0.15],
+    roughness=0.95
+)
+
+material "leaf" (
+    color=[0.20, 0.50, 0.22],
+    roughness=0.65,
+    alpha_mode="mask",
+    alpha_cutoff=0.5,
+    double_sided=1
+)
+
+scene {
+  branch "oak" (
+    length=1.4,
+    radius=0.18,
+    depth=5,
+    splits=2,
+    length_falloff=0.72,
+    radius_falloff=0.62,
+    branch_angle=32,
+    roll=137.5,
+    tropism=-0.05,
+    bend=12,
+    jitter=0.25,
+    seed=7,
+    leaves=1,
+    leaf_size=0.32,
+    leaf_cards=2,
+    leaf_mat="leaf",
+    mat="bark"
+  )
+}

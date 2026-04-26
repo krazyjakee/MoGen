@@ -1,0 +1,26 @@
+// mogen-generate seed=1777172251887243000
+// mogen-generate thinking=high
+// prompt: a red apple, heavy-bottomed and slightly asymmetrical, glows with a deep crimson-to-oxblood gradient reminiscent of a moody Flemish still life. Its waxy, high-gloss skin is dappled with tiny golden lenticels and a single satiny bruise, catching the warm, directional light of a rustic autumn kitchen.
+
+material "apple_skin" (color=[0.35, 0.02, 0.03], roughness=0.56)
+material "apple_stem" (color=[0.20, 0.12, 0.05], roughness=0.85)
+
+scene {
+  group "apple" (pos=[0, 0.0425, 0], rot=[5, 25, -3]) {
+    superellipsoid "body" (size=[0.09, 0.085, 0.087], ew=1.1, ns=0.85, mat="apple_skin") {
+      connector "dimple" (at=[0, 0.038, 0], dir=[0, 1, 0])
+    }
+    
+    spline_tube "stem" (
+      points=[
+        [0, 0, 0],
+        [0.002, 0.01, 0.002],
+        [0.008, 0.02, 0.005]
+      ],
+      radius=0.0015,
+      mat="apple_stem"
+    )
+    
+    attach (parent="body", child="stem", socket="dimple", plug="start")
+  }
+}
