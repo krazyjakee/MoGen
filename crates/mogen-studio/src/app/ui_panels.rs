@@ -19,7 +19,7 @@ impl MogenStudioApp {
     pub(super) fn ui_editor(&mut self, ui: &mut egui::Ui) {
         let mut changed = false;
         let i = self.active;
-        let editor_id = egui::Id::new("mog_editor_textedit");
+        let editor_id = self.active_editor_id();
 
         // Consume popup navigation keys BEFORE the TextEdit is rendered — Up /
         // Down / Tab / Enter / Esc are only intercepted when the popup is

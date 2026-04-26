@@ -303,9 +303,6 @@ enum Cmd {
         /// Stop after rewriting the .mog; don't run build.
         #[arg(long)]
         no_build: bool,
-        /// Disable the local image cache under `$MOGEN_CACHE_DIR/images/`.
-        #[arg(long)]
-        no_cache: bool,
         /// Override GEMINI_API_KEY.
         #[arg(long)]
         api_key: Option<String>,
@@ -496,7 +493,6 @@ fn main() -> ExitCode {
             force,
             dry_run,
             no_build,
-            no_cache,
             api_key,
             no_pbr,
             no_normal,
@@ -514,7 +510,6 @@ fn main() -> ExitCode {
             force,
             dry_run,
             no_build,
-            no_cache,
             api_key,
             no_pbr,
             no_normal,

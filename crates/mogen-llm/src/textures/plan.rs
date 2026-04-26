@@ -5,7 +5,6 @@ use mogen_dsl::ast::{Node, Value};
 
 #[cfg(test)]
 use crate::image::DEFAULT_IMAGE_MODEL;
-use crate::image_cache::ImageCache;
 
 use super::prompt::{
     build_prompt, collect_material_anatomy, collect_materials, parse_prompt_header,
@@ -80,7 +79,6 @@ pub struct TexturesArgs {
     pub force: bool,
     pub dry_run: bool,
     pub no_build: bool,
-    pub no_cache: bool,
     pub api_key: Option<String>,
     /// Disable every derived PBR map. Albedo still gets generated.
     pub no_pbr: bool,
@@ -107,7 +105,6 @@ impl TexturesArgs {
             force: false,
             dry_run: false,
             no_build: false,
-            no_cache: false,
             api_key: None,
             no_pbr: false,
             no_normal: false,
@@ -138,8 +135,6 @@ pub struct Plan {
 pub enum PlanAction {
     /// Call the LLM (albedo only).
     Generate,
-    /// Load a cached LLM PNG (albedo only).
-    CacheHit,
     /// Derive locally from the albedo PNG (PBR maps only).
     Derive,
     /// Do nothing — either the attr is already present, or the user disabled
@@ -149,12 +144,7 @@ pub enum PlanAction {
 
 /// Build the plan without calling the API. Used by `--dry-run` and exposed
 /// for testing.
-pub fn build_plan(
-    src: &str,
-    ast: &[Node],
-    args: &TexturesArgs,
-    cache: Option<&ImageCache>,
-) -> Vec<Plan> {
+pub fn build_plan(src: &str, ast: &[Node], args: &TexturesArgs) -> Vec<Plan> {
     let subject = parse_prompt_header(src);
     let hits = collect_materials(ast);
     let anatomy = collect_material_anatomy(ast);
@@ -175,15 +165,7 @@ pub fn build_plan(
                 subject.as_deref(),
                 anatomy.get(&h.name).map(|s| s.as_str()),
             );
-            let cached = cache
-                .map(|c| c.lookup(&ImageCache::key(&args.model, &prompt)).is_some())
-                .unwrap_or(false);
-            let action = if cached {
-                PlanAction::CacheHit
-            } else {
-                PlanAction::Generate
-            };
-            (action, prompt)
+            (PlanAction::Generate, prompt)
         };
         plans.push(Plan {
             material: h.name.clone(),
@@ -245,7 +227,7 @@ mod tests {
         let src = r#"material "a" (color=[1,0,0])"#;
         let ast = parse_or_panic(src);
         let args = TexturesArgs::with_defaults(PathBuf::from("x.mog"));
-        let plans = build_plan(src, &ast, &args, None);
+        let plans = build_plan(src, &ast, &args);
         assert_eq!(plans.len(), 4);
         assert_eq!(plans[0].kind, SlotKind::Albedo);
         assert!(matches!(plans[0].action, PlanAction::Generate));
@@ -260,7 +242,7 @@ mod tests {
         let ast = parse_or_panic(src);
         let mut args = TexturesArgs::with_defaults(PathBuf::from("x.mog"));
         args.no_pbr = true;
-        let plans = build_plan(src, &ast, &args, None);
+        let plans = build_plan(src, &ast, &args);
         assert_eq!(plans.len(), 1);
         assert_eq!(plans[0].kind, SlotKind::Albedo);
     }
@@ -270,7 +252,7 @@ mod tests {
         let src = r#"material "a" (color=[1,0,0], base_color_texture="existing.png")"#;
         let ast = parse_or_panic(src);
         let args = TexturesArgs::with_defaults(PathBuf::from("x.mog"));
-        let plans = build_plan(src, &ast, &args, None);
+        let plans = build_plan(src, &ast, &args);
         // Albedo skipped but captures existing path for derivation.
         let albedo = &plans[0];
         assert!(matches!(albedo.action, PlanAction::Skip(_)));
@@ -309,7 +291,7 @@ mod tests {
         let src = r#"material "wood" (color=[1,0,0])"#;
         let ast = parse_or_panic(src);
         let args = TexturesArgs::with_defaults(PathBuf::from("axe.mog"));
-        let plans = build_plan(src, &ast, &args, None);
+        let plans = build_plan(src, &ast, &args);
         assert_eq!(
             plans[0].rel_path,
             PathBuf::from("textures").join("axe").join("wood_albedo.png"),
@@ -322,7 +304,7 @@ mod tests {
         let ast = parse_or_panic(src);
         let mut args = TexturesArgs::with_defaults(PathBuf::from("x.mog"));
         args.force = true;
-        let plans = build_plan(src, &ast, &args, None);
+        let plans = build_plan(src, &ast, &args);
         assert!(matches!(plans[0].action, PlanAction::Generate));
     }
 }

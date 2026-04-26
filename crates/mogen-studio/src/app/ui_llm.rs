@@ -224,7 +224,6 @@ impl MogenStudioApp {
             ui.checkbox(&mut cfg.no_metallic_roughness, "Skip metallic/roughness");
             ui.checkbox(&mut cfg.no_occlusion, "Skip occlusion (AO)");
             ui.checkbox(&mut cfg.force, "Re-generate even if texture file exists");
-            ui.checkbox(&mut cfg.no_cache, "Bypass on-disk image cache");
         });
         // Persist whether the expander is open so it survives recompiles.
         self.files[self.active].texture_cfg.expanded = resp.openness > 0.5;
@@ -407,7 +406,6 @@ impl MogenStudioApp {
                     );
                     let verb = match stage {
                         TextureStage::Generating => "generating",
-                        TextureStage::CacheHit => "cache hit",
                         TextureStage::Deriving => "deriving PBR for",
                         TextureStage::Done => "finished",
                     };
@@ -843,7 +841,6 @@ fn stage_headline(p: &Option<LlmProgress>, kind: LlmKind) -> String {
         }) => {
             let verb = match stage {
                 TextureStage::Generating => "generating",
-                TextureStage::CacheHit => "cache hit",
                 TextureStage::Deriving => "deriving PBR for",
                 TextureStage::Done => "finished",
             };

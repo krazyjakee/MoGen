@@ -659,7 +659,6 @@ fn event_for_progress(p: &LlmProgress) -> (String, LlmEventTone) {
         } => {
             let verb = match stage {
                 TextureStage::Generating => "generating",
-                TextureStage::CacheHit => "cache hit",
                 TextureStage::Deriving => "deriving PBR",
                 TextureStage::Done => "finished",
             };

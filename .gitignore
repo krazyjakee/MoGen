@@ -26,7 +26,6 @@
 
 # Generated .glb outputs (keep curated examples)
 *.glb
-!examples/*.glb
 .claude
 generated
 examples/textures

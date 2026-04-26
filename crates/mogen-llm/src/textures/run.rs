@@ -11,7 +11,6 @@ use mogen_dsl::ast::{Node, Value};
 
 use crate::gemini::{GeminiClient, GeminiError};
 use crate::image::GeneratedImage;
-use crate::image_cache::{default_image_cache_dir, ImageCache};
 use crate::pbr_maps::{derive_pbr_maps, PbrMapOptions};
 
 use super::plan::{Plan, PlanAction, SlotKind, TexturesArgs};
@@ -39,8 +38,6 @@ pub struct TextureProgress {
 pub enum TextureStage {
     /// Calling the image model for the albedo.
     Generating,
-    /// Albedo was served from the on-disk cache instead of a fresh API call.
-    CacheHit,
     /// Deriving the PBR companion maps (normal/MR/AO) locally.
     Deriving,
     /// All slots for this material wrote successfully.
@@ -74,10 +71,10 @@ fn pbr_opts(_args: &TexturesArgs, material: &Node) -> PbrMapOptions {
     opts
 }
 
-/// Execute the plan: generate/cache-hit each PNG, write it into the `.mog`
-/// directory's texture folder, and return the [`Edit`]s the splicer should
-/// apply. `progress_cb`, when supplied, is invoked once per stage transition
-/// of each material (see [`TextureProgress`]).
+/// Execute the plan: generate each PNG, write it into the `.mog` directory's
+/// texture folder, and return the [`Edit`]s the splicer should apply.
+/// `progress_cb`, when supplied, is invoked once per stage transition of each
+/// material (see [`TextureProgress`]).
 pub fn run_plan(
     client: Option<&GeminiClient>,
     model: &str,
@@ -85,7 +82,6 @@ pub fn run_plan(
     ast: &[Node],
     plans: &[Plan],
     base_dir: &Path,
-    cache: Option<&ImageCache>,
     progress_cb: Option<&dyn Fn(TextureProgress)>,
 ) -> Result<Vec<Edit>> {
     // Group plans by (span, material) so we process each material's slots
@@ -114,10 +110,7 @@ pub fn run_plan(
         .iter()
         .filter(|(_, _, ps)| {
             ps.iter().any(|p| {
-                matches!(
-                    p.action,
-                    PlanAction::Generate | PlanAction::CacheHit | PlanAction::Derive
-                )
+                matches!(p.action, PlanAction::Generate | PlanAction::Derive)
             })
         })
         .count() as u32;
@@ -128,12 +121,9 @@ pub fn run_plan(
     for (mat_name, _span, mat_plans) in by_material {
         // Skip materials where every slot is a no-op — no need to surface them
         // in progress, they just clutter the status line.
-        let has_work = mat_plans.iter().any(|p| {
-            matches!(
-                p.action,
-                PlanAction::Generate | PlanAction::CacheHit | PlanAction::Derive
-            )
-        });
+        let has_work = mat_plans
+            .iter()
+            .any(|p| matches!(p.action, PlanAction::Generate | PlanAction::Derive));
         if !has_work {
             continue;
         }
@@ -154,14 +144,9 @@ pub fn run_plan(
 
         if let Some(p) = albedo_plan {
             match &p.action {
-                PlanAction::Generate | PlanAction::CacheHit => {
-                    let stage = if matches!(p.action, PlanAction::CacheHit) {
-                        TextureStage::CacheHit
-                    } else {
-                        TextureStage::Generating
-                    };
-                    emit(stage);
-                    let bytes = resolve_albedo_bytes(client, model, p, cache, args.texture_size)?;
+                PlanAction::Generate => {
+                    emit(TextureStage::Generating);
+                    let bytes = resolve_albedo_bytes(client, model, p, args.texture_size)?;
                     let abs = base_dir.join(&p.rel_path);
                     write_png(&abs, &bytes)?;
                     edits.push(Edit {
@@ -250,31 +235,22 @@ fn resolve_albedo_bytes(
     client: Option<&GeminiClient>,
     model: &str,
     plan: &Plan,
-    cache: Option<&ImageCache>,
     max_side: u32,
 ) -> Result<Vec<u8>> {
-    let key = ImageCache::key(model, &plan.prompt);
-    if let Some(c) = cache {
-        if let Some(cached_path) = c.lookup(&key) {
-            let raw = fs::read(&cached_path)
-                .with_context(|| format!("reading cached image {}", cached_path.display()))?;
-            return resize_and_recompress_albedo(&raw, max_side);
-        }
-    }
     let client = client.ok_or_else(|| {
-        anyhow!(
-            "no GeminiClient available and no cache hit for material {}",
-            plan.material
-        )
+        anyhow!("no GeminiClient available for material {}", plan.material)
     })?;
-    let img = generate_with_recitation_retry(client, model, &plan.prompt, RECITATION_RETRIES)
-        .map_err(|e: GeminiError| anyhow!("gemini image: {e}"))?;
-    if let Some(c) = cache {
-        // Cache the *original* model output under the base prompt key so that
-        // changing `--texture-size` on a future run re-resizes from the full
-        // resolution instead of a pre-shrunk copy.
-        let _ = c.store(&key, &img.png_bytes);
-    }
+    // Fresh per-material random seed so repeated runs over the same prompt
+    // don't keep landing on the same Gemini sample.
+    let seed = Some(random_seed());
+    let img = generate_with_recitation_retry(
+        client,
+        model,
+        &plan.prompt,
+        RECITATION_RETRIES,
+        seed,
+    )
+    .map_err(|e: GeminiError| anyhow!("gemini image: {e}"))?;
     resize_and_recompress_albedo(&img.png_bytes, max_side)
 }
 
@@ -328,11 +304,16 @@ fn to_forward_slashes(rel: &Path) -> String {
 /// same prompt — re-issuing as-is just burns quota — so each retry appends a
 /// distinct hint that nudges the model toward a different sample without
 /// changing what the texture is supposed to depict.
+///
+/// `seed` is forwarded to every attempt so callers can drive sampling
+/// variation across whole runs; the variation hint handles intra-call variety
+/// on recitation retries.
 pub fn generate_with_recitation_retry(
     client: &GeminiClient,
     model: &str,
     base_prompt: &str,
     max_retries: u32,
+    seed: Option<u64>,
 ) -> Result<GeneratedImage, GeminiError> {
     let mut attempt: u32 = 0;
     loop {
@@ -342,7 +323,7 @@ pub fn generate_with_recitation_retry(
             let hint = recitation_variation_hint(attempt);
             format!("{base_prompt}\nVariation hint: {hint}")
         };
-        match client.generate_image(model, &prompt) {
+        match client.generate_image(model, &prompt, seed) {
             Ok(img) => return Ok(img),
             Err(GeminiError::InvalidResponse(msg))
                 if msg.contains("IMAGE_RECITATION") && attempt < max_retries =>
@@ -367,13 +348,25 @@ fn recitation_variation_hint(attempt: u32) -> &'static str {
     HINTS[(attempt as usize - 1) % HINTS.len()]
 }
 
-/// Resolve the cache (if enabled) without panicking — mirrors the pattern
-/// used by the text-side system-instruction cache.
-pub fn maybe_cache(no_cache: bool) -> Option<ImageCache> {
-    if no_cache {
-        return None;
-    }
-    default_image_cache_dir().map(ImageCache::new)
+/// Mint a fresh seed for an image generation call.
+///
+/// Combines wall-clock nanoseconds with a process-wide atomic counter and
+/// runs the result through SplitMix64, so back-to-back calls that land in
+/// the same nanosecond still produce independent seeds. Avoids pulling in a
+/// `rand` dependency for what's effectively one u64 per material per run.
+fn random_seed() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0);
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let mut x = nanos.wrapping_add(n.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+    x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    x ^ (x >> 31)
 }
 
 #[cfg(test)]

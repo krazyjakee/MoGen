@@ -23,10 +23,15 @@ impl GeminiClient {
     /// Call `generateContent` on an image-capable model and return the first
     /// `inlineData` part as decoded bytes. Text parts are ignored — the model
     /// typically emits a short caption alongside the image which we don't need.
+    ///
+    /// `seed`, when supplied, is forwarded to `generationConfig.seed` so the
+    /// caller can drive sampling variation. Gemini doesn't guarantee
+    /// determinism, but the field still varies the output for image models.
     pub fn generate_image(
         &self,
         model: &str,
         prompt: &str,
+        seed: Option<u64>,
     ) -> Result<GeneratedImage, GeminiError> {
         let url = format!(
             "{}/models/{}:generateContent?key={}",
@@ -35,14 +40,21 @@ impl GeminiClient {
             self.api_key(),
         );
 
+        let mut gen_cfg = serde_json::json!({
+            "responseModalities": ["IMAGE"],
+        });
+        if let Some(s) = seed {
+            // Gemini accepts `seed` as an i32 — saturate to the positive range,
+            // matching what the text path does in `gemini::build_request`.
+            let clipped = (s as i64) & 0x7FFF_FFFF;
+            gen_cfg["seed"] = serde_json::json!(clipped);
+        }
         let body = serde_json::json!({
             "contents": [{
                 "role": "user",
                 "parts": [{ "text": prompt }],
             }],
-            "generationConfig": {
-                "responseModalities": ["IMAGE"],
-            },
+            "generationConfig": gen_cfg,
         });
 
         let resp = self.http().post(&url).json(&body).send()?;

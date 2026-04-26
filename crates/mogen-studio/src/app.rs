@@ -25,16 +25,23 @@ mod ui_llm;
 mod ui_menu;
 mod ui_panels;
 mod util;
+mod watcher;
 
 use self::types::{
-    AutocompleteState, BuildOutcome, EnhanceInFlight, EnhanceTarget, FileState, SessionUsage,
-    ThumbCache, VIEWER_BG_COLOR,
+    AutocompleteState, BuildOutcome, EnhanceInFlight, EnhanceTarget, ExternalConflict, FileState,
+    SessionUsage, ThumbCache, VIEWER_BG_COLOR,
 };
 use self::util::locate_project_root;
 
 pub struct MogenStudioApp {
     files: Vec<FileState>,
     active: usize,
+
+    /// Monotonic counter handed out as `FileState::tab_id`. Each tab needs a
+    /// stable identity for the editor's `egui::Id`; reusing indices across
+    /// close/open would mean a fresh tab inheriting the closed tab's
+    /// TextEditState (cursor + undo history) from egui memory.
+    next_tab_id: u64,
 
     project_root: PathBuf,
 
@@ -114,6 +121,12 @@ pub struct MogenStudioApp {
     /// Editor autocomplete popup state. One instance since only one editor is
     /// on-screen at a time; it's reset on tab switch / focus loss.
     autocomplete: AutocompleteState,
+
+    /// Pending on-disk conflict awaiting user resolution. Set by the file
+    /// watcher when an open file changed on disk and the buffer is dirty
+    /// (clean buffers reload silently — see `watcher.rs`). Cleared when the
+    /// modal is dismissed.
+    pending_external: Option<ExternalConflict>,
 }
 
 impl MogenStudioApp {
@@ -131,12 +144,15 @@ impl MogenStudioApp {
         apply_theme(&cc.egui_ctx, settings.theme());
         viewer.set_preview_shader(settings.preview_shader());
 
-        let mut initial = FileState::untitled();
+        // Hand the seed tab id 0 directly; the counter that hands out
+        // subsequent ids starts at 1 so it never collides.
+        let mut initial = FileState::untitled(0);
         initial.status = "welcome — open a MOG file to get started".into();
 
         let mut app = Self {
             files: vec![initial],
             active: 0,
+            next_tab_id: 1,
             project_root,
             settings,
             show_options: false,
@@ -159,6 +175,7 @@ impl MogenStudioApp {
             enhance_in_flight: None,
             enhance_error: None,
             autocomplete: AutocompleteState::default(),
+            pending_external: None,
         };
 
         // Restore the last opened MOG when it still exists. Otherwise leave
@@ -182,6 +199,22 @@ impl MogenStudioApp {
 
         app
     }
+
+    /// Mint the next stable per-tab id. Every fresh `FileState` should pull
+    /// from here so the editor's `egui::Id` never collides with one belonging
+    /// to a now-closed tab.
+    pub(super) fn next_tab_id(&mut self) -> u64 {
+        let id = self.next_tab_id;
+        self.next_tab_id = self.next_tab_id.wrapping_add(1);
+        id
+    }
+
+    /// `egui::Id` for the active tab's code-editor TextEdit. Salting on the
+    /// tab id (not the index) keeps cursor + undo history per-tab and stable
+    /// across tab reorders / closes.
+    pub(super) fn active_editor_id(&self) -> egui::Id {
+        egui::Id::new(("mog_editor_textedit", self.files[self.active].tab_id))
+    }
 }
 
 impl eframe::App for MogenStudioApp {
@@ -204,6 +237,7 @@ impl eframe::App for MogenStudioApp {
         self.poll_prompt_enhance();
         self.poll_build();
         self.drive_compile_debounce(ctx);
+        self.check_external_changes(ctx);
 
         // Consume global shortcuts before the menu / editor see the key event,
         // so e.g. Ctrl+S doesn't reach the TextEdit.
@@ -315,12 +349,13 @@ impl eframe::App for MogenStudioApp {
         self.ui_quit_confirm(ctx);
         self.ui_close_confirm(ctx);
         self.ui_export_dialog(ctx);
+        self.ui_external_conflict(ctx);
         self.ui_about(ctx);
 
         // Paint the autocomplete popup last so it floats above every panel.
         // The editor panel updated state earlier in the frame; here we just
         // draw what that state says.
-        let editor_id = egui::Id::new("mog_editor_textedit");
+        let editor_id = self.active_editor_id();
         self.render_autocomplete_popup(ctx, editor_id);
 
         // Keep repainting while ANY file has an LLM call in flight so every
@@ -330,6 +365,14 @@ impl eframe::App for MogenStudioApp {
         // window.
         if self.any_in_flight() || self.any_enhance_in_flight() || self.build_rx.is_some() {
             ctx.request_repaint_after(std::time::Duration::from_millis(120));
+        }
+
+        // Idle-tick the on-disk watcher: even when nothing else needs a
+        // redraw, schedule a repaint within a watch interval so external
+        // edits surface promptly. egui collapses overlapping `request_repaint`
+        // calls, so this composes harmlessly with the in-flight heartbeat.
+        if self.files.iter().any(|f| f.path.is_some()) {
+            ctx.request_repaint_after(types::WATCH_INTERVAL);
         }
     }
 

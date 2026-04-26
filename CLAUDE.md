@@ -89,12 +89,14 @@ mogen-dsl  ──parse──►  AST  ──validate_ast──►  lower  ──
   from grammar + stdlib index + examples (`prompt.rs`), and the repair loop (`repair.rs`)
   that re-feeds JSON diagnostics for up to `max_repair_iters` retries. `embed_seed_header` /
   `parse_seed_header` keep the seed round-tripping through the DSL file. A separate PBR
-  texture pipeline lives in `textures.rs` + `pbr_maps.rs` + `image.rs` + `image_cache.rs`:
-  `textures.rs` walks the AST, generates per-material albedo PNGs via Gemini 2.5 Flash Image,
-  and splices `texture = "…"` attributes back into the source using spans (no reformatting).
-  `pbr_maps.rs` derives normal / metallic-roughness / occlusion maps locally from the albedo
-  (Sobel gradients + luminance cavity detection, tileable). Image generation retries on
-  `IMAGE_RECITATION` up to 3× and caches through `image_cache.rs`.
+  texture pipeline lives in `textures.rs` + `pbr_maps.rs` + `image.rs`: `textures.rs` walks
+  the AST, generates per-material albedo PNGs via Gemini 2.5 Flash Image with a fresh
+  per-call random seed, and splices `texture = "…"` attributes back into the source using
+  spans (no reformatting). `pbr_maps.rs` derives normal / metallic-roughness / occlusion
+  maps locally from the albedo (Sobel gradients + luminance cavity detection, tileable).
+  Image generation retries on `IMAGE_RECITATION` up to 3×. There is no cache for generated
+  images — repeat builds reuse PNGs already on disk in the project's `textures/` folder
+  (the `Skip` action when the source already has `*_texture` attrs).
 - **mogen** — the binary; `clap` subcommands (`build`, `parse`, `check`, `dump-scene`,
   `inspect`, `generate`, `modify`, `bench`). `build` is the canonical pipeline and the other
   LLM commands end by calling it.

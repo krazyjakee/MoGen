@@ -1,6 +1,12 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::time::{Instant, SystemTime};
+
+/// Read `path`'s modified time, dropping any platform error (we treat
+/// "no mtime" the same as an untitled buffer — watcher disabled, no prompts).
+pub(super) fn mtime_of(path: &Path) -> Option<SystemTime> {
+    fs::metadata(path).and_then(|m| m.modified()).ok()
+}
 
 /// If the user saved via the Save dialog without typing any extension, append
 /// `.mog`. rfd's `add_filter` doesn't enforce an extension on every platform,
@@ -41,7 +47,9 @@ impl MogenStudioApp {
         }
         match fs::read_to_string(path) {
             Ok(src) => {
-                let f = FileState::loaded(path.to_path_buf(), src);
+                let tab_id = self.next_tab_id();
+                let mtime = mtime_of(path);
+                let f = FileState::loaded(tab_id, path.to_path_buf(), src, mtime);
                 if self.files.len() == 1 && self.files[0].is_pristine_untitled() {
                     self.files[0] = f;
                     self.activate(0);
@@ -147,7 +155,8 @@ impl MogenStudioApp {
     /// that file.
     pub(super) fn close_file(&mut self, i: usize) {
         if self.files.len() <= 1 {
-            self.files[0] = FileState::untitled();
+            let tab_id = self.next_tab_id();
+            self.files[0] = FileState::untitled(tab_id);
             self.active = 0;
             self.viewer.clear();
             return;
@@ -183,10 +192,17 @@ impl MogenStudioApp {
             self.files[i].status = format!("save failed: {e}");
             return;
         }
+        // Capture the new on-disk mtime so the watcher's next tick treats this
+        // save as our own write rather than as an external edit. If the
+        // filesystem won't give us an mtime we leave it `None` — better to
+        // disable watching for this file than to spuriously prompt.
+        let mtime = mtime_of(path);
         let f = &mut self.files[i];
         f.path = Some(path.to_path_buf());
         f.last_saved_source = src;
         f.dirty = false;
+        f.disk_mtime = mtime;
+        f.last_watch_check = Some(Instant::now());
         f.status = format!("saved {}", path.display());
         if i == self.active {
             self.remember_last_opened();
@@ -282,7 +298,8 @@ impl MogenStudioApp {
         let gen_prompt = self.files[i].gen_prompt.clone();
         let mod_prompt = self.files[i].mod_prompt.clone();
         let anim_prompt = self.files[i].anim_prompt.clone();
-        let mut f = FileState::untitled();
+        let tab_id = self.next_tab_id();
+        let mut f = FileState::untitled(tab_id);
         f.source = src;
         // Leave `last_saved_source` empty so the copy shows a dirty marker
         // — this is an unsaved duplicate until the user picks a path.
@@ -299,7 +316,8 @@ impl MogenStudioApp {
     }
 
     pub(super) fn new_untitled(&mut self) {
-        let mut f = FileState::untitled();
+        let tab_id = self.next_tab_id();
+        let mut f = FileState::untitled(tab_id);
         f.source = "scene {\n  box \"b\" (size=[1, 1, 1])\n}\n".to_string();
         f.last_saved_source = f.source.clone();
         f.status = "new scene".into();

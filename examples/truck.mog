@@ -1,0 +1,115 @@
+// mogen-generate seed=1777172779106654000
+// mogen-generate thinking=high
+// prompt: A haulage truck stands as a massive, slab-sided behemoth of a near-future industrial wasteland, its towering silhouette dominated by a snub-nosed cab and oversized, chain-wrapped wheels. The chassis is a weathered patchwork of oxidized iron and chipped cobalt paint, marked by deep structural gouges and the iridescent, oily sheen of road grime.
+
+material "cobalt_paint" (color=[0.15, 0.25, 0.45], roughness=0.7, metallic=0.4)
+material "oxidized_iron" (color=[0.35, 0.20, 0.15], roughness=0.85, metallic=0.6)
+material "oily_grime" (color=[0.1, 0.1, 0.1], roughness=0.3, metallic=0.8)
+material "tire_rubber" (color=[0.08, 0.08, 0.08], roughness=0.9)
+material "glass" (color=[0.55, 0.65, 0.7], roughness=0.08, metallic=0.0, transmission=0.85)
+material "headlight" (color=[1.0, 0.9, 0.7], emissive=[1.0, 0.9, 0.7], emissive_strength=5.0)
+
+module "wheel" () {
+  connector "mount" (at=[0.4, 0, 0], dir=[1, 0, 0])
+  cylinder "tire" (radius=0.8, height=0.8, rot=[0, 0, 90], mat="tire_rubber")
+  cylinder "rim" (radius=0.5, height=0.82, rot=[0, 0, 90], mat="oxidized_iron")
+  cylinder "hub" (radius=0.2, height=0.86, rot=[0, 0, 90], mat="oily_grime")
+  
+  array "chains" (count=16, around=x) {
+    group "chain_pivot" {
+      box "link" (size=[0.82, 0.05, 0.2], pos=[0, 0.8, 0], mat="oxidized_iron")
+    }
+  }
+}
+
+scene {
+  box "chassis" (size=[3.4, 0.6, 8.0], anchor=bottom, mat="oxidized_iron") {
+    connector "w_fl"  (at=[-1.7, 0.3, -2.5], dir=[-1, 0, 0])
+    connector "w_fr"  (at=[ 1.7, 0.3, -2.5], dir=[ 1, 0, 0])
+    connector "w_rl1" (at=[-1.7, 0.3,  1.5], dir=[-1, 0, 0])
+    connector "w_rr1" (at=[ 1.7, 0.3,  1.5], dir=[ 1, 0, 0])
+    connector "w_rl2" (at=[-1.7, 0.3,  3.2], dir=[-1, 0, 0])
+    connector "w_rr2" (at=[ 1.7, 0.3,  3.2], dir=[ 1, 0, 0])
+    
+    connector "cab_mount"    (at=[0, 0.6, -2.5], dir=[0, 1, 0])
+    connector "bed_mount"    (at=[0, 0.6,  1.5], dir=[0, 1, 0])
+    connector "bumper_mount" (at=[0, 0.3, -4.0], dir=[0, 0, -1])
+  }
+
+  group "cab" {
+    connector "base" (at=[0, 0, 0], dir=[0, -1, 0])
+
+    difference "cab_base" (mat="cobalt_paint") {
+      box "outer"  (size=[3.0, 1.5, 2.5], anchor=bottom)
+      box "cavity" (size=[2.8, 1.45, 2.3], pos=[0, 0.85, 0.0])
+    }
+
+    difference "cab_top" (mat="cobalt_paint", pos=[0, -0.7713, 0]) {
+      box "outer"          (size=[3.0, 1.02, 2.5], pos=[0, 2.0, 0.0])
+      box "cavity"         (size=[2.8, 0.95, 2.3], pos=[0, 1.975, 0.0])
+      box "windscreen_cut" (size=[2.6, 0.7, 0.3],  pos=[0, 2.05, -1.25])
+    }
+
+    box "windshield" (size=[2.55, 0.7, 0.04], pos=[0, 1.2953, -1.25], mat="glass")
+
+    box "hl_l" (size=[0.4, 0.2, 0.05], pos=[-1.2, 0.5, -1.27], mat="headlight")
+    box "hl_r" (size=[0.4, 0.2, 0.05], pos=[ 1.2, 0.5, -1.27], mat="headlight")
+
+    group "interior" {
+      box "floor" (size=[2.8, 0.04, 2.3], pos=[0, 0.15, 0.0], mat="oily_grime")
+
+      box "seat_l_base"     (size=[0.6, 0.1, 0.55], pos=[-0.6, 0.42, 0.4],  mat="oily_grime")
+      box "seat_l_back"     (size=[0.6, 0.7, 0.1],  pos=[-0.6, 0.82, 0.65], mat="oily_grime")
+      box "seat_l_headrest" (size=[0.45, 0.18, 0.1], pos=[-0.6, 1.25, 0.65], mat="oily_grime")
+
+      box "seat_r_base"     (size=[0.6, 0.1, 0.55], pos=[ 0.6, 0.42, 0.4],  mat="oily_grime")
+      box "seat_r_back"     (size=[0.6, 0.7, 0.1],  pos=[ 0.6, 0.82, 0.65], mat="oily_grime")
+      box "seat_r_headrest" (size=[0.45, 0.18, 0.1], pos=[ 0.6, 1.25, 0.65], mat="oily_grime")
+
+      box "dashboard"  (size=[2.8, 0.3, 0.4], pos=[0, 0.8, -1.0], mat="oxidized_iron")
+      box "dash_panel" (size=[2.0, 0.16, 0.02], pos=[0, 0.97, -0.84], mat="oily_grime")
+
+      cylinder "steering_col" (radius=0.04, height=0.4, pos=[-0.6, 0.92, -0.9], rot=[75, 0, 0], mat="oxidized_iron")
+      torus    "steering"     (major=0.18, minor=0.025, pos=[-0.6, 0.97, -0.7], rot=[75, 0, 0], mat="oily_grime")
+
+      cylinder "gear_lever" (radius=0.025, height=0.35, pos=[0, 0.65, 0.3], mat="oxidized_iron")
+      sphere   "gear_knob"  (radius=0.05, pos=[0, 0.83, 0.3], mat="oily_grime")
+
+      sphere "dome_light" (radius=0.08, pos=[0, 1.6, 0.0], tags="floating", mat="headlight")
+    }
+
+    cylinder "ex_l" (radius=0.15, height=2.5, pos=[-1.6, 1.5, 1.0], mat="oily_grime")
+    cylinder "ex_r" (radius=0.15, height=2.5, pos=[ 1.6, 1.5, 1.0], mat="oily_grime")
+  }
+
+  group "bed" {
+    connector "base" (at=[0, 0, 0], dir=[0, -1, 0])
+    difference "bed_box" (pos=[0, 0.6786, 0]) {
+      box "bed_outer" (size=[3.4, 2.5, 5.0], anchor=bottom, mat="oxidized_iron")
+      box "bed_inner" (size=[3.2, 2.5, 4.8], pos=[0, 1.45, 0], mat="oily_grime")
+    }
+  }
+
+  group "bumper_grp" {
+    connector "mount" (at=[0, 0.4, 0.4], dir=[0, 0, 1])
+    wedge "bumper" (size=[3.4, 0.8, 0.8], rot=[0, 180, 0], anchor=bottom, mat="oily_grime")
+  }
+
+  group "wh_fl"  { use "wheel" () }
+  group "wh_fr"  { use "wheel" () }
+  group "wh_rl1" { use "wheel" () }
+  group "wh_rr1" { use "wheel" () }
+  group "wh_rl2" { use "wheel" () }
+  group "wh_rr2" { use "wheel" () }
+
+  attach (parent="chassis", child="cab",        socket="cab_mount",    plug="base")
+  attach (parent="chassis", child="bed",        socket="bed_mount",    plug="base")
+  attach (parent="chassis", child="bumper_grp", socket="bumper_mount", plug="mount")
+  
+  attach (parent="chassis", child="wh_fl",  socket="w_fl",  plug="mount")
+  attach (parent="chassis", child="wh_fr",  socket="w_fr",  plug="mount")
+  attach (parent="chassis", child="wh_rl1", socket="w_rl1", plug="mount")
+  attach (parent="chassis", child="wh_rr1", socket="w_rr1", plug="mount")
+  attach (parent="chassis", child="wh_rl2", socket="w_rl2", plug="mount")
+  attach (parent="chassis", child="wh_rr2", socket="w_rr2", plug="mount")
+}

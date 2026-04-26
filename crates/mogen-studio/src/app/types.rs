@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use eframe::egui;
 use mogen_core::Diagnostic;
@@ -20,6 +20,11 @@ pub(super) const COMPILE_DEBOUNCE: Duration = Duration::from_millis(180);
 /// TTL on the texture-existence cache. Texture roster runs every paint and
 /// would otherwise stat every PNG every frame.
 pub(super) const TEX_EXISTS_TTL: Duration = Duration::from_millis(1500);
+
+/// Throttle on the on-disk file watcher. Each open tab's path is stat'd at
+/// most once per this interval. Long enough that a quick burst of saves from
+/// an external editor doesn't thrash, short enough to feel live.
+pub(super) const WATCH_INTERVAL: Duration = Duration::from_millis(1500);
 
 /// GitHub source URL shown in Help → GitHub repository.
 pub(super) const GITHUB_REPO_URL: &str = "https://github.com/krazyjakee/model-gen";
@@ -170,6 +175,34 @@ pub(super) struct ThumbEntry {
 }
 
 pub(super) type ThumbCache = HashMap<PathBuf, ThumbEntry>;
+
+/// External-change kind detected by the on-disk watcher.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum ExternalChangeKind {
+    /// File still exists but its mtime no longer matches the value captured
+    /// when we last loaded or saved it.
+    Modified,
+    /// File no longer exists at the recorded path. Could be a delete, a move,
+    /// or an editor that wrote with `create` semantics and lost permissions.
+    Deleted,
+}
+
+/// Pending external-change conflict awaiting user resolution. Set by the
+/// watcher when an open file's on-disk content diverges from the buffer and
+/// the buffer is dirty (clean buffers reload silently, no modal). Only one
+/// conflict is shown at a time; the next is picked up on the next watch tick.
+pub(super) struct ExternalConflict {
+    pub(super) file_index: usize,
+    pub(super) kind: ExternalChangeKind,
+    /// Disk contents read at detection time. `None` for `Deleted`. We capture
+    /// here rather than re-reading on resolve so the user resolves against
+    /// exactly what they were prompted about, even if the file changes again
+    /// while the modal is open.
+    pub(super) disk_source: Option<String>,
+    /// Disk mtime captured alongside `disk_source`. Reapplied to the
+    /// `FileState` on resolve so we don't immediately re-prompt.
+    pub(super) disk_mtime: Option<SystemTime>,
+}
 
 /// Result from a background GLB build. The exported scene is carried back so
 /// the viewer can show exactly what hit disk — important when the merge
@@ -391,7 +424,6 @@ pub(super) struct TextureUiConfig {
     pub(super) no_metallic_roughness: bool,
     pub(super) no_occlusion: bool,
     pub(super) force: bool,
-    pub(super) no_cache: bool,
     /// Whether the "Advanced" expander is open. Persisted per-file so users
     /// can leave it open on the file they're iterating on.
     pub(super) expanded: bool,
@@ -406,7 +438,6 @@ impl Default for TextureUiConfig {
             no_metallic_roughness: false,
             no_occlusion: false,
             force: false,
-            no_cache: false,
             expanded: false,
         }
     }
@@ -447,11 +478,27 @@ pub(super) enum AutocompleteKey {
 /// does not clobber the other file — you can generate on several models at
 /// once.
 pub(super) struct FileState {
+    /// Stable per-tab identifier minted from the app's monotonic counter.
+    /// Used as the salt for the editor's `egui::Id` so each tab's TextEdit
+    /// owns its own cursor / undo history — without this, egui memory keyed
+    /// on a shared id would let one tab's typing pollute another's undo
+    /// stack.
+    pub(super) tab_id: u64,
     pub(super) path: Option<PathBuf>,
     pub(super) source: String,
     pub(super) last_saved_source: String,
     pub(super) dirty: bool,
     pub(super) last_result: Option<CompileResult>,
+
+    /// Mtime of the on-disk file as of the last load or save. Compared by the
+    /// watcher each tick to detect external edits. `None` for untitled tabs,
+    /// for files that don't yet exist on disk, or when the platform refuses
+    /// to give us a modified timestamp (treated as "watching disabled" rather
+    /// than as a sentinel — we won't prompt without a baseline).
+    pub(super) disk_mtime: Option<SystemTime>,
+    /// Last instant the watcher checked this file's mtime. Throttled by
+    /// `WATCH_INTERVAL` so we don't `stat()` on every paint.
+    pub(super) last_watch_check: Option<Instant>,
 
     pub(super) gen_prompt: String,
     pub(super) mod_prompt: String,
@@ -507,13 +554,16 @@ pub(super) struct FileState {
 }
 
 impl FileState {
-    pub(super) fn untitled() -> Self {
+    pub(super) fn untitled(tab_id: u64) -> Self {
         Self {
+            tab_id,
             path: None,
             source: String::new(),
             last_saved_source: String::new(),
             dirty: false,
             last_result: None,
+            disk_mtime: None,
+            last_watch_check: None,
             gen_prompt: String::new(),
             mod_prompt: String::new(),
             anim_prompt: String::new(),
@@ -535,15 +585,23 @@ impl FileState {
         }
     }
 
-    pub(super) fn loaded(path: PathBuf, source: String) -> Self {
+    pub(super) fn loaded(
+        tab_id: u64,
+        path: PathBuf,
+        source: String,
+        disk_mtime: Option<SystemTime>,
+    ) -> Self {
         let status = format!("opened {}", path.display());
         let thinking_override = mogen_llm::parse_thinking_header(&source);
         Self {
+            tab_id,
             path: Some(path),
             source: source.clone(),
             last_saved_source: source,
             dirty: false,
             last_result: None,
+            disk_mtime,
+            last_watch_check: None,
             gen_prompt: String::new(),
             mod_prompt: String::new(),
             anim_prompt: String::new(),

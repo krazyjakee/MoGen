@@ -7,7 +7,7 @@ use mogen_core::SceneGraph;
 use mogen_export::ExportOptions;
 use mogen_llm::gemini::{GeminiClient, GenerateConfig, Usage};
 use mogen_llm::textures::{
-    build_plan, default_textures_dir, maybe_cache, run_plan, splice_textures, PlanAction,
+    build_plan, default_textures_dir, run_plan, splice_textures, PlanAction,
     TextureProgress, TexturesArgs,
 };
 use mogen_llm::{
@@ -627,7 +627,6 @@ pub(super) fn run_llm_textures(
         force: cfg.force,
         dry_run: false,
         no_build: true,
-        no_cache: cfg.no_cache,
         api_key: Some(api_key.clone()),
         no_pbr: false,
         no_normal: cfg.no_normal,
@@ -636,17 +635,13 @@ pub(super) fn run_llm_textures(
         texture_size: cfg.texture_size,
     };
 
-    let cache = maybe_cache(cfg.no_cache);
-    let plans = build_plan(&src, &ast, &args, cache.as_ref());
+    let plans = build_plan(&src, &ast, &args);
 
     // If nothing needs generating *or* deriving, leave the source untouched so
     // the editor doesn't get marked dirty.
-    let anything_to_do = plans.iter().any(|p| {
-        matches!(
-            p.action,
-            PlanAction::Generate | PlanAction::CacheHit | PlanAction::Derive
-        )
-    });
+    let anything_to_do = plans
+        .iter()
+        .any(|p| matches!(p.action, PlanAction::Generate | PlanAction::Derive));
     if !anything_to_do {
         return LlmOutcome {
             dsl: src,
@@ -697,7 +692,6 @@ pub(super) fn run_llm_textures(
         &ast,
         &plans,
         &base_dir,
-        cache.as_ref(),
         Some(&progress_cb),
     ) {
         Ok(e) => e,
