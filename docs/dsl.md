@@ -379,6 +379,11 @@ Internally a connector is stored as a position plus a quaternion that rotates
 canonical `+Y` onto `dir`. `tag` groups compatible attach points (e.g. every
 leg top shares `tag=leg_top`) so downstream fitting logic can pair them.
 
+When a node is the `child` of an `attach`, its `pos` / `rot` are still honoured
+as a local offset on top of the alignment — `pos` shifts the anchor in the
+parent's frame and `rot` rotates the aligned node around its anchor — so a
+Studio gizmo drag persists across rebuilds.
+
 ---
 
 ## Replicators: `mirror`, `array`, `stack`, `grid`

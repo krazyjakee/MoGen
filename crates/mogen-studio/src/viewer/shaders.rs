@@ -6,7 +6,9 @@ layout (location = 3) in vec4 a_joints;
 layout (location = 4) in vec4 a_weights;
 
 uniform mat4 u_viewproj;
-uniform int u_use_skin;
+// Per-batch matrix palette. Rigid batches use single-bone weights
+// (`a_weights = [1,0,0,0]`, `a_joints[0]` = palette slot for the source node)
+// so the same skinning path covers static and skinned geometry uniformly.
 // Keep in sync with MAX_JOINTS in viewer.rs.
 uniform mat4 u_joint_mats[128];
 // Preview shader selector. 0=Standard, 1=Toon, 2=PS1, 3=CRT, 4=Matcap.
@@ -24,25 +26,19 @@ out vec2 v_uv;
 noperspective out vec2 v_uv_aff;
 
 void main() {
-    vec4 pos4 = vec4(a_pos, 1.0);
-    vec3 n = a_normal;
-    if (u_use_skin == 1) {
-        // Clamp defensively: huge skins get their palette truncated on the
-        // CPU side, but a vertex might still reference a joint beyond 127 if
-        // the caller's skin has more than MAX_JOINTS. The corresponding weight
-        // will typically be zero in that case, but out-of-range uniform reads
-        // are undefined, so keep the index in range unconditionally.
-        ivec4 ji = clamp(ivec4(a_joints), ivec4(0), ivec4(127));
-        mat4 skin = u_joint_mats[ji.x] * a_weights.x
-                  + u_joint_mats[ji.y] * a_weights.y
-                  + u_joint_mats[ji.z] * a_weights.z
-                  + u_joint_mats[ji.w] * a_weights.w;
-        pos4 = skin * pos4;
-        // mat3(skin) is a reasonable approximation of the normal transform so
-        // long as joint palettes stay close to rigid; the renderer re-
-        // normalizes in the fragment shader regardless.
-        n = mat3(skin) * n;
-    }
+    // Clamp defensively: huge skins get their palette truncated on the CPU
+    // side, but a vertex might still reference a joint beyond 127 if the
+    // caller's skin has more than MAX_JOINTS. Out-of-range uniform reads are
+    // undefined, so keep the index in range unconditionally.
+    ivec4 ji = clamp(ivec4(a_joints), ivec4(0), ivec4(127));
+    mat4 palette = u_joint_mats[ji.x] * a_weights.x
+                 + u_joint_mats[ji.y] * a_weights.y
+                 + u_joint_mats[ji.z] * a_weights.z
+                 + u_joint_mats[ji.w] * a_weights.w;
+    vec4 pos4 = palette * vec4(a_pos, 1.0);
+    // mat3(palette) is a reasonable approximation of the normal transform so
+    // long as the palette stays close to rigid; the FS re-normalizes anyway.
+    vec3 n = mat3(palette) * a_normal;
     vec4 clip = u_viewproj * pos4;
     if (u_shader_mode == 2) {
         // PS1 vertex snap: quantize NDC.xy to a coarse grid so the geometry

@@ -433,6 +433,11 @@ impl MogenStudioApp {
     /// event hides it from text widgets like the editor — pressing Ctrl+S
     /// shouldn't insert anything into the source buffer.
     pub(super) fn dispatch_shortcuts(&mut self, ctx: &egui::Context) {
+        // Find (Ctrl+F / F3) — consumed first so the editor never sees the
+        // keypress and the find bar opens regardless of which widget owns
+        // focus.
+        self.dispatch_find_shortcuts(ctx);
+
         // Esc cancels an in-flight LLM call when the active tab is busy. Gated
         // so the key isn't swallowed when there's nothing to cancel.
         if self.active().llm_in_flight.is_some() {

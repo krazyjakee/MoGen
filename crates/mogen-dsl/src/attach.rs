@@ -11,6 +11,14 @@
 //! not have to declare them. User-declared connectors with the same name
 //! override the defaults.
 //!
+//! `pos` / `rot` / `scale` set on the attached child are preserved as a local
+//! offset composed on top of the alignment: `pos` shifts the anchor in the
+//! parent's frame, `rot` rotates the (already-aligned) node around its anchor,
+//! `scale` is the child's own scale (used when computing where the plug lands).
+//! With all three at their defaults the child sits exactly where the alignment
+//! puts it; non-default values let a Studio gizmo drag persist instead of
+//! being silently discarded on the next build.
+//!
 //! This pass runs after the scene graph is built and before skin binding so
 //! bind-pose world matrices reflect post-attach positions.
 //!
@@ -208,7 +216,8 @@ fn apply_attach(
         (conn.pos, normalize_or(conn.rotation * Vec3::Y, Vec3::Y))
     };
 
-    let child_scale = graph.nodes[child_id.0 as usize].transform.scale;
+    let user_xform = graph.nodes[child_id.0 as usize].transform;
+    let child_scale = user_xform.scale;
 
     // Rotation: take plug_dir to -socket_dir, then apply twist around that axis.
     let target = normalize_or(-socket_dir, -Vec3::Y);
@@ -227,11 +236,20 @@ fn apply_attach(
     );
     let translation = target_local - rotation * scaled;
 
+    // Compose the user's pos/rot on top of the attach result, in the new
+    // parent's local frame: pos shifts the anchor; rot rotates the
+    // (already-aligned) node around its anchor. Lets a gizmo drag on an
+    // attached node persist instead of being silently discarded.
+    let final_translation = translation + user_xform.translation;
+    let final_rotation = user_xform.rotation * rotation;
+
     graph.nodes[child_id.0 as usize].transform =
-        Transform::from_trs(translation, rotation, child_scale);
+        Transform::from_trs(final_translation, final_rotation, child_scale);
     graph.nodes[child_id.0 as usize].attach_binding = Some(AttachBinding {
         parent: parent_id,
         socket: spec.socket.clone(),
+        anchor: translation.to_array(),
+        rotation: rotation.to_array(),
     });
 
     reparent(graph, child_id, parent_id);
@@ -297,6 +315,24 @@ mod tests {
         assert!((head_center.y - 1.3).abs() < 1e-4, "y = {}", head_center.y);
         // And head is reparented under body.
         assert_eq!(g.nodes[head.0 as usize].parent, Some(g.find_node("body").unwrap()));
+    }
+
+    #[test]
+    fn user_pos_offsets_attached_child() {
+        let src = r#"
+            scene {
+              box "body" (size=[1, 2, 1])
+              sphere "head" (radius=0.3, pos=[0, 0.05, 0])
+            }
+            attach (parent="body", child="head", socket="top", plug="bottom")
+        "#;
+        let g = build(src);
+        let head = g.find_node("head").unwrap();
+        let worlds = g.world_transforms();
+        let y = worlds[head.0 as usize].transform_point3(Vec3::ZERO).y;
+        // Without the offset attach lands head center at y=1.3; pos=[0,0.05,0]
+        // shifts it 0.05 along the parent's local Y.
+        assert!((y - 1.35).abs() < 1e-4, "y = {}", y);
     }
 
     #[test]

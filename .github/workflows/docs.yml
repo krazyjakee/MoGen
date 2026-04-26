@@ -1,0 +1,43 @@
+name: docs
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'docs/**'
+      - 'site/**'
+      - '.github/workflows/docs.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write          # needed to push to the gh-pages branch
+
+concurrency:
+  group: gh-pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install pandoc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pandoc
+
+      - name: Build static site
+        run: ./site/build.sh
+
+      - name: Publish to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./_site
+          publish_branch: gh-pages
+          force_orphan: true   # one-commit branch — every deploy is a clean snapshot
+          commit_message: 'docs: deploy ${{ github.sha }}'
+          user_name: 'github-actions[bot]'
+          user_email: 'github-actions[bot]@users.noreply.github.com'

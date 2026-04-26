@@ -14,26 +14,27 @@ The desktop GUI is **MoGen Studio** (crate `mogen-studio`, binary `mogen-studio`
 ## Commands
 
 ```sh
-./build.sh                                  # cargo build --release --workspace
-./test.sh                                   # cargo test --workspace
-./mogen.sh <subcommand> …                   # cargo run --release --bin mogen -- …
+./scripts/build-release.sh                  # cargo build --release --workspace
+./scripts/run-tests.sh                      # cargo test --workspace
+./scripts/run-mogen.sh <subcommand> …       # cargo run --release --bin mogen -- …
+./scripts/run-studio.sh                     # cargo run --release -p mogen-studio
 
 # one package / one test
 cargo test -p mogen-dsl
 cargo test -p mogen-geom csg::tests::difference_basic -- --exact
 
 # common CLI flows
-./mogen.sh build    examples/chair.mog --out chair.glb
-./mogen.sh check    examples/chair.mog [--json]      # validate; exits non-zero on errors
-./mogen.sh parse    examples/chair.mog               # dump AST
-./mogen.sh dump-scene examples/chair.mog --json      # dump lowered SceneGraph
-./mogen.sh inspect  chair.glb                        # read back + summarize a GLB
-./mogen.sh generate "a wooden stool" --out stool.glb     # Gemini-driven; needs GEMINI_API_KEY
-./mogen.sh modify   examples/chair.mog "make legs taller" # LLM edit of an existing .mog
-./mogen.sh bench    --prompts benches/prompts.txt         # ≥80% success gate
+./scripts/run-mogen.sh build    examples/chair.mog --out chair.glb
+./scripts/run-mogen.sh check    examples/chair.mog [--json]      # validate; exits non-zero on errors
+./scripts/run-mogen.sh parse    examples/chair.mog               # dump AST
+./scripts/run-mogen.sh dump-scene examples/chair.mog --json      # dump lowered SceneGraph
+./scripts/run-mogen.sh inspect  chair.glb                        # read back + summarize a GLB
+./scripts/run-mogen.sh generate "a wooden stool" --out stool.glb     # Gemini-driven; needs GEMINI_API_KEY
+./scripts/run-mogen.sh modify   examples/chair.mog "make legs taller" # LLM edit of an existing .mog
+./scripts/run-mogen.sh bench    --prompts benches/prompts.txt         # ≥80% success gate
 
 # GUI
-cargo run --release -p mogen-studio           # MoGen Studio desktop app
+./scripts/run-studio.sh                     # MoGen Studio desktop app
 ```
 
 `generate`/`modify`/`bench` read `GEMINI_API_KEY` from env (or take `--api-key`). `generate` and

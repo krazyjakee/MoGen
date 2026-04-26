@@ -18,6 +18,7 @@ mod build;
 mod compile;
 mod error_class;
 mod files;
+mod find;
 mod indent;
 mod llm;
 mod onboarding;
@@ -34,7 +35,7 @@ mod watcher;
 
 use self::types::{
     AskInFlight, AutocompleteState, BuildOutcome, EnhanceInFlight, EnhanceTarget,
-    ExternalConflict, FileState, SessionUsage, ThumbCache, VIEWER_BG_COLOR,
+    ExternalConflict, FileState, FindState, SessionUsage, ThumbCache, VIEWER_BG_COLOR,
 };
 use self::util::locate_project_root;
 
@@ -207,6 +208,11 @@ pub struct MogenStudioApp {
     /// on-screen at a time; it's reset on tab switch / focus loss.
     autocomplete: AutocompleteState,
 
+    /// Find / search bar state for the code editor. App-level since only one
+    /// editor is visible at a time; the bar persists across tab switches and
+    /// recomputes matches against whichever file is active.
+    find: FindState,
+
     /// Pending on-disk conflict awaiting user resolution. Set by the file
     /// watcher when an open file changed on disk and the buffer is dirty
     /// (clean buffers reload silently — see `watcher.rs`). Cleared when the
@@ -326,6 +332,7 @@ impl MogenStudioApp {
             ask_in_flight: None,
             ask_answer: None,
             autocomplete: AutocompleteState::default(),
+            find: FindState::default(),
             pending_external: None,
             init: Some(init),
         }

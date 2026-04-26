@@ -4,19 +4,42 @@ use serde::{Deserialize, Serialize};
 
 use glam::Mat4;
 
+use glam::{Quat, Vec3};
+
 use crate::{Clip, Connector, Joint, Material, MaterialId, Mesh, Skin, SkinId, Span, Transform};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct NodeId(pub u32);
 
-/// Records that a node's local transform was set by an `attach` pass and
-/// is therefore overwritten on every recompile. Stored on the child so the
-/// viewport editor can redirect a gizmo translate into the bound socket's
-/// `at=` instead of writing a `pos=` that would just be clobbered.
+/// Records that a node's local transform was set by an `attach` pass.
+/// `anchor` / `rotation` are what attach computed *before* composing the
+/// user's `pos=` / `rot=` on top — the viewport editor subtracts these out
+/// to recover the user-authored portion when reading or writing transforms.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AttachBinding {
     pub parent: NodeId,
     pub socket: String,
+    /// Translation the attach math placed on the child, in the new parent's
+    /// local frame, with the user's `pos=` *not* yet applied.
+    #[serde(default)]
+    pub anchor: [f32; 3],
+    /// Rotation the attach math placed on the child, with the user's `rot=`
+    /// *not* yet applied.
+    #[serde(default = "default_attach_rotation")]
+    pub rotation: [f32; 4],
+}
+
+fn default_attach_rotation() -> [f32; 4] {
+    [0.0, 0.0, 0.0, 1.0]
+}
+
+impl AttachBinding {
+    pub fn anchor_vec3(&self) -> Vec3 {
+        Vec3::from_array(self.anchor)
+    }
+    pub fn rotation_quat(&self) -> Quat {
+        Quat::from_array(self.rotation)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,10 +79,10 @@ pub struct SceneNode {
     /// offset. Authors detach by removing the relative-placement attr.
     #[serde(default, skip_serializing_if = "is_false")]
     pub relative_placed: bool,
-    /// Set when this node's transform was overridden by an `attach` pass.
-    /// Names the parent + socket connector that controls its placement, so
-    /// the gizmo can redirect a translate into the connector's `at=` rather
-    /// than writing a `pos=` that the next compile would overwrite.
+    /// Set when this node's transform was set by an `attach` pass. Carries
+    /// the parent + socket controlling placement, plus the pre-composition
+    /// `anchor` / `rotation` so editors can recover the user-authored
+    /// `pos=` / `rot=` portion (`transform - anchor`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attach_binding: Option<AttachBinding>,
 }

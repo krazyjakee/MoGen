@@ -1,0 +1,140 @@
+// mogen-generate seed=1777232626221469463
+// mogen-generate thinking=high
+// prompt: The desert scorpion hunches low with a menacing, prehistoric silhouette, its segmented carapace rendered in weathered, matte chitin the color of sun-bleached ochre and dusty amber. This ancient predator features oversized, scarred pincers and a high-arched tail ending in a translucent stinger that glints like polished obsidian against the shifting, arid sands.
+
+lod_scale (value=0.75)
+
+material "chitin_ochre" (color=[0.75, 0.60, 0.40], roughness=0.85)
+material "chitin_amber" (color=[0.65, 0.45, 0.25], roughness=0.90)
+material "stinger_obsidian" (color=[0.05, 0.05, 0.05], roughness=0.1, transmission=0.8)
+
+scene {
+  // Central Body (Cephalothorax and Mesosoma)
+  stack "body" (axis=z, gap=-0.01, align=center, pack=start, pos=[0, 0.2, 0]) {
+    superellipsoid "head" (size=[0.16, 0.08, 0.18], ew=1.5, ns=0.6, mat="chitin_amber") {
+      connector "arm_l" (at=[-0.06, -0.02, -0.06], dir=[-1, 0, -1])
+      connector "arm_r" (at=[ 0.06, -0.02, -0.06], dir=[ 1, 0, -1])
+    }
+    rounded_box "seg1" (size=[0.16, 0.07, 0.06], radius=0.02, mat="chitin_ochre") {
+      connector "leg_l" (at=[-0.08, -0.02, 0], dir=[-1, 0, 0])
+      connector "leg_r" (at=[ 0.08, -0.02, 0], dir=[ 1, 0, 0])
+    }
+    rounded_box "seg2" (size=[0.17, 0.07, 0.06], radius=0.02, mat="chitin_ochre") {
+      connector "leg_l" (at=[-0.085, -0.02, 0], dir=[-1, 0, 0])
+      connector "leg_r" (at=[ 0.085, -0.02, 0], dir=[ 1, 0, 0])
+    }
+    rounded_box "seg3" (size=[0.16, 0.07, 0.06], radius=0.02, mat="chitin_ochre") {
+      connector "leg_l" (at=[-0.08, -0.02, 0], dir=[-1, 0, 0])
+      connector "leg_r" (at=[ 0.08, -0.02, 0], dir=[ 1, 0, 0])
+    }
+    rounded_box "seg4" (size=[0.14, 0.06, 0.06], radius=0.02, mat="chitin_ochre") {
+      connector "leg_l" (at=[-0.07, -0.02, 0], dir=[-1, 0, 0])
+      connector "leg_r" (at=[ 0.07, -0.02, 0], dir=[ 1, 0, 0])
+    }
+    rounded_box "seg5" (size=[0.11, 0.05, 0.06], radius=0.02, mat="chitin_ochre") {
+      connector "tail_start" (at=[0, 0.02, 0.03], dir=[0, 0.5, 0.866])
+    }
+  }
+
+  // High-arched Tail (Metasoma)
+  spline_tube "tail" (
+    points=[
+      [0, 0, 0],
+      [0, 0.15, 0.1],
+      [0, 0.3, 0.0],
+      [0, 0.35, -0.15],
+      [0, 0.3, -0.3]
+    ],
+    radii=[0.035, 0.03, 0.025, 0.02, 0.015],
+    mat="chitin_amber", pos=[0, -0.0182, -0.0144]
+  )
+  
+  // Telson (Stinger)
+  sphere "bulb" (radius=0.025, mat="chitin_amber", pos=[0, 0.0052, 0.0105]) {
+    connector "sting_base" (at=[-0, 0.0099, 0.0021], dir=[0, 1, 0])
+  }
+  spline_tube "stinger" (
+    points=[[0, 0, 0], [0, 0.01, -0.015], [0, 0.02, -0.03], [0, 0.01, -0.06]],
+    radii=[0.01, 0.0075, 0.005, 0.001],
+    mat="stinger_obsidian"
+  )
+
+  // Left Pincer (Pedipalp)
+  group "pincer_l" {
+    connector "base" (at=[0, 0, 0], dir=[1, 0, 1])
+    spline_tube "limb_l" (points=[[0, 0, 0], [-0.05, 0.01, -0.025], [-0.1, 0.02, -0.05], [-0.15, 0.0, -0.15]], radii=[0.015, 0.0175, 0.02, 0.025], mat="chitin_ochre", pos=[0.0056, 0.0198, 0.0143]) {
+      connector "claw_mount" (at=[-0.15, 0, -0.126], dir=[0, 0, -1])
+    }
+    superellipsoid "palm_l" (size=[0.06, 0.04, 0.1], ew=1.2, ns=0.8, mat="chitin_amber") {
+      connector "f1" (at=[-0.015, 0, -0.0342], dir=[0, 0, -1])
+      connector "f2" (at=[0.015, 0, -0.037], dir=[0, 0, -1])
+    }
+    spline_tube "finger1_l" (points=[[0, 0, 0], [0, 0, -0.02], [0, 0, -0.04], [ 0.01, 0, -0.08]], radii=[0.01, 0.0085, 0.007, 0.002], mat="stinger_obsidian")
+    spline_tube "finger2_l" (points=[[0, 0, 0], [0, 0, -0.02], [0, 0, -0.04], [-0.01, 0, -0.08]], radii=[0.008, 0.0065, 0.005, 0.002], mat="stinger_obsidian")
+    
+    attach (parent="limb_l", child="palm_l", socket="claw_mount", plug="back")
+    attach (parent="palm_l", child="finger1_l", socket="f1", plug="start")
+    attach (parent="palm_l", child="finger2_l", socket="f2", plug="start")
+  }
+
+  // Right Pincer (Pedipalp)
+  group "pincer_r" {
+    connector "base" (at=[0, 0, 0], dir=[-1, 0, 1])
+    spline_tube "limb_r" (points=[[0, 0, 0], [0.05, 0.01, -0.025], [0.1, 0.02, -0.05], [0.15, 0.0, -0.15]], radii=[0.015, 0.0175, 0.02, 0.025], mat="chitin_ochre", pos=[-0.0121, 0.0206, 0.0101]) {
+      connector "claw_mount" (at=[0.15, 0, -0.128], dir=[0, 0, -1])
+    }
+    superellipsoid "palm_r" (size=[0.06, 0.04, 0.1], ew=1.2, ns=0.8, mat="chitin_amber") {
+      connector "f1" (at=[0.015, 0, -0.0319], dir=[0, 0, -1])
+      connector "f2" (at=[-0.015, 0, -0.0331], dir=[0, 0, -1])
+    }
+    spline_tube "finger1_r" (points=[[0, 0, 0], [0, 0, -0.02], [0, 0, -0.04], [-0.01, 0, -0.08]], radii=[0.01, 0.0085, 0.007, 0.002], mat="stinger_obsidian")
+    spline_tube "finger2_r" (points=[[0, 0, 0], [0, 0, -0.02], [0, 0, -0.04], [ 0.01, 0, -0.08]], radii=[0.008, 0.0065, 0.005, 0.002], mat="stinger_obsidian")
+    
+    attach (parent="limb_r", child="palm_r", socket="claw_mount", plug="back")
+    attach (parent="palm_r", child="finger1_r", socket="f1", plug="start")
+    attach (parent="palm_r", child="finger2_r", socket="f2", plug="start")
+  }
+
+  // Left Legs
+  spline_tube "leg_l1" (points=[[0, 0, 0], [-0.05, 0.025, -0.025], [-0.1, 0.05, -0.05], [-0.18, -0.15, -0.1]], radii=[0.012, 0.01, 0.008, 0.003], mat="chitin_ochre", pos=[0, 0.0153, 0]) { connector "base" (at=[0, 0, 0], dir=[1, 0, 0]) }
+  spline_tube "leg_l2" (points=[[0, 0, 0], [-0.05, 0.025,  0.0  ], [-0.1, 0.05,  0.0 ], [-0.18, -0.15,  0.0]], radii=[0.012, 0.01, 0.008, 0.003], mat="chitin_ochre", pos=[0, 0.0121, 0]) { connector "base" (at=[0, 0, 0], dir=[1, 0, 0]) }
+  spline_tube "leg_l3" (points=[[0, 0, 0], [-0.05, 0.025,  0.025], [-0.1, 0.05,  0.05], [-0.18, -0.15,  0.1]], radii=[0.012, 0.01, 0.008, 0.003], mat="chitin_ochre", pos=[0, 0.0113, 0]) { connector "base" (at=[0, 0, 0], dir=[1, 0, 0]) }
+  spline_tube "leg_l4" (points=[[0, 0, 0], [-0.05, 0.025,  0.05 ], [-0.1, 0.05,  0.1 ], [-0.18, -0.15,  0.2]], radii=[0.012, 0.01, 0.008, 0.003], mat="chitin_ochre", pos=[0, 0.0119, 0]) { connector "base" (at=[0, 0, 0], dir=[1, 0, 0]) }
+
+  // Right Legs
+  spline_tube "leg_r1" (points=[[0, 0, 0], [0.05, 0.025, -0.025], [0.1, 0.05, -0.05], [0.18, -0.15, -0.1]], radii=[0.012, 0.01, 0.008, 0.003], mat="chitin_ochre", pos=[0, 0.0127, 0]) { connector "base" (at=[0, 0, 0], dir=[-1, 0, 0]) }
+  spline_tube "leg_r2" (points=[[0, 0, 0], [0.05, 0.025,  0.0  ], [0.1, 0.05,  0.0 ], [0.18, -0.15,  0.0]], radii=[0.012, 0.01, 0.008, 0.003], mat="chitin_ochre", pos=[0, 0.0112, 0]) { connector "base" (at=[0, 0, 0], dir=[-1, 0, 0]) }
+  spline_tube "leg_r3" (points=[[0, 0, 0], [0.05, 0.025,  0.025], [0.1, 0.05,  0.05], [0.18, -0.15,  0.1]], radii=[0.012, 0.01, 0.008, 0.003], mat="chitin_ochre", pos=[0, 0.0185, 0]) { connector "base" (at=[0, 0, 0], dir=[-1, 0, 0]) }
+  spline_tube "leg_r4" (points=[[0, 0, 0], [0.05, 0.025,  0.05 ], [0.1, 0.05,  0.1 ], [0.18, -0.15,  0.2]], radii=[0.012, 0.01, 0.008, 0.003], mat="chitin_ochre", pos=[0, 0.0184, 0]) { connector "base" (at=[0, 0, 0], dir=[-1, 0, 0]) }
+
+  // Assembly
+  attach (parent="seg5", child="tail", socket="tail_start", plug="start")
+  attach (parent="tail", child="bulb", socket="end", plug="bottom")
+  attach (parent="bulb", child="stinger", socket="sting_base", plug="start")
+
+  attach (parent="head", child="pincer_l", socket="arm_l", plug="base")
+  attach (parent="head", child="pincer_r", socket="arm_r", plug="base")
+
+  attach (parent="seg1", child="leg_l1", socket="leg_l", plug="base")
+  attach (parent="seg1", child="leg_r1", socket="leg_r", plug="base")
+  attach (parent="seg2", child="leg_l2", socket="leg_l", plug="base")
+  attach (parent="seg2", child="leg_r2", socket="leg_r", plug="base")
+  attach (parent="seg3", child="leg_l3", socket="leg_l", plug="base")
+  attach (parent="seg3", child="leg_r3", socket="leg_r", plug="base")
+  attach (parent="seg4", child="leg_l4", socket="leg_l", plug="base")
+  attach (parent="seg4", child="leg_r4", socket="leg_r", plug="base")
+}
+
+wave "idle_pincer_l" (target="pincer_l", axis=[0, 1, 0], amplitude=4, hz=0.2)
+wave "idle_pincer_r" (target="pincer_r", axis=[0, 1, 0], amplitude=4, hz=0.2)
+
+wave "idle_stinger" (target="bulb", axis=[1, 0, 0], amplitude=8, hz=0.3)
+
+wave "idle_leg_l1" (target="leg_l1", axis=[0, 0, 1], amplitude=3, hz=0.4)
+wave "idle_leg_r1" (target="leg_r1", axis=[0, 0, 1], amplitude=3, hz=0.4)
+wave "idle_leg_l2" (target="leg_l2", axis=[0, 0, 1], amplitude=3, hz=0.45)
+wave "idle_leg_r2" (target="leg_r2", axis=[0, 0, 1], amplitude=3, hz=0.45)
+wave "idle_leg_l3" (target="leg_l3", axis=[0, 0, 1], amplitude=3, hz=0.35)
+wave "idle_leg_r3" (target="leg_r3", axis=[0, 0, 1], amplitude=3, hz=0.35)
+wave "idle_leg_l4" (target="leg_l4", axis=[0, 0, 1], amplitude=3, hz=0.5)
+wave "idle_leg_r4" (target="leg_r4", axis=[0, 0, 1], amplitude=3, hz=0.5)

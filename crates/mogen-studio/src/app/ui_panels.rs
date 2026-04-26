@@ -29,6 +29,17 @@ impl MogenStudioApp {
             self.autocomplete.close();
         }
 
+        // Find bar (Ctrl+F). Painted above the editor's ScrollArea so the
+        // controls stay anchored while the source scrolls beneath. The bar
+        // owns its own focus via `find_input_id` — the user can keep typing
+        // in the query without losing the editor's selection state.
+        if self.find.open {
+            // Source can change every frame (typing, undo, gizmo edits) —
+            // re-search so match positions stay valid before we draw overlays.
+            self.recompute_find_matches();
+            self.ui_find_bar(ui);
+        }
+
         // Consume popup navigation keys BEFORE the TextEdit is rendered — Up /
         // Down / Tab / Enter / Esc are only intercepted when the popup is
         // open, so normal editing isn't affected.
@@ -189,6 +200,15 @@ impl MogenStudioApp {
                             state.store(ui.ctx(), editor_id);
                             ui.ctx().memory_mut(|m| m.request_focus(editor_id));
                         }
+                    }
+
+                    // Paint find-match overlays + drive scroll-to-match. Both
+                    // need to happen inside this ScrollArea closure so the
+                    // overlay scrolls with the text and `scroll_to_rect`
+                    // targets the correct ScrollArea.
+                    if self.find.open {
+                        self.paint_find_overlays(ui, &output);
+                        self.drive_find_scroll(ui, editor_id, &output);
                     }
 
                     textedit_output = Some(output);
@@ -381,17 +401,28 @@ impl MogenStudioApp {
             }
         });
 
-        let t = node.transform;
-        let (rx_rad, ry_rad, rz_rad) = t.rotation.to_euler(glam::EulerRot::XYZ);
-        let mut tx = t.translation.x;
-        let mut ty = t.translation.y;
-        let mut tz = t.translation.z;
+        // For attached nodes the live transform is `attach + user`. Show
+        // the user-authored portion so the inspector reflects what's in
+        // the source — and so a writeback doesn't double-count the attach
+        // contribution on the next compile.
+        let (effective_translation, effective_rotation) = match node.attach_binding.as_ref() {
+            Some(b) => (
+                node.transform.translation - b.anchor_vec3(),
+                node.transform.rotation * b.rotation_quat().inverse(),
+            ),
+            None => (node.transform.translation, node.transform.rotation),
+        };
+        let t_scale = node.transform.scale;
+        let (rx_rad, ry_rad, rz_rad) = effective_rotation.to_euler(glam::EulerRot::XYZ);
+        let mut tx = effective_translation.x;
+        let mut ty = effective_translation.y;
+        let mut tz = effective_translation.z;
         let mut rx = rx_rad.to_degrees();
         let mut ry = ry_rad.to_degrees();
         let mut rz = rz_rad.to_degrees();
-        let mut sx = t.scale.x;
-        let mut sy = t.scale.y;
-        let mut sz = t.scale.z;
+        let mut sx = t_scale.x;
+        let mut sy = t_scale.y;
+        let mut sz = t_scale.z;
         let node_span = node.source_span;
         let node_id = sel;
 

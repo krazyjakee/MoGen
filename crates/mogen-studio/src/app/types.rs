@@ -527,6 +527,34 @@ pub(super) enum AutocompleteKey {
     Cancel,
 }
 
+/// Find / search bar state for the code editor. App-level (not per-file)
+/// because only one editor is on-screen at a time; switching tabs keeps the
+/// bar open and recomputes matches against the new active source.
+#[derive(Default)]
+pub(super) struct FindState {
+    pub(super) open: bool,
+    pub(super) query: String,
+    /// Char-index ranges of every match in the active file's source.
+    /// Recomputed when the query, source, or case toggle changes.
+    pub(super) matches: Vec<std::ops::Range<usize>>,
+    /// Index into `matches` of the currently-highlighted result. Wraps.
+    pub(super) current: usize,
+    /// Latched when the bar opens so the query input grabs focus on its first
+    /// frame; cleared after focus is requested.
+    pub(super) focus_pending: bool,
+    /// User toggle — case-insensitive by default to match every modern editor.
+    pub(super) case_sensitive: bool,
+    /// When `Some`, the editor should scroll to (and re-highlight) the match
+    /// at this index after rendering. Set by Enter / F3 / Next / Prev.
+    pub(super) scroll_pending: Option<usize>,
+}
+
+/// Stable egui id for the find bar's text input. App-level constant since
+/// only one find bar is ever live.
+pub(super) fn find_input_id() -> egui::Id {
+    egui::Id::new("mog_find_input")
+}
+
 /// Per-file state. Every open `.mog` owns its own buffer, compile result,
 /// prompts, and in-flight LLM job, so switching files while Gemini is running
 /// does not clobber the other file — you can generate on several models at

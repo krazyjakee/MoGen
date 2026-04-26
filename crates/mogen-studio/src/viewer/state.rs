@@ -2,19 +2,27 @@ use std::path::PathBuf;
 
 use eframe::egui;
 use glam::{Mat4, Quat, Vec3};
-use mogen_core::{NodeId, SceneGraph, Span, Transform};
+use mogen_core::{NodeId, SceneGraph, Transform};
 
-use super::anim::{apply_animation, world_transforms_from_locals};
+use super::anim::apply_animation;
 use super::camera::OrbitCamera;
 use super::cinema::CinemaDirector;
-use super::flatten::{flatten, flatten_with_worlds, FlatMesh};
+use super::flatten::{flatten, update_palettes, FlatMesh};
 use crate::preview_shader::PreviewShader;
 
 /// Shared state between the egui main thread and the render-time paint callback.
 pub struct ViewerState {
     pub camera: OrbitCamera,
     pub mesh: FlatMesh,
+    /// Set when vertex/index data must be re-uploaded to the GPU (scene
+    /// recompiles, scene clears). Animation ticks and gizmo drags do NOT set
+    /// this — they only refresh `mesh.palettes` and set `palettes_dirty`.
     pub mesh_dirty: bool,
+    /// Set when only the per-batch matrix palettes have changed (animation
+    /// tick, gizmo drag, clip toggle, time scrub). The paint callback uploads
+    /// just the palette uniforms when this is set, leaving the VBO/EBO alone
+    /// — the whole point of the rest-pose-baked vertex stream.
+    pub palettes_dirty: bool,
     pub scene: Option<SceneGraph>,
     /// Directory of the source `.mog` file — used to resolve relative texture
     /// paths declared on materials. `None` for unsaved buffers.
@@ -154,18 +162,6 @@ pub enum PendingEdit {
         value: String,
         delete: Vec<String>,
     },
-    /// Set an attribute on the AST declaration at `span`. Used by the gizmo
-    /// redirect path to rewrite a connector's `at=` when the user drags a
-    /// child whose transform is overwritten by `attach` — there's no
-    /// `NodeId` for a connector, so we carry the span directly. `node` is
-    /// kept for undo coalescing only (the source node the user clicked).
-    SetAttrAtSpan {
-        node: NodeId,
-        span: Span,
-        attr: String,
-        value: String,
-        delete: Vec<String>,
-    },
 }
 
 impl Default for ViewerState {
@@ -174,6 +170,7 @@ impl Default for ViewerState {
             camera: Default::default(),
             mesh: Default::default(),
             mesh_dirty: false,
+            palettes_dirty: false,
             scene: None,
             base_dir: None,
             clip_active: Vec::new(),
@@ -199,14 +196,39 @@ impl ViewerState {
         self.clip_active.iter().any(|&b| b)
     }
 
+    /// Full vertex+index+palette rebuild. Use only when scene topology or
+    /// material data has changed (recompile, scene swap). Per-frame animation
+    /// and gizmo drags should call [`Self::update_palettes`] instead — that
+    /// path leaves the VBO/EBO alone and just refreshes the per-batch matrix
+    /// palettes the shader applies.
     pub(super) fn rebuild_mesh(&mut self) {
         let Some(scene) = &self.scene else {
             return;
         };
         let base_dir = self.base_dir.as_deref();
+        self.mesh = flatten(scene, base_dir);
+        self.mesh_dirty = true;
+        // The fresh mesh already carries rest-pose palettes; if any clips are
+        // active or a drag is in progress, fold them in so the next paint
+        // shows the live pose without waiting for the next anim tick.
+        if self.any_active() || self.gizmo_drag.is_some() {
+            self.update_palettes();
+        }
+    }
+
+    /// Cheap per-frame refresh: rebuild only the per-batch matrix palettes
+    /// from the current animation time + active clips + live gizmo drag.
+    /// Sets `palettes_dirty` so the paint callback uploads the new uniforms;
+    /// leaves `mesh_dirty` untouched so vertex data stays put.
+    pub(super) fn update_palettes(&mut self) {
+        let Some(scene) = &self.scene else {
+            return;
+        };
+        if self.mesh.palette_sources.is_empty() {
+            return;
+        }
         let mut locals: Vec<Transform> = scene.nodes.iter().map(|n| n.transform).collect();
-        let animating = self.any_active();
-        if animating {
+        if self.any_active() {
             for (i, &active) in self.clip_active.iter().enumerate() {
                 if !active {
                     continue;
@@ -225,19 +247,43 @@ impl ViewerState {
                 *t = apply_gizmo_drag(drag);
             }
         }
-        let mesh = if animating || self.gizmo_drag.is_some() {
-            let worlds = world_transforms_from_locals(scene, &locals);
-            flatten_with_worlds(scene, &worlds, base_dir)
-        } else {
-            flatten(scene, base_dir)
-        };
-        self.mesh = mesh;
-        self.mesh_dirty = true;
+        update_palettes(scene, &locals, &mut self.mesh);
+        self.palettes_dirty = true;
     }
 }
 
 pub(super) fn aspect_for(rect: egui::Rect) -> f32 {
     (rect.width() / rect.height()).max(0.01)
+}
+
+/// Whether the gizmo for `mode` should be drawn AND respond to drags on
+/// `node_id`. The render path and `begin_gizmo_drag` both consult this so
+/// the visual affordance never lies — if the input layer would refuse the
+/// drag, no handles are drawn and clicks fall through to camera orbit
+/// without first looking active. Keep this in sync with the commit path
+/// in [`commit_gizmo_drag`].
+pub(super) fn gizmo_handles_supported(
+    scene: &SceneGraph,
+    node_id: NodeId,
+    mode: crate::gizmo::GizmoMode,
+) -> bool {
+    let Some(node) = scene.nodes.get(node_id.0 as usize) else {
+        return false;
+    };
+    if !node.editable {
+        return false;
+    }
+    // Relative placement re-shifts the node's translation every compile, so
+    // a `pos=` writeback would stack on the next layout pass.
+    if node.relative_placed {
+        return false;
+    }
+    // Attach-bound nodes get their transform composed as `attach + user`,
+    // so a `pos=` / `rot=` writeback survives the next compile as long as
+    // we subtract the attach contribution before writing. The commit path
+    // does that by reading `attach_binding.anchor` / `rotation`.
+    let _ = mode;
+    true
 }
 
 /// If the cursor is over a gizmo handle on the selected node, build a
@@ -250,37 +296,10 @@ pub(super) fn begin_gizmo_drag(
     aspect: f32,
 ) -> Option<GizmoDrag> {
     let scene = st.scene.as_ref()?;
+    if !gizmo_handles_supported(scene, selected, st.gizmo_mode) {
+        return None;
+    }
     let node = scene.nodes.get(selected.0 as usize)?;
-    if !node.editable {
-        return None;
-    }
-    // Relative placement re-shifts the node's translation every compile. A
-    // `pos=` writeback would stack on top of that shift, producing a visible
-    // jump-and-snap instead of following the cursor. Refuse the drag here so
-    // the render path (which also skips the gizmo handles for these nodes)
-    // stays consistent with the input path.
-    if node.relative_placed {
-        return None;
-    }
-    // Attach-bound nodes have their transform overwritten on every compile.
-    // Translate is redirected to the bound socket's `at=` (handled in
-    // commit), but only when the socket has a source span — synthesized
-    // default sockets (primitive faces) have no DSL slice to rewrite, so
-    // any drag on them would just snap back. Rotate/scale have no clean
-    // redirect either. Refuse the drag in those cases so the user sees a
-    // no-op gizmo rather than a confusing snap-back.
-    if let Some(binding) = node.attach_binding.as_ref() {
-        let mode_supported = matches!(st.gizmo_mode, crate::gizmo::GizmoMode::Translate);
-        let has_span = scene
-            .nodes
-            .get(binding.parent.0 as usize)
-            .and_then(|p| p.connectors.iter().find(|c| c.name == binding.socket))
-            .and_then(|c| c.source_span)
-            .is_some();
-        if !mode_supported || !has_span {
-            return None;
-        }
-    }
     let worlds = scene.world_transforms();
     let world = worlds.get(selected.0 as usize).copied().unwrap_or(Mat4::IDENTITY);
     let origin = world.w_axis.truncate();
@@ -370,30 +389,9 @@ pub(super) fn update_gizmo_drag(
     if let Some(drag) = st.gizmo_drag.as_mut() {
         drag.delta = new_delta;
     }
-    st.rebuild_mesh();
-}
-
-/// Resolved redirect target for an attach-bound translate. Only present
-/// when the dragged node has an `attach_binding` AND the bound socket has
-/// a source span (i.e. it was user-declared, not synthesized from a
-/// primitive's faces).
-struct AttachRedirect {
-    connector_span: Span,
-    /// Connector's current `pos` in the parent's local frame — the value
-    /// the rewritten `at=` is offset from.
-    socket_at: Vec3,
-}
-
-fn drag_attach_redirect(st: &ViewerState, drag: &GizmoDrag) -> Option<AttachRedirect> {
-    let scene = st.scene.as_ref()?;
-    let node = scene.nodes.get(drag.node.0 as usize)?;
-    let binding = node.attach_binding.as_ref()?;
-    let parent = scene.nodes.get(binding.parent.0 as usize)?;
-    let socket = parent.connectors.iter().find(|c| c.name == binding.socket)?;
-    Some(AttachRedirect {
-        connector_span: socket.source_span?,
-        socket_at: socket.pos,
-    })
+    // Drag changes one node's local transform → palette only. Vertex data
+    // stays at rest-pose so no VBO/EBO upload is needed.
+    st.update_palettes();
 }
 
 pub(super) fn commit_gizmo_drag(st: &mut ViewerState) -> Option<PendingEdit> {
@@ -417,38 +415,25 @@ pub(super) fn commit_gizmo_drag(st: &mut ViewerState) -> Option<PendingEdit> {
     const POS_SHADOWS: &[&str] = &["x", "y", "z", "from", "to"];
     const ROT_SHADOWS: &[&str] = &["rx", "ry", "rz"];
     let final_local = apply_gizmo_drag(drag);
-    // Attach-bound nodes have their transform rewritten on every compile.
-    // Writing `pos=` on the child would be silently clobbered, so redirect
-    // a translate into the bound socket connector's `at=` instead. Rotate
-    // and scale have no clean redirect target (the connector carries a
-    // dir but not a scale, and rewriting `dir=` mid-rig is a footgun) —
-    // refuse them so the user gets a no-op rather than a snap-back.
-    let attach_redirect = drag_attach_redirect(st, drag);
-    if matches!(drag.mode, GizmoMode::Rotate | GizmoMode::Scale) && attach_redirect.is_some() {
-        return None;
-    }
+    // For attach-bound nodes the post-compile transform is `attach + user`,
+    // so the `pos=` we write back must be `final_local - attach_anchor`.
+    // Likewise for `rot=`: the composed rotation is `user_rot * attach_rot`,
+    // so user_rot = final_rot * attach_rot⁻¹.
+    let attach_binding = st
+        .scene
+        .as_ref()
+        .and_then(|s| s.nodes.get(drag.node.0 as usize))
+        .and_then(|n| n.attach_binding.clone());
+    let user_pos = match &attach_binding {
+        Some(b) => final_local.translation - b.anchor_vec3(),
+        None => final_local.translation,
+    };
+    let user_rot = match &attach_binding {
+        Some(b) => final_local.rotation * b.rotation_quat().inverse(),
+        None => final_local.rotation,
+    };
     match drag.mode {
         GizmoMode::Translate => {
-            if let Some(redirect) = attach_redirect {
-                // delta in child-local translation == delta in socket `at`
-                // (both live in the parent's local frame and the connector
-                // is what fixes the child there). Just shift the connector
-                // by the same vector and the child follows on recompile.
-                let delta_local = final_local.translation - drag.start_transform.translation;
-                let new_at = redirect.socket_at + delta_local;
-                return Some(PendingEdit::SetAttrAtSpan {
-                    node: drag.node,
-                    span: redirect.connector_span,
-                    attr: "at".to_string(),
-                    value: format!(
-                        "[{}, {}, {}]",
-                        format_scalar(new_at.x),
-                        format_scalar(new_at.y),
-                        format_scalar(new_at.z)
-                    ),
-                    delete: Vec::new(),
-                });
-            }
             // Write the full vec3 under `pos=` rather than a lone axis
             // shortcut (`x=`, `y=`, `z=`). Dragging the X handle, then Y,
             // then Z would otherwise smear three redundant attrs across
@@ -458,25 +443,24 @@ pub(super) fn commit_gizmo_drag(st: &mut ViewerState) -> Option<PendingEdit> {
             // been pulled back through the parent inverse, so children of
             // a rotated/scaled parent move along the world axis the user
             // grabbed instead of the parent's tilted axis.
-            let end = final_local.translation;
             Some(PendingEdit::SetAttrCanonical {
                 node: drag.node,
                 attr: "pos".to_string(),
                 value: format!(
                     "[{}, {}, {}]",
-                    format_scalar(end.x),
-                    format_scalar(end.y),
-                    format_scalar(end.z)
+                    format_scalar(user_pos.x),
+                    format_scalar(user_pos.y),
+                    format_scalar(user_pos.z)
                 ),
                 delete: POS_SHADOWS.iter().map(|s| s.to_string()).collect(),
             })
         }
         GizmoMode::Rotate => {
             // `apply_gizmo_drag` already conjugated the world-axis rotation
-            // through the parent's world rotation, so `final_local.rotation`
-            // is the local-space quaternion to write. Decompose to Euler
-            // XYZ degrees for the existing `rot=[x,y,z]` DSL surface.
-            let (rx, ry, rz) = final_local.rotation.to_euler(glam::EulerRot::XYZ);
+            // through the parent's world rotation, so `user_rot` is the
+            // local-space quaternion to write. Decompose to Euler XYZ
+            // degrees for the existing `rot=[x,y,z]` DSL surface.
+            let (rx, ry, rz) = user_rot.to_euler(glam::EulerRot::XYZ);
             let value = format!(
                 "[{}, {}, {}]",
                 format_scalar(rx.to_degrees()),

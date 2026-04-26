@@ -1,4 +1,4 @@
-    use super::flatten::{flatten, FLOATS_PER_VERTEX};
+    use super::flatten::{flatten, PaletteSource, FLOATS_PER_VERTEX};
     use super::state::{
         apply_gizmo_drag, commit_gizmo_drag, snap_rotate_delta, snap_scale_factor,
         snap_translate_delta, GizmoDrag, PendingEdit, ViewerState, SCALE_SNAP_STEP,
@@ -90,11 +90,15 @@
         let flat = flatten(&scene, None);
 
         assert_eq!(flat.batches.len(), 1);
-        assert_eq!(flat.batches[0].skin_id, Some(0));
+        let palette_id = flat.batches[0].palette_id as usize;
+        assert!(matches!(
+            flat.palette_sources[palette_id],
+            PaletteSource::Skin { skin_id: 0 }
+        ));
 
-        assert_eq!(flat.skins.len(), 1);
-        assert_eq!(flat.skins[0].joint_matrices.len(), 1);
-        let m = flat.skins[0].joint_matrices[0];
+        assert_eq!(flat.palettes.len(), 1);
+        assert_eq!(flat.palettes[palette_id].joint_matrices.len(), 1);
+        let m = flat.palettes[palette_id].joint_matrices[0];
         for (a, b) in m
             .to_cols_array()
             .iter()
@@ -111,6 +115,59 @@
         }
 
         let _ = NodeId(0);
+    }
+
+    #[test]
+    fn flatten_rigid_batch_emits_per_node_palette_with_single_bone_weights() {
+        // Two rigid nodes share a material → one batch, palette with two
+        // entries. Each vertex gets `joints[0] = node_index_in_palette` and
+        // `weights = [1, 0, 0, 0]` so the runtime shader applies that node's
+        // current world matrix even when nothing is animating.
+        let mut scene = SceneGraph::new();
+        let mat = scene.add_material(material_with_texture("a", None));
+        let a = scene.add_root(
+            "a",
+            "primitive",
+            Transform::from_trs(Vec3::ZERO, Quat::IDENTITY, Vec3::ONE),
+        );
+        scene.set_mesh(a, quad_mesh());
+        scene.set_material(a, mat);
+        let b = scene.add_root(
+            "b",
+            "primitive",
+            Transform::from_trs(Vec3::new(5.0, 0.0, 0.0), Quat::IDENTITY, Vec3::ONE),
+        );
+        scene.set_mesh(b, quad_mesh());
+        scene.set_material(b, mat);
+
+        let flat = flatten(&scene, None);
+
+        assert_eq!(flat.batches.len(), 1, "shared material → one batch");
+        let palette_id = flat.batches[0].palette_id as usize;
+        match &flat.palette_sources[palette_id] {
+            PaletteSource::Rigid {
+                nodes,
+                inv_rest_worlds,
+            } => {
+                assert_eq!(nodes.len(), 2);
+                assert_eq!(inv_rest_worlds.len(), 2);
+            }
+            _ => panic!("expected rigid palette source"),
+        }
+
+        // First quad's verts (4 of them) should reference palette slot 0;
+        // second quad's should reference slot 1. weights[0] is always 1.
+        let stride = FLOATS_PER_VERTEX;
+        for v in 0..4 {
+            let base = v * stride;
+            assert_eq!(flat.vertices[base + 8], 0.0, "first quad joints[0]");
+            assert_eq!(flat.vertices[base + 12], 1.0, "first quad weights[0]");
+        }
+        for v in 4..8 {
+            let base = v * stride;
+            assert_eq!(flat.vertices[base + 8], 1.0, "second quad joints[0]");
+            assert_eq!(flat.vertices[base + 12], 1.0, "second quad weights[0]");
+        }
     }
 
     #[test]

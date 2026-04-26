@@ -24,8 +24,8 @@ use crate::preview_shader::PreviewShader;
 
 use renderer::Renderer;
 use state::{
-    aspect_for, begin_gizmo_drag, commit_gizmo_drag, node_path, resolve_node_path, select_by_id,
-    update_gizmo_drag, ViewerState,
+    aspect_for, begin_gizmo_drag, commit_gizmo_drag, gizmo_handles_supported, node_path,
+    resolve_node_path, select_by_id, update_gizmo_drag, ViewerState,
 };
 
 pub struct Viewer {
@@ -196,7 +196,7 @@ impl Viewer {
         }
         st.clip_active[idx] = active;
         st.anim_times[idx] = 0.0;
-        st.rebuild_mesh();
+        st.update_palettes();
     }
 
     pub fn set_all_clips_active(&self, active: bool) {
@@ -211,7 +211,7 @@ impl Viewer {
             }
         }
         if changed {
-            st.rebuild_mesh();
+            st.update_palettes();
         }
     }
 
@@ -236,7 +236,7 @@ impl Viewer {
         for t in st.anim_times.iter_mut() {
             *t = 0.0;
         }
-        st.rebuild_mesh();
+        st.update_palettes();
     }
 
     pub fn anim_times(&self) -> Vec<f32> {
@@ -265,7 +265,7 @@ impl Viewer {
         st.anim_times[idx] = clamped;
         let active = *st.clip_active.get(idx).unwrap_or(&false);
         if active {
-            st.rebuild_mesh();
+            st.update_palettes();
         }
     }
 
@@ -440,16 +440,6 @@ impl Viewer {
                             "[gizmo] commit SetAttrCanonical node={} attr={} value={} delete={:?}",
                             node.0, attr, value, delete
                         ),
-                        Some(PendingEdit::SetAttrAtSpan {
-                            node,
-                            span,
-                            attr,
-                            value,
-                            delete,
-                        }) => eprintln!(
-                            "[gizmo] commit SetAttrAtSpan node={} span={:?} attr={} value={} delete={:?}",
-                            node.0, span, attr, value, delete
-                        ),
                         None => eprintln!("[gizmo] commit SKIPPED (trivial delta)"),
                     }
                 }
@@ -503,7 +493,7 @@ impl Viewer {
                     }
                 }
                 if advanced {
-                    st.rebuild_mesh();
+                    st.update_palettes();
                     needs_repaint = true;
                 }
             }
@@ -524,7 +514,13 @@ impl Viewer {
             if st.mesh_dirty {
                 rr.upload(gl, &st.mesh);
                 st.mesh_dirty = false;
+                // The VBO upload also refreshes the palette cache, so any
+                // pending palette-only update is now redundant.
+                st.palettes_dirty = false;
                 rr.evict_unused_textures(gl);
+            } else if st.palettes_dirty {
+                rr.upload_palettes(&st.mesh.palettes);
+                st.palettes_dirty = false;
             }
             let viewproj = st.camera.view_proj(aspect);
             let eye = st.camera.eye();
@@ -538,21 +534,22 @@ impl Viewer {
             if !st.cinema.active {
                 rr.draw_grid(gl, viewproj, eye);
                 if let (Some(sel), Some(scene)) = (st.selected, st.scene.as_ref()) {
-                    if let Some(node) = scene.nodes.get(sel.0 as usize) {
-                        // Skip gizmo handles for non-editable (replicator/CSG)
-                        // nodes AND for relative-placed nodes: both have derived
-                        // transforms that a direct writeback can't change
-                        // coherently. `begin_gizmo_drag` mirrors both gates.
-                        if node.editable && !node.relative_placed {
-                            let worlds = scene.world_transforms();
-                            let base_world = worlds
-                                .get(sel.0 as usize)
-                                .copied()
-                                .unwrap_or(Mat4::IDENTITY);
-                            let origin = base_world.w_axis.truncate();
-                            let scale = crate::gizmo::handle_scale(origin, eye, viewport_height);
-                            rr.draw_gizmo(gl, viewproj, origin, scale, st.gizmo_mode);
-                        }
+                    // Single source of truth shared with `begin_gizmo_drag`:
+                    // skip drawing for non-editable / relative-placed nodes,
+                    // and for attach-bound nodes whose current mode has no
+                    // writeback path (rotate/scale always; translate when the
+                    // socket has no source span). Drawing handles the input
+                    // layer would refuse just lets the user grab a dead
+                    // affordance and watch the camera orbit instead.
+                    if gizmo_handles_supported(scene, sel, st.gizmo_mode) {
+                        let worlds = scene.world_transforms();
+                        let base_world = worlds
+                            .get(sel.0 as usize)
+                            .copied()
+                            .unwrap_or(Mat4::IDENTITY);
+                        let origin = base_world.w_axis.truncate();
+                        let scale = crate::gizmo::handle_scale(origin, eye, viewport_height);
+                        rr.draw_gizmo(gl, viewproj, origin, scale, st.gizmo_mode);
                     }
                 }
             }

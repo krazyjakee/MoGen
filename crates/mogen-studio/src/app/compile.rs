@@ -85,37 +85,26 @@ impl MogenStudioApp {
             // to `rot` opens a new entry.
             let mut last_attr: Option<String> = None;
             for edit in edits {
-                let (node, span, attr, value, delete) = match edit {
-                    PendingEdit::SetAttrCanonical { node, attr, value, delete } => {
-                        // Look up the node's span in the current compile
-                        // result — recompile-consistent because
-                        // take_pending_edits is drained before the next
-                        // compile fires.
-                        let Some(result) = &self.files[i].last_result else {
-                            if trace {
-                                eprintln!("[gizmo] drain SKIPPED: no last_result");
-                            }
-                            continue;
-                        };
-                        let Some(span) = result.node_spans.get(node.0 as usize).and_then(|s| *s)
-                        else {
-                            if trace {
-                                eprintln!(
-                                    "[gizmo] drain SKIPPED: no span for node {} (node_spans.len={})",
-                                    node.0,
-                                    result.node_spans.len()
-                                );
-                            }
-                            continue;
-                        };
-                        (node, span, attr, value, delete)
+                let PendingEdit::SetAttrCanonical { node, attr, value, delete } = edit;
+                // Look up the node's span in the current compile result —
+                // recompile-consistent because take_pending_edits is drained
+                // before the next compile fires.
+                let Some(result) = &self.files[i].last_result else {
+                    if trace {
+                        eprintln!("[gizmo] drain SKIPPED: no last_result");
                     }
-                    PendingEdit::SetAttrAtSpan { node, span, attr, value, delete } => {
-                        // Span is supplied directly (e.g. attach-redirect
-                        // pointing at a connector declaration); no node
-                        // table lookup needed.
-                        (node, span, attr, value, delete)
+                    continue;
+                };
+                let Some(span) = result.node_spans.get(node.0 as usize).and_then(|s| *s)
+                else {
+                    if trace {
+                        eprintln!(
+                            "[gizmo] drain SKIPPED: no span for node {} (node_spans.len={})",
+                            node.0,
+                            result.node_spans.len()
+                        );
                     }
+                    continue;
                 };
                 // Strip shadowing attrs BEFORE setting the canonical one.
                 // Doing deletes first keeps all the spans valid for the

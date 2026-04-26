@@ -148,7 +148,10 @@ fn check_connectivity(graph: &SceneGraph) -> Vec<Diagnostic> {
     // Union-find over the entries. Two entries merge if their inflated AABBs
     // intersect, OR if they're bound to the same skin — skinned meshes are
     // rigidly linked through their shared skeleton, so the geometric gap
-    // between e.g. an arm mesh and the torso is not a real disconnection.
+    // between e.g. an arm mesh and the torso is not a real disconnection —
+    // OR if they're connected through an explicit `attach`. Attach is a
+    // declarative "this is part of that" statement, so a user-supplied pos/rot
+    // offset on the attached child must not cause the cluster to split.
     let mut parent: Vec<usize> = (0..entries.len()).collect();
     let mut first_for_skin: std::collections::HashMap<u32, usize> =
         std::collections::HashMap::new();
@@ -160,6 +163,25 @@ fn check_connectivity(graph: &SceneGraph) -> Vec<Diagnostic> {
                 first_for_skin.insert(skin.0, i);
             }
         }
+    }
+    let entry_idx: std::collections::HashMap<NodeId, usize> = entries
+        .iter()
+        .enumerate()
+        .map(|(i, (id, _))| (*id, i))
+        .collect();
+    for (node_idx, n) in graph.nodes.iter().enumerate() {
+        if n.attach_binding.is_none() {
+            continue;
+        }
+        let m_id = NodeId(node_idx as u32);
+        let Some(p_id) = n.parent else { continue };
+        let Some(side_a) = first_entry_in_subtree(graph, m_id, &entry_idx) else {
+            continue;
+        };
+        let Some(side_b) = first_entry_in_ancestor_chain(graph, p_id, &entry_idx) else {
+            continue;
+        };
+        union(&mut parent, side_a, side_b);
     }
     for i in 0..entries.len() {
         for j in (i + 1)..entries.len() {
@@ -231,6 +253,38 @@ fn compute_floating_flags(graph: &SceneGraph) -> Vec<bool> {
         walk(graph, *root, false, &mut out);
     }
     out
+}
+
+fn first_entry_in_subtree(
+    graph: &SceneGraph,
+    root: NodeId,
+    entry_idx: &std::collections::HashMap<NodeId, usize>,
+) -> Option<usize> {
+    let mut stack = vec![root];
+    while let Some(id) = stack.pop() {
+        if let Some(&i) = entry_idx.get(&id) {
+            return Some(i);
+        }
+        for c in &graph.nodes[id.0 as usize].children {
+            stack.push(*c);
+        }
+    }
+    None
+}
+
+fn first_entry_in_ancestor_chain(
+    graph: &SceneGraph,
+    start: NodeId,
+    entry_idx: &std::collections::HashMap<NodeId, usize>,
+) -> Option<usize> {
+    let mut cur = Some(start);
+    while let Some(id) = cur {
+        if let Some(&i) = entry_idx.get(&id) {
+            return Some(i);
+        }
+        cur = graph.nodes[id.0 as usize].parent;
+    }
+    None
 }
 
 fn find(parent: &mut [usize], x: usize) -> usize {
@@ -322,6 +376,45 @@ mod connectivity_tests {
               box "body" (pos=[0, 0, 0], size=[1, 2, 1])
               sphere "halo" (pos=[0, 3, 0], radius=0.3, tags="floating")
             }
+        "#,
+        );
+        assert!(d.is_empty(), "unexpected diagnostics: {d:?}");
+    }
+
+    #[test]
+    fn attached_child_offset_far_from_parent_stays_connected() {
+        // pos= on an attached child applies as a local offset on top of the
+        // alignment, which can push the AABBs apart. The attach edge is an
+        // explicit "child belongs to parent" claim, so the connectivity check
+        // must keep them in one cluster regardless of geometric gap.
+        let d = diags(
+            r#"
+            scene {
+              box "body" (size=[1, 2, 1])
+              sphere "head" (radius=0.3, pos=[0, 5, 0])
+            }
+            attach (parent="body", child="head", socket="top", plug="bottom")
+        "#,
+        );
+        assert!(d.is_empty(), "unexpected diagnostics: {d:?}");
+    }
+
+    #[test]
+    fn attached_group_offset_keeps_inner_parts_connected() {
+        // Same idea, but the attached node is a group whose mesh-bearing
+        // descendants are what actually populate the connectivity graph. The
+        // bridge from the attached subtree to the rest of the scene must still
+        // form, even when the group itself has no mesh.
+        let d = diags(
+            r#"
+            scene {
+              box "body" (size=[1, 2, 1])
+              group "limb" (pos=[5, 0, 0]) {
+                sphere "shoulder" (radius=0.2)
+                sphere "hand" (pos=[0.3, 0, 0], radius=0.2)
+              }
+            }
+            attach (parent="body", child="limb", socket="right", plug="left")
         "#,
         );
         assert!(d.is_empty(), "unexpected diagnostics: {d:?}");

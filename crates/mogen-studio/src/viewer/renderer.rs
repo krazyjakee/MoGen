@@ -45,7 +45,6 @@ pub struct Renderer {
     u_normal_tex: Option<glow::UniformLocation>,
     u_ao_tex: Option<glow::UniformLocation>,
     u_emissive_tex: Option<glow::UniformLocation>,
-    u_use_skin: Option<glow::UniformLocation>,
     u_joint_mats: Option<glow::UniformLocation>,
     u_shader_mode: Option<glow::UniformLocation>,
     /// Preview style selector. The fragment shader switches on its integer
@@ -70,10 +69,12 @@ pub struct Renderer {
     /// Per-batch draw plan owned by the renderer so the paint callback doesn't
     /// have to re-read the mesh on every frame.
     batches: Vec<DrawBatch>,
-    /// Latest per-skin joint palettes. Indexed by `SkinId.0`; `DrawBatch`'s
-    /// `skin_id` selects which one to upload before a draw call. Refreshed
-    /// in `upload` alongside the vertex buffer.
-    skin_palettes: Vec<SkinPalette>,
+    /// Latest per-batch matrix palettes. Indexed by `DrawBatch::palette_id`;
+    /// the same array carries both rigid (single-bone-per-vertex) and
+    /// skinned palettes — the shader doesn't care which is which. Refreshed
+    /// in `upload` alongside the vertex buffer, or by `upload_palettes`
+    /// alone when only the pose changed.
+    palettes: Vec<SkinPalette>,
     /// Gizmo overlay pipeline. Drawn after the main scene with depth-always
     /// so it's visible through geometry. Kept as a separate program from the
     /// PBR pass because its vertex format (pos + color only) is different.
@@ -158,7 +159,6 @@ impl Renderer {
             let u_normal_tex = u("u_normal_tex");
             let u_ao_tex = u("u_ao_tex");
             let u_emissive_tex = u("u_emissive_tex");
-            let u_use_skin = u("u_use_skin");
             let u_joint_mats = u("u_joint_mats[0]");
             let u_shader_mode = u("u_shader_mode");
 
@@ -200,7 +200,6 @@ impl Renderer {
                 u_normal_tex,
                 u_ao_tex,
                 u_emissive_tex,
-                u_use_skin,
                 u_joint_mats,
                 u_shader_mode,
                 shader_mode: 0,
@@ -209,7 +208,7 @@ impl Renderer {
                 vbo_bytes: 0,
                 ebo_bytes: 0,
                 batches: Vec::new(),
-                skin_palettes: Vec::new(),
+                palettes: Vec::new(),
             })
         }
     }
@@ -245,8 +244,17 @@ impl Renderer {
             gl.bind_buffer(glow::ARRAY_BUFFER, None);
             gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, None);
             self.batches = mesh.batches.clone();
-            self.skin_palettes = mesh.skins.clone();
+            self.palettes = mesh.palettes.clone();
         }
+    }
+
+    /// Refresh the per-batch matrix palettes without touching the VBO/EBO.
+    /// Called every animation tick + every gizmo drag tick — the whole point
+    /// of the rest-pose-baked vertex stream is that this is the only GPU
+    /// upload required when the pose moves.
+    pub fn upload_palettes(&mut self, palettes: &[SkinPalette]) {
+        self.palettes.clear();
+        self.palettes.extend_from_slice(palettes);
     }
 
     /// Look up a texture in the cache, decoding the PNG and uploading on the
@@ -290,40 +298,25 @@ impl Renderer {
         texture
     }
 
-    /// Upload the joint palette for `skin_id` (or turn skinning off when
-    /// `None`). Uploads only the joints the skin actually declares; unused
-    /// palette slots are left as whatever the driver initialised them to
-    /// because shader weights for absent bones are zero.
-    fn bind_skin(&self, gl: &glow::Context, skin_id: Option<u32>) {
+    /// Upload the matrix palette for `palette_id` into `u_joint_mats`. The
+    /// shader applies it unconditionally (rigid batches just have weights
+    /// `[1,0,0,0]` and a one-bone palette per node), so there is no
+    /// "skinning off" branch to worry about — every batch has a palette.
+    fn bind_palette(&self, gl: &glow::Context, palette_id: u32) {
+        let Some(palette) = self.palettes.get(palette_id as usize) else {
+            return;
+        };
+        let Some(loc) = &self.u_joint_mats else { return };
+        let n = palette.joint_matrices.len().min(MAX_JOINTS);
+        if n == 0 {
+            return;
+        }
+        let mut flat = Vec::with_capacity(n * 16);
+        for m in &palette.joint_matrices[..n] {
+            flat.extend_from_slice(&m.to_cols_array());
+        }
         unsafe {
-            match skin_id {
-                None => {
-                    if let Some(loc) = &self.u_use_skin {
-                        gl.uniform_1_i32(Some(loc), 0);
-                    }
-                }
-                Some(id) => {
-                    let Some(palette) = self.skin_palettes.get(id as usize) else {
-                        if let Some(loc) = &self.u_use_skin {
-                            gl.uniform_1_i32(Some(loc), 0);
-                        }
-                        return;
-                    };
-                    if let Some(loc) = &self.u_joint_mats {
-                        let n = palette.joint_matrices.len().min(MAX_JOINTS);
-                        if n > 0 {
-                            let mut flat = Vec::with_capacity(n * 16);
-                            for m in &palette.joint_matrices[..n] {
-                                flat.extend_from_slice(&m.to_cols_array());
-                            }
-                            gl.uniform_matrix_4_f32_slice(Some(loc), false, &flat);
-                        }
-                    }
-                    if let Some(loc) = &self.u_use_skin {
-                        gl.uniform_1_i32(Some(loc), 1);
-                    }
-                }
-            }
+            gl.uniform_matrix_4_f32_slice(Some(loc), false, &flat);
         }
     }
 
@@ -483,9 +476,10 @@ impl Renderer {
         });
         let order: Vec<usize> = opaque_indices.into_iter().chain(blend_indices).collect();
 
-        // Tracks which skin palette is currently on the GPU, so consecutive
-        // batches sharing a skin (or both rigid) avoid a redundant reupload.
-        let mut current_skin: Option<Option<u32>> = None;
+        // Tracks which palette is currently on the GPU, so consecutive batches
+        // sharing one (e.g. an opaque chain that all live in the same skin)
+        // avoid a redundant reupload of the matrix array.
+        let mut current_palette: Option<u32> = None;
         // Per-batch GL state we shadow to avoid redundant calls when many
         // adjacent batches share the same alpha/cull configuration.
         let mut current_blend = false;
@@ -493,9 +487,9 @@ impl Renderer {
         let mut current_cull = true;
         for &idx in &order {
             let b = &batches[idx];
-            if current_skin != Some(b.skin_id) {
-                self.bind_skin(gl, b.skin_id);
-                current_skin = Some(b.skin_id);
+            if current_palette != Some(b.palette_id) {
+                self.bind_palette(gl, b.palette_id);
+                current_palette = Some(b.palette_id);
             }
 
             // glTF: `Blend` materials use premultiplied-alpha over the

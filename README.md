@@ -7,56 +7,77 @@ high-level structured scenes, `mogen` expands them into real geometry.
 Written in Rust. No runtime, no graph editor, no dependencies on a game engine — just a
 small parser, a scene graph, a mesh library, and a glTF exporter.
 
+## Why
+
+LLMs are good at structure and intent, bad at floating-point geometry. A DSL like this
+one lets the model decide *what* to build — the parts, their roles, how they relate —
+while deterministic Rust code handles *how* to build it. Small outputs, cheap iteration,
+no hallucinated triangles.
+
 ## Status
 
-Usable but still moving fast. The DSL parses, the scene graph builds, primitives render,
-and GLB export works. Most of the original ambitions in [`PLAN.md`](PLAN.md) have landed.
-
-Supported:
-
-- Primitives: `box`, `plane`, `quad`, `cylinder`, `cone`, `sphere`, `capsule`, `torus`,
-  `prism`, `pyramid`, `disc`, `icosphere`, `rounded_box`, `wedge`, `frustum`, `tube`,
-  `hemisphere`, `half_cylinder`, `torus_arc`, `ellipsoid`, `superellipsoid`,
-  `curved_plane`, `lathe`, `spline_tube` — each emits `TEXCOORD_0` UVs
-- CSG: `union`, `difference`, `intersect`, with post-op triplanar UVs so booleans stay
-  texturable
-- Hierarchy: `group` containers; reusable `module` definitions with `instance`
-- Repetition and symmetry: `array`, `mirror`
-- Connectors for attachment points between parts
-- Skeletons, skinning, and animation templates (`spin`, `open_close`, `wave`, `flap`, `idle`)
-- Materials: base color, metallic, roughness, alpha, transmission, emissive + HDR
-  strength, `double_sided`, per-node transforms, `role` and `tags`
-- PBR textures: `base_color_texture`, `metallic_roughness_texture`, `normal_texture`,
-  `occlusion_texture`, `emissive_texture`. PNGs and JPEGs are embedded in the output
-  GLB, so `.glb` files remain self-contained and portable.
-- Validation layer with human-readable and JSON diagnostics
-- LLM-driven generation, modification, and animation via Gemini (`mogen generate` /
-  `mogen modify` / `mogen animate`) with automatic repair on failures
+Usable but still moving fast. Primitives, CSG, hierarchy/modules, arrays and mirrors,
+connectors, skeletons + skinning + animation templates, full PBR materials with embedded
+textures, validation diagnostics, and Gemini-driven generate/modify/animate are all
+working. See [`docs/dsl.md`](docs/dsl.md) for the full feature surface.
 
 ## Install
+
+### Prebuilt binaries (recommended)
+
+Linux and macOS — one-liner installer:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/krazyjakee/MoGen/master/scripts/install.sh | bash
+```
+
+This pulls the latest release from
+[GitHub Releases](https://github.com/krazyjakee/MoGen/releases), verifies the SHA-256
+checksum, and installs `mogen` and `mogen-studio` into `$HOME/.local/bin`. Run with
+`-s -- --help` for options (`--version`, `--bin-dir`, `--cli-only`, `--studio-only`,
+`--force`).
+
+Windows — grab the `mogen-<version>-x86_64-pc-windows-msvc.zip` archive from the
+releases page and extract it somewhere on your `PATH`.
+
+### Build from source
 
 Requires a recent stable Rust toolchain.
 
 ```sh
-git clone <this-repo>
-cd mogen
-./build.sh         # cargo build --release --workspace
+git clone https://github.com/krazyjakee/MoGen.git
+cd MoGen
+./scripts/build-release.sh # cargo build --release --workspace
 ```
 
-The release binary is at `target/release/mogen`. The `./mogen.sh` wrapper runs it via
+The release binary is at `target/release/mogen`. The `./scripts/run-mogen.sh` wrapper runs it via
 `cargo run --release` if you'd rather not add it to `$PATH`.
 
 ## Quick start
 
 ```sh
-./mogen.sh build examples/chair.mog --out chair.glb
+./scripts/run-mogen.sh build examples/chair.mog --out chair.glb
 ```
 
 Drop `chair.glb` into Godot, Blender, three.js, or anything else that reads glTF 2.0.
 
+## MoGen Studio
+
+A minimal desktop GUI ships alongside the CLI — **MoGen Studio** combines the DSL
+editor, a live 3D preview, diagnostics, and one-click Gemini generate/modify/animate
+calls. Build and run it with:
+
+```sh
+./scripts/run-studio.sh
+```
+
+The inspector panel shows a texture roster for the current scene with a ✓/✗ marker
+per texture path, so missing image files are visible before you hit "Build GLB".
+
 ## The DSL
 
-Files use the `.mog` extension. The shape of every statement is the same:
+Files use the `.mog` extension. Every statement has the same shape — a `kind`, an
+optional name, attributes, and optional children:
 
 ```
 kind "optional name" (attr=value, attr=value, ...) {
@@ -73,47 +94,9 @@ scene {
 }
 ```
 
-With materials, grouping, and metadata:
-
-```mogen
-material "wood"   (color=[0.55, 0.35, 0.18], metallic=0.0, roughness=0.75)
-material "fabric" (color=[0.20, 0.30, 0.55], metallic=0.0, roughness=0.95)
-
-scene {
-  group "chair" (pos=[0, 0, 0], role="furniture", tags="chair,seat") {
-    box      "seat" (pos=[0, 0.5, 0],     size=[1.0, 0.1, 1.0], mat="fabric", role="seat")
-    box      "back" (pos=[0, 1.0, -0.45], size=[1.0, 1.0, 0.1], mat="wood",   role="back")
-    cylinder "leg_fl" (pos=[-0.45, 0.25, -0.45], radius=0.05, height=0.5, mat="wood", role="leg")
-    cylinder "leg_fr" (pos=[ 0.45, 0.25, -0.45], radius=0.05, height=0.5, mat="wood", role="leg")
-    cylinder "leg_bl" (pos=[-0.45, 0.25,  0.45], radius=0.05, height=0.5, mat="wood", role="leg")
-    cylinder "leg_br" (pos=[ 0.45, 0.25,  0.45], radius=0.05, height=0.5, mat="wood", role="leg")
-  }
-}
-```
-
-With textures:
-
-```mogen
-material "oak" (
-  color=[1, 1, 1],
-  roughness=0.8,
-  base_color_texture="textures/oak_albedo.png",
-  normal_texture="textures/oak_normal.png"
-)
-
-scene {
-  box "table_top" (pos=[0, 0.75, 0], size=[2, 0.05, 1], mat="oak")
-}
-```
-
-Texture paths are resolved relative to the `.mog` file and the image bytes are embedded
-into the output `.glb`, so the result is a single portable file with no external
-dependencies.
-
-Two more examples live in [`examples/`](examples/): `hierarchy_test.mog` exercises nested
-groups with rotation and scale, `chair_mat.mog` shows the full material flow.
-
-Coordinate system is glTF-standard: right-handed, +Y up, -Z forward.
+Coordinate system is glTF-standard: right-handed, +Y up, -Z forward. The full grammar,
+every node kind, and worked examples live in [`docs/dsl.md`](docs/dsl.md) and
+[`examples/`](examples/).
 
 ## CLI
 
@@ -133,47 +116,6 @@ it leaves geometry, materials, and hierarchy untouched. There are a few more
 developer-facing subcommands (`parse`, `dump-scene`, `bench`) — run `mogen --help`
 for the full list.
 
-### Controlling generation latency
-
-Gemini 2.5 Pro does dynamic internal "thinking" before emitting a token — at full budget
-that can push a single `generate` call past two minutes. `mogen` exposes a `--thinking`
-flag on `generate`, `modify`, `animate`, and `bench` that caps the budget:
-
-| level    | budget tokens | when to use                                                  |
-|----------|---------------|--------------------------------------------------------------|
-| `low`    | 512           | fast path; simple, unambiguous prompts                       |
-| `medium` | 2048          | slightly ambiguous prompts                                   |
-| `high`   | 8192          | default; balances latency with planning for complex scenes   |
-| `xhigh`  | 24576         | near-max quality; expect ~2 min on Pro                       |
-
-```sh
-./mogen.sh generate "a wooden stool" --out stool.glb                  # high (default)
-./mogen.sh generate "a simple cube"   --thinking low                  # cheaper, faster
-./mogen.sh generate "a clockwork dragon" --thinking xhigh             # slower, most careful
-```
-
-## Why
-
-LLMs are good at structure and intent, bad at floating-point geometry. A DSL like this
-one lets the model decide *what* to build — the parts, their roles, how they relate —
-while deterministic Rust code handles *how* to build it. Small outputs, cheap iteration,
-no hallucinated triangles.
-
-The long-form design goals live in [`PLAN.md`](PLAN.md).
-
-## MoGen Studio
-
-A minimal desktop GUI ships alongside the CLI — **MoGen Studio** combines the DSL
-editor, a live 3D preview, diagnostics, and one-click Gemini generate/modify/animate
-calls. Build and run it with:
-
-```sh
-cargo run --release -p mogen-studio
-```
-
-The inspector panel shows a texture roster for the current scene with a ✓/✗ marker
-per texture path, so missing image files are visible before you hit "Build GLB".
-
 ## Contributing
 
 Issues and PRs welcome. Good first targets:
@@ -183,7 +125,18 @@ Issues and PRs welcome. Good first targets:
 - a second exporter alongside GLB
 - snapshot/round-trip tests for the example scenes
 
-Run the test suite with `./test.sh`.
+Run the test suite with `./scripts/run-tests.sh`.
+
+## 💖 Support Me
+Hi! I’m krazyjakee 🎮, creator and maintain­er of the *NodotProject* - a suite of open‑source Godot tools (e.g. Nodot, Gedis, GedisQueue etc) that empower game developers to build faster and maintain cleaner code.
+
+I’m looking for sponsors to help sustain and grow the project: more dev time, better docs, more features, and deeper community support. Your support means more stable, polished tools used by indie makers and studios alike.
+
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/krazyjakee)
+
+Every contribution helps maintain and improve this project. And encourage me to make more projects like this!
+
+*This is optional support. The tool remains free and open-source regardless.*
 
 ## License
 
