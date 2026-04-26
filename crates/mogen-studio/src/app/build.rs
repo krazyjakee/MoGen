@@ -115,7 +115,7 @@ impl MogenStudioApp {
             format!("export failed: {err}")
         } else {
             let size = bytes.unwrap_or(0);
-            format!("wrote {} ({} bytes)", path.display(), size)
+            format!("wrote {} ({})", path.display(), format_bytes(size))
         };
         self.files[file_index].status = msg;
 
@@ -125,11 +125,27 @@ impl MogenStudioApp {
         if file_index == self.active {
             if let Some(scene) = exported_scene {
                 let base_dir = self.files[file_index].path.as_deref().and_then(|p| p.parent());
-                self.viewer.set_scene(&scene, base_dir);
+                self.viewer.set_scene(&scene, base_dir, false);
             }
         }
 
         // Leave the modal open so the user sees the result; the ui code
         // shows a Close button once `build_rx` is None.
+    }
+}
+
+fn format_bytes(n: u64) -> String {
+    const KIB: f64 = 1024.0;
+    const MIB: f64 = 1024.0 * 1024.0;
+    const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
+    let f = n as f64;
+    if f >= GIB {
+        format!("{:.2} GiB", f / GIB)
+    } else if f >= MIB {
+        format!("{:.2} MiB", f / MIB)
+    } else if f >= KIB {
+        format!("{:.1} KiB", f / KIB)
+    } else {
+        format!("{n} B")
     }
 }

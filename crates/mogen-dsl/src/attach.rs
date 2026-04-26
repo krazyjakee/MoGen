@@ -24,7 +24,7 @@ use std::collections::{HashMap, HashSet};
 use anyhow::{anyhow, bail, Result};
 use glam::{Quat, Vec3};
 
-use mogen_core::{NodeId, SceneGraph, Span, Transform};
+use mogen_core::{AttachBinding, NodeId, SceneGraph, Span, Transform};
 
 use crate::ast::{Node, Value};
 
@@ -229,6 +229,10 @@ fn apply_attach(
 
     graph.nodes[child_id.0 as usize].transform =
         Transform::from_trs(translation, rotation, child_scale);
+    graph.nodes[child_id.0 as usize].attach_binding = Some(AttachBinding {
+        parent: parent_id,
+        socket: spec.socket.clone(),
+    });
 
     reparent(graph, child_id, parent_id);
     Ok(())

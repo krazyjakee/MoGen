@@ -152,6 +152,7 @@ pub fn flatten_with_worlds(
     for ((skin_id, mat_id), node_ids) in groups {
         let batch_start = indices.len() as u32;
         let material = mat_id.and_then(|id| scene.materials.get(id as usize));
+        let uv_scale = material.map(|m| m.uv_scale).unwrap_or([1.0, 1.0]);
         let mut bmin = Vec3::splat(f32::INFINITY);
         let mut bmax = Vec3::splat(f32::NEG_INFINITY);
         for i in node_ids {
@@ -184,7 +185,8 @@ pub fn flatten_with_worlds(
                 } else {
                     (normal_mat * Vec3::from_array(n_src)).normalize_or_zero()
                 };
-                let uv = mesh.uvs.get(vi).copied().unwrap_or([0.0, 0.0]);
+                let uv_raw = mesh.uvs.get(vi).copied().unwrap_or([0.0, 0.0]);
+                let uv = [uv_raw[0] * uv_scale[0], uv_raw[1] * uv_scale[1]];
                 let (j, w) = if has_skin_attrs {
                     let ji = mesh.joints[vi];
                     let wi = mesh.weights[vi];

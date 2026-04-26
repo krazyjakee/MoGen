@@ -92,11 +92,11 @@ mogen-dsl  ──parse──►  AST  ──validate_ast──►  lower  ──
   texture pipeline lives in `textures.rs` + `pbr_maps.rs` + `image.rs`: `textures.rs` walks
   the AST, generates per-material albedo PNGs via Gemini 2.5 Flash Image with a fresh
   per-call random seed, and splices `texture = "…"` attributes back into the source using
-  spans (no reformatting). `pbr_maps.rs` derives normal / metallic-roughness / occlusion
-  maps locally from the albedo (Sobel gradients + luminance cavity detection, tileable).
-  Image generation retries on `IMAGE_RECITATION` up to 3×. There is no cache for generated
-  images — repeat builds reuse PNGs already on disk in the project's `textures/` folder
-  (the `Skip` action when the source already has `*_texture` attrs).
+  spans (no reformatting). `pbr_maps.rs` derives normal / metallic-roughness / occlusion maps
+  locally from the albedo (Sobel gradients + luminance cavity detection, tileable). Image
+  generation retries on `IMAGE_RECITATION` up to 3×. There is no in-memory or on-disk cache
+  for generated images — `build_plan`'s `UseExisting` action handles repeat builds by
+  reusing PNGs already on disk in the project's `textures/` folder.
 - **mogen** — the binary; `clap` subcommands (`build`, `parse`, `check`, `dump-scene`,
   `inspect`, `generate`, `modify`, `bench`). `build` is the canonical pipeline and the other
   LLM commands end by calling it.
@@ -145,3 +145,9 @@ mogen-dsl  ──parse──►  AST  ──validate_ast──►  lower  ──
 - `examples/*.mog` — canonical usage of each feature (hierarchy, materials, array/mirror, CSG,
   modules, connectors/attach, animation, skeletons). `tests/broken/*.mog` covers diagnostic
   snapshots.
+
+## Agent-Specific Notes
+
+This repository includes a compiled documentation database/knowledgebase at `AGENTS.db`.
+For context for any task, you MUST use MCP `agents_search` to look up context including architectural, API, and historical changes.
+Treat `AGENTS.db` layers as immutable; avoid in-place mutation utilities unless required by the design.

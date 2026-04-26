@@ -9,6 +9,16 @@ use crate::{Clip, Connector, Joint, Material, MaterialId, Mesh, Skin, SkinId, Sp
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct NodeId(pub u32);
 
+/// Records that a node's local transform was set by an `attach` pass and
+/// is therefore overwritten on every recompile. Stored on the child so the
+/// viewport editor can redirect a gizmo translate into the bound socket's
+/// `at=` instead of writing a `pos=` that would just be clobbered.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AttachBinding {
+    pub parent: NodeId,
+    pub socket: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SceneNode {
     pub name: String,
@@ -46,6 +56,12 @@ pub struct SceneNode {
     /// offset. Authors detach by removing the relative-placement attr.
     #[serde(default, skip_serializing_if = "is_false")]
     pub relative_placed: bool,
+    /// Set when this node's transform was overridden by an `attach` pass.
+    /// Names the parent + socket connector that controls its placement, so
+    /// the gizmo can redirect a translate into the connector's `at=` rather
+    /// than writing a `pos=` that the next compile would overwrite.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attach_binding: Option<AttachBinding>,
 }
 
 fn default_editable() -> bool {
@@ -77,6 +93,7 @@ impl Default for SceneNode {
             source_span: None,
             editable: true,
             relative_placed: false,
+            attach_binding: None,
         }
     }
 }

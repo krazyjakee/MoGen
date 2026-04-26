@@ -24,9 +24,16 @@ pub struct Settings {
     #[serde(default)]
     pub thinking_level: String,
     /// Absolute path of the last `.mog` opened in the GUI. Used at startup to
-    /// reopen the previous file.
+    /// reopen the previous file. With [`Self::open_tabs`] populated this also
+    /// names which tab to activate after the strip is restored.
     #[serde(default)]
     pub last_opened: Option<String>,
+    /// Absolute paths of every titled tab open in the studio at last persist
+    /// time, in tab-strip order. Untitled buffers are skipped (no path to key
+    /// off). Empty after upgrade-from-old-settings, in which case startup
+    /// falls back to opening just [`Self::last_opened`].
+    #[serde(default)]
+    pub open_tabs: Vec<String>,
     /// Most-recently-opened `.mog` files, newest first. Capped at
     /// [`Self::MAX_RECENT`] entries. Drives the File → Open Recent menu.
     #[serde(default)]

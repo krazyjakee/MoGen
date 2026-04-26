@@ -272,8 +272,11 @@ enum Cmd {
     /// variance-based, cavity-based). PNGs are written next to the .mog and
     /// the matching `*_texture="…"` attrs are spliced into each material.
     ///
-    /// Per-slot, materials that already declare a given `*_texture` attr are
-    /// skipped unless `--force` is passed.
+    /// Per-slot, materials that already declare a given `*_texture` attr — or
+    /// whose target PNG already exists at the planned path on disk — are
+    /// skipped unless `--force` is passed. Existing on-disk PNGs still get
+    /// their `*_texture` attr spliced into the source, just without an API
+    /// call or local re-derivation.
     Textures {
         /// Input .mog file to augment.
         input: PathBuf,
@@ -294,7 +297,8 @@ enum Cmd {
         /// Gemini image model name.
         #[arg(long, default_value = DEFAULT_IMAGE_MODEL)]
         model: String,
-        /// Regenerate slots whose attr is already declared in the .mog.
+        /// Regenerate slots whose attr is already declared in the .mog or
+        /// whose PNG already exists on disk at the planned path.
         #[arg(long)]
         force: bool,
         /// Print the plan and skip all API calls and file writes.

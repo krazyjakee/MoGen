@@ -9,13 +9,15 @@ pub const KNOWN_KINDS: &[&str] = &[
     "box", "plane", "quad", "cylinder", "cone", "sphere", "capsule", "torus",
     "prism", "pyramid", "disc", "icosphere", "rounded_box",
     "wedge", "frustum", "tube", "hemisphere", "half_cylinder", "torus_arc", "ellipsoid",
-    "superellipsoid", "curved_plane", "lathe", "spline_tube",
+    "superellipsoid", "curved_plane", "lathe", "spline_tube", "leaf_card",
     "slab", "post", "panel", "wall",
+    "branch",
     "module", "use",
     "union", "difference", "intersect",
     "joint", "clip", "track",
     "spin", "open_close", "wave", "flap", "idle",
     "skeleton", "bone",
+    "lod_scale",
 ];
 
 /// Attribute names accepted on any geometry/group-like node (primitives,
@@ -49,7 +51,8 @@ pub fn common_attrs_for_kind(kind: &str) -> &'static [&'static str] {
         "skeleton" | "bone" => TRANSFORM_COMMON_ATTRS,
         "material" | "connector" | "attach"
         | "joint" | "clip" | "track"
-        | "spin" | "open_close" | "wave" | "flap" | "idle" => &[],
+        | "spin" | "open_close" | "wave" | "flap" | "idle"
+        | "lod_scale" => &[],
         _ => GEOMETRY_COMMON_ATTRS,
     }
 }
@@ -295,6 +298,12 @@ pub fn attrs_for_kind(kind: &str) -> &'static [&'static str] {
         "spline_tube" => &[
             "points", "radius", "radii", "segments", "samples", "cap_ends",
         ],
+        "leaf_card" => &["size", "cards"],
+        "branch" => &[
+            "length", "radius", "depth", "splits", "length_falloff", "radius_falloff",
+            "branch_angle", "roll", "tropism", "bend", "segments", "samples", "seed",
+            "jitter", "leaves", "leaf_size", "leaf_cards", "leaf_mat",
+        ],
         "material" => &[
             "color", "alpha", "metallic", "roughness",
             "normal_strength", "occlusion_strength",
@@ -319,6 +328,7 @@ pub fn attrs_for_kind(kind: &str) -> &'static [&'static str] {
         "skeleton" => &[],
         "bone" => &["envelope"],
         "attach" => &["parent", "child", "socket", "plug", "offset", "twist"],
+        "lod_scale" => &["value"],
         // `smooth` blends limb-to-torso seams for organic shapes.
         // `difference`/`intersect` reject it via attr_type below.
         "union" => &["smooth"],
@@ -364,6 +374,26 @@ fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         ("lathe", "profile") => "list",
         ("spline_tube", "points") => "list",
         ("spline_tube", "radii") => "list",
+        ("leaf_card", "size") => "number or vec3",
+        ("leaf_card", "cards") => "number",
+        ("branch", "length")
+        | ("branch", "radius")
+        | ("branch", "depth")
+        | ("branch", "splits")
+        | ("branch", "length_falloff")
+        | ("branch", "radius_falloff")
+        | ("branch", "branch_angle")
+        | ("branch", "roll")
+        | ("branch", "tropism")
+        | ("branch", "bend")
+        | ("branch", "segments")
+        | ("branch", "samples")
+        | ("branch", "seed")
+        | ("branch", "jitter")
+        | ("branch", "leaves")
+        | ("branch", "leaf_size")
+        | ("branch", "leaf_cards") => "number",
+        ("branch", "leaf_mat") => "string",
         ("cylinder", "radius")
         | ("cylinder", "height")
         | ("cylinder", "segments")
@@ -469,6 +499,7 @@ fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         ("attach", "parent") | ("attach", "child")
         | ("attach", "socket") | ("attach", "plug") => "string",
         ("attach", "offset") | ("attach", "twist") => "number",
+        ("lod_scale", "value") => "number",
         (_, "mat") | (_, "role") | (_, "skin") => "string",
         (_, "tags") => "string",
         _ => return None,

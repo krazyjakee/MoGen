@@ -4,7 +4,7 @@ use eframe::egui;
 
 use crate::pipeline::{compile, Stage};
 
-use super::types::COMPILE_DEBOUNCE;
+use super::types::{UndoKey, COMPILE_DEBOUNCE};
 use super::MogenStudioApp;
 
 impl MogenStudioApp {
@@ -18,7 +18,9 @@ impl MogenStudioApp {
             match &r.scene {
                 Some(scene) if matches!(r.stage, Stage::Ok) => {
                     let base_dir = self.files[i].path.as_deref().and_then(|p| p.parent());
-                    self.viewer.set_scene(scene, base_dir);
+                    let fit = self.files[i].first_render;
+                    self.viewer.set_scene(scene, base_dir, fit);
+                    self.files[i].first_render = false;
                 }
                 _ => self.viewer.clear(),
             }
@@ -60,38 +62,48 @@ impl MogenStudioApp {
         }
         if !edits.is_empty() {
             let i = self.active;
+            // Snapshot the source BEFORE any edit lands so the undo stack
+            // can revert the whole batch (one drain = one undoable action).
+            let undo_before = self.files[i].source.clone();
             let mut source = self.files[i].source.clone();
             let mut any_applied = false;
+            // Last canonical attr in the batch. Used as the coalesce key so
+            // a multi-frame inspector DragValue burst writing the same vec3
+            // collapses into a single undo entry, while a switch from `pos`
+            // to `rot` opens a new entry.
+            let mut last_attr: Option<String> = None;
             for edit in edits {
-                let (node, attr, value, delete): (_, String, String, Vec<String>) = match edit {
-                    PendingEdit::SetAttr { node, attr, value } => {
-                        (node, attr, value, Vec::new())
+                let (node, span, attr, value, delete) = match edit {
+                    PendingEdit::SetAttrCanonical { node, attr, value, delete } => {
+                        // Look up the node's span in the current compile
+                        // result — recompile-consistent because
+                        // take_pending_edits is drained before the next
+                        // compile fires.
+                        let Some(result) = &self.files[i].last_result else {
+                            if trace {
+                                eprintln!("[gizmo] drain SKIPPED: no last_result");
+                            }
+                            continue;
+                        };
+                        let Some(span) = result.node_spans.get(node.0 as usize).and_then(|s| *s)
+                        else {
+                            if trace {
+                                eprintln!(
+                                    "[gizmo] drain SKIPPED: no span for node {} (node_spans.len={})",
+                                    node.0,
+                                    result.node_spans.len()
+                                );
+                            }
+                            continue;
+                        };
+                        (node, span, attr, value, delete)
                     }
-                    PendingEdit::SetAttrCanonical {
-                        node,
-                        attr,
-                        value,
-                        delete,
-                    } => (node, attr, value, delete),
-                };
-                // Look up the node's span in the current compile result —
-                // recompile-consistent because take_pending_edits is drained
-                // before the next compile fires.
-                let Some(result) = &self.files[i].last_result else {
-                    if trace {
-                        eprintln!("[gizmo] drain SKIPPED: no last_result");
+                    PendingEdit::SetAttrAtSpan { node, span, attr, value, delete } => {
+                        // Span is supplied directly (e.g. attach-redirect
+                        // pointing at a connector declaration); no node
+                        // table lookup needed.
+                        (node, span, attr, value, delete)
                     }
-                    continue;
-                };
-                let Some(span) = result.node_spans.get(node.0 as usize).and_then(|s| *s) else {
-                    if trace {
-                        eprintln!(
-                            "[gizmo] drain SKIPPED: no span for node {} (node_spans.len={})",
-                            node.0,
-                            result.node_spans.len()
-                        );
-                    }
-                    continue;
                 };
                 // Strip shadowing attrs BEFORE setting the canonical one.
                 // Doing deletes first keeps all the spans valid for the
@@ -113,6 +125,7 @@ impl MogenStudioApp {
                         before != source
                     );
                 }
+                last_attr = Some(attr);
                 any_applied = true;
             }
             if any_applied {
@@ -123,6 +136,17 @@ impl MogenStudioApp {
                     f.needs_compile = true;
                     f.last_edit_at = Some(Instant::now());
                 }
+                // Record the batch as one undo entry. The coalesce key folds
+                // successive batches on the same node + same attr (within
+                // the time window) into a single entry — gizmo releases are
+                // already discrete (one PendingEdit per drag) but inspector
+                // DragValues fire per-frame and need the merge to behave.
+                let key = UndoKey {
+                    surface: "viewport",
+                    attr: last_attr,
+                    node_path: self.current_selection_path(i),
+                };
+                self.push_undo(i, undo_before, key);
                 // Gizmo releases are discrete events, not keystroke bursts —
                 // skip the 180 ms debounce and compile immediately so the
                 // viewport can pick up the rotated / translated / scaled

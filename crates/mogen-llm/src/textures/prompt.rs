@@ -23,19 +23,44 @@ pub fn collect_materials<'a>(ast: &'a [Node]) -> Vec<MaterialHit<'a>> {
         .collect()
 }
 
-/// Build the image prompt for one material. Includes:
-///   - material name (strongest signal — "oak" vs "denim" drives the output),
-///   - authored color as an RGB hex hint (preserves artist intent),
-///   - a rough/polished word from `roughness`,
-///   - an optional subject hint parsed from the DSL's `// prompt:` header,
-///   - an optional anatomy hint (de-duped `role=`/`tags=` values from primitives
-///     that reference this material) — disambiguates fur on a tiger's
-///     shoulder vs. its belly when both share the same `<creature>_fur`
-///     style but want different patterns.
-pub fn build_prompt(
+/// True when this material is configured for alpha-test cutout rendering
+/// (`alpha_mode="mask"`). These materials need a cutout texture atlas — a
+/// cluster of leaves / fronds / petals on a uniform pure-black background that
+/// the texture pipeline post-processes into transparency — not a tileable
+/// surface swatch. Ident and string forms both count.
+pub fn is_mask_material(node: &Node) -> bool {
+    matches!(
+        node.attr("alpha_mode"),
+        Some(Value::String(s) | Value::Ident(s)) if s == "mask"
+    )
+}
+
+/// Build the image prompt for one material. Two prompt families:
+///
+/// - **Surface swatch** (default): a tileable PBR albedo for a continuous
+///   surface. Framed as a macro-photo of a 30 cm \u{00D7} 30 cm sample with an
+///   exclusion list that stops Gemini from drawing the material's *subject*
+///   (a tiger, a chair) onto every swatch. Tileability is spelled out as an
+///   edge-wrap requirement.
+/// - **Cutout atlas** (when the material has `alpha_mode="mask"`): a cluster
+///   of leaves / fronds / petals on a uniform pure-black background. The
+///   texture pipeline post-processes the black background into alpha=0 so
+///   the leaf_card mesh shows the cluster shape, the way game-foliage atlas
+///   textures do in SpeedTree-style trees.
+///
+/// Both branches honour the optional motif hint (de-duped `role=`/`tags=`
+/// values) framed as inspiration with a "do not depict" guard so Gemini
+/// doesn't draw the body part.
+pub fn build_prompt(hit: &MaterialHit<'_>, style: &str, anatomy: Option<&str>) -> String {
+    if is_mask_material(hit.node) {
+        return build_cutout_atlas_prompt(hit, style, anatomy);
+    }
+    build_surface_swatch_prompt(hit, style, anatomy)
+}
+
+fn build_surface_swatch_prompt(
     hit: &MaterialHit<'_>,
     style: &str,
-    subject: Option<&str>,
     anatomy: Option<&str>,
 ) -> String {
     let color = hit.node.attr("color").and_then(|v| match v {
@@ -49,10 +74,27 @@ pub fn build_prompt(
 
     let mut s = String::new();
     s.push_str(
-        "Seamless tileable PBR base-color (albedo) texture. \
-         Flat overhead lighting, no directional shadows, no baked-in ambient occlusion, \
-         no highlights. The image must tile perfectly when placed edge-to-edge. \
-         Output a square image.\n\n",
+        "Output a single seamless, perfectly tileable PBR base-color (albedo) \
+         texture map. This is a material swatch, NOT a picture of anything.\n\n\
+         Framing: extreme overhead macro photograph of a flat 30 cm \u{00D7} 30 cm \
+         material sample lying under a copy stand. The whole frame is one \
+         continuous surface filling edge to edge.\n\n\
+         Hard exclusions (image must contain NONE of these):\n\
+         - no objects, props, tools, furniture, vehicles, or items of any kind\n\
+         - no characters, people, faces, animals, or body parts (no fur on a \
+         leg, no scales on a tail \u{2014} just the surface itself)\n\
+         - no scenery, landscapes, skies, horizons, or environments\n\
+         - no logos, text, numbers, watermarks, signatures, or symbols\n\
+         - no borders, frames, vignettes, drop shadows, or rounded corners\n\
+         - no directional lighting, cast shadows, baked ambient occlusion, \
+         or specular highlights\n\n\
+         Required qualities:\n\
+         - repeating natural micro-detail across the entire frame, no central \
+         focal point or composed subject\n\
+         - tiles seamlessly: detail, color, and structure wrap continuously \
+         across all four edges with no visible seam\n\
+         - even, flat, diffuse lighting as if shot for a PBR scan library\n\
+         - square aspect, surface fills the frame corner to corner\n\n",
     );
     s.push_str(&format!("Material name: {}\n", hit.name));
     if let Some([r, g, b]) = color {
@@ -65,18 +107,99 @@ pub fn build_prompt(
         s.push_str(&format!("Surface finish: {}\n", roughness_word(r)));
     }
     s.push_str(&format!("Style: {style}\n"));
-    if let Some(ctx) = subject {
-        let trimmed = ctx.trim();
-        if !trimmed.is_empty() {
-            s.push_str(&format!("Subject context (for mood/era only): {trimmed}\n"));
-        }
-    }
     if let Some(hint) = anatomy {
         let trimmed = hint.trim();
         if !trimmed.is_empty() {
-            s.push_str(&format!("Anatomy / role hints: {trimmed}\n"));
+            s.push_str(&format!(
+                "Pattern motif (texture inspiration only \u{2014} DO NOT depict \
+                 the named body part, object, or scene; use it only to bias \
+                 the surface pattern, e.g. \"back\" \u{2192} dorsal-stripe \
+                 layout, \"belly\" \u{2192} paler finer texture): {trimmed}\n"
+            ));
         }
     }
+    s.push_str(
+        "\nReminder: the output is a flat tileable surface scan. \
+         No subject. No scene. Surface only.",
+    );
+    s
+}
+
+fn build_cutout_atlas_prompt(
+    hit: &MaterialHit<'_>,
+    style: &str,
+    anatomy: Option<&str>,
+) -> String {
+    let color = hit.node.attr("color").and_then(|v| match v {
+        Value::Vec3([r, g, b]) => Some([*r, *g, *b]),
+        _ => None,
+    });
+    let roughness = hit.node.attr("roughness").and_then(|v| match v {
+        Value::Number(n) => Some(*n),
+        _ => None,
+    });
+
+    let mut s = String::new();
+    s.push_str(
+        "Output a foliage CUTOUT ATLAS texture for an alpha-tested billboard \
+         leaf card \u{2014} the kind used on game trees and bushes (SpeedTree-style). \
+         The image is a *cluster* of overlapping leaves, fronds, or petals \
+         photographed against a uniform pure-black background; the texture \
+         pipeline keys the black to transparency so the leaf shapes become \
+         the visible silhouette.\n\n\
+         Framing: top-down view of a flat foliage spray pinned against a pure \
+         black studio backdrop. 5\u{2013}15 leaves arranged naturally with \
+         realistic overlap, slight rotation variation, and small gaps between \
+         leaves so the black background reads through where the cluster ends. \
+         Leaves fill most of the frame but do NOT touch the image edges \
+         \u{2014} leave a thin black margin all around so the silhouette \
+         resolves cleanly when the background is keyed to alpha.\n\n\
+         Hard exclusions (image must contain NONE of these):\n\
+         - no branches, twigs, stems, tree trunks, or wood (just the leaf \
+         blades themselves \u{2014} their petioles can be hinted but no woody \
+         growth)\n\
+         - no characters, people, faces, animals, hands, or body parts\n\
+         - no scenery, sky, ground, soil, water, mulch, or environment\n\
+         - no logos, text, numbers, watermarks, signatures, or symbols\n\
+         - no borders, frames, vignettes, drop shadows from the leaves onto \
+         the backdrop, or directional rim lighting\n\
+         - no gradient backgrounds, no studio bokeh, no atmospheric haze \
+         \u{2014} the background is FLAT pure RGB(0, 0, 0)\n\n\
+         Required qualities:\n\
+         - background is solid, uniform, pure black (RGB 0, 0, 0) everywhere \
+         outside the leaf silhouettes; no near-black grays, no dark green \
+         spill, no gradient\n\
+         - leaves are clearly defined with crisp silhouette edges so the \
+         alpha cutout reads cleanly at small sizes\n\
+         - flat, even, diffuse lighting on the leaves themselves \u{2014} no \
+         strong specular, no cast shadows on neighbouring leaves\n\
+         - square aspect, the cluster centred in the frame\n\n",
+    );
+    s.push_str(&format!("Material name: {}\n", hit.name));
+    if let Some([r, g, b]) = color {
+        s.push_str(&format!(
+            "Target leaf color (approximate, hex): {}\n",
+            rgb_to_hex(r, g, b)
+        ));
+    }
+    if let Some(r) = roughness {
+        s.push_str(&format!("Leaf surface finish: {}\n", roughness_word(r)));
+    }
+    s.push_str(&format!("Style: {style}\n"));
+    if let Some(hint) = anatomy {
+        let trimmed = hint.trim();
+        if !trimmed.is_empty() {
+            s.push_str(&format!(
+                "Species / shape motif (use only to bias leaf SHAPE and \
+                 arrangement \u{2014} do NOT draw the named subject): {trimmed}\n"
+            ));
+        }
+    }
+    s.push_str(
+        "\nReminder: foliage cluster on PURE BLACK. Keep a thin black margin \
+         around the cluster. No branches, no scene, no horizons. The black \
+         backdrop becomes transparent in the final asset.",
+    );
     s
 }
 
@@ -186,7 +309,7 @@ scene { box "b" (size=[1,1,1]) }"#;
         let src = r#"material "oak" (color=[0.55, 0.35, 0.18], roughness=0.75)"#;
         let ast = parse_or_panic(src);
         let hits = collect_materials(&ast);
-        let p = build_prompt(&hits[0], "photorealistic", None, None);
+        let p = build_prompt(&hits[0], "photorealistic", None);
         assert!(p.contains("Material name: oak"));
         assert!(p.contains("#8C592E"));
         assert!(p.contains("rough, matte"));
@@ -194,12 +317,33 @@ scene { box "b" (size=[1,1,1]) }"#;
     }
 
     #[test]
+    fn build_prompt_enforces_surface_only_framing() {
+        // The exclusion list is the load-bearing part of the rewrite — if
+        // these phrases ever drift out of the prompt, Gemini starts drawing
+        // the material's subject (a tiger, a chair) instead of a swatch.
+        let src = r#"material "stone" (color=[0.5,0.5,0.5])"#;
+        let ast = parse_or_panic(src);
+        let hits = collect_materials(&ast);
+        let p = build_prompt(&hits[0], "photorealistic", None);
+        assert!(p.contains("seamless"));
+        assert!(p.contains("tileable"));
+        assert!(p.contains("no characters"));
+        assert!(p.contains("body parts"));
+        assert!(p.contains("no scenery"));
+        assert!(p.contains("Surface only"));
+    }
+
+    #[test]
     fn anatomy_hint_appears_when_provided() {
         let src = r#"material "fur" (color=[0.5, 0.3, 0.1], roughness=0.85)"#;
         let ast = parse_or_panic(src);
         let hits = collect_materials(&ast);
-        let p = build_prompt(&hits[0], "photorealistic", None, Some("back, shoulder"));
-        assert!(p.contains("Anatomy / role hints: back, shoulder"));
+        let p = build_prompt(&hits[0], "photorealistic", Some("back, shoulder"));
+        // Hint must come through, but framed as motif inspiration with the
+        // explicit don't-depict guard so Gemini doesn't draw a shoulder.
+        assert!(p.contains("back, shoulder"));
+        assert!(p.contains("Pattern motif"));
+        assert!(p.contains("DO NOT depict"));
     }
 
     #[test]
@@ -230,5 +374,66 @@ scene { box "b" (size=[1,1,1]) }"#;
     #[test]
     fn parse_prompt_header_absent() {
         assert!(parse_prompt_header("material \"a\" ()").is_none());
+    }
+
+    #[test]
+    fn mask_material_swaps_to_cutout_atlas_prompt() {
+        // Default surface-swatch prompt is mutually exclusive with the cutout
+        // atlas one — different exclusion lists, different framing. Detect the
+        // alpha_mode="mask" flag and emit the foliage-cluster-on-black prompt
+        // so the chroma-key step has a clean backdrop to convert to alpha.
+        let src = r#"
+            material "oak_leaf" (
+                color=[0.2, 0.55, 0.22], roughness=0.65,
+                alpha_mode="mask", alpha_cutoff=0.5, double_sided=1
+            )
+        "#;
+        let ast = parse_or_panic(src);
+        let hits = collect_materials(&ast);
+        assert!(is_mask_material(hits[0].node));
+        let p = build_prompt(&hits[0], "photorealistic", None);
+        // Cutout-atlas-specific framing.
+        assert!(p.contains("CUTOUT ATLAS"), "missing cutout-atlas tag");
+        assert!(p.contains("pure-black background"));
+        assert!(p.contains("cluster"), "missing cluster framing");
+        assert!(p.contains("realistic overlap"), "missing overlap guidance");
+        assert!(p.contains("RGB(0, 0, 0)"));
+        // Must NOT carry the swatch prompt's tileable-surface framing.
+        assert!(
+            !p.contains("perfectly tileable"),
+            "cutout prompt leaked tileable-surface phrasing"
+        );
+        assert!(
+            !p.contains("material swatch"),
+            "cutout prompt leaked swatch phrasing"
+        );
+    }
+
+    #[test]
+    fn opaque_material_keeps_surface_swatch_prompt() {
+        // Default path stays untouched for materials that don't opt in to
+        // alpha cutout — bark, stone, wood etc.
+        let src = r#"material "oak_bark" (color=[0.36, 0.25, 0.15], roughness=0.95)"#;
+        let ast = parse_or_panic(src);
+        let hits = collect_materials(&ast);
+        assert!(!is_mask_material(hits[0].node));
+        let p = build_prompt(&hits[0], "photorealistic", None);
+        assert!(p.contains("perfectly tileable"));
+        assert!(!p.contains("CUTOUT ATLAS"));
+    }
+
+    #[test]
+    fn cutout_prompt_carries_color_and_motif_hints() {
+        // Authored color + species motif must come through the cutout branch
+        // too — that's how Gemini knows whether to draw oak vs. maple vs. fern.
+        let src = r#"material "leaf" (color=[0.18, 0.45, 0.20], alpha_mode="mask")"#;
+        let ast = parse_or_panic(src);
+        let hits = collect_materials(&ast);
+        let p = build_prompt(&hits[0], "stylized", Some("oak, autumn"));
+        assert!(p.contains("Target leaf color"));
+        assert!(p.contains("#2E7333"));
+        assert!(p.contains("Style: stylized"));
+        assert!(p.contains("oak, autumn"));
+        assert!(p.contains("Species / shape motif"));
     }
 }

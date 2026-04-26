@@ -7,7 +7,7 @@ use mogen_core::Severity;
 
 use crate::pipeline::Stage;
 
-use super::types::{ShortcutAction, TEX_EXISTS_TTL};
+use super::types::{ShortcutAction, UndoKey, TEX_EXISTS_TTL};
 use super::util::{
     delete_texture_group, ellipsize_path, find_clip_source_span, find_material_source_span,
     format_inspector_scalar, gather_texture_refs, offset_to_line_col, resolve_for_check,
@@ -26,6 +26,13 @@ impl MogenStudioApp {
         // open, so normal editing isn't affected.
         let popup_key = self.autocomplete_key(ui);
 
+        // Block-indent / dedent on Tab / Shift+Tab when the selection covers
+        // multiple lines (or for any Shift+Tab). Runs after autocomplete so an
+        // open popup keeps its claim on Tab.
+        if self.handle_indent_keys(ui, editor_id) {
+            changed = true;
+        }
+
         let font_id = egui::TextStyle::Monospace.resolve(ui.style());
         let palette = crate::highlight::Palette::for_visuals(&ui.style().visuals);
 
@@ -33,8 +40,10 @@ impl MogenStudioApp {
         // cheap by the single-pass tokeniser in `highlight`; caching on hash
         // would be nice but isn't needed yet at typical .mog sizes.
         let hl_font = font_id.clone();
-        let mut layouter = move |ui: &egui::Ui, text: &str, wrap_width: f32| {
-            let job = crate::highlight::highlight(text, hl_font.clone(), palette, wrap_width);
+        let mut layouter = move |ui: &egui::Ui, text: &str, _wrap_width: f32| {
+            // Wrap is disabled in `highlight` — long lines scroll horizontally
+            // so the gutter's one-number-per-source-line stays aligned.
+            let job = crate::highlight::highlight(text, hl_font.clone(), palette);
             ui.fonts(|f| f.layout_job(job))
         };
 
@@ -51,7 +60,7 @@ impl MogenStudioApp {
 
         let mut textedit_output: Option<egui::widgets::text_edit::TextEditOutput> = None;
 
-        egui::ScrollArea::vertical()
+        egui::ScrollArea::both()
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.horizontal_top(|ui| {
@@ -165,9 +174,28 @@ impl MogenStudioApp {
             self.files[i].dirty = self.files[i].source != self.files[i].last_saved_source;
             self.files[i].needs_compile = true;
             self.files[i].last_edit_at = Some(Instant::now());
+            // The TextEdit owns its own native undo for typing — those edits
+            // never enter the app stack. Reset the coalesce window so a
+            // subsequent gizmo / inspector edit doesn't merge into a stack
+            // entry whose `before` predates the user's typing.
+            self.break_undo_chain(i);
             // Compilation itself is gated by `drive_compile_debounce` so a
             // burst of keystrokes only re-parses once the user pauses.
         }
+    }
+
+    /// True when the active file has at least one error- or warning-level
+    /// diagnostic. Drives the editor's footer panel visibility — info-only
+    /// or clean states keep the panel hidden so the editor reclaims the
+    /// space.
+    pub(super) fn has_blocking_diagnostics(&self) -> bool {
+        let Some(result) = &self.files[self.active].last_result else {
+            return false;
+        };
+        result
+            .diagnostics
+            .iter()
+            .any(|d| matches!(d.severity, Severity::Error | Severity::Warning))
     }
 
     /// One-line summary of the active MOG file's validator state, shown as
@@ -284,6 +312,20 @@ impl MogenStudioApp {
             );
             return;
         }
+        if node.relative_placed {
+            // The viewport gizmo refuses these for the same reason: a layout
+            // pass (attach / pack) recomputes their translation every compile,
+            // so a `pos=` writeback would silently snap back. Keep the two
+            // input paths consistent rather than offering a transform grid
+            // that secretly does nothing.
+            ui.add_space(6.0);
+            ui.colored_label(
+                egui::Color32::from_rgb(230, 200, 100),
+                "Placed by attach/pack — translation is recomputed each compile. \
+                 Detach or edit the layout spec to free this node.",
+            );
+            return;
+        }
 
         // Gizmo mode switch — mirrors the viewport overlay buttons so a user
         // staring at the inspector can flip modes without pointing at the
@@ -318,31 +360,51 @@ impl MogenStudioApp {
 
         let mut edits: Vec<PendingEdit> = Vec::new();
 
+        // DSL shortcut/corner-form attrs that override the canonical
+        // transform field. The inspector strips these on commit for the
+        // same reason the gizmo does — otherwise a node authored with `x=`
+        // / `from=` / `rx=` shorthand would silently win on recompile and
+        // make the just-typed value snap back. Kept in sync with the
+        // viewport gizmo's shadow lists in `viewer/state.rs`.
+        let pos_shadows: Vec<String> = ["x", "y", "z", "from", "to"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let rot_shadows: Vec<String> =
+            ["rx", "ry", "rz"].iter().map(|s| s.to_string()).collect();
+
         ui.add_space(6.0);
         egui::Grid::new("inspector_transform")
             .num_columns(4)
             .spacing([6.0, 4.0])
             .show(ui, |ui| {
                 ui.label("Translate");
+                let mut emit_pos = false;
                 if ui.add(egui::DragValue::new(&mut tx).speed(0.02)).changed() {
-                    edits.push(PendingEdit::SetAttr {
-                        node: node_id,
-                        attr: "x".into(),
-                        value: format_inspector_scalar(tx),
-                    });
+                    emit_pos = true;
                 }
                 if ui.add(egui::DragValue::new(&mut ty).speed(0.02)).changed() {
-                    edits.push(PendingEdit::SetAttr {
-                        node: node_id,
-                        attr: "y".into(),
-                        value: format_inspector_scalar(ty),
-                    });
+                    emit_pos = true;
                 }
                 if ui.add(egui::DragValue::new(&mut tz).speed(0.02)).changed() {
-                    edits.push(PendingEdit::SetAttr {
+                    emit_pos = true;
+                }
+                if emit_pos {
+                    // Emit the full `pos=[x,y,z]` vector and strip shadow
+                    // attrs. The previous per-axis `x=`/`y=`/`z=` writes
+                    // left two attrs fighting in the header (`pos=…` plus a
+                    // stale `x=`); whichever won depended on
+                    // `transform_from_attrs` resolution order.
+                    edits.push(PendingEdit::SetAttrCanonical {
                         node: node_id,
-                        attr: "z".into(),
-                        value: format_inspector_scalar(tz),
+                        attr: "pos".into(),
+                        value: format!(
+                            "[{}, {}, {}]",
+                            format_inspector_scalar(tx),
+                            format_inspector_scalar(ty),
+                            format_inspector_scalar(tz),
+                        ),
+                        delete: pos_shadows.clone(),
                     });
                 }
                 ui.end_row();
@@ -359,7 +421,7 @@ impl MogenStudioApp {
                     emit_rot = true;
                 }
                 if emit_rot {
-                    edits.push(PendingEdit::SetAttr {
+                    edits.push(PendingEdit::SetAttrCanonical {
                         node: node_id,
                         attr: "rot".into(),
                         value: format!(
@@ -368,6 +430,7 @@ impl MogenStudioApp {
                             format_inspector_scalar(ry),
                             format_inspector_scalar(rz),
                         ),
+                        delete: rot_shadows.clone(),
                     });
                 }
                 ui.end_row();
@@ -384,9 +447,11 @@ impl MogenStudioApp {
                     emit_scale = true;
                 }
                 if emit_scale {
-                    edits.push(PendingEdit::SetAttr {
+                    edits.push(PendingEdit::SetAttrCanonical {
                         node: node_id,
                         attr: "scale".into(),
+                        // Scale has no DSL shortcut attrs.
+                        delete: Vec::new(),
                         value: format!(
                             "[{}, {}, {}]",
                             format_inspector_scalar(sx),
@@ -413,13 +478,26 @@ impl MogenStudioApp {
                 .clicked()
             {
                 if let Some(span) = node_span {
-                    let src = &self.files[i].source;
-                    let new_src = edit::duplicate_node(src, span);
-                    let f = &mut self.files[i];
-                    f.source = new_src;
-                    f.dirty = f.source != f.last_saved_source;
-                    f.needs_compile = true;
-                    f.last_edit_at = Some(Instant::now());
+                    let before = self.files[i].source.clone();
+                    let new_src = edit::duplicate_node(&before, span);
+                    {
+                        let f = &mut self.files[i];
+                        f.source = new_src;
+                        f.dirty = f.source != f.last_saved_source;
+                        f.needs_compile = true;
+                        f.last_edit_at = Some(Instant::now());
+                    }
+                    // Discrete click — never coalesce with a prior entry.
+                    self.break_undo_chain(i);
+                    self.push_undo(
+                        i,
+                        before,
+                        UndoKey {
+                            surface: "inspector-action",
+                            attr: None,
+                            node_path: None,
+                        },
+                    );
                 }
             }
             if ui
@@ -428,13 +506,25 @@ impl MogenStudioApp {
                 .clicked()
             {
                 if let Some(span) = node_span {
-                    let src = &self.files[i].source;
-                    let new_src = edit::delete_node(src, span);
-                    let f = &mut self.files[i];
-                    f.source = new_src;
-                    f.dirty = f.source != f.last_saved_source;
-                    f.needs_compile = true;
-                    f.last_edit_at = Some(Instant::now());
+                    let before = self.files[i].source.clone();
+                    let new_src = edit::delete_node(&before, span);
+                    {
+                        let f = &mut self.files[i];
+                        f.source = new_src;
+                        f.dirty = f.source != f.last_saved_source;
+                        f.needs_compile = true;
+                        f.last_edit_at = Some(Instant::now());
+                    }
+                    self.break_undo_chain(i);
+                    self.push_undo(
+                        i,
+                        before,
+                        UndoKey {
+                            surface: "inspector-action",
+                            attr: None,
+                            node_path: None,
+                        },
+                    );
                     self.viewer.set_selection(None);
                 }
             }
@@ -442,38 +532,98 @@ impl MogenStudioApp {
     }
 
     pub(super) fn ui_summary(&mut self, ui: &mut egui::Ui) {
+        use crate::edit;
+
         let i = self.active;
-        let Some(result) = &self.files[i].last_result else {
-            ui.label("(no build yet)");
-            return;
-        };
-        let Some(scene) = &result.scene else {
-            ui.label("(no scene — fix errors first)");
-            return;
-        };
-        let mut tris = 0usize;
-        let mut verts = 0usize;
-        let mut meshes = 0usize;
-        for n in &scene.nodes {
-            if let Some(m) = &n.mesh {
-                tris += m.indices.len() / 3;
-                verts += m.positions.len();
-                meshes += 1;
+        let counts = {
+            let Some(result) = &self.files[i].last_result else {
+                ui.label("(no build yet)");
+                return;
+            };
+            let Some(scene) = &result.scene else {
+                ui.label("(no scene — fix errors first)");
+                return;
+            };
+            let mut tris = 0usize;
+            let mut verts = 0usize;
+            let mut meshes = 0usize;
+            for n in &scene.nodes {
+                if let Some(m) = &n.mesh {
+                    tris += m.indices.len() / 3;
+                    verts += m.positions.len();
+                    meshes += 1;
+                }
             }
-        }
-        ui.label(format!("nodes: {}", scene.nodes.len()));
+            (
+                scene.nodes.len(),
+                meshes,
+                tris,
+                verts,
+                scene.materials.len(),
+                scene.skins.len(),
+                scene.clips.len(),
+                scene.joints.len(),
+            )
+        };
+        let (nodes, meshes, tris, verts, mats, skins, clips, joints) = counts;
+
+        ui.label(format!("nodes: {nodes}"));
         ui.label(format!("meshes: {meshes}"));
         ui.label(format!("triangles: {tris}"));
         ui.label(format!("vertices: {verts}"));
-        ui.label(format!("materials: {}", scene.materials.len()));
-        if !scene.skins.is_empty() {
-            ui.label(format!("skins: {}", scene.skins.len()));
+        ui.label(format!("materials: {mats}"));
+        if skins > 0 {
+            ui.label(format!("skins: {skins}"));
         }
-        if !scene.clips.is_empty() {
-            ui.label(format!("clips: {}", scene.clips.len()));
+        if clips > 0 {
+            ui.label(format!("clips: {clips}"));
         }
-        if !scene.joints.is_empty() {
-            ui.label(format!("joints: {}", scene.joints.len()));
+        if joints > 0 {
+            ui.label(format!("joints: {joints}"));
+        }
+
+        // Polygon count slider — multiplies primitive default segment/ring
+        // counts at lower-time. Reads the live value out of source so it
+        // stays in sync if the user edits the directive in the text editor.
+        let current = edit::get_lod_scale(&self.files[i].source).unwrap_or(1.0);
+        let mut draft = current;
+        ui.add_space(6.0);
+        let resp = ui
+            .add(
+                egui::Slider::new(&mut draft, 0.25..=4.0)
+                    .text("LOD scale")
+                    .logarithmic(true)
+                    .fixed_decimals(2),
+            )
+            .on_hover_text(
+                "Multiplies primitive default segment/ring counts.\n\
+                 Per-primitive `segments=`/`rings=` overrides still win.",
+            );
+        if resp.drag_stopped() || (resp.changed() && !resp.dragged()) {
+            let snapped = (draft * 100.0).round() / 100.0;
+            if (snapped - current).abs() > 1e-3 {
+                let before = self.files[i].source.clone();
+                let new_src = edit::set_lod_scale(&before, snapped);
+                {
+                    let f = &mut self.files[i];
+                    f.source = new_src;
+                    f.dirty = f.source != f.last_saved_source;
+                    f.needs_compile = true;
+                    f.last_edit_at = Some(Instant::now());
+                }
+                // Slider release is already a discrete event (drag_stopped
+                // gate above), so each release is one undoable step.
+                self.break_undo_chain(i);
+                self.push_undo(
+                    i,
+                    before,
+                    UndoKey {
+                        surface: "lod",
+                        attr: None,
+                        node_path: None,
+                    },
+                );
+            }
         }
     }
 
@@ -932,13 +1082,19 @@ impl MogenStudioApp {
         // module) silently skips — the widget state rolls back on the next
         // frame when the compiled scene is re-read.
         if !pending.is_empty() {
-            let mut source = self.files[i].source.clone();
+            let undo_before = self.files[i].source.clone();
+            let mut source = undo_before.clone();
             let mut any_applied = false;
+            // Track the last (material, attr) pair in the batch — drives the
+            // coalesce key so a continuous DragValue / colour-picker drag on
+            // one slot collapses into a single undo entry.
+            let mut last_target: Option<(String, &'static str)> = None;
             for (mat_name, attr, value) in pending {
                 let Some(span) = find_material_source_span(&source, &mat_name) else {
                     continue;
                 };
                 source = edit::set_attr(&source, span, attr, &value);
+                last_target = Some((mat_name, attr));
                 any_applied = true;
             }
             if any_applied {
@@ -949,6 +1105,18 @@ impl MogenStudioApp {
                     f.needs_compile = true;
                     f.last_edit_at = Some(Instant::now());
                 }
+                let coalesce_attr = last_target
+                    .as_ref()
+                    .map(|(name, attr)| format!("{name}:{attr}"));
+                self.push_undo(
+                    i,
+                    undo_before,
+                    UndoKey {
+                        surface: "material",
+                        attr: coalesce_attr,
+                        node_path: None,
+                    },
+                );
                 // Immediate recompile so the widgets read the updated
                 // material on the very next frame (matches the gizmo-commit
                 // pattern in `drain_viewport_edits`). Debouncing causes
@@ -1025,6 +1193,28 @@ impl MogenStudioApp {
             }
         });
 
+        ui.horizontal(|ui| {
+            let mut speed = self.viewer.playback_speed();
+            ui.label("Speed");
+            let resp = ui.add(
+                egui::Slider::new(&mut speed, -2.0..=4.0)
+                    .suffix("×")
+                    .fixed_decimals(2)
+                    .clamping(egui::SliderClamping::Always),
+            );
+            if resp.changed() {
+                self.viewer.set_playback_speed(speed);
+            }
+            if ui
+                .button("1×")
+                .on_hover_text("Reset playback speed to real time")
+                .clicked()
+                && (speed - 1.0).abs() > f32::EPSILON
+            {
+                self.viewer.set_playback_speed(1.0);
+            }
+        });
+
         ui.add_space(4.0);
         let file_i = self.active;
         let mut pending_delete: Option<String> = None;
@@ -1082,12 +1272,25 @@ impl MogenStudioApp {
         if let Some(name) = pending_delete {
             use crate::edit;
             if let Some(span) = find_clip_source_span(&self.files[file_i].source, &name) {
-                let new_src = edit::delete_node(&self.files[file_i].source, span);
-                let f = &mut self.files[file_i];
-                f.source = new_src;
-                f.dirty = f.source != f.last_saved_source;
-                f.needs_compile = true;
-                f.last_edit_at = Some(Instant::now());
+                let before = self.files[file_i].source.clone();
+                let new_src = edit::delete_node(&before, span);
+                {
+                    let f = &mut self.files[file_i];
+                    f.source = new_src;
+                    f.dirty = f.source != f.last_saved_source;
+                    f.needs_compile = true;
+                    f.last_edit_at = Some(Instant::now());
+                }
+                self.break_undo_chain(file_i);
+                self.push_undo(
+                    file_i,
+                    before,
+                    UndoKey {
+                        surface: "animation",
+                        attr: None,
+                        node_path: None,
+                    },
+                );
             }
         }
     }
@@ -1107,38 +1310,64 @@ impl MogenStudioApp {
                         ui.horizontal(|ui| {
                             let frame_sc = ctx
                                 .format_shortcut(&ShortcutAction::Frame.shortcut());
-                            if ui
-                                .small_button("Frame")
-                                .on_hover_text(format!(
-                                    "Re-fit the camera to the scene  ({frame_sc})"
-                                ))
-                                .clicked()
-                            {
-                                self.viewer.frame_view();
-                            }
-                            ui.separator();
-                            let cur = self.viewer.gizmo_mode();
-                            for (label, mode, tip) in [
-                                ("T", GizmoMode::Translate, "Translate gizmo"),
-                                ("R", GizmoMode::Rotate, "Rotate gizmo"),
-                                ("S", GizmoMode::Scale, "Scale gizmo"),
-                            ] {
-                                let selected = cur == mode;
+                            let cinema_on = self.viewer.is_cinema_active();
+                            ui.add_enabled_ui(!cinema_on, |ui| {
                                 if ui
-                                    .selectable_label(selected, label)
-                                    .on_hover_text(tip)
+                                    .small_button("Frame")
+                                    .on_hover_text(format!(
+                                        "Re-fit the camera to the scene  ({frame_sc})"
+                                    ))
                                     .clicked()
                                 {
-                                    self.viewer.set_gizmo_mode(mode);
+                                    self.viewer.frame_view();
                                 }
+                                ui.separator();
+                                let cur = self.viewer.gizmo_mode();
+                                for (label, mode, tip) in [
+                                    ("T", GizmoMode::Translate, "Translate gizmo"),
+                                    ("R", GizmoMode::Rotate, "Rotate gizmo"),
+                                    ("S", GizmoMode::Scale, "Scale gizmo"),
+                                ] {
+                                    let selected = cur == mode;
+                                    if ui
+                                        .selectable_label(selected, label)
+                                        .on_hover_text(tip)
+                                        .clicked()
+                                    {
+                                        self.viewer.set_gizmo_mode(mode);
+                                    }
+                                }
+                            });
+                            ui.separator();
+                            // Cinema mode: orbit/pan/zoom + gizmo + grid all
+                            // suppressed while on, so its toggle stays
+                            // outside the disabled group.
+                            if ui
+                                .selectable_label(cinema_on, "🎬 Cinema")
+                                .on_hover_text(if cinema_on {
+                                    "Stop cinema mode and restore the previous camera"
+                                } else {
+                                    "Play an automated sequence of camera shots"
+                                })
+                                .clicked()
+                            {
+                                self.viewer.set_cinema_active(!cinema_on);
                             }
                             ui.separator();
-                            ui.label(
-                                egui::RichText::new(
-                                    "click: select · drag: orbit · shift+drag/middle/right: pan · scroll: zoom · ctrl: snap",
-                                )
-                                .weak(),
-                            );
+                            if cinema_on {
+                                if let Some(name) = self.viewer.cinema_shot_label() {
+                                    ui.label(
+                                        egui::RichText::new(format!("now: {name}")).weak(),
+                                    );
+                                }
+                            } else {
+                                ui.label(
+                                    egui::RichText::new(
+                                        "click: select · drag: orbit · shift+drag/middle/right: pan · scroll: zoom · ctrl: snap",
+                                    )
+                                    .weak(),
+                                );
+                            }
                         });
                     });
             });

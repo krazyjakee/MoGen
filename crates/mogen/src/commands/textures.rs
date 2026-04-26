@@ -15,7 +15,7 @@ pub(crate) fn textures_cmd(args: mogen_llm::textures::TexturesArgs) -> Result<()
         .with_context(|| format!("reading {}", args.input.display()))?;
     let ast = mogen_dsl::parse(&src)?;
 
-    let plans = mogen_llm::textures::build_plan(&src, &ast, &args);
+    let plans = mogen_llm::textures::build_plan(&ast, &args);
 
     if plans.is_empty() {
         println!("textures: no `material` declarations found in {}", args.input.display());
@@ -25,26 +25,30 @@ pub(crate) fn textures_cmd(args: mogen_llm::textures::TexturesArgs) -> Result<()
     // Summary line first so users see what's about to happen.
     let mut to_gen = 0usize;
     let mut to_derive = 0usize;
+    let mut to_existing = 0usize;
     let mut to_skip = 0usize;
     for p in &plans {
         match p.action {
             mogen_llm::textures::PlanAction::Generate => to_gen += 1,
             mogen_llm::textures::PlanAction::Derive => to_derive += 1,
+            mogen_llm::textures::PlanAction::UseExisting => to_existing += 1,
             mogen_llm::textures::PlanAction::Skip(_) => to_skip += 1,
         }
     }
     println!(
-        "textures: {} slot{} · {} to generate · {} to derive · {} skipped",
+        "textures: {} slot{} · {} to generate · {} to derive · {} existing · {} skipped",
         plans.len(),
         if plans.len() == 1 { "" } else { "s" },
         to_gen,
         to_derive,
+        to_existing,
         to_skip,
     );
     for p in &plans {
         let tag = match p.action {
             mogen_llm::textures::PlanAction::Generate => "gen",
             mogen_llm::textures::PlanAction::Derive => "drv",
+            mogen_llm::textures::PlanAction::UseExisting => "exist",
             mogen_llm::textures::PlanAction::Skip(reason) => reason,
         };
         println!(

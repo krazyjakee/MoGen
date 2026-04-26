@@ -338,6 +338,7 @@ impl MogenStudioApp {
             MenuAction::OpenNewPromptModal => {
                 self.new_prompt_draft.clear();
                 self.show_new_prompt = true;
+                self.new_prompt_focus_pending = true;
             }
             MenuAction::OpenDialog => self.open_dialog(),
             MenuAction::OpenPath(p) => {
@@ -358,12 +359,28 @@ impl MogenStudioApp {
             MenuAction::Quit => {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
-            MenuAction::Undo => inject_key(ctx, egui::Key::Z, egui::Modifiers::COMMAND),
-            MenuAction::Redo => inject_key(
-                ctx,
-                egui::Key::Z,
-                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
-            ),
+            // Undo / Redo are bimodal: when a TextEdit owns focus, route the
+            // event natively so the editor's per-buffer history runs; when
+            // no widget is focused (the viewport / inspector are the user's
+            // current surface), drive the app-level undo stack instead.
+            MenuAction::Undo => {
+                if ctx.memory(|m| m.focused().is_none()) {
+                    self.undo_active();
+                } else {
+                    inject_key(ctx, egui::Key::Z, egui::Modifiers::COMMAND);
+                }
+            }
+            MenuAction::Redo => {
+                if ctx.memory(|m| m.focused().is_none()) {
+                    self.redo_active();
+                } else {
+                    inject_key(
+                        ctx,
+                        egui::Key::Z,
+                        egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                    );
+                }
+            }
             MenuAction::Cut => {
                 ctx.input_mut(|i| i.events.push(egui::Event::Cut));
             }
@@ -403,6 +420,24 @@ impl MogenStudioApp {
             let esc = egui::KeyboardShortcut::new(egui::Modifiers::NONE, egui::Key::Escape);
             if ctx.input_mut(|i| i.consume_shortcut(&esc)) {
                 self.cancel_active_llm();
+            }
+        }
+
+        // App-level undo / redo: only fire when nothing is focused, so typing
+        // in the code editor or any prompt field still gets native TextEdit
+        // history. Cmd+Shift+Z is tested first because its modifier set is a
+        // strict superset of Cmd+Z's — otherwise the redo press would be
+        // consumed as an undo.
+        if ctx.memory(|m| m.focused().is_none()) {
+            let undo_sc = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Z);
+            let redo_sc = egui::KeyboardShortcut::new(
+                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+                egui::Key::Z,
+            );
+            if ctx.input_mut(|i| i.consume_shortcut(&redo_sc)) {
+                self.redo_active();
+            } else if ctx.input_mut(|i| i.consume_shortcut(&undo_sc)) {
+                self.undo_active();
             }
         }
 

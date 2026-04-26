@@ -6,7 +6,9 @@ use mogen_llm::textures::TextureStage;
 
 use super::pricing::{format_usd, image_pricing, text_pricing};
 use super::types::{EnhanceTarget, LlmErrorClass, LlmEvent, LlmEventTone, LlmKind, LlmProgress};
-use super::util::{ellipsize_path, gather_texture_refs, resolve_for_check};
+use super::util::{
+    delete_material_textures, ellipsize_path, gather_texture_refs, resolve_for_check,
+};
 use super::MogenStudioApp;
 use crate::settings::{thinking_level_label, THINKING_LEVELS};
 
@@ -406,6 +408,7 @@ impl MogenStudioApp {
                     );
                     let verb = match stage {
                         TextureStage::Generating => "generating",
+                        TextureStage::Existing => "using existing PNG for",
                         TextureStage::Deriving => "deriving PBR for",
                         TextureStage::Done => "finished",
                     };
@@ -430,8 +433,16 @@ impl MogenStudioApp {
                     ui.add_space(6.0);
                     ui.separator();
                     ui.add_space(2.0);
-                    for ev in visible {
-                        draw_timeline_row(ui, ev, now, accent);
+                    // Freeze each finished event's timer at the moment the
+                    // next event was logged; only the most recent event
+                    // keeps ticking against `now`.
+                    for i in 0..visible.len() {
+                        let ev = visible[i];
+                        let until = visible
+                            .get(i + 1)
+                            .map(|next| next.at)
+                            .unwrap_or(now);
+                        draw_timeline_row(ui, ev, until, accent);
                     }
                 }
 
@@ -586,6 +597,9 @@ impl MogenStudioApp {
 
     /// Thumbnails of every generated base-colour texture referenced by the
     /// active scene. Only drawn when at least one PNG exists on disk.
+    /// Right-clicking a thumb opens a per-material menu for regenerating
+    /// just that texture or deleting the PNG group + clearing its `*_texture`
+    /// attrs from the source.
     fn ui_texture_thumbs(&mut self, ui: &mut egui::Ui) {
         let i = self.active;
         let Some(result) = &self.files[i].last_result else {
@@ -601,13 +615,17 @@ impl MogenStudioApp {
             .and_then(|p| p.parent())
             .map(|p| p.to_path_buf());
 
-        // Albedo only — normal / MR / AO thumbnails are unintuitive to read.
-        let refs: Vec<(String, PathBuf)> = gather_texture_refs(scene)
-            .into_iter()
+        // Full slot list (not just albedo) so the per-material delete sweeps
+        // every companion `*_texture` attr too. The thumbnail row itself
+        // still only paints base_color — normal / MR / AO thumbnails read as
+        // noise.
+        let all_refs = gather_texture_refs(scene);
+        let refs: Vec<(String, PathBuf)> = all_refs
+            .iter()
             .filter(|(_, slot, _)| *slot == "base_color")
             .map(|(mat, _, rel)| {
-                let abs = resolve_for_check(&rel, source_dir.as_deref());
-                (mat, abs)
+                let abs = resolve_for_check(rel, source_dir.as_deref());
+                (mat.clone(), abs)
             })
             .filter(|(_, abs)| abs.is_file())
             .collect();
@@ -625,6 +643,15 @@ impl MogenStudioApp {
         // or the previews lose all detail.
         let thumb_size = ((available - 24.0) / 4.0).clamp(48.0, 96.0);
 
+        // Right-click action chosen during the loop. Applied after the UI
+        // closures return so we can take a fresh `&mut self` borrow without
+        // fighting `horizontal_wrapped`.
+        enum ThumbAction {
+            Regenerate,
+            Delete,
+        }
+        let mut pending: Option<(String, ThumbAction)> = None;
+
         ui.horizontal_wrapped(|ui| {
             for (mat, abs) in &refs {
                 let handle = match self.thumb_handle(&ctx, abs) {
@@ -632,11 +659,42 @@ impl MogenStudioApp {
                     None => continue,
                 };
                 ui.vertical(|ui| {
-                    ui.add(
-                        egui::Image::new((handle.id(), egui::vec2(thumb_size, thumb_size)))
-                            .rounding(4.0),
-                    )
-                    .on_hover_text(ellipsize_path(abs, 60));
+                    let resp = ui
+                        .add(
+                            egui::Image::new((handle.id(), egui::vec2(thumb_size, thumb_size)))
+                                .rounding(4.0)
+                                .sense(egui::Sense::click()),
+                        )
+                        .on_hover_text(format!(
+                            "{}\nright-click for actions",
+                            ellipsize_path(abs, 60),
+                        ));
+                    resp.context_menu(|ui| {
+                        ui.label(egui::RichText::new(mat).strong());
+                        ui.separator();
+                        if ui
+                            .button("Regenerate")
+                            .on_hover_text(
+                                "Re-run the textures pipeline for just this material \
+                                 (forces overwrite of existing PNGs)",
+                            )
+                            .clicked()
+                        {
+                            pending = Some((mat.clone(), ThumbAction::Regenerate));
+                            ui.close_menu();
+                        }
+                        if ui
+                            .button("Delete")
+                            .on_hover_text(
+                                "Remove the albedo + PBR companion PNGs and clear the \
+                                 *_texture attrs on this material",
+                            )
+                            .clicked()
+                        {
+                            pending = Some((mat.clone(), ThumbAction::Delete));
+                            ui.close_menu();
+                        }
+                    });
                     ui.add(
                         egui::Label::new(egui::RichText::new(mat).small().weak())
                             .truncate(),
@@ -644,6 +702,43 @@ impl MogenStudioApp {
                 });
             }
         });
+
+        if let Some((material, action)) = pending {
+            match action {
+                ThumbAction::Regenerate => {
+                    self.start_llm_textures_for_material(ctx.clone(), material);
+                }
+                ThumbAction::Delete => {
+                    let source = self.files[i].source.clone();
+                    let (new_source, status) = delete_material_textures(
+                        &source,
+                        source_dir.as_deref(),
+                        &material,
+                        &all_refs,
+                    );
+                    let changed = new_source != source;
+                    self.tex_exists_cache.clear();
+                    self.thumb_cache.clear();
+                    if changed {
+                        {
+                            let f = &mut self.files[i];
+                            f.source = new_source;
+                            f.dirty = f.source != f.last_saved_source;
+                            f.needs_compile = true;
+                            f.last_edit_at = Some(std::time::Instant::now());
+                        }
+                        // Texture-cleanup deletes PNGs from disk as a side
+                        // effect, so this edit is non-undoable like the
+                        // LLM completions. Break the coalesce chain so a
+                        // subsequent gizmo / inspector edit doesn't merge
+                        // into a pre-cleanup stack entry.
+                        self.break_undo_chain(i);
+                        self.compile_active();
+                    }
+                    self.active_mut().status = status;
+                }
+            }
+        }
     }
 
     /// Look up or lazily upload a thumbnail for `abs`. `None` when the file
@@ -785,12 +880,14 @@ fn draw_repair_dots(ui: &mut egui::Ui, filled: u32, max: u32, accent: egui::Colo
 }
 
 /// One line in the card's activity log. Shows a coloured leading bullet,
-/// the stage message, and the age of the event (e.g. `2s ago`) on the
-/// right so users can see how long each step took.
+/// the stage message, and the duration of the step on the right
+/// (`until - ev.at`). For finished events the caller passes the timestamp
+/// of the next event so the timer freezes; for the in-flight event the
+/// caller passes `now` so it keeps ticking.
 fn draw_timeline_row(
     ui: &mut egui::Ui,
     ev: &LlmEvent,
-    now: Instant,
+    until: Instant,
     accent: egui::Color32,
 ) {
     let bullet_color = match ev.tone {
@@ -811,7 +908,7 @@ fn draw_timeline_row(
         ui.with_layout(
             egui::Layout::right_to_left(egui::Align::Center),
             |ui| {
-                let age = now.saturating_duration_since(ev.at);
+                let age = until.saturating_duration_since(ev.at);
                 ui.label(
                     egui::RichText::new(format_age(age))
                         .small()
@@ -841,6 +938,7 @@ fn stage_headline(p: &Option<LlmProgress>, kind: LlmKind) -> String {
         }) => {
             let verb = match stage {
                 TextureStage::Generating => "generating",
+                TextureStage::Existing => "using existing PNG for",
                 TextureStage::Deriving => "deriving PBR for",
                 TextureStage::Done => "finished",
             };
@@ -871,15 +969,16 @@ fn format_elapsed(d: Duration) -> String {
     }
 }
 
-/// Shorter relative-age format for timeline entries ("now", "3s", "47s", "2m").
+/// Shorter relative-age format for timeline entries ("0.4s", "3s", "47s", "2m").
+/// Sub-second precision under 10s so very fast steps don't all collapse to "now".
 fn format_age(d: Duration) -> String {
-    let secs = d.as_secs();
-    if secs == 0 {
-        "now".into()
-    } else if secs < 60 {
-        format!("{secs}s")
+    let secs_f = d.as_secs_f64();
+    if secs_f < 10.0 {
+        format!("{:.1}s", secs_f)
+    } else if secs_f < 60.0 {
+        format!("{:.0}s", secs_f)
     } else {
-        let m = secs / 60;
+        let m = (secs_f / 60.0).floor() as u64;
         format!("{m}m")
     }
 }

@@ -2,15 +2,15 @@ use std::path::PathBuf;
 
 use eframe::egui;
 use glam::{Mat4, Quat, Vec3};
-use mogen_core::{NodeId, SceneGraph, Transform};
+use mogen_core::{NodeId, SceneGraph, Span, Transform};
 
 use super::anim::{apply_animation, world_transforms_from_locals};
 use super::camera::OrbitCamera;
+use super::cinema::CinemaDirector;
 use super::flatten::{flatten, flatten_with_worlds, FlatMesh};
 use crate::preview_shader::PreviewShader;
 
 /// Shared state between the egui main thread and the render-time paint callback.
-#[derive(Default)]
 pub struct ViewerState {
     pub camera: OrbitCamera,
     pub mesh: FlatMesh,
@@ -27,6 +27,11 @@ pub struct ViewerState {
     /// with themselves (not with each other).
     pub anim_times: Vec<f32>,
     pub anim_playing: bool,
+    /// Multiplier on per-frame `dt` when advancing clip timers. 1.0 = real
+    /// time, 0.0 freezes playback (different from pausing — clips remain
+    /// active and gizmo edits still rebuild the posed mesh), negative values
+    /// rewind. Default 1.0.
+    pub playback_speed: f32,
     /// Static-pose bounding sphere captured at `set_scene` time. The Frame
     /// button refits the camera against this so the view doesn't bounce with
     /// active animations.
@@ -57,6 +62,10 @@ pub struct ViewerState {
     /// Current View → Shader preview style. Never propagates to the exported
     /// GLB — it only parameterises the OpenGL draw path.
     pub preview_shader: PreviewShader,
+    /// Cinema mode director. When `cinema.active`, `Viewer::show` ignores
+    /// orbit/pan/zoom/click input and the paint callback skips the grid +
+    /// gizmo handles so the framing reads as a clean presentation.
+    pub cinema: CinemaDirector,
 }
 
 /// Snapshot captured at `pointer_down` on a gizmo handle plus the running
@@ -75,15 +84,23 @@ pub struct GizmoDrag {
     /// runs in world space and we want a stable pivot even if the mesh
     /// rebuild moves it.
     pub start_origin: Vec3,
+    /// Parent's world transform at drag start. The gizmo math is in world
+    /// space (handles align to world axes) but the writeback lands on the
+    /// node's *local* transform — we need this matrix's inverse to convert
+    /// world deltas into local space so a node parented inside a rotated /
+    /// scaled hierarchy doesn't move the wrong direction when its handle is
+    /// dragged. `Mat4::IDENTITY` for roots.
+    pub parent_start_world: Mat4,
     /// Cursor ray at drag start. Used by each per-frame delta calculation
     /// together with the current ray.
     pub start_ray_origin: Vec3,
     pub start_ray_dir: Vec3,
-    /// Running delta to apply. Translate: world-units along axis. Rotate:
-    /// radians about axis. Scale: multiplicative factor along axis. Already
-    /// snap-rounded if the user was holding Ctrl at the last update. The
-    /// commit path checks this against an effective-zero threshold to skip
-    /// pure-click taps where the cursor never moved off the handle.
+    /// Running delta to apply, expressed in WORLD space along the chosen
+    /// world axis. Translate: world-units. Rotate: radians. Scale:
+    /// multiplicative factor. Already snap-rounded if the user was holding
+    /// Ctrl at the last update. The commit path checks this against an
+    /// effective-zero threshold to skip pure-click taps where the cursor
+    /// never moved off the handle.
     pub delta: f32,
 }
 
@@ -126,25 +143,55 @@ pub(super) fn snap_scale_factor(factor: f32) -> f32 {
 /// span-aware text mutator in `edit.rs` to rewrite the `.mog` source.
 #[derive(Clone, Debug)]
 pub enum PendingEdit {
-    /// Inspector widget / simple attr set. Writes `attr=value` on the node,
-    /// leaves any other attribute untouched.
-    SetAttr {
-        node: NodeId,
-        attr: String,
-        value: String,
-    },
-    /// Gizmo drag commit. Writes the canonical transform attr (`pos` / `rot` /
-    /// `scale`) AND deletes any shadowing shortcut attrs listed in `delete` —
-    /// per-axis (`x`/`y`/`z`, `rx`/`ry`/`rz`) or corner-form (`from`/`to`) —
-    /// that would otherwise win on recompile and make the drag snap back.
-    /// Using a separate variant keeps inspector edits (which must preserve
-    /// the author's shorthand) on their own path.
+    /// Set the canonical transform attr (`pos` / `rot` / `scale`) AND delete
+    /// any shadowing shortcut attrs listed in `delete` — per-axis (`x` /
+    /// `y` / `z`, `rx` / `ry` / `rz`) or corner-form (`from` / `to`) — that
+    /// would otherwise win on recompile and silently defeat the writeback.
+    /// Pass an empty `delete` for attrs that have no DSL shortcut.
     SetAttrCanonical {
         node: NodeId,
         attr: String,
         value: String,
         delete: Vec<String>,
     },
+    /// Set an attribute on the AST declaration at `span`. Used by the gizmo
+    /// redirect path to rewrite a connector's `at=` when the user drags a
+    /// child whose transform is overwritten by `attach` — there's no
+    /// `NodeId` for a connector, so we carry the span directly. `node` is
+    /// kept for undo coalescing only (the source node the user clicked).
+    SetAttrAtSpan {
+        node: NodeId,
+        span: Span,
+        attr: String,
+        value: String,
+        delete: Vec<String>,
+    },
+}
+
+impl Default for ViewerState {
+    fn default() -> Self {
+        Self {
+            camera: Default::default(),
+            mesh: Default::default(),
+            mesh_dirty: false,
+            scene: None,
+            base_dir: None,
+            clip_active: Vec::new(),
+            anim_times: Vec::new(),
+            anim_playing: false,
+            playback_speed: 1.0,
+            static_center: Vec3::ZERO,
+            static_radius: 0.0,
+            selected: None,
+            selected_path: None,
+            gizmo_mode: Default::default(),
+            gizmo_drag: None,
+            pending_edits: Vec::new(),
+            pending_caret: None,
+            preview_shader: Default::default(),
+            cinema: Default::default(),
+        }
+    }
 }
 
 impl ViewerState {
@@ -215,9 +262,32 @@ pub(super) fn begin_gizmo_drag(
     if node.relative_placed {
         return None;
     }
+    // Attach-bound nodes have their transform overwritten on every compile.
+    // Translate is redirected to the bound socket's `at=` (handled in
+    // commit), but only when the socket has a source span — synthesized
+    // default sockets (primitive faces) have no DSL slice to rewrite, so
+    // any drag on them would just snap back. Rotate/scale have no clean
+    // redirect either. Refuse the drag in those cases so the user sees a
+    // no-op gizmo rather than a confusing snap-back.
+    if let Some(binding) = node.attach_binding.as_ref() {
+        let mode_supported = matches!(st.gizmo_mode, crate::gizmo::GizmoMode::Translate);
+        let has_span = scene
+            .nodes
+            .get(binding.parent.0 as usize)
+            .and_then(|p| p.connectors.iter().find(|c| c.name == binding.socket))
+            .and_then(|c| c.source_span)
+            .is_some();
+        if !mode_supported || !has_span {
+            return None;
+        }
+    }
     let worlds = scene.world_transforms();
     let world = worlds.get(selected.0 as usize).copied().unwrap_or(Mat4::IDENTITY);
     let origin = world.w_axis.truncate();
+    let parent_start_world = node
+        .parent
+        .and_then(|p| worlds.get(p.0 as usize).copied())
+        .unwrap_or(Mat4::IDENTITY);
     let viewproj = st.camera.view_proj(aspect);
     let eye = st.camera.eye();
     let (ro, rd) = crate::gizmo::screen_ray(viewproj, eye, rect, cursor);
@@ -229,6 +299,7 @@ pub(super) fn begin_gizmo_drag(
         mode: st.gizmo_mode,
         start_transform: node.transform,
         start_origin: origin,
+        parent_start_world,
         start_ray_origin: ro,
         start_ray_dir: rd,
         delta: match st.gizmo_mode {
@@ -275,17 +346,18 @@ pub(super) fn update_gizmo_drag(
             cur_rd,
         ),
     };
-    // Apply snap (if Ctrl held) against the start transform so the drag's
-    // absolute landing value lands on a milestone regardless of where the
-    // drag began. The same snapped delta feeds the preview and the final
-    // DSL writeback, so the user's release value matches what they see.
+    // Apply snap (if Ctrl held) against the *world-space* starting position
+    // so the grid the user lands on matches the world axes the handles are
+    // drawn against. Using the local translation here would snap to a grid
+    // tilted by every parent rotation in the chain — invisible to the user
+    // and surprising on release.
     let new_delta = if snap {
         match drag_ref.mode {
             crate::gizmo::GizmoMode::Translate => {
                 let start_axis = match drag_ref.axis {
-                    crate::gizmo::Axis::X => drag_ref.start_transform.translation.x,
-                    crate::gizmo::Axis::Y => drag_ref.start_transform.translation.y,
-                    crate::gizmo::Axis::Z => drag_ref.start_transform.translation.z,
+                    crate::gizmo::Axis::X => drag_ref.start_origin.x,
+                    crate::gizmo::Axis::Y => drag_ref.start_origin.y,
+                    crate::gizmo::Axis::Z => drag_ref.start_origin.z,
                 };
                 snap_translate_delta(start_axis, raw_delta)
             }
@@ -299,6 +371,29 @@ pub(super) fn update_gizmo_drag(
         drag.delta = new_delta;
     }
     st.rebuild_mesh();
+}
+
+/// Resolved redirect target for an attach-bound translate. Only present
+/// when the dragged node has an `attach_binding` AND the bound socket has
+/// a source span (i.e. it was user-declared, not synthesized from a
+/// primitive's faces).
+struct AttachRedirect {
+    connector_span: Span,
+    /// Connector's current `pos` in the parent's local frame — the value
+    /// the rewritten `at=` is offset from.
+    socket_at: Vec3,
+}
+
+fn drag_attach_redirect(st: &ViewerState, drag: &GizmoDrag) -> Option<AttachRedirect> {
+    let scene = st.scene.as_ref()?;
+    let node = scene.nodes.get(drag.node.0 as usize)?;
+    let binding = node.attach_binding.as_ref()?;
+    let parent = scene.nodes.get(binding.parent.0 as usize)?;
+    let socket = parent.connectors.iter().find(|c| c.name == binding.socket)?;
+    Some(AttachRedirect {
+        connector_span: socket.source_span?,
+        socket_at: socket.pos,
+    })
 }
 
 pub(super) fn commit_gizmo_drag(st: &mut ViewerState) -> Option<PendingEdit> {
@@ -315,23 +410,55 @@ pub(super) fn commit_gizmo_drag(st: &mut ViewerState) -> Option<PendingEdit> {
     if trivial {
         return None;
     }
-    use crate::gizmo::{Axis, GizmoMode};
+    use crate::gizmo::GizmoMode;
     // Shortcut/corner-form attrs that the DSL lets override the canonical
     // transform field. The gizmo must strip these on commit or the author's
     // original shortcuts silently defeat the writeback on recompile.
     const POS_SHADOWS: &[&str] = &["x", "y", "z", "from", "to"];
     const ROT_SHADOWS: &[&str] = &["rx", "ry", "rz"];
+    let final_local = apply_gizmo_drag(drag);
+    // Attach-bound nodes have their transform rewritten on every compile.
+    // Writing `pos=` on the child would be silently clobbered, so redirect
+    // a translate into the bound socket connector's `at=` instead. Rotate
+    // and scale have no clean redirect target (the connector carries a
+    // dir but not a scale, and rewriting `dir=` mid-rig is a footgun) —
+    // refuse them so the user gets a no-op rather than a snap-back.
+    let attach_redirect = drag_attach_redirect(st, drag);
+    if matches!(drag.mode, GizmoMode::Rotate | GizmoMode::Scale) && attach_redirect.is_some() {
+        return None;
+    }
     match drag.mode {
         GizmoMode::Translate => {
+            if let Some(redirect) = attach_redirect {
+                // delta in child-local translation == delta in socket `at`
+                // (both live in the parent's local frame and the connector
+                // is what fixes the child there). Just shift the connector
+                // by the same vector and the child follows on recompile.
+                let delta_local = final_local.translation - drag.start_transform.translation;
+                let new_at = redirect.socket_at + delta_local;
+                return Some(PendingEdit::SetAttrAtSpan {
+                    node: drag.node,
+                    span: redirect.connector_span,
+                    attr: "at".to_string(),
+                    value: format!(
+                        "[{}, {}, {}]",
+                        format_scalar(new_at.x),
+                        format_scalar(new_at.y),
+                        format_scalar(new_at.z)
+                    ),
+                    delete: Vec::new(),
+                });
+            }
             // Write the full vec3 under `pos=` rather than a lone axis
             // shortcut (`x=`, `y=`, `z=`). Dragging the X handle, then Y,
             // then Z would otherwise smear three redundant attrs across
             // the header — this keeps the round-trip clean and matches
-            // how most .mog sources are authored.
-            let start = drag.start_transform.translation;
-            let delta_vec = drag.axis.unit() * drag.delta;
-            let end = start + delta_vec;
-            let _ = Axis::X; // keep axis enum import in scope for other arms
+            // how most .mog sources are authored. The new value is the
+            // node's *local* translation after the world-space drag has
+            // been pulled back through the parent inverse, so children of
+            // a rotated/scaled parent move along the world axis the user
+            // grabbed instead of the parent's tilted axis.
+            let end = final_local.translation;
             Some(PendingEdit::SetAttrCanonical {
                 node: drag.node,
                 attr: "pos".to_string(),
@@ -345,12 +472,11 @@ pub(super) fn commit_gizmo_drag(st: &mut ViewerState) -> Option<PendingEdit> {
             })
         }
         GizmoMode::Rotate => {
-            // Compose the incremental rotation with the start rotation and
-            // decompose back to Euler XYZ in degrees so it round-trips
-            // through the existing `rot=[x,y,z]` attr format.
-            let q = Quat::from_axis_angle(drag.axis.unit(), drag.delta);
-            let final_rot = (q * drag.start_transform.rotation).normalize();
-            let (rx, ry, rz) = final_rot.to_euler(glam::EulerRot::XYZ);
+            // `apply_gizmo_drag` already conjugated the world-axis rotation
+            // through the parent's world rotation, so `final_local.rotation`
+            // is the local-space quaternion to write. Decompose to Euler
+            // XYZ degrees for the existing `rot=[x,y,z]` DSL surface.
+            let (rx, ry, rz) = final_local.rotation.to_euler(glam::EulerRot::XYZ);
             let value = format!(
                 "[{}, {}, {}]",
                 format_scalar(rx.to_degrees()),
@@ -365,13 +491,7 @@ pub(super) fn commit_gizmo_drag(st: &mut ViewerState) -> Option<PendingEdit> {
             })
         }
         GizmoMode::Scale => {
-            let s0 = drag.start_transform.scale;
-            let factor = drag.delta.max(0.01);
-            let new_scale = match drag.axis {
-                Axis::X => Vec3::new(s0.x * factor, s0.y, s0.z),
-                Axis::Y => Vec3::new(s0.x, s0.y * factor, s0.z),
-                Axis::Z => Vec3::new(s0.x, s0.y, s0.z * factor),
-            };
+            let new_scale = final_local.scale;
             let value = format!(
                 "[{}, {}, {}]",
                 format_scalar(new_scale.x),
@@ -424,29 +544,70 @@ pub(super) fn select_by_id(st: &mut ViewerState, id: Option<NodeId>) {
 }
 
 pub(super) fn apply_gizmo_drag(drag: &GizmoDrag) -> Transform {
-    use crate::gizmo::{Axis, GizmoMode};
+    use crate::gizmo::GizmoMode;
     let mut t = drag.start_transform;
+    let world_axis = drag.axis.unit();
+    // Decompose the parent's world matrix once. The rotation is what we
+    // conjugate the gizmo through; the inverse-of-the-full-matrix is what
+    // we pull translation deltas back through (so a parent that scales
+    // doesn't make a 1-unit drag move the child by 1 / parent_scale).
+    let parent_inv = drag.parent_start_world.inverse();
+    let (parent_scale, parent_rot, _) =
+        drag.parent_start_world.to_scale_rotation_translation();
+    let parent_rot_inv = parent_rot.inverse();
     match drag.mode {
         GizmoMode::Translate => {
-            let delta = drag.axis.unit() * drag.delta;
-            t.translation += delta;
+            let world_delta = world_axis * drag.delta;
+            // Pull the world-space translation delta back through the
+            // parent's full transform — handles parent rotation AND
+            // non-uniform scale in one shot.
+            let local_delta = parent_inv.transform_vector3(world_delta);
+            t.translation += local_delta;
         }
         GizmoMode::Rotate => {
-            let q = Quat::from_axis_angle(drag.axis.unit(), drag.delta);
-            t.rotation = (q * t.rotation).normalize();
+            // Rotate around the WORLD axis: q_local must conjugate through
+            // the parent's world rotation so the post-compile world
+            // rotation is `q_world * old_world_rot`.
+            let q_world = Quat::from_axis_angle(world_axis, drag.delta);
+            let q_local = parent_rot_inv * q_world * parent_rot;
+            t.rotation = (q_local * t.rotation).normalize();
         }
         GizmoMode::Scale => {
+            // Non-uniform scale doesn't compose cleanly through a rotated
+            // parent (it would require shear, which TRS can't express).
+            // Project the world axis into the parent's local frame and
+            // apply the factor on the dominant local-axis component — for
+            // a parent with no rotation this collapses to the obvious
+            // per-axis scale; for a rotated parent it picks the closest
+            // axis match, which is the best a TRS rig can do.
             let factor = drag.delta.max(0.01);
-            let i = drag.axis.index();
-            match drag.axis {
-                Axis::X => t.scale.x = drag.start_transform.scale.x * factor,
-                Axis::Y => t.scale.y = drag.start_transform.scale.y * factor,
-                Axis::Z => t.scale.z = drag.start_transform.scale.z * factor,
-            }
-            let _ = i;
+            let local_axis = parent_rot_inv * world_axis;
+            let i = dominant_axis_index(local_axis);
+            let s0 = drag.start_transform.scale;
+            t.scale = match i {
+                0 => Vec3::new(s0.x * factor, s0.y, s0.z),
+                1 => Vec3::new(s0.x, s0.y * factor, s0.z),
+                _ => Vec3::new(s0.x, s0.y, s0.z * factor),
+            };
+            // Reference parent_scale so a future "scale-uniform-with-parent"
+            // toggle has the value to hand. Currently unused.
+            let _ = parent_scale;
         }
     }
     t
+}
+
+fn dominant_axis_index(v: Vec3) -> usize {
+    let ax = v.x.abs();
+    let ay = v.y.abs();
+    let az = v.z.abs();
+    if ax >= ay && ax >= az {
+        0
+    } else if ay >= az {
+        1
+    } else {
+        2
+    }
 }
 
 /// Walk from `id` up to a root collecting names in root → ... → node order.

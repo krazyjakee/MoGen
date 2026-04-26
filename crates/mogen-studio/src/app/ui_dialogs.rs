@@ -552,6 +552,10 @@ impl MogenStudioApp {
                         )
                     },
                 );
+                if self.new_prompt_focus_pending {
+                    ui.ctx().memory_mut(|m| m.request_focus(prompt_id));
+                    self.new_prompt_focus_pending = false;
+                }
                 self.ui_enhance_button(
                     ui,
                     EnhanceTarget::Generate,
@@ -874,7 +878,7 @@ impl MogenStudioApp {
                     }
                 } else {
                     // After a build completes, `self.files[i].status` carries
-                    // the "wrote X (N bytes)" or "export failed: …" summary —
+                    // the "wrote X (size)" or "export failed: …" summary —
                     // surface it so the user can see the result in-modal.
                     if last_status.starts_with("wrote ") || last_status.starts_with("export failed") {
                         ui.label(&last_status);
