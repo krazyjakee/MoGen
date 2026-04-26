@@ -2,10 +2,38 @@
 name = "mogen-studio"
 version.workspace = true
 edition.workspace = true
+description = "MoGen Studio — visual editor and live preview for the MoGen .mog DSL."
+license = "MIT"
 
 [[bin]]
 name = "mogen-studio"
 path = "src/main.rs"
+
+[package.metadata.deb]
+name = "mogen"
+maintainer = "Jake Cattrall <krazyjakee@gmail.com>"
+copyright = "2026, Jake Cattrall"
+license-file = ["../../LICENSE", "0"]
+extended-description = """\
+MoGen compiles a compact declarative DSL into glTF 2.0 GLB assets for \
+Godot and other engines. This package installs the mogen CLI alongside \
+the MoGen Studio desktop GUI."""
+section = "graphics"
+priority = "optional"
+depends = "$auto"
+assets = [
+    ["target/release/mogen", "usr/bin/", "755"],
+    ["target/release/mogen-studio", "usr/bin/", "755"],
+    ["../../README.md", "usr/share/doc/mogen/README", "644"],
+    ["../../LICENSE", "usr/share/doc/mogen/copyright", "644"],
+    ["packaging/linux/mogen-studio.desktop", "usr/share/applications/", "644"],
+    ["../../assets/icon.png", "usr/share/icons/hicolor/512x512/apps/mogen-studio.png", "644"],
+]
+
+[package.metadata.wix]
+name = "MoGen Studio"
+upgrade-guid = "54F9F1E2-7A82-4B11-9CD0-3E6F9B12A3F0"
+path-guid = "7C1A3B5D-9E4F-4C82-AF1B-2D3E4F5061A0"
 
 [dependencies]
 mogen-core = { workspace = true }
@@ -24,5 +52,6 @@ egui = "0.29"
 egui_glow = "0.29"
 glow = "0.14"
 rfd = "0.15"
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 arboard = { version = "3", default-features = false }
+sentry = { version = "0.34", default-features = false, features = ["backtrace", "contexts", "debug-images", "panic", "reqwest", "rustls"] }

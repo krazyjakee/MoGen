@@ -9,7 +9,7 @@ scene {
       connector "bottom" (at=[0, -0.05, 0], dir=[0, -1, 0], tag=seat_bottom)
     }
 
-    box "back" (pos=[0, 1.0, -0.45], size=[1.0, 1.0, 0.1], mat="wood", role="back")
+    box "back" (pos=[0, 1.048, -0.45], size=[1.0, 1.0, 0.1], mat="wood", role="back")
 
     // Four legs arranged around Y at corners: each instance is rotated 90°,
     // the leg itself is offset forward-right so rotation spreads it to four corners.

@@ -28,6 +28,7 @@ impl MogenStudioApp {
             || self.show_options
             || self.show_new_prompt
             || self.show_about
+            || self.show_onboarding
         {
             return;
         }

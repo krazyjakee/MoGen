@@ -30,3 +30,7 @@
 generated
 examples/textures
 AGENTS.local.db
+
+# Generated packaging icons (built in CI from assets/icon.png)
+crates/mogen-studio/wix/AppIcon.ico
+AppIcon.iconset/

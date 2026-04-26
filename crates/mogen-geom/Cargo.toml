@@ -6,3 +6,4 @@ edition.workspace = true
 [dependencies]
 mogen-core = { workspace = true }
 glam = { workspace = true }
+manifold3d = "0.1"

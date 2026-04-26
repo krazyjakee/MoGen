@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
@@ -8,9 +8,11 @@ use eframe::egui;
 use mogen_export::ExportOptions;
 
 use crate::settings::Settings;
+use crate::splash;
 use crate::theme::apply_theme;
 use crate::viewer::Viewer;
 
+mod ask;
 mod autocomplete;
 mod build;
 mod compile;
@@ -18,6 +20,7 @@ mod error_class;
 mod files;
 mod indent;
 mod llm;
+mod onboarding;
 mod pricing;
 mod text_menu;
 mod types;
@@ -30,10 +33,57 @@ mod util;
 mod watcher;
 
 use self::types::{
-    AutocompleteState, BuildOutcome, EnhanceInFlight, EnhanceTarget, ExternalConflict, FileState,
-    SessionUsage, ThumbCache, VIEWER_BG_COLOR,
+    AskInFlight, AutocompleteState, BuildOutcome, EnhanceInFlight, EnhanceTarget,
+    ExternalConflict, FileState, SessionUsage, ThumbCache, VIEWER_BG_COLOR,
 };
 use self::util::locate_project_root;
+
+/// One queued unit of deferred startup work. Each step runs on a separate
+/// frame so the splash screen has a chance to advance the progress bar before
+/// the next item; `OpenTab` is the slow one (file read + parse + viewer
+/// rebuild via `compile_active`), `RestoreRecent` and `ActivateRestored` are
+/// trivial and exist mainly to round out the progress count and bookend the
+/// init sequence.
+enum InitStep {
+    OpenTab(PathBuf),
+    /// Reapply the saved recent-files list. `open_path` clobbers it on each
+    /// call (every open pushes the path to the front), so the original list
+    /// has to be written back once the tab strip is rebuilt.
+    RestoreRecent(Vec<String>),
+    /// Activate the tab whose path matches the saved `last_opened`. Resolves
+    /// the index lazily because `open_path` may have collapsed pristine tabs.
+    ActivateRestored(PathBuf),
+    /// Legacy single-file restore path for users whose settings predate the
+    /// `open_tabs` field. Skipped when the saved tab list is non-empty.
+    LegacyRestoreLast,
+}
+
+/// Loader state machine. Held on the app while startup work is in flight so
+/// the splash screen can show real progress (and a stage caption) instead of
+/// a fixed-duration animation. `splash_tex` is uploaded on the first frame
+/// from inside `update`, since `eframe::CreationContext` doesn't expose a
+/// texture loader before the GL renderer is fully online.
+struct InitProgress {
+    queue: VecDeque<InitStep>,
+    /// Total step count when we kicked off, used as the progress denominator.
+    /// Doesn't shrink when items are pulled — `done` does the bookkeeping.
+    total: usize,
+    done: usize,
+    /// Caption shown above the progress bar. Updated *before* the matching
+    /// step runs so the user sees "opening foo.mog" while the file is being
+    /// parsed, not after.
+    label: String,
+    splash_tex: Option<egui::TextureHandle>,
+    /// Wall-clock time the splash first painted. Used to enforce a minimum
+    /// dwell so a near-instant launch (no tabs to restore) doesn't flash the
+    /// splash for a single frame.
+    started_at: Option<Instant>,
+}
+
+/// Floor on splash visibility (ms). Shorter and the splash flashes; longer
+/// and it feels like the app is dragging. Tuned to feel deliberate without
+/// holding up users on cold launch with no tabs to restore.
+const SPLASH_MIN_DWELL_MS: u128 = 4000;
 
 pub struct MogenStudioApp {
     files: Vec<FileState>,
@@ -50,6 +100,16 @@ pub struct MogenStudioApp {
     settings: Settings,
     show_options: bool,
     options_api_key_draft: String,
+
+    /// First-launch onboarding visibility. Raised once after the splash drains
+    /// when `settings.onboarded` is false; the user dismisses it by pasting a
+    /// key + Get Started, or by Skip. Either path latches `onboarded = true`
+    /// so the modal never reopens on this install.
+    show_onboarding: bool,
+    /// Draft API key edited inside the onboarding modal. Kept separate from
+    /// `options_api_key_draft` so closing one dialog never leaks state into
+    /// the other.
+    onboarding_api_key_draft: String,
 
     /// "New from Prompt…" modal visibility and its prompt draft. The LLM
     /// generator only surfaces here — it is no longer part of the inspector.
@@ -123,6 +183,26 @@ pub struct MogenStudioApp {
     /// nothing has been tried yet.
     enhance_error: Option<(EnhanceTarget, String)>,
 
+    /// "Ask MoGen" modal state. The user opens it from the editor context
+    /// menu; the snippet they had selected (or the whole file) is captured
+    /// once at open time so later edits to the editor don't change what the
+    /// model is asked about.
+    show_ask: bool,
+    ask_question_draft: String,
+    ask_code_context: String,
+    /// Short human description of what's being asked about ("selected (12
+    /// lines)" / "entire file (45 lines)") shown above the question field.
+    ask_context_label: String,
+    /// Latched when the modal is opened so the dialog can grab focus on its
+    /// first frame; cleared after the focus request fires.
+    ask_focus_pending: bool,
+    /// Single in-flight Ask call. `None` when idle. Held at the app level
+    /// because the modal is global.
+    ask_in_flight: Option<AskInFlight>,
+    /// Last Ask result. Kept after the call returns so the user can read /
+    /// re-read it until they close the modal or submit a fresh question.
+    ask_answer: Option<Result<String, String>>,
+
     /// Editor autocomplete popup state. One instance since only one editor is
     /// on-screen at a time; it's reset on tab switch / focus loss.
     autocomplete: AutocompleteState,
@@ -132,6 +212,13 @@ pub struct MogenStudioApp {
     /// (clean buffers reload silently — see `watcher.rs`). Cleared when the
     /// modal is dismissed.
     pending_external: Option<ExternalConflict>,
+
+    /// Deferred startup state. `Some(_)` while the splash screen is still
+    /// running and queued init steps remain; cleared the frame the queue
+    /// drains so the regular UI takes over without flicker. The whole
+    /// loading dance lives behind this option so steady-state code paths
+    /// don't pay any branch cost once startup is done.
+    init: Option<InitProgress>,
 }
 
 impl MogenStudioApp {
@@ -144,7 +231,7 @@ impl MogenStudioApp {
 
         let project_root = locate_project_root();
 
-        let settings = Settings::load();
+        let mut settings = Settings::load();
         let options_api_key_draft = settings.gemini_api_key.clone();
         apply_theme(&cc.egui_ctx, settings.theme());
         viewer.set_preview_shader(settings.preview_shader());
@@ -154,7 +241,56 @@ impl MogenStudioApp {
         let mut initial = FileState::untitled(0);
         initial.status = "welcome — open a MOG file to get started".into();
 
-        let mut app = Self {
+        // Build the deferred startup queue. open_path is the slow part of
+        // restoring a session (file I/O + parse + viewer recompile per tab),
+        // so each tab opens on its own frame and the splash bar advances in
+        // between. open_path also clobbers `recent_files`, so snapshot it
+        // here and queue a `RestoreRecent` step to put it back at the end.
+        let saved_open_tabs = settings.open_tabs.clone();
+        let saved_active = settings.last_opened.clone();
+        let saved_recent = settings.recent_files.clone();
+
+        let mut queue: VecDeque<InitStep> = VecDeque::new();
+        if !saved_open_tabs.is_empty() {
+            for path_str in &saved_open_tabs {
+                let p = PathBuf::from(path_str);
+                if !p.is_file() {
+                    continue;
+                }
+                queue.push_back(InitStep::OpenTab(p));
+            }
+            queue.push_back(InitStep::RestoreRecent(saved_recent));
+            if let Some(active) = saved_active {
+                let p = PathBuf::from(active);
+                if p.is_file() {
+                    queue.push_back(InitStep::ActivateRestored(p));
+                }
+            }
+        } else {
+            queue.push_back(InitStep::LegacyRestoreLast);
+        }
+
+        let total = queue.len().max(1);
+        let init = InitProgress {
+            queue,
+            total,
+            done: 0,
+            label: "starting MoGen Studio…".into(),
+            splash_tex: None,
+            started_at: None,
+        };
+
+        // Show the welcome flow exactly once per install. Skip it for users
+        // upgrading from a settings file that predates the `onboarded` field
+        // but already has a saved key — they've clearly walked through
+        // Preferences themselves and don't need the orientation pass.
+        if !settings.onboarded && !settings.gemini_api_key.trim().is_empty() {
+            settings.onboarded = true;
+            let _ = settings.save();
+        }
+        let show_onboarding = !settings.onboarded;
+
+        Self {
             files: vec![initial],
             active: 0,
             next_tab_id: 1,
@@ -162,6 +298,8 @@ impl MogenStudioApp {
             settings,
             show_options: false,
             options_api_key_draft,
+            show_onboarding,
+            onboarding_api_key_draft: String::new(),
             show_new_prompt: false,
             new_prompt_draft: String::new(),
             new_prompt_focus_pending: false,
@@ -180,58 +318,138 @@ impl MogenStudioApp {
             thumb_cache: ThumbCache::new(),
             enhance_in_flight: None,
             enhance_error: None,
+            show_ask: false,
+            ask_question_draft: String::new(),
+            ask_code_context: String::new(),
+            ask_context_label: String::new(),
+            ask_focus_pending: false,
+            ask_in_flight: None,
+            ask_answer: None,
             autocomplete: AutocompleteState::default(),
             pending_external: None,
+            init: Some(init),
+        }
+    }
+
+    /// Advance the splash one step. Caller has already confirmed `init` is
+    /// `Some` and the queue is non-empty. The label is set *before* running
+    /// so the user sees what's happening during the call, not after.
+    fn run_one_init_step(&mut self) {
+        let Some(init) = self.init.as_mut() else {
+            return;
         };
-
-        // Restore the prior session's tab strip. `open_tabs` holds every
-        // titled tab in order; `last_opened` names which one to activate.
-        // open_path repeatedly clobbers `recent_files` (each open pushes the
-        // path to the front), so snapshot it and write the original list back
-        // once the strip is rebuilt.
-        let saved_open_tabs = app.settings.open_tabs.clone();
-        let saved_active = app.settings.last_opened.clone();
-        let saved_recent = app.settings.recent_files.clone();
-
-        if !saved_open_tabs.is_empty() {
-            let mut active_idx: Option<usize> = None;
-            for path_str in &saved_open_tabs {
-                let p = PathBuf::from(path_str);
-                if !p.is_file() {
-                    continue;
+        let Some(step) = init.queue.pop_front() else {
+            return;
+        };
+        match step {
+            InitStep::OpenTab(path) => {
+                let name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| path.display().to_string());
+                init.label = format!("opening {name}");
+                self.open_path(&path);
+            }
+            InitStep::RestoreRecent(recent) => {
+                if let Some(init) = self.init.as_mut() {
+                    init.label = "restoring recent files…".into();
                 }
-                app.open_path(&p);
-                if Some(path_str.clone()) == saved_active {
-                    active_idx = app.file_index_by_path(&p);
+                self.settings.recent_files = recent;
+                let _ = self.settings.save();
+            }
+            InitStep::ActivateRestored(path) => {
+                if let Some(init) = self.init.as_mut() {
+                    let name = path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| path.display().to_string());
+                    init.label = format!("activating {name}");
+                }
+                if let Some(i) = self.file_index_by_path(&path) {
+                    self.activate(i);
                 }
             }
-            if let Some(i) = active_idx {
-                app.activate(i);
+            InitStep::LegacyRestoreLast => {
+                if let Some(init) = self.init.as_mut() {
+                    init.label = "loading last session…".into();
+                }
+                let last = self
+                    .settings
+                    .recent_files
+                    .iter()
+                    .map(PathBuf::from)
+                    .find(|p| p.is_file())
+                    .or_else(|| {
+                        self.settings
+                            .last_opened
+                            .as_ref()
+                            .map(PathBuf::from)
+                            .filter(|p| p.is_file())
+                    });
+                if let Some(p) = last {
+                    self.open_path(&p);
+                }
             }
-            app.settings.recent_files = saved_recent;
-            let _ = app.settings.save();
-        } else {
-            // Legacy single-file restore for users with settings written
-            // before the open-tabs field existed.
-            let last = app
-                .settings
-                .recent_files
-                .iter()
-                .map(PathBuf::from)
-                .find(|p| p.is_file())
-                .or_else(|| {
-                    app.settings
-                        .last_opened
-                        .as_ref()
-                        .map(PathBuf::from)
-                        .filter(|p| p.is_file())
-                });
-            if let Some(p) = last {
-                app.open_path(&p);
+        }
+        if let Some(init) = self.init.as_mut() {
+            init.done = init.done.saturating_add(1);
+        }
+    }
+
+    /// Drive the splash screen for one frame: lazy-upload the splash texture
+    /// on first paint, advance one init step (if any), render the splash UI,
+    /// and clear `self.init` once the queue is drained and the minimum dwell
+    /// has elapsed.
+    fn tick_splash(&mut self, ctx: &egui::Context) {
+        if let Some(init) = self.init.as_mut() {
+            if init.splash_tex.is_none() {
+                init.splash_tex = splash::upload(ctx);
+            }
+            if init.started_at.is_none() {
+                init.started_at = Some(Instant::now());
             }
         }
 
-        app
+        // One step per frame. This means N tabs takes N frames of splash —
+        // at typical egui pacing that's still well under a second per tab,
+        // and the bar advances visibly between them.
+        let has_step = self
+            .init
+            .as_ref()
+            .map(|i| !i.queue.is_empty())
+            .unwrap_or(false);
+        if has_step {
+            self.run_one_init_step();
+        }
+
+        // Snapshot what we need to paint and decide whether to stay loading.
+        let (progress, label, tex, dwell_ok, queue_empty) = {
+            let Some(init) = self.init.as_ref() else {
+                return;
+            };
+            let progress = if init.total == 0 {
+                1.0
+            } else {
+                (init.done as f32 / init.total as f32).clamp(0.0, 1.0)
+            };
+            let dwell_ok = init
+                .started_at
+                .map(|t| t.elapsed().as_millis() >= SPLASH_MIN_DWELL_MS)
+                .unwrap_or(false);
+            (
+                progress,
+                init.label.clone(),
+                init.splash_tex.clone(),
+                dwell_ok,
+                init.queue.is_empty(),
+            )
+        };
+
+        splash::draw(ctx, tex.as_ref(), progress, &label);
+
+        if queue_empty && dwell_ok {
+            self.init = None;
+        }
     }
 
     /// Mint the next stable per-tab id. Every fresh `FileState` should pull
@@ -253,6 +471,19 @@ impl MogenStudioApp {
 
 impl eframe::App for MogenStudioApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // While the splash is up, do exactly one queued init step per frame
+        // and paint the splash. This keeps the bar moving without holding the
+        // UI thread for the whole startup duration. We also enforce a small
+        // minimum dwell so a near-instant launch (no tabs to restore) doesn't
+        // flash the splash for a single frame.
+        if self.init.is_some() {
+            self.tick_splash(ctx);
+            if self.init.is_some() {
+                ctx.request_repaint();
+                return;
+            }
+        }
+
         // Intercept window-close (titlebar ×, Alt-F4, Cmd-Q, menu Quit). If
         // any buffer is dirty and we haven't already confirmed, cancel the
         // close and raise the confirmation modal. `confirmed_quit` latches on
@@ -269,6 +500,7 @@ impl eframe::App for MogenStudioApp {
         // the editor's debounce window before painting.
         self.poll_llm();
         self.poll_prompt_enhance();
+        self.poll_ask();
         self.poll_build();
         self.drive_compile_debounce(ctx);
         self.check_external_changes(ctx);
@@ -393,6 +625,7 @@ impl eframe::App for MogenStudioApp {
         let snap = self.viewer.camera_snapshot();
         self.files[self.active].camera = Some(snap);
 
+        self.ui_onboarding(ctx);
         self.ui_options(ctx);
         self.ui_new_prompt(ctx);
         self.ui_quit_confirm(ctx);
@@ -400,6 +633,7 @@ impl eframe::App for MogenStudioApp {
         self.ui_export_dialog(ctx);
         self.ui_external_conflict(ctx);
         self.ui_about(ctx);
+        self.ui_ask(ctx);
 
         // Paint the autocomplete popup last so it floats above every panel.
         // The editor panel updated state earlier in the frame; here we just
@@ -412,7 +646,11 @@ impl eframe::App for MogenStudioApp {
         // is active. The Build GLB worker is covered by the same heartbeat
         // so its stage label animates without the user having to mouse the
         // window.
-        if self.any_in_flight() || self.any_enhance_in_flight() || self.build_rx.is_some() {
+        if self.any_in_flight()
+            || self.any_enhance_in_flight()
+            || self.any_ask_in_flight()
+            || self.build_rx.is_some()
+        {
             ctx.request_repaint_after(std::time::Duration::from_millis(120));
         }
 

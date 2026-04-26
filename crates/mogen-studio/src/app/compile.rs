@@ -60,6 +60,18 @@ impl MogenStudioApp {
         if trace && !edits.is_empty() {
             eprintln!("[gizmo] drain got {} edit(s)", edits.len());
         }
+        // Discard viewport edits while an LLM call is in flight — the worker
+        // will overwrite `source` on completion, so applying them would just
+        // queue work that gets thrown away. Drained above so they don't
+        // accumulate; pending_caret below is harmless and still relayed.
+        let edits = if self.files[self.active].llm_in_flight.is_some() {
+            if trace && !edits.is_empty() {
+                eprintln!("[gizmo] drain DROPPED {} edit(s) — LLM in flight", edits.len());
+            }
+            Vec::new()
+        } else {
+            edits
+        };
         if !edits.is_empty() {
             let i = self.active;
             // Snapshot the source BEFORE any edit lands so the undo stack

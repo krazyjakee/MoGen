@@ -21,6 +21,14 @@ impl MogenStudioApp {
         let i = self.active;
         let editor_id = self.active_editor_id();
 
+        // Lock the editor while an LLM call is in flight — the worker will
+        // overwrite `source` on completion, so any keystrokes typed during
+        // generation would just be discarded.
+        let generating = self.files[i].llm_in_flight.is_some();
+        if generating {
+            self.autocomplete.close();
+        }
+
         // Consume popup navigation keys BEFORE the TextEdit is rendered — Up /
         // Down / Tab / Enter / Esc are only intercepted when the popup is
         // open, so normal editing isn't affected.
@@ -97,7 +105,7 @@ impl MogenStudioApp {
                     let prior = egui::TextEdit::load_state(ui.ctx(), editor_id)
                         .and_then(|s| s.cursor.char_range());
 
-                    let output = egui::TextEdit::multiline(&mut self.files[i].source)
+                    let mut editor = egui::TextEdit::multiline(&mut self.files[i].source)
                         // code_editor() implies lock_focus(true), so Tab inserts
                         // a tab character instead of moving focus out of the
                         // editor — the right behavior for a code surface.
@@ -106,8 +114,11 @@ impl MogenStudioApp {
                         .desired_width(f32::INFINITY)
                         .font(egui::TextStyle::Monospace)
                         .layouter(&mut layouter)
-                        .id(editor_id)
-                        .show(ui);
+                        .id(editor_id);
+                    if generating {
+                        editor = editor.interactive(false);
+                    }
+                    let output = editor.show(ui);
 
                     let resp = output.response.clone();
                     if resp.changed() {
@@ -130,14 +141,36 @@ impl MogenStudioApp {
                         }
                     }
                     let mut menu_changed = false;
+                    // (selected_text, label) captured at click-time so opening
+                    // the modal later doesn't have to re-read editor state.
+                    let mut ask_request: Option<(String, String)> = None;
                     let source_ref = &mut self.files[i].source;
                     resp.context_menu(|ui| {
                         if super::text_menu::show_context_menu(ui, editor_id, source_ref) {
                             menu_changed = true;
                         }
+                        ui.separator();
+                        if ui
+                            .add(egui::Button::new("Ask…"))
+                            .on_hover_text(
+                                "Ask Gemini Flash a question about the selected code \
+                                 (or the whole file if nothing is selected)",
+                            )
+                            .clicked()
+                        {
+                            ask_request = Some(super::ask::capture_snippet(
+                                ui,
+                                editor_id,
+                                source_ref,
+                            ));
+                            ui.close_menu();
+                        }
                     });
                     if menu_changed {
                         changed = true;
+                    }
+                    if let Some((snippet, label)) = ask_request {
+                        self.open_ask_modal(snippet, label);
                     }
 
                     // Move the editor caret onto the selected node's
@@ -166,8 +199,12 @@ impl MogenStudioApp {
             // Refresh candidate list + popup anchor after the TextEdit has
             // rendered. Keyboard navigation decoded before the widget is
             // applied here so the selection/accept lands on the current
-            // candidates.
-            self.update_autocomplete_after_textedit(ui, output, editor_id, popup_key);
+            // candidates. Skipped while the LLM owns the buffer so Tab/Enter
+            // can't splice a completion into source the worker is about to
+            // overwrite.
+            if !generating {
+                self.update_autocomplete_after_textedit(ui, output, editor_id, popup_key);
+            }
         }
 
         if changed {

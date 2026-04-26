@@ -225,15 +225,16 @@ pub fn cull_coplanar_opposites(mesh: &Mesh) -> Mesh {
     }
 }
 
-/// Apply the standard post-CSG cleanup: weld → cull → recompute normals.
-/// UVs are preserved from the CSG output when present (the BSP carries them
-/// through clipping as of the UV-aware csg.rs). If the CSG result has no UVs
-/// — typically because at least one operand lacked them — we fall back to a
-/// triplanar projection so a downstream material with texture slots still
-/// has *some* mapping to sample.
+/// Apply the standard post-CSG finalisation: cull degenerates → recompute
+/// normals → assign triplanar UVs if the CSG result lacked them. With the
+/// Manifold-backed CSG the input is already watertight and welded by
+/// construction, so there is no boundary stitching or hole repair to do —
+/// we just need normals (Manifold doesn't emit them) and a UV fallback for
+/// the case where one operand had no UVs and we routed positions-only
+/// through the boolean. The cull pass is kept as cheap insurance against
+/// any zero-area triangles produced by numerically tight intersections.
 pub fn clean_csg_output(mesh: &Mesh) -> Mesh {
-    let welded = weld_vertices(mesh, WELD_EPS);
-    let culled = cull_degenerate(&welded);
+    let culled = cull_degenerate(mesh);
     let with_normals = recompute_normals(&culled);
     if with_normals.has_uvs() {
         with_normals

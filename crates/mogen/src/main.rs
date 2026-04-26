@@ -41,7 +41,7 @@ impl From<ThinkingArg> for ThinkingLevel {
 }
 
 #[derive(Parser)]
-#[command(name = "mogen", about = "Procedural 3D model generator")]
+#[command(name = "mogen", version, about = "Procedural 3D model generator")]
 struct Cli {
     #[command(subcommand)]
     cmd: Cmd,

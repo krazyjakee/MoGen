@@ -397,7 +397,7 @@ impl MogenStudioApp {
                     ctx.input_mut(|i| i.events.push(egui::Event::Paste(clip)));
                 }
             }
-            MenuAction::SelectAll => inject_key(ctx, egui::Key::A, egui::Modifiers::COMMAND),
+            MenuAction::SelectAll => self.select_all_active_editor(ctx),
             MenuAction::OpenOptions => {
                 self.options_api_key_draft = self.settings.gemini_api_key.clone();
                 self.show_options = true;
@@ -407,6 +407,25 @@ impl MogenStudioApp {
                 self.show_about = true;
             }
         }
+    }
+
+    /// Select the entire source buffer in the active tab's code editor by
+    /// writing its `TextEdit` state directly. Injecting a synthetic Cmd+A is
+    /// unreliable from a menu click — the menu interaction can drop focus, and
+    /// pushed events don't always reach the widget in the same frame.
+    fn select_all_active_editor(&self, ctx: &egui::Context) {
+        use egui::text::{CCursor, CCursorRange};
+
+        let editor_id = self.active_editor_id();
+        let total_chars = self.files[self.active].source.chars().count();
+        if let Some(mut st) = egui::TextEdit::load_state(ctx, editor_id) {
+            st.cursor.set_char_range(Some(CCursorRange::two(
+                CCursor::new(0),
+                CCursor::new(total_chars),
+            )));
+            st.store(ctx, editor_id);
+        }
+        ctx.memory_mut(|m| m.request_focus(editor_id));
     }
 
     /// Poll every global keyboard shortcut and run its bound action. Called

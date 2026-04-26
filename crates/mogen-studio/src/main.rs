@@ -1,5 +1,6 @@
 mod app;
 mod autocomplete;
+mod crash;
 mod edit;
 mod gizmo;
 mod highlight;
@@ -8,12 +9,14 @@ mod pick;
 mod pipeline;
 mod preview_shader;
 mod settings;
+mod splash;
 mod theme;
 mod viewer;
 
 use eframe::egui;
 
 fn main() -> eframe::Result<()> {
+    let _sentry = crash::init();
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("MoGen Studio")

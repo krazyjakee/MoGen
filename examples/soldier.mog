@@ -1,0 +1,89 @@
+// mogen-generate seed=1776960134385703068
+// mogen-generate thinking=high
+// prompt: A bipedal silhouette composed of rounded box and cylinder segments, wearing a distinct hemispherical steel helmet and a matte olive-drab tunic detailed with mirrored rectangular pockets and a vertical array of brass disc buttons. The figure stands in a neutral pose with mirrored capsule limbs ending in rugged, dark leather-textured box boots, emphasizing structural proportions and period-accurate material finishes.
+
+material "steel" (color=[0.75, 0.78, 0.82], metallic=1.0, roughness=0.46, base_color_texture="textures/soldier/steel_albedo.png", normal_texture="textures/soldier/steel_normal.png", metallic_roughness_texture="textures/soldier/steel_metallicRoughness.png", transmission=0, uv_mode="tile", double_sided=1)
+material "olive_drab" (color=[0.32, 0.35, 0.22], roughness=1, base_color_texture="textures/soldier/olive_drab_albedo.png", normal_texture="textures/soldier/olive_drab_normal.png", metallic_roughness_texture="textures/soldier/olive_drab_metallicRoughness.png", metallic=0, uv_mode="tile", uv_scale=[0, 0])
+material "brass" (color=[0.85, 0.75, 0.25], metallic=1.0, roughness=0.3, base_color_texture="textures/soldier/brass_albedo.png", normal_texture="textures/soldier/brass_normal.png", metallic_roughness_texture="textures/soldier/brass_metallicRoughness.png")
+material "leather" (color=[0.18, 0.12, 0.08], roughness=0.85, base_color_texture="textures/soldier/leather_albedo.png", normal_texture="textures/soldier/leather_normal.png", metallic_roughness_texture="textures/soldier/leather_metallicRoughness.png")
+material "undersuit" (color=[0.15, 0.15, 0.15], roughness=0.9, base_color_texture="textures/soldier/undersuit_albedo.png", normal_texture="textures/soldier/undersuit_normal.png", metallic_roughness_texture="textures/soldier/undersuit_metallicRoughness.png")
+material "skin" (color=[0.85, 0.65, 0.55], roughness=0.6, double_sided=1, base_color_texture="textures/soldier/skin_albedo.png", normal_texture="textures/soldier/skin_normal.png", metallic_roughness_texture="textures/soldier/skin_metallicRoughness.png", uv_mode="tile", uv_scale=[1.9, 0.2])
+material "canvas" (color=[0.4, 0.38, 0.25], roughness=0.9, base_color_texture="textures/soldier/canvas_albedo.png", normal_texture="textures/soldier/canvas_normal.png", metallic_roughness_texture="textures/soldier/canvas_metallicRoughness.png")
+material "eye_dark" (color=[0.1, 0.1, 0.1], roughness=0.3, base_color_texture="textures/soldier/eye_dark_albedo.png", normal_texture="textures/soldier/eye_dark_normal.png", metallic_roughness_texture="textures/soldier/eye_dark_metallicRoughness.png")
+
+scene {
+  rounded_box "torso" (size=[0.4, 0.6, 0.25], radius=0.05, mat="olive_drab") {
+    box "belt" (pos=[0, -0.2, 0], size=[0.42, 0.08, 0.27], mat="leather")
+    box "buckle" (pos=[0, -0.2, 0.14], size=[0.1, 0.1, 0.02], mat="brass")
+
+    // Surface details: pockets and buttons
+    box "pocket_l" (pos=[ 0.12, 0.05, 0.13], size=[0.12, 0.15, 0.02], mat="olive_drab")
+    box "pocket_r" (pos=[-0.12, 0.05, 0.13], size=[0.12, 0.15, 0.02], mat="olive_drab")
+    
+    group "buttons" (pos=[0, 0.05, 0.126]) {
+      grid (count=[1, 4, 1], step=[0, 0.08, 0], center=1) {
+        disc "button" (radius=0.015, mat="brass", rot=[90, 0, 0])
+      }
+    }
+
+    // Downward-facing sockets for arms to hang naturally in a neutral pose
+    connector "shoulder_l" (at=[ 0.24,  0.2, 0], dir=[0, -1, 0])
+    connector "shoulder_r" (at=[-0.24,  0.2, 0], dir=[0, -1, 0])
+    connector "hip_l"      (at=[ 0.1,  -0.3, 0], dir=[0, -1, 0])
+    connector "hip_r"      (at=[-0.1,  -0.3, 0], dir=[0, -1, 0])
+  }
+
+  superellipsoid "head" (size=[0.18, 0.22, 0.2], ew=1.2, ns=0.8, mat="skin") {
+    sphere "eye_l" (pos=[ 0.04, 0.02, 0.09], radius=0.015, mat="eye_dark")
+    sphere "eye_r" (pos=[-0.04, 0.02, 0.09], radius=0.015, mat="eye_dark")
+    capsule "nose" (pos=[0, -0.02, 0.1], radius=0.015, height=0.04, rot=[-20, 0, 0], mat="skin")
+  }
+  hemisphere "helmet" (radius=0.14, mat="steel")
+
+  rounded_box "backpack" (size=[0.3, 0.4, 0.15], radius=0.03, mat="canvas") {
+    cylinder "bedroll" (pos=[0, 0.25, 0], radius=0.06, height=0.35, rot=[0, 0, 90], mat="olive_drab")
+  }
+
+  capsule "upper_arm_l" (radius=0.045, height=0.3, mat="olive_drab", pos=[0.24, 0.0702, 0])
+  capsule "lower_arm_l" (radius=0.04, height=0.25, mat="undersuit")
+  sphere "hand_l" (radius=0.05, mat="skin")
+
+  capsule "upper_arm_r" (radius=0.045, height=0.3, mat="olive_drab")
+  capsule "lower_arm_r" (radius=0.04, height=0.25, mat="undersuit")
+  sphere "hand_r" (radius=0.05, mat="skin")
+
+  capsule "thigh_l" (radius=0.055, height=0.35, mat="olive_drab")
+  capsule "calf_l" (radius=0.05, height=0.35, mat="undersuit")
+
+  capsule "thigh_r" (radius=0.055, height=0.35, mat="olive_drab")
+  capsule "calf_r" (radius=0.05, height=0.35, mat="undersuit")
+
+  rounded_box "boot_l" (size=[0.12, 0.15, 0.25], radius=0.02, mat="leather") {
+    connector "ankle" (at=[0, 0.075, -0.05], dir=[0, 1, 0])
+  }
+  rounded_box "boot_r" (size=[0.12, 0.15, 0.25], radius=0.02, mat="leather") {
+    connector "ankle" (at=[0, 0.075, -0.05], dir=[0, 1, 0])
+  }
+
+  // Assembly
+  attach (parent="torso", child="head", socket="top", plug="bottom")
+  attach (parent="head", child="helmet", socket="top", plug="bottom", offset=-0.06)
+
+  attach (parent="torso", child="backpack", socket="front", plug="front")
+
+  attach (parent="torso", child="upper_arm_l", socket="shoulder_l", plug="top")
+  attach (parent="upper_arm_l", child="lower_arm_l", socket="bottom", plug="top")
+  attach (parent="lower_arm_l", child="hand_l", socket="bottom", plug="top")
+
+  attach (parent="torso", child="upper_arm_r", socket="shoulder_r", plug="top")
+  attach (parent="upper_arm_r", child="lower_arm_r", socket="bottom", plug="top")
+  attach (parent="lower_arm_r", child="hand_r", socket="bottom", plug="top")
+
+  attach (parent="torso", child="thigh_l", socket="hip_l", plug="top")
+  attach (parent="thigh_l", child="calf_l", socket="bottom", plug="top")
+  attach (parent="calf_l", child="boot_l", socket="bottom", plug="ankle")
+
+  attach (parent="torso", child="thigh_r", socket="hip_r", plug="top")
+  attach (parent="thigh_r", child="calf_r", socket="bottom", plug="top")
+  attach (parent="calf_r", child="boot_r", socket="bottom", plug="ankle")
+}

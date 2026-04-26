@@ -77,6 +77,13 @@ pub struct Settings {
     /// can reproduce a prior generation when they saw one they liked.
     #[serde(default)]
     pub seed_override: Option<u64>,
+
+    /// Set once the first-launch onboarding modal has been dismissed (whether
+    /// the user pasted a key or skipped). False on a fresh install or after
+    /// the settings file is wiped, which is the signal to show the welcome
+    /// flow again.
+    #[serde(default)]
+    pub onboarded: bool,
 }
 
 impl Settings {

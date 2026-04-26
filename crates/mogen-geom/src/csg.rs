@@ -1,398 +1,128 @@
-//! BSP-tree boolean CSG over triangle meshes.
+//! Boolean CSG over triangle meshes — backed by Google's Manifold library
+//! via the `manifold3d` Rust bindings.
 //!
-//! Port of Evan Wallace's csg.js algorithm
-//! (<https://evanw.github.io/csg.js/>). Polygons are stored with their
-//! supporting plane; booleans are computed by clipping each operand against
-//! the other's BSP tree and recombining.
+//! Manifold guarantees watertight output for any pair of valid manifold
+//! inputs (including curved-vs-curved cases that the previous BSP/csg.js
+//! implementation dropped fragments on). The public API here is unchanged
+//! from the BSP era — `union`/`difference`/`intersect` and the `_many`
+//! variants — so callers in `mogen-dsl` and `mogen-export` need no changes.
 //!
-//! The roadmap's original plan was to wrap `csgrs`, but that crate is
-//! currently uninstallable from crates.io (its `core2 = "0.4"` transitive
-//! dependency is fully yanked). This in-crate port keeps the same public
-//! surface — `union` / `difference` / `intersect` on `Mesh` — so we can swap
-//! back later without touching callers.
+//! ## Input requirements
+//!
+//! Manifold requires each input to be topologically manifold: every edge
+//! shared by exactly two triangles using the same vertex indices. Our
+//! primitives often emit per-face vertex copies for sharp edges (a cube
+//! has 24 vertices, 4 per face), so we run [`weld_vertices`] on every
+//! operand before handing it to Manifold. This is the same epsilon-weld
+//! used by `clean_csg_output`.
+//!
+//! ## Vertex properties
+//!
+//! When both operands carry UVs we send `[x, y, z, u, v]` per vertex
+//! (`n_props = 5`); Manifold interpolates the UVs linearly across boolean
+//! intersection cuts. Otherwise we send positions only and let the cleanup
+//! pass synthesise triplanar UVs.
+//!
+//! Per-vertex normals are not passed through — Manifold's boolean produces
+//! new vertices on intersection curves whose normals would need to come
+//! from the analytic surface, not interpolation. `clean_csg_output` calls
+//! `recompute_normals` to rebuild face-averaged normals after the boolean.
+//!
+//! ## Errors
+//!
+//! `Manifold::from_mesh_f32` returns a `Result`. A non-manifold input
+//! (e.g. an open primitive, or a mesh whose welding failed to close
+//! coincident-vertex pairs) becomes an `Err`. We treat that as a bug in
+//! the caller's primitive and panic with the offending status — silent
+//! fallback would mask geometry corruption.
 
-use glam::{Vec2, Vec3};
+use manifold3d::Manifold;
 
 use mogen_core::Mesh;
 
-const EPS: f32 = 1e-5;
+use crate::cleanup::{recompute_normals, weld_vertices};
 
-#[derive(Clone, Copy, Debug)]
-struct Vertex {
-    pos: Vec3,
-    normal: Vec3,
-    /// Source-mesh UV. Carried through clipping so CSG results preserve the
-    /// input texture coordinates. When an input mesh has no UVs, this is
-    /// filled with `Vec2::ZERO` and the final `polygons_to_mesh` drops it.
-    uv: Vec2,
+/// Same epsilon as `clean_csg_output` so a CSG operand that already went
+/// through the cleanup pass doesn't get re-welded with a different threshold.
+const WELD_EPS: f32 = 1e-4;
+
+/// Convert a `Mesh` into the `(vert_props, n_props, tri_indices)` triple
+/// Manifold expects. UVs are interleaved when present so they survive the
+/// boolean; positions are emitted as the first three components either way.
+fn to_manifold_input(mesh: &Mesh) -> (Vec<f32>, usize, Vec<u32>) {
+    let welded = weld_vertices(mesh, WELD_EPS);
+    let has_uvs = welded.has_uvs();
+    let n_props = if has_uvs { 5 } else { 3 };
+    let mut vert_props = Vec::with_capacity(welded.positions.len() * n_props);
+    for (i, p) in welded.positions.iter().enumerate() {
+        vert_props.extend_from_slice(p);
+        if has_uvs {
+            vert_props.extend_from_slice(&welded.uvs[i]);
+        }
+    }
+    (vert_props, n_props, welded.indices)
 }
 
-impl Vertex {
-    fn new(pos: Vec3, normal: Vec3, uv: Vec2) -> Self {
-        Self { pos, normal, uv }
-    }
-
-    /// Interpolate position, normal, and UV along an edge. `t` is 0..1 from
-    /// self→other. The UV lerp is linearly correct per-triangle (same as
-    /// interpolating any other vertex attribute across a primitive); on a
-    /// UV seam the result may land mid-wrap, producing a narrow streak —
-    /// acceptable for the primitives MoGen emits.
-    fn interpolate(&self, other: &Self, t: f32) -> Self {
-        Self {
-            pos: self.pos.lerp(other.pos, t),
-            normal: self.normal.lerp(other.normal, t),
-            uv: self.uv.lerp(other.uv, t),
-        }
-    }
-
-    fn flip(&mut self) {
-        self.normal = -self.normal;
-    }
+fn build_manifold(mesh: &Mesh) -> (Manifold, usize) {
+    let (vert_props, n_props, tri_indices) = to_manifold_input(mesh);
+    let manifold = Manifold::from_mesh_f32(&vert_props, n_props, &tri_indices)
+        .expect("CSG operand is not a manifold mesh; check that the primitive is closed");
+    (manifold, n_props)
 }
 
-#[derive(Clone, Copy, Debug)]
-struct Plane {
-    normal: Vec3,
-    w: f32,
-}
-
-impl Plane {
-    /// Build a plane from three points in CCW order. Returns `None` if the
-    /// triangle is degenerate.
-    fn from_points(a: Vec3, b: Vec3, c: Vec3) -> Option<Self> {
-        let n = (b - a).cross(c - a);
-        let len = n.length();
-        if len < EPS {
-            return None;
-        }
-        let normal = n / len;
-        Some(Self { normal, w: normal.dot(a) })
-    }
-
-    fn flip(&mut self) {
-        self.normal = -self.normal;
-        self.w = -self.w;
-    }
-
-    /// Split `poly` against this plane. Each fragment is placed into one of:
-    /// `coplanar_front`, `coplanar_back`, `front`, `back`.
-    fn split_polygon(
-        &self,
-        poly: &Polygon,
-        coplanar_front: &mut Vec<Polygon>,
-        coplanar_back: &mut Vec<Polygon>,
-        front: &mut Vec<Polygon>,
-        back: &mut Vec<Polygon>,
-    ) {
-        const COPLANAR: u8 = 0;
-        const FRONT: u8 = 1;
-        const BACK: u8 = 2;
-        const SPANNING: u8 = 3;
-
-        let mut polygon_type: u8 = 0;
-        let mut types: Vec<u8> = Vec::with_capacity(poly.verts.len());
-        for v in &poly.verts {
-            let t = self.normal.dot(v.pos) - self.w;
-            let c = if t < -EPS {
-                BACK
-            } else if t > EPS {
-                FRONT
-            } else {
-                COPLANAR
-            };
-            polygon_type |= c;
-            types.push(c);
-        }
-
-        match polygon_type {
-            COPLANAR => {
-                if self.normal.dot(poly.plane.normal) > 0.0 {
-                    coplanar_front.push(poly.clone());
-                } else {
-                    coplanar_back.push(poly.clone());
-                }
-            }
-            FRONT => front.push(poly.clone()),
-            BACK => back.push(poly.clone()),
-            _ => {
-                // SPANNING: subdivide the polygon along the plane.
-                let mut f: Vec<Vertex> = Vec::new();
-                let mut b: Vec<Vertex> = Vec::new();
-                let n = poly.verts.len();
-                for i in 0..n {
-                    let j = (i + 1) % n;
-                    let ti = types[i];
-                    let tj = types[j];
-                    let vi = poly.verts[i];
-                    let vj = poly.verts[j];
-                    if ti != BACK {
-                        f.push(vi);
-                    }
-                    if ti != FRONT {
-                        // Push a distinct copy so later normal flips on one
-                        // side don't bleed across through shared references.
-                        b.push(if ti != BACK { vi } else { vi });
-                    }
-                    if (ti | tj) == SPANNING {
-                        let t = (self.w - self.normal.dot(vi.pos))
-                            / self.normal.dot(vj.pos - vi.pos);
-                        let v = vi.interpolate(&vj, t);
-                        f.push(v);
-                        b.push(v);
-                    }
-                }
-                if f.len() >= 3 {
-                    if let Some(p) = Polygon::try_new(f) {
-                        front.push(p);
-                    }
-                }
-                if b.len() >= 3 {
-                    if let Some(p) = Polygon::try_new(b) {
-                        back.push(p);
-                    }
-                }
-            }
+/// Convert a Manifold result back to `Mesh`. UVs are recovered when
+/// `n_props == 5`; otherwise the output `uvs` is empty and the caller's
+/// `clean_csg_output` will assign triplanar coordinates. Normals are
+/// recomputed from face geometry so the returned mesh is internally
+/// consistent — callers like `union_smooth` rely on per-vertex normals
+/// without needing a separate cleanup pass first.
+fn from_manifold_output(m: &Manifold, n_props: usize) -> Mesh {
+    let (flat, props, tri_indices) = m.to_mesh_f32();
+    debug_assert_eq!(props, n_props);
+    let n_verts = flat.len() / props;
+    let mut positions = Vec::with_capacity(n_verts);
+    let mut uvs = Vec::with_capacity(if props >= 5 { n_verts } else { 0 });
+    for i in 0..n_verts {
+        let base = i * props;
+        positions.push([flat[base], flat[base + 1], flat[base + 2]]);
+        if props >= 5 {
+            uvs.push([flat[base + 3], flat[base + 4]]);
         }
     }
-}
-
-#[derive(Clone, Debug)]
-struct Polygon {
-    verts: Vec<Vertex>,
-    plane: Plane,
-}
-
-impl Polygon {
-    fn try_new(verts: Vec<Vertex>) -> Option<Self> {
-        if verts.len() < 3 {
-            return None;
-        }
-        let plane = Plane::from_points(verts[0].pos, verts[1].pos, verts[2].pos)?;
-        Some(Self { verts, plane })
-    }
-
-    fn flip(&mut self) {
-        self.verts.reverse();
-        for v in &mut self.verts {
-            v.flip();
-        }
-        self.plane.flip();
-    }
-}
-
-/// BSP node. The plane is `None` only for the empty tree.
-#[derive(Default)]
-struct Node {
-    plane: Option<Plane>,
-    front: Option<Box<Node>>,
-    back: Option<Box<Node>>,
-    polys: Vec<Polygon>,
-}
-
-impl Node {
-    fn from_polygons(polys: Vec<Polygon>) -> Self {
-        let mut node = Node::default();
-        if !polys.is_empty() {
-            node.build(polys);
-        }
-        node
-    }
-
-    fn invert(&mut self) {
-        for p in &mut self.polys {
-            p.flip();
-        }
-        if let Some(pl) = self.plane.as_mut() {
-            pl.flip();
-        }
-        if let Some(f) = self.front.as_mut() {
-            f.invert();
-        }
-        if let Some(b) = self.back.as_mut() {
-            b.invert();
-        }
-        std::mem::swap(&mut self.front, &mut self.back);
-    }
-
-    /// Return `polys` trimmed of fragments that lie inside this BSP.
-    fn clip_polygons(&self, polys: Vec<Polygon>) -> Vec<Polygon> {
-        let Some(plane) = self.plane else {
-            return polys;
-        };
-        let mut cf = Vec::new();
-        let mut cb = Vec::new();
-        let mut front = Vec::new();
-        let mut back = Vec::new();
-        for p in &polys {
-            plane.split_polygon(p, &mut cf, &mut cb, &mut front, &mut back);
-        }
-        // Coplanar fragments are placed on their natural side; clipPolygons
-        // treats coplanar-with-same-orientation as "in front" and the opposite
-        // as "in back".
-        front.extend(cf);
-        back.extend(cb);
-        let front = match &self.front {
-            Some(n) => n.clip_polygons(front),
-            None => front,
-        };
-        let back = match &self.back {
-            Some(n) => n.clip_polygons(back),
-            None => Vec::new(),
-        };
-        let mut out = front;
-        out.extend(back);
-        out
-    }
-
-    /// Remove all of `self`'s polygons that are inside `other`.
-    fn clip_to(&mut self, other: &Node) {
-        self.polys = other.clip_polygons(std::mem::take(&mut self.polys));
-        if let Some(f) = self.front.as_mut() {
-            f.clip_to(other);
-        }
-        if let Some(b) = self.back.as_mut() {
-            b.clip_to(other);
-        }
-    }
-
-    fn all_polygons(&self) -> Vec<Polygon> {
-        let mut out = self.polys.clone();
-        if let Some(f) = &self.front {
-            out.extend(f.all_polygons());
-        }
-        if let Some(b) = &self.back {
-            out.extend(b.all_polygons());
-        }
-        out
-    }
-
-    /// Build a BSP by picking the first polygon's plane as the splitter and
-    /// recursing on the rest.
-    fn build(&mut self, polys: Vec<Polygon>) {
-        if polys.is_empty() {
-            return;
-        }
-        if self.plane.is_none() {
-            self.plane = Some(polys[0].plane);
-        }
-        let plane = self.plane.unwrap();
-        let mut cf = Vec::new();
-        let mut cb = Vec::new();
-        let mut front = Vec::new();
-        let mut back = Vec::new();
-        for p in &polys {
-            plane.split_polygon(p, &mut cf, &mut cb, &mut front, &mut back);
-        }
-        // Coplanar polygons (either orientation) stay at this BSP node.
-        self.polys.extend(cf);
-        self.polys.extend(cb);
-        if !front.is_empty() {
-            self.front.get_or_insert_with(|| Box::new(Node::default())).build(front);
-        }
-        if !back.is_empty() {
-            self.back.get_or_insert_with(|| Box::new(Node::default())).build(back);
-        }
-    }
-}
-
-fn mesh_to_polygons(mesh: &Mesh) -> Vec<Polygon> {
-    let has_uvs = mesh.has_uvs();
-    let mut out = Vec::with_capacity(mesh.indices.len() / 3);
-    for tri in mesh.indices.chunks_exact(3) {
-        let [ia, ib, ic] = [tri[0] as usize, tri[1] as usize, tri[2] as usize];
-        let vert = |i: usize| {
-            Vertex::new(
-                Vec3::from_array(mesh.positions[i]),
-                Vec3::from_array(mesh.normals[i]),
-                if has_uvs { Vec2::from_array(mesh.uvs[i]) } else { Vec2::ZERO },
-            )
-        };
-        if let Some(poly) = Polygon::try_new(vec![vert(ia), vert(ib), vert(ic)]) {
-            out.push(poly);
-        }
-    }
-    out
-}
-
-/// Convert the BSP polygons back to an indexed triangle mesh. `emit_uvs`
-/// decides whether to populate `Mesh::uvs`; callers pass `true` only when
-/// *every* input mesh to the boolean op had UVs, so the stored `Vertex::uv`
-/// values carry meaningful data rather than the `Vec2::ZERO` default.
-fn polygons_to_mesh(polys: &[Polygon], emit_uvs: bool) -> Mesh {
-    let mut positions = Vec::new();
-    let mut normals = Vec::new();
-    let mut uvs: Vec<[f32; 2]> = Vec::new();
-    let mut indices = Vec::new();
-    for poly in polys {
-        if poly.verts.len() < 3 {
-            continue;
-        }
-        // Fan-triangulate. Polygons produced by BSP clipping are convex, so
-        // the fan from vertex 0 is always valid.
-        let base = positions.len() as u32;
-        for v in &poly.verts {
-            positions.push([v.pos.x, v.pos.y, v.pos.z]);
-            normals.push([v.normal.x, v.normal.y, v.normal.z]);
-            if emit_uvs {
-                uvs.push([v.uv.x, v.uv.y]);
-            }
-        }
-        for i in 1..(poly.verts.len() as u32 - 1) {
-            indices.extend_from_slice(&[base, base + i, base + i + 1]);
-        }
-    }
-    Mesh {
+    let raw = Mesh {
         positions,
-        normals,
-        indices,
+        normals: vec![[0.0; 3]; n_verts],
         uvs,
+        indices: tri_indices,
         ..Default::default()
-    }
+    };
+    recompute_normals(&raw)
 }
 
 fn boolean(a: &Mesh, b: &Mesh, op: Op) -> Mesh {
-    // UVs pass through only when *both* operands contribute them. If either
-    // side lacks UVs, half the result would have `Vec2::ZERO` garbage and
-    // downstream cleanup can still synthesise a triplanar projection — fail
-    // closed.
-    let emit_uvs = a.has_uvs() && b.has_uvs();
-    let mut na = Node::from_polygons(mesh_to_polygons(a));
-    let mut nb = Node::from_polygons(mesh_to_polygons(b));
-
-    match op {
-        Op::Union => {
-            na.clip_to(&nb);
-            nb.clip_to(&na);
-            nb.invert();
-            nb.clip_to(&na);
-            nb.invert();
-            let b_polys = nb.all_polygons();
-            na.build(b_polys);
-        }
-        Op::Difference => {
-            na.invert();
-            na.clip_to(&nb);
-            nb.clip_to(&na);
-            nb.invert();
-            nb.clip_to(&na);
-            nb.invert();
-            let b_polys = nb.all_polygons();
-            na.build(b_polys);
-            na.invert();
-        }
-        Op::Intersect => {
-            na.invert();
-            nb.clip_to(&na);
-            nb.invert();
-            na.clip_to(&nb);
-            nb.clip_to(&na);
-            let b_polys = nb.all_polygons();
-            na.build(b_polys);
-            na.invert();
-        }
+    let (ma, props_a) = build_manifold(a);
+    let (mb, props_b) = build_manifold(b);
+    // If only one side carries UVs, fall back to position-only output —
+    // mixing a UV'd operand with a non-UV'd one would interpolate against
+    // garbage. The cleanup pass will synthesise triplanar UVs.
+    let out_props = if props_a == props_b { props_a } else { 3 };
+    let result = match op {
+        Op::Union => ma.union(&mb),
+        Op::Difference => ma.difference(&mb),
+        Op::Intersect => ma.intersection(&mb),
+    };
+    if result.is_empty() {
+        return Mesh::default();
     }
-
-    polygons_to_mesh(&na.all_polygons(), emit_uvs)
+    if out_props != props_a {
+        // The result still has whatever n_props the operands shared inside
+        // Manifold; if we requested mixed handling we re-emit without UVs by
+        // stripping them after extraction.
+        let mut m = from_manifold_output(&result, props_a);
+        m.uvs.clear();
+        return m;
+    }
+    from_manifold_output(&result, out_props)
 }
 
 #[derive(Clone, Copy)]
@@ -440,6 +170,7 @@ pub fn intersect_many(meshes: &[Mesh]) -> Mesh {
 mod tests {
     use super::*;
     use crate::primitives::{box_mesh, cylinder_mesh};
+    use glam::Vec3;
     use mogen_core::UvMode;
 
     fn ubox(s: [f32; 3]) -> Mesh {
@@ -528,7 +259,7 @@ mod tests {
         }
         assert!(a.has_uvs() && b.has_uvs(), "box primitives emit UVs");
         let u = union(&a, &b);
-        assert!(u.has_uvs(), "union output should carry UVs through the BSP");
+        assert!(u.has_uvs(), "union output should carry UVs through Manifold");
         assert_eq!(u.positions.len(), u.uvs.len());
     }
 

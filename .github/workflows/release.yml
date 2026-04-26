@@ -59,7 +59,7 @@ jobs:
       - name: Build mogen-studio (GUI)
         run: cargo build -p mogen-studio --release --locked --target ${{ matrix.target }}
 
-      - name: Package (unix)
+      - name: Package (unix tarball)
         if: runner.os != 'Windows'
         shell: bash
         run: |
@@ -75,7 +75,7 @@ jobs:
           chmod +x dist/mogen dist/mogen-studio
           tar -czf "${out}" -C dist mogen mogen-studio
 
-      - name: Package (windows)
+      - name: Package (windows zip)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
@@ -91,6 +91,102 @@ jobs:
           Compress-Archive -Path "mogen.exe","mogen-studio.exe" -DestinationPath "../$out" -Force
           Pop-Location
 
+      - name: Install cargo-deb
+        if: runner.os == 'Linux'
+        run: cargo install cargo-deb --locked
+
+      - name: Package .deb (linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          target="${{ matrix.target }}"
+          cargo deb -p mogen-studio --no-build --target "${target}"
+          src=$(ls "target/${target}/debian"/*.deb | head -n1)
+          cp "${src}" "mogen-${tag}-${target}.deb"
+
+      - name: Install cargo-wix
+        if: runner.os == 'Windows'
+        run: cargo install cargo-wix --locked
+
+      - name: Generate Windows app icon (.ico)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          magick assets/icon.png `
+            -define icon:auto-resize=256,128,64,48,32,24,16 `
+            crates/mogen-studio/wix/AppIcon.ico
+
+      - name: Package .msi (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $target = "${{ matrix.target }}"
+          $out = "mogen-$tag-$target.msi"
+          cargo wix -p mogen-studio --no-build --nocapture --target $target --output $out
+
+      - name: Package .dmg (macos)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          target="${{ matrix.target }}"
+          version="${tag#v}"
+          app="MoGen Studio.app"
+
+          rm -rf "${app}" dmg-staging
+          mkdir -p "${app}/Contents/MacOS" "${app}/Contents/Resources"
+          cp "target/${target}/release/mogen-studio" "${app}/Contents/MacOS/mogen-studio"
+          cp "target/${target}/release/mogen"        "${app}/Contents/MacOS/mogen"
+          chmod +x "${app}/Contents/MacOS/mogen-studio" "${app}/Contents/MacOS/mogen"
+
+          iconset="AppIcon.iconset"
+          rm -rf "${iconset}"
+          mkdir -p "${iconset}"
+          sips -z 16   16   assets/icon.png --out "${iconset}/icon_16x16.png"     >/dev/null
+          sips -z 32   32   assets/icon.png --out "${iconset}/icon_16x16@2x.png"  >/dev/null
+          sips -z 32   32   assets/icon.png --out "${iconset}/icon_32x32.png"     >/dev/null
+          sips -z 64   64   assets/icon.png --out "${iconset}/icon_32x32@2x.png"  >/dev/null
+          sips -z 128  128  assets/icon.png --out "${iconset}/icon_128x128.png"   >/dev/null
+          sips -z 256  256  assets/icon.png --out "${iconset}/icon_128x128@2x.png">/dev/null
+          sips -z 256  256  assets/icon.png --out "${iconset}/icon_256x256.png"   >/dev/null
+          sips -z 512  512  assets/icon.png --out "${iconset}/icon_256x256@2x.png">/dev/null
+          cp assets/icon.png "${iconset}/icon_512x512.png"
+          iconutil -c icns "${iconset}" -o "${app}/Contents/Resources/AppIcon.icns"
+
+          cat > "${app}/Contents/Info.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleName</key><string>MoGen Studio</string>
+            <key>CFBundleDisplayName</key><string>MoGen Studio</string>
+            <key>CFBundleIdentifier</key><string>com.cattrall.mogen-studio</string>
+            <key>CFBundleVersion</key><string>${version}</string>
+            <key>CFBundleShortVersionString</key><string>${version}</string>
+            <key>CFBundleExecutable</key><string>mogen-studio</string>
+            <key>CFBundleIconFile</key><string>AppIcon</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>LSMinimumSystemVersion</key><string>10.13</string>
+            <key>NSHighResolutionCapable</key><true/>
+          </dict>
+          </plist>
+          PLIST
+
+          mkdir dmg-staging
+          mv "${app}" "dmg-staging/${app}"
+          ln -s /Applications dmg-staging/Applications
+
+          out="mogen-studio-${tag}-${target}.dmg"
+          hdiutil create \
+            -volname "MoGen Studio" \
+            -srcfolder dmg-staging \
+            -ov -format UDZO \
+            "${out}"
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -98,6 +194,9 @@ jobs:
           path: |
             mogen-${{ github.ref_name }}-${{ matrix.target }}.tar.gz
             mogen-${{ github.ref_name }}-${{ matrix.target }}.zip
+            mogen-${{ github.ref_name }}-${{ matrix.target }}.deb
+            mogen-${{ github.ref_name }}-${{ matrix.target }}.msi
+            mogen-studio-${{ github.ref_name }}-${{ matrix.target }}.dmg
           if-no-files-found: error
 
   publish:
@@ -116,10 +215,9 @@ jobs:
         run: |
           set -euo pipefail
           rm -f SHA256SUMS
-          for f in mogen-*.tar.gz mogen-*.zip; do
-            if [[ -f "$f" ]]; then
-              sha256sum "$f" >> SHA256SUMS
-            fi
+          shopt -s nullglob
+          for f in mogen-*.tar.gz mogen-*.zip mogen-*.deb mogen-*.msi mogen-studio-*.dmg; do
+            sha256sum "$f" >> SHA256SUMS
           done
           if [[ ! -s SHA256SUMS ]]; then
             echo "No release archives found to checksum" >&2
@@ -132,4 +230,7 @@ jobs:
           files: |
             mogen-*.tar.gz
             mogen-*.zip
+            mogen-*.deb
+            mogen-*.msi
+            mogen-studio-*.dmg
             SHA256SUMS

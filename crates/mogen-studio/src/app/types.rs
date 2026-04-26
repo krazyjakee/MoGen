@@ -345,14 +345,17 @@ impl ShortcutAction {
         }
     }
 
-    /// Every shortcut action; iteration order doesn't matter — `dispatch` is
-    /// short-circuiting at the first match.
+    /// Every shortcut action. Iteration order matters: egui's
+    /// `consume_shortcut` uses `Modifiers::matches_logically`, so Cmd+N also
+    /// fires for Cmd+Shift+N unless the more-specific binding is checked
+    /// first. List shortcuts that share a key with descending modifier
+    /// specificity (Cmd+Shift+N before Cmd+N, Cmd+Shift+S before Cmd+S).
     pub(super) const ALL: &'static [ShortcutAction] = &[
-        ShortcutAction::NewUntitled,
         ShortcutAction::OpenNewPromptModal,
+        ShortcutAction::NewUntitled,
         ShortcutAction::OpenDialog,
-        ShortcutAction::Save,
         ShortcutAction::SaveAs,
+        ShortcutAction::Save,
         ShortcutAction::Build,
         ShortcutAction::Recheck,
         ShortcutAction::CloseActive,
@@ -455,6 +458,13 @@ pub(super) struct EnhanceInFlight {
     /// routing since the draft lives on the app), kept only so tab closures
     /// mid-call can't panic.
     pub(super) file_index: usize,
+    pub(super) rx: Receiver<Result<String, String>>,
+}
+
+/// In-flight slot for the "Ask MoGen" modal. Single app-level slot since the
+/// modal is itself singleton — clicking Ask while a call is running is gated
+/// at the button.
+pub(super) struct AskInFlight {
     pub(super) rx: Receiver<Result<String, String>>,
 }
 

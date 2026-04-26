@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="windows-1252"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+    <Product
+        Id="*"
+        Name="MoGen Studio"
+        UpgradeCode="54F9F1E2-7A82-4B11-9CD0-3E6F9B12A3F0"
+        Manufacturer="Jake Cattrall"
+        Language="1033"
+        Codepage="1252"
+        Version="$(var.Version)">
+
+        <Package Id="*"
+                 Keywords="Installer"
+                 Description="MoGen Studio Installer"
+                 Manufacturer="Jake Cattrall"
+                 InstallerVersion="450"
+                 Languages="1033"
+                 Compressed="yes"
+                 InstallScope="perMachine"
+                 SummaryCodepage="1252"/>
+
+        <MajorUpgrade
+            Schedule="afterInstallInitialize"
+            DowngradeErrorMessage="A newer version of MoGen Studio is already installed."/>
+
+        <Media Id="1" Cabinet="media1.cab" EmbedCab="yes"/>
+
+        <Icon Id="AppIcon.ico" SourceFile="wix\AppIcon.ico"/>
+        <Property Id="ARPPRODUCTICON" Value="AppIcon.ico"/>
+
+        <Directory Id="TARGETDIR" Name="SourceDir">
+            <Directory Id="ProgramFiles64Folder">
+                <Directory Id="APPLICATIONFOLDER" Name="MoGen">
+                    <Component Id="binary_mogen" Guid="*">
+                        <File Id="exe_mogen"
+                              Name="mogen.exe"
+                              DiskId="1"
+                              Source="$(var.CargoTargetBinDir)\mogen.exe"
+                              KeyPath="yes"/>
+                    </Component>
+                    <Component Id="binary_mogen_studio" Guid="*">
+                        <File Id="exe_mogen_studio"
+                              Name="mogen-studio.exe"
+                              DiskId="1"
+                              Source="$(var.CargoTargetBinDir)\mogen-studio.exe"
+                              KeyPath="yes"/>
+                    </Component>
+                    <Component Id="Path"
+                               Guid="7C1A3B5D-9E4F-4C82-AF1B-2D3E4F5061A0"
+                               KeyPath="yes">
+                        <Environment Id="PATH"
+                                     Name="PATH"
+                                     Value="[APPLICATIONFOLDER]"
+                                     Permanent="no"
+                                     Part="last"
+                                     Action="set"
+                                     System="yes"/>
+                    </Component>
+                </Directory>
+            </Directory>
+
+            <Directory Id="ProgramMenuFolder">
+                <Directory Id="ApplicationProgramsFolder" Name="MoGen Studio"/>
+            </Directory>
+        </Directory>
+
+        <DirectoryRef Id="ApplicationProgramsFolder">
+            <Component Id="ApplicationShortcut"
+                       Guid="B3F9C8D0-12AE-4D5B-9F2A-7C8D9E0F1A2B">
+                <Shortcut Id="ApplicationStartMenuShortcut"
+                          Name="MoGen Studio"
+                          Description="Visual editor for the MoGen DSL"
+                          Target="[APPLICATIONFOLDER]mogen-studio.exe"
+                          WorkingDirectory="APPLICATIONFOLDER"
+                          Icon="AppIcon.ico"
+                          IconIndex="0"/>
+                <RemoveFolder Id="CleanUpShortCut"
+                              Directory="ApplicationProgramsFolder"
+                              On="uninstall"/>
+                <RegistryValue Root="HKCU"
+                               Key="Software\MoGen\MoGen Studio"
+                               Name="installed"
+                               Type="integer"
+                               Value="1"
+                               KeyPath="yes"/>
+            </Component>
+        </DirectoryRef>
+
+        <Feature Id="Binaries"
+                 Title="MoGen"
+                 Description="Installs the MoGen CLI and MoGen Studio GUI."
+                 Level="1">
+            <ComponentRef Id="binary_mogen"/>
+            <ComponentRef Id="binary_mogen_studio"/>
+            <ComponentRef Id="ApplicationShortcut"/>
+            <ComponentRef Id="Path"/>
+        </Feature>
+
+        <SetProperty Id="ARPINSTALLLOCATION"
+                     Value="[APPLICATIONFOLDER]"
+                     After="CostFinalize"/>
+    </Product>
+</Wix>

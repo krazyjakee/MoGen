@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=MoGen Studio
+GenericName=3D DSL Editor
+Comment=Visual editor and live preview for the MoGen .mog DSL
+Exec=mogen-studio %F
+Icon=mogen-studio
+Terminal=false
+Categories=Graphics;3DGraphics;Development;
+MimeType=text/plain;
+Keywords=3d;gltf;glb;dsl;mogen;
+StartupWMClass=mogen-studio

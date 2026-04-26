@@ -1,0 +1,95 @@
+// mogen-generate seed=1776975026356710483
+// mogen-generate thinking=high
+// prompt: A SWAT TEAM  operative composed of a rounded-box torso layered with an array of rectangular equipment pouches and mirrored capsule-shaped limb guards. The head features a hemispherical ballistic helmet with a translucent dark-grey polycarbonate visor, finished in high-roughness matte black PBR materials. A carbine, assembled from booleaned box and cylinder primitives, is integrated into a hierarchy of cylindrical limbs in a tactical stance.
+
+material "armor" (color=[0.08, 0.08, 0.08], roughness=0.95)
+material "suit"  (color=[0.12, 0.12, 0.12], roughness=0.85)
+material "visor" (color=[0.05, 0.05, 0.05], transmission=0.85, roughness=0.1)
+material "gun"   (color=[0.15, 0.15, 0.15], metallic=0.8, roughness=0.4)
+
+scene {
+  rounded_box "torso" (size=[0.4, 0.5, 0.25], radius=0.05, mat="armor") {
+    connector "neck"       (at=[ 0,    0.25,  0], dir=[ 0,   1,   0])
+    connector "shoulder_r" (at=[-0.2,  0.2,   0], dir=[-0.3,-0.7,-0.5])
+    connector "shoulder_l" (at=[ 0.2,  0.2,   0], dir=[ 0.3,-0.5,-0.8])
+    connector "hip_r"      (at=[-0.1, -0.25,  0], dir=[ 0,  -1,   0])
+    connector "hip_l"      (at=[ 0.1, -0.25,  0], dir=[ 0,  -1,   0])
+
+    grid "pouches" (count=[3, 2, 1], step=[0.12, 0.12, 0], center=1, pos=[0, -0.05, -0.13]) {
+      box "pouch" (size=[0.1, 0.1, 0.05], mat="suit")
+    }
+  }
+
+  group "head_rig" {
+    cylinder "neck_mesh" (pos=[0, -0.1, 0], radius=0.04, height=0.06, mat="suit")
+    sphere "head" (radius=0.1, mat="suit")
+    hemisphere "helmet" (pos=[0, 0.02, 0], radius=0.11, mat="armor")
+    curved_plane "visor_glass" (pos=[0, 0.01, -0.1], rot=[-90, 0, 0], size=[0.2, 0.12], bend_u=-70, mat="visor")
+  }
+  attach (parent="torso", child="head_rig", socket="neck", plug="bottom", offset=0)
+
+  cylinder "arm_r_up" (radius=0.05, height=0.3, mat="suit") {
+    connector "elbow" (at=[0, -0.15, 0], dir=[0, -0.3, -0.8])
+    capsule "guard_r_up" (pos=[0, 0, -0.05], radius=0.055, height=0.2, mat="armor")
+  }
+  cylinder "arm_r_dn" (radius=0.04, height=0.3, mat="suit") {
+    connector "wrist" (at=[0, -0.15, 0], dir=[0, -1, 0])
+    capsule "guard_r_dn" (pos=[0, 0, -0.045], radius=0.045, height=0.2, mat="armor")
+  }
+  attach (parent="torso", child="arm_r_up", socket="shoulder_r", plug="top", twist=15)
+  attach (parent="arm_r_up", child="arm_r_dn", socket="elbow", plug="top", twist=45)
+
+  cylinder "arm_l_up" (radius=0.05, height=0.3, mat="suit") {
+    connector "elbow" (at=[0, -0.15, 0], dir=[0.4, -0.2, -0.8])
+    capsule "guard_l_up" (pos=[0, 0, -0.05], radius=0.055, height=0.2, mat="armor")
+  }
+  cylinder "arm_l_dn" (radius=0.04, height=0.3, mat="suit") {
+    capsule "guard_l_dn" (pos=[0, 0, -0.045], radius=0.045, height=0.2, mat="armor")
+  }
+  attach (parent="torso", child="arm_l_up", socket="shoulder_l", plug="top", twist=-15)
+  attach (parent="arm_l_up", child="arm_l_dn", socket="elbow", plug="top", twist=-30)
+
+  cylinder "leg_r_up" (radius=0.07, height=0.4, mat="suit") {
+    connector "knee" (at=[0, -0.2, 0], dir=[0, -1, 0])
+    capsule "guard_leg_r_up" (pos=[0, 0, -0.075], radius=0.075, height=0.3, mat="armor")
+  }
+  cylinder "leg_r_dn" (radius=0.06, height=0.4, mat="suit") {
+    capsule "guard_leg_r_dn" (pos=[0, 0, -0.065], radius=0.065, height=0.3, mat="armor")
+  }
+  attach (parent="torso", child="leg_r_up", socket="hip_r", plug="top", twist=15)
+  attach (parent="leg_r_up", child="leg_r_dn", socket="knee", plug="top", twist=-10)
+
+  cylinder "leg_l_up" (radius=0.07, height=0.4, mat="suit") {
+    connector "knee" (at=[0, -0.2, 0], dir=[0, -1, 0])
+    capsule "guard_leg_l_up" (pos=[0, 0, -0.075], radius=0.075, height=0.3, mat="armor")
+  }
+  cylinder "leg_l_dn" (radius=0.06, height=0.4, mat="suit") {
+    capsule "guard_leg_l_dn" (pos=[0, 0, -0.065], radius=0.065, height=0.3, mat="armor")
+  }
+  attach (parent="torso", child="leg_l_up", socket="hip_l", plug="top", twist=-15)
+  attach (parent="leg_l_up", child="leg_l_dn", socket="knee", plug="top", twist=-10)
+
+  group "carbine" {
+    difference "receiver" (mat="gun") {
+      box "body" (size=[0.04, 0.12, 0.5])
+      cylinder "barrel_cut" (pos=[0, 0.03, -0.25], radius=0.015, height=0.3, rot=[90, 0, 0])
+    }
+    cylinder "barrel" (pos=[0, 0.03, -0.35], radius=0.01, height=0.3, rot=[90, 0, 0], mat="gun")
+    box "mag"  (pos=[0, -0.1, 0.05], size=[0.03, 0.12, 0.06], rot=[10, 0, 0], mat="gun")
+    box "grip" (pos=[0, -0.1, 0.15], size=[0.03, 0.1, 0.04], rot=[-15, 0, 0], mat="gun")
+  }
+  attach (parent="arm_r_dn", child="carbine", socket="wrist", plug="back", twist=0, offset=0.05)
+}
+
+clip "run_cycle" (seconds=0.6) {
+  track "torso" (prop=translation, axis=[0, 1, 0], keys=[[0, 0], [0.15, 0.1], [0.3, 0], [0.45, 0.1], [0.6, 0]])
+  track "head_rig" (prop=rotation, axis=[1, 0, 0], keys=[[0, -5], [0.15, 5], [0.3, -5], [0.45, 5], [0.6, -5]])
+}
+
+clip "crouch_motion" (seconds=1.0) {
+  track "torso" (prop=translation, axis=[0, 1, 0], from=0, to=-0.3)
+  track "leg_r_up" (prop=rotation, axis=[1, 0, 0], from=0, to=60)
+  track "leg_l_up" (prop=rotation, axis=[1, 0, 0], from=0, to=60)
+  track "leg_r_dn" (prop=rotation, axis=[1, 0, 0], from=0, to=-100)
+  track "leg_l_dn" (prop=rotation, axis=[1, 0, 0], from=0, to=-100)
+}
