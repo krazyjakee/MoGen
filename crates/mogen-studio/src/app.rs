@@ -35,7 +35,8 @@ mod watcher;
 
 use self::types::{
     AskInFlight, AutocompleteState, BuildOutcome, EnhanceInFlight, EnhanceTarget,
-    ExternalConflict, FileState, FindState, SessionUsage, ThumbCache, VIEWER_BG_COLOR,
+    ExternalConflict, FileState, FindState, GenImageInput, SessionUsage, ThumbCache,
+    VIEWER_BG_COLOR,
 };
 use self::util::locate_project_root;
 
@@ -116,6 +117,10 @@ pub struct MogenStudioApp {
     /// generator only surfaces here — it is no longer part of the inspector.
     show_new_prompt: bool,
     new_prompt_draft: String,
+    /// Optional image staged inside the New-from-Prompt modal (image-to-3D).
+    /// Moved into the new tab's `FileState.gen_image` on submit; cleared when
+    /// the dialog closes. None until the user picks a file.
+    new_prompt_image: Option<GenImageInput>,
     /// Latched when the modal is opened so the dialog can grab focus on its
     /// first frame; cleared after the focus request fires.
     new_prompt_focus_pending: bool,
@@ -308,6 +313,7 @@ impl MogenStudioApp {
             onboarding_api_key_draft: String::new(),
             show_new_prompt: false,
             new_prompt_draft: String::new(),
+            new_prompt_image: None,
             new_prompt_focus_pending: false,
             show_quit_confirm: false,
             confirmed_quit: false,

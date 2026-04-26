@@ -6,6 +6,7 @@
 
 use std::time::Duration;
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -93,12 +94,32 @@ pub enum GeminiError {
     InvalidResponse(String),
 }
 
+/// One image attached to the user turn. Sent to Gemini as an `inline_data`
+/// part alongside the text prompt — vision-capable models (the Pro tier and
+/// the multimodal Flash variants) interpret these as visual context. Used by
+/// the Studio "New from Prompt" dialog to support image-to-3D generation.
+#[derive(Debug, Clone)]
+pub struct ImageInput {
+    /// MIME type, e.g. `"image/png"` or `"image/jpeg"`. Must start with
+    /// `image/` — Gemini rejects anything else on a vision turn.
+    pub mime_type: String,
+    /// Raw bytes of the image. Encoded as base64 in the request body; not
+    /// kept in memory after [`GeminiClient::generate`] returns.
+    pub data: Vec<u8>,
+}
+
 /// One full request to `generateContent`.
 #[derive(Debug, Clone)]
 pub struct GenerateConfig {
     pub model: String,
-    /// Single-shot prompt from the user (e.g. `"a wooden stool"`).
+    /// Single-shot prompt from the user (e.g. `"a wooden stool"`). May be
+    /// empty when [`Self::user_images`] is non-empty — the image alone is a
+    /// valid input on vision-capable models.
     pub user_prompt: String,
+    /// Optional images attached to the user turn (image-to-3D). Encoded as
+    /// `inline_data` parts on every call, including repair iterations, so the
+    /// model retains the visual reference while it fixes validation errors.
+    pub user_images: Vec<ImageInput>,
     /// Prior turns (e.g. first attempt's DSL + diagnostic feedback for repair).
     pub history: Vec<Turn>,
     /// System instruction (grammar + stdlib). See [`crate::prompt`].
@@ -128,6 +149,7 @@ impl GenerateConfig {
         Self {
             model: DEFAULT_MODEL.to_string(),
             user_prompt: user_prompt.into(),
+            user_images: Vec::new(),
             history: Vec::new(),
             system_instruction: None,
             cached_content: None,
@@ -356,9 +378,24 @@ fn build_request(cfg: &GenerateConfig) -> serde_json::Value {
             "parts": [{ "text": turn.text }],
         }));
     }
+
+    // Build the user turn's parts list: optional images first (Gemini's docs
+    // recommend image-before-text ordering for vision prompts), then the text.
+    // The text part is always present even when empty, so the request is
+    // well-formed when only images were supplied.
+    let mut user_parts: Vec<serde_json::Value> = Vec::with_capacity(cfg.user_images.len() + 1);
+    for img in &cfg.user_images {
+        user_parts.push(serde_json::json!({
+            "inline_data": {
+                "mime_type": img.mime_type,
+                "data": STANDARD.encode(&img.data),
+            }
+        }));
+    }
+    user_parts.push(serde_json::json!({ "text": cfg.user_prompt }));
     contents.push(serde_json::json!({
         "role": "user",
-        "parts": [{ "text": cfg.user_prompt }],
+        "parts": user_parts,
     }));
 
     let mut req = serde_json::json!({ "contents": contents });

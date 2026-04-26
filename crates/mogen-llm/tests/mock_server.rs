@@ -6,7 +6,7 @@ use std::io::Read;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use mogen_llm::gemini::{GeminiClient, GenerateConfig};
+use mogen_llm::gemini::{GeminiClient, GenerateConfig, ImageInput};
 use mogen_llm::{generate_with_repair, RepairConfig};
 
 struct MockServer {
@@ -166,6 +166,36 @@ fn fenced_markdown_output_is_stripped_before_validation() {
 
     assert!(outcome.is_ok(), "diagnostics: {:?}", outcome.diagnostics);
     assert!(!outcome.dsl.contains("```"));
+}
+
+#[test]
+fn user_images_become_inline_data_parts_on_the_user_turn() {
+    // Image-to-3D path: an attached image should serialize as a sibling
+    // `inline_data` part on the user turn, base64-encoded, alongside the text
+    // prompt. The legacy text-only request shape is preserved when no image
+    // is attached (covered by the other tests in this file).
+    let dsl = "scene { box \"b\" (size=[1,1,1]) }";
+    let server = MockServer::start(vec![&candidate_body(dsl)]);
+    let client = GeminiClient::with_base_url("test-key", server.base_url());
+
+    let mut cfg = GenerateConfig::new("a box");
+    cfg.user_images.push(ImageInput {
+        mime_type: "image/png".into(),
+        // Three bytes the test can spot once base64-encoded ("AQID").
+        data: vec![0x01, 0x02, 0x03],
+    });
+    let _ = generate_with_repair(&client, cfg, &RepairConfig { max_iters: 0, on_iteration: None })
+        .expect("request ok");
+
+    let reqs = server.requests.lock().unwrap();
+    assert_eq!(reqs.len(), 1);
+    let body: serde_json::Value = serde_json::from_str(&reqs[0]).expect("valid JSON");
+    let parts = body["contents"][0]["parts"].as_array().expect("parts array");
+    // Image part comes first, text part second — vision-prompt convention.
+    assert_eq!(parts.len(), 2, "got: {body}");
+    assert_eq!(parts[0]["inline_data"]["mime_type"], "image/png");
+    assert_eq!(parts[0]["inline_data"]["data"], "AQID");
+    assert_eq!(parts[1]["text"], "a box");
 }
 
 #[test]

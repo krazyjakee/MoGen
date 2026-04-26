@@ -497,6 +497,25 @@ impl Default for TextureUiConfig {
     }
 }
 
+/// One image attached to a Generate prompt (image-to-3D). The `path` is kept
+/// only for display in the dialog and the `// prompt:` header; the bytes are
+/// what flow to Gemini as `inline_data`. `thumbnail` is loaded once when the
+/// user picks the file so the dialog can render a preview without re-decoding
+/// every frame; it is dropped before the worker thread starts.
+#[derive(Clone)]
+pub(super) struct GenImageInput {
+    pub(super) path: PathBuf,
+    pub(super) mime_type: String,
+    pub(super) data: Vec<u8>,
+    pub(super) thumbnail: Option<egui::TextureHandle>,
+}
+
+/// Hard cap on image bytes (raw, pre-base64). Gemini accepts up to 20 MB
+/// inline, but base64 expands by ~33%; capping the source at 8 MB keeps the
+/// encoded body well under the limit and avoids surprise failures on phone
+/// photos. The dialog rejects files larger than this with a status message.
+pub(super) const MAX_GEN_IMAGE_BYTES: usize = 8 * 1024 * 1024;
+
 /// Transient state for the editor autocomplete popup. One instance lives on
 /// the app since only one editor is visible at a time — switching tabs or
 /// losing focus closes the popup, so there's no need to persist per-file.
@@ -583,6 +602,11 @@ pub(super) struct FileState {
     pub(super) last_watch_check: Option<Instant>,
 
     pub(super) gen_prompt: String,
+    /// Optional image attached to the generate prompt (image-to-3D). Carried
+    /// on the FileState — not just on the dialog — so the Retry button can
+    /// re-issue the same call after a transient failure without forcing the
+    /// user to re-pick the file.
+    pub(super) gen_image: Option<GenImageInput>,
     pub(super) mod_prompt: String,
     pub(super) anim_prompt: String,
     pub(super) texture_cfg: TextureUiConfig,
@@ -660,6 +684,7 @@ impl FileState {
             disk_mtime: None,
             last_watch_check: None,
             gen_prompt: String::new(),
+            gen_image: None,
             mod_prompt: String::new(),
             anim_prompt: String::new(),
             texture_cfg: TextureUiConfig::default(),
@@ -700,6 +725,7 @@ impl FileState {
             disk_mtime,
             last_watch_check: None,
             gen_prompt: String::new(),
+            gen_image: None,
             mod_prompt: String::new(),
             anim_prompt: String::new(),
             texture_cfg: TextureUiConfig::default(),
