@@ -16,6 +16,7 @@ mod build;
 mod compile;
 mod error_class;
 mod files;
+mod indent;
 mod llm;
 mod pricing;
 mod text_menu;
@@ -24,6 +25,7 @@ mod ui_dialogs;
 mod ui_llm;
 mod ui_menu;
 mod ui_panels;
+mod undo;
 mod util;
 
 use self::types::{
@@ -46,6 +48,9 @@ pub struct MogenStudioApp {
     /// generator only surfaces here — it is no longer part of the inspector.
     show_new_prompt: bool,
     new_prompt_draft: String,
+    /// Latched when the modal is opened so the dialog can grab focus on its
+    /// first frame; cleared after the focus request fires.
+    new_prompt_focus_pending: bool,
 
     /// "Unsaved changes" modal shown when a window-close is requested while
     /// any buffer is dirty. `confirmed_quit` latches once the user picks
@@ -143,6 +148,7 @@ impl MogenStudioApp {
             options_api_key_draft,
             show_new_prompt: false,
             new_prompt_draft: String::new(),
+            new_prompt_focus_pending: false,
             show_quit_confirm: false,
             confirmed_quit: false,
             pending_close_index: None,
@@ -161,23 +167,51 @@ impl MogenStudioApp {
             autocomplete: AutocompleteState::default(),
         };
 
-        // Restore the last opened MOG when it still exists. Otherwise leave
-        // the pristine untitled buffer in place.
-        let last = app
-            .settings
-            .recent_files
-            .iter()
-            .map(PathBuf::from)
-            .find(|p| p.is_file())
-            .or_else(|| {
-                app.settings
-                    .last_opened
-                    .as_ref()
-                    .map(PathBuf::from)
-                    .filter(|p| p.is_file())
-            });
-        if let Some(p) = last {
-            app.open_path(&p);
+        // Restore the prior session's tab strip. `open_tabs` holds every
+        // titled tab in order; `last_opened` names which one to activate.
+        // open_path repeatedly clobbers `recent_files` (each open pushes the
+        // path to the front), so snapshot it and write the original list back
+        // once the strip is rebuilt.
+        let saved_open_tabs = app.settings.open_tabs.clone();
+        let saved_active = app.settings.last_opened.clone();
+        let saved_recent = app.settings.recent_files.clone();
+
+        if !saved_open_tabs.is_empty() {
+            let mut active_idx: Option<usize> = None;
+            for path_str in &saved_open_tabs {
+                let p = PathBuf::from(path_str);
+                if !p.is_file() {
+                    continue;
+                }
+                app.open_path(&p);
+                if Some(path_str.clone()) == saved_active {
+                    active_idx = app.file_index_by_path(&p);
+                }
+            }
+            if let Some(i) = active_idx {
+                app.activate(i);
+            }
+            app.settings.recent_files = saved_recent;
+            let _ = app.settings.save();
+        } else {
+            // Legacy single-file restore for users with settings written
+            // before the open-tabs field existed.
+            let last = app
+                .settings
+                .recent_files
+                .iter()
+                .map(PathBuf::from)
+                .find(|p| p.is_file())
+                .or_else(|| {
+                    app.settings
+                        .last_opened
+                        .as_ref()
+                        .map(PathBuf::from)
+                        .filter(|p| p.is_file())
+                });
+            if let Some(p) = last {
+                app.open_path(&p);
+            }
         }
 
         app
@@ -260,27 +294,42 @@ impl eframe::App for MogenStudioApp {
         // Editor and viewer sit side-by-side: editor on the left (resizable),
         // viewer fills whatever remains in the central panel. The diagnostics
         // footer is nested inside the editor panel so validator output sits
-        // directly under the code it refers to.
+        // directly under the code it refers to — but only appears when the
+        // validator has something actionable to report (errors/warnings).
         egui::SidePanel::left("editor_panel")
             .resizable(true)
             .default_width(520.0)
             .min_width(200.0)
             .show(ctx, |ui| {
-                egui::TopBottomPanel::bottom("diagnostics")
-                    .resizable(true)
-                    .default_height(120.0)
-                    .min_height(28.0)
-                    .show_inside(ui, |ui| {
-                        egui::CollapsingHeader::new(self.diagnostics_header_label())
-                            .id_salt("footer_diagnostics")
-                            .default_open(true)
-                            .show(ui, |ui| {
-                                egui::ScrollArea::vertical()
-                                    .auto_shrink([false, true])
-                                    .max_height(200.0)
-                                    .show(ui, |ui| self.ui_diagnostics(ui));
-                            });
-                    });
+                // Force the SidePanel's content ui to claim its full available
+                // width. Without this, neither the nested CentralPanel below
+                // nor the editor's ScrollArea propagates its allocation back
+                // to the panel ui's `min_rect` — so `PanelState.rect.width`
+                // stores `min_width` (200) regardless of how wide the user
+                // dragged the boundary, and on mouse-up the panel snaps back
+                // and the 3D viewport never resizes. Previously the
+                // always-shown diagnostics `TopBottomPanel` did this work via
+                // `ui.expand_to_include_rect` (egui panel.rs:792); now that
+                // the diagnostics panel is conditional we have to ensure it
+                // ourselves on the no-diagnostics path.
+                ui.set_min_width(ui.max_rect().width());
+                if self.has_blocking_diagnostics() {
+                    egui::TopBottomPanel::bottom("diagnostics")
+                        .resizable(true)
+                        .default_height(120.0)
+                        .min_height(28.0)
+                        .show_inside(ui, |ui| {
+                            egui::CollapsingHeader::new(self.diagnostics_header_label())
+                                .id_salt("footer_diagnostics")
+                                .default_open(true)
+                                .show(ui, |ui| {
+                                    egui::ScrollArea::vertical()
+                                        .auto_shrink([false, true])
+                                        .max_height(200.0)
+                                        .show(ui, |ui| self.ui_diagnostics(ui));
+                                });
+                        });
+                }
                 egui::CentralPanel::default().show_inside(ui, |ui| self.ui_editor(ui));
             });
 

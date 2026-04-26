@@ -1,7 +1,7 @@
     use super::flatten::{flatten, FLOATS_PER_VERTEX};
     use super::state::{
-        commit_gizmo_drag, snap_rotate_delta, snap_scale_factor, snap_translate_delta, GizmoDrag,
-        PendingEdit, ViewerState, SCALE_SNAP_STEP,
+        apply_gizmo_drag, commit_gizmo_drag, snap_rotate_delta, snap_scale_factor,
+        snap_translate_delta, GizmoDrag, PendingEdit, ViewerState, SCALE_SNAP_STEP,
     };
     use glam::{Mat4, Quat, Vec3};
     use mogen_core::{AlphaMode, Material, Mesh, NodeId, SceneGraph, Transform};
@@ -181,6 +181,27 @@
     }
 
     #[test]
+    fn flatten_applies_material_uv_scale_to_vertex_stream() {
+        // The GLB exporter multiplies mesh UVs by `material.uv_scale` at write
+        // time; the viewer must do the same so the live preview tiles textures
+        // identically to the exported asset.
+        let mut scene = SceneGraph::new();
+        let mut mat = material_with_texture("tiled", Some("a.png"));
+        mat.uv_scale = [3.0, 5.0];
+        let mid = scene.add_material(mat);
+        let id = scene.add_root("n", "primitive", Transform::IDENTITY);
+        scene.set_mesh(id, quad_mesh());
+        scene.set_material(id, mid);
+
+        let mesh = flatten(&scene, None);
+        let stride = FLOATS_PER_VERTEX;
+        let last = mesh.vertices.len() - stride;
+        // quad_mesh's last vertex has raw uv [0, 1]; scaled by [3, 5] = [0, 5].
+        assert!((mesh.vertices[last + 6] - 0.0).abs() < 1e-6);
+        assert!((mesh.vertices[last + 7] - 5.0).abs() < 1e-6);
+    }
+
+    #[test]
     fn flatten_propagates_pbr_scalars_and_extra_texture_slots() {
         let mut scene = SceneGraph::new();
         let mut mat = Material::new("metal");
@@ -292,6 +313,7 @@
             mode: crate::gizmo::GizmoMode::Translate,
             start_transform: Transform::IDENTITY,
             start_origin: Vec3::ZERO,
+            parent_start_world: Mat4::IDENTITY,
             start_ray_origin: Vec3::ZERO,
             start_ray_dir: Vec3::Z,
             delta: 0.0,
@@ -312,6 +334,7 @@
                 Vec3::ONE,
             ),
             start_origin: Vec3::ZERO,
+            parent_start_world: Mat4::IDENTITY,
             start_ray_origin: Vec3::ZERO,
             start_ray_dir: Vec3::Z,
             delta: 0.75,
@@ -340,6 +363,7 @@
             mode: crate::gizmo::GizmoMode::Rotate,
             start_transform: Transform::IDENTITY,
             start_origin: Vec3::ZERO,
+            parent_start_world: Mat4::IDENTITY,
             start_ray_origin: Vec3::ZERO,
             start_ray_dir: Vec3::Z,
             delta: 45.0_f32.to_radians(),
@@ -357,4 +381,111 @@
         assert_eq!(attr, "rot");
         assert_eq!(value, "[0, 45, 0]");
         assert_eq!(delete, vec!["rx", "ry", "rz"]);
+    }
+
+    #[test]
+    fn translate_drag_pulls_world_delta_through_rotated_parent() {
+        // Parent rotated +90° about Y. World +X drag of 1 unit must land
+        // as +Z in the child's local translation so the post-compile world
+        // position moves along world +X (not the parent's tilted X).
+        let parent_rot = Quat::from_axis_angle(Vec3::Y, std::f32::consts::FRAC_PI_2);
+        let parent_world = Mat4::from_quat(parent_rot);
+        let mut st = ViewerState::default();
+        st.gizmo_drag = Some(GizmoDrag {
+            node: NodeId(1),
+            axis: crate::gizmo::Axis::X,
+            mode: crate::gizmo::GizmoMode::Translate,
+            start_transform: Transform::IDENTITY,
+            start_origin: Vec3::ZERO,
+            parent_start_world: parent_world,
+            start_ray_origin: Vec3::ZERO,
+            start_ray_dir: Vec3::Z,
+            delta: 1.0,
+        });
+        let Some(PendingEdit::SetAttrCanonical { value, .. }) = commit_gizmo_drag(&mut st) else {
+            panic!("expected SetAttrCanonical");
+        };
+        assert_eq!(value, "[0, 0, 1]", "got {value}");
+    }
+
+    #[test]
+    fn translate_drag_compensates_for_parent_scale() {
+        // Parent scales 2x along Y. A 1-unit world-Y drag must shrink to
+        // 0.5 in local space so the post-compile world translation is
+        // exactly +1 unit, not +2.
+        let parent_world = Mat4::from_scale(Vec3::new(1.0, 2.0, 1.0));
+        let mut st = ViewerState::default();
+        st.gizmo_drag = Some(GizmoDrag {
+            node: NodeId(1),
+            axis: crate::gizmo::Axis::Y,
+            mode: crate::gizmo::GizmoMode::Translate,
+            start_transform: Transform::IDENTITY,
+            start_origin: Vec3::ZERO,
+            parent_start_world: parent_world,
+            start_ray_origin: Vec3::ZERO,
+            start_ray_dir: Vec3::Z,
+            delta: 1.0,
+        });
+        let Some(PendingEdit::SetAttrCanonical { value, .. }) = commit_gizmo_drag(&mut st) else {
+            panic!("expected SetAttrCanonical");
+        };
+        assert_eq!(value, "[0, 0.5, 0]", "got {value}");
+    }
+
+    #[test]
+    fn rotate_drag_conjugates_through_rotated_parent() {
+        // Parent rotated +90° about Y, child starts identity.
+        let parent_rot = Quat::from_axis_angle(Vec3::Y, std::f32::consts::FRAC_PI_2);
+        let parent_world = Mat4::from_quat(parent_rot);
+
+        // Drag the world-Y rotation handle 30°. Since Y is the parent's
+        // invariant axis, the conjugation is the identity and the local
+        // rotation lands as a pure +30° about Y.
+        let mut st = ViewerState::default();
+        st.gizmo_drag = Some(GizmoDrag {
+            node: NodeId(1),
+            axis: crate::gizmo::Axis::Y,
+            mode: crate::gizmo::GizmoMode::Rotate,
+            start_transform: Transform::IDENTITY,
+            start_origin: Vec3::ZERO,
+            parent_start_world: parent_world,
+            start_ray_origin: Vec3::ZERO,
+            start_ray_dir: Vec3::Z,
+            delta: 30.0_f32.to_radians(),
+        });
+        let Some(PendingEdit::SetAttrCanonical { value, .. }) = commit_gizmo_drag(&mut st) else {
+            panic!("expected SetAttrCanonical");
+        };
+        assert_eq!(value, "[0, 30, 0]", "got {value}");
+
+        // Now drag the world-X rotation handle 30° under the same parent.
+        // The local-space writeback won't be a pure +X rotation, but
+        // recomposing parent_rot * local should equal a world-space +30°
+        // about world +X.
+        let mut st = ViewerState::default();
+        st.gizmo_drag = Some(GizmoDrag {
+            node: NodeId(1),
+            axis: crate::gizmo::Axis::X,
+            mode: crate::gizmo::GizmoMode::Rotate,
+            start_transform: Transform::IDENTITY,
+            start_origin: Vec3::ZERO,
+            parent_start_world: parent_world,
+            start_ray_origin: Vec3::ZERO,
+            start_ray_dir: Vec3::Z,
+            delta: 30.0_f32.to_radians(),
+        });
+        let local = apply_gizmo_drag(st.gizmo_drag.as_ref().unwrap());
+        let world_rot = parent_rot * local.rotation;
+        // Recover the world-space rotation the drag added: the node's
+        // world rotation before the drag was just parent_rot (start
+        // transform was identity), so right-multiplying by its inverse
+        // peels that back off and what's left should be the +30° about
+        // world X the user grabbed.
+        let added_world = world_rot * parent_rot.inverse();
+        let expected = Quat::from_axis_angle(Vec3::X, 30.0_f32.to_radians());
+        let dot = added_world.dot(expected).abs();
+        assert!(
+            dot > 0.9999,
+            "world-space rotation added by the drag should equal +30° about world X; got dot={dot}"
+        );
     }

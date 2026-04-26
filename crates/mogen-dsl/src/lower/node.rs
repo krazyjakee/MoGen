@@ -5,6 +5,7 @@ use mogen_core::{Connector, NodeId, SceneGraph};
 
 use crate::ast::{Node, Value};
 
+use super::branch::expand_branch;
 use super::connector::{add_aabb_connectors_if_missing, add_connector, default_connectors};
 use super::csg::lower_csg;
 use super::helpers::{
@@ -29,6 +30,9 @@ pub(super) fn lower_into(
     }
     if node.kind == "grid" {
         return expand_grid(node, parent, graph);
+    }
+    if node.kind == "branch" {
+        return expand_branch(node, parent, graph);
     }
 
     let transform = transform_from_attrs(node);

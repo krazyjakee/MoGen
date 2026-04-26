@@ -10,8 +10,9 @@ pub struct OrbitCamera {
     /// from the mesh's bounding sphere on every `fit()` call.
     pub fit_distance: f32,
     /// User-controlled multiplier on top of `fit_distance`. 1.0 = auto-fit;
-    /// scroll tweaks this. Reset by `Viewer::reset_view` when switching files
-    /// so different models render at the same apparent size.
+    /// scroll tweaks this. `Viewer::set_scene` resets it to 1.0 when the
+    /// caller asks for a refit so different models render at the same
+    /// apparent size.
     pub zoom: f32,
     pub target: Vec3,
 }

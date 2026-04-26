@@ -80,11 +80,13 @@ impl Palette {
 }
 
 /// Build a styled `LayoutJob` for `src` using the monospace font at `font_id`.
-/// `wrap_width` is forwarded from the TextEdit layouter so the galley wraps
-/// the same way the editor expects.
-pub fn highlight(src: &str, font_id: FontId, palette: Palette, wrap_width: f32) -> LayoutJob {
+/// Wrapping is intentionally disabled so one source line is one visual row —
+/// the gutter renders one number per source line, and a wrapped editor would
+/// drift the numbers out of alignment. Long lines scroll horizontally in the
+/// surrounding `ScrollArea` instead.
+pub fn highlight(src: &str, font_id: FontId, palette: Palette) -> LayoutJob {
     let mut job = LayoutJob::default();
-    job.wrap.max_width = wrap_width;
+    job.wrap.max_width = f32::INFINITY;
 
     let bytes = src.as_bytes();
     let mut i = 0;
@@ -276,7 +278,7 @@ mod tests {
 
     #[test]
     fn highlights_keyword_over_identifier() {
-        let job = highlight("box foo", font(), palette(), f32::INFINITY);
+        let job = highlight("box foo", font(), palette());
         let secs = sections_text(&job);
         assert_eq!(secs[0].0, "box");
         assert_eq!(secs[0].1, palette().keyword);
@@ -287,7 +289,7 @@ mod tests {
 
     #[test]
     fn highlights_comment_to_end_of_line() {
-        let job = highlight("// hi\nbox", font(), palette(), f32::INFINITY);
+        let job = highlight("// hi\nbox", font(), palette());
         let secs = sections_text(&job);
         assert_eq!(secs[0].0, "// hi");
         assert_eq!(secs[0].1, palette().comment);
@@ -295,7 +297,7 @@ mod tests {
 
     #[test]
     fn highlights_string_literal() {
-        let job = highlight("box \"hello\"", font(), palette(), f32::INFINITY);
+        let job = highlight("box \"hello\"", font(), palette());
         let secs = sections_text(&job);
         let s = secs.iter().find(|(t, _)| t == "\"hello\"").expect("string section");
         assert_eq!(s.1, palette().string);
@@ -303,7 +305,7 @@ mod tests {
 
     #[test]
     fn highlights_numbers() {
-        let job = highlight("x=1.5", font(), palette(), f32::INFINITY);
+        let job = highlight("x=1.5", font(), palette());
         let secs = sections_text(&job);
         let n = secs.iter().find(|(t, _)| t == "1.5").expect("number section");
         assert_eq!(n.1, palette().number);
@@ -311,7 +313,7 @@ mod tests {
 
     #[test]
     fn highlights_param_ref() {
-        let job = highlight("$size", font(), palette(), f32::INFINITY);
+        let job = highlight("$size", font(), palette());
         let secs = sections_text(&job);
         assert_eq!(secs[0].0, "$size");
         assert_eq!(secs[0].1, palette().param_ref);
@@ -320,7 +322,7 @@ mod tests {
     #[test]
     fn tolerates_unclosed_string() {
         // Unterminated strings mid-edit must not consume the rest of the buffer.
-        let job = highlight("\"oops\nbox", font(), palette(), f32::INFINITY);
+        let job = highlight("\"oops\nbox", font(), palette());
         let secs = sections_text(&job);
         assert_eq!(secs[0].0, "\"oops");
         assert_eq!(secs[0].1, palette().string);
@@ -365,7 +367,7 @@ mod tests {
     #[test]
     fn handles_utf8_punctuation() {
         // A smart quote used to panic the byte-at-a-time punctuation branch.
-        let job = highlight("box \u{201C}x\u{201D}", font(), palette(), f32::INFINITY);
+        let job = highlight("box \u{201C}x\u{201D}", font(), palette());
         // Should produce sections without panicking and recover `box` as a keyword.
         let secs = sections_text(&job);
         assert_eq!(secs[0].0, "box");

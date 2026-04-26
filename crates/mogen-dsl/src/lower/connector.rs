@@ -168,6 +168,23 @@ pub(super) fn default_connectors(node: &Node) -> Vec<(&'static str, Vec3, Vec3)>
                 out.push(("top",    Vec3::ZERO,  Vec3::Y));
             }
         }
+        "leaf_card" => {
+            // Stem at origin (the leaf grows upward from y=0); tip at the top.
+            let s = node
+                .attr("size")
+                .and_then(|v| match v {
+                    Value::Number(n) => Some([*n, *n]),
+                    Value::Vec3(v) => Some([v[0], v[1]]),
+                    Value::List(v) if v.len() == 2 => Some([v[0], v[1]]),
+                    _ => None,
+                })
+                .unwrap_or([0.4, 0.4]);
+            let h = node.attr_number("h").unwrap_or(s[1]);
+            out.push(("stem", Vec3::ZERO, -Vec3::Y));
+            out.push(("base", Vec3::ZERO, -Vec3::Y));
+            out.push(("tip",  Vec3::new(0.0, h, 0.0), Vec3::Y));
+            out.push(("top",  Vec3::new(0.0, h, 0.0), Vec3::Y));
+        }
         "spline_tube" => {
             // `start` at the first control point (facing -tangent), `end` at the last.
             let points = node.attr_list_vec3("points").unwrap_or_default();
@@ -197,7 +214,8 @@ pub(super) fn add_connector(node: &Node, parent: NodeId, graph: &mut SceneGraph)
         _ => String::new(),
     };
     let radius = node.attr_number("radius");
-    let c = Connector::from_at_dir(name.clone(), at, dir, tag, radius);
+    let mut c = Connector::from_at_dir(name.clone(), at, dir, tag, radius);
+    c.source_span = Some(node.span);
     let connectors = &mut graph.nodes[parent.0 as usize].connectors;
     connectors.retain(|existing| existing.name != name);
     connectors.push(c);

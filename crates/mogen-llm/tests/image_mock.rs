@@ -121,7 +121,7 @@ fn decodes_inline_png_bytes() {
     let client = GeminiClient::with_base_url("k", server.base_url());
 
     let img = client
-        .generate_image("gemini-2.5-flash-image", "seamless albedo of oak")
+        .generate_image("gemini-2.5-flash-image", "seamless albedo of oak", None)
         .expect("ok");
 
     assert_eq!(img.png_bytes, bytes);
@@ -142,7 +142,7 @@ fn rejects_non_image_mime() {
     let server = MockServer::start(image_response("text/plain", b"hello"), 200);
     let client = GeminiClient::with_base_url("k", server.base_url());
     let err = client
-        .generate_image("m", "p")
+        .generate_image("m", "p", None)
         .expect_err("should reject non-image mime");
     assert!(err.to_string().contains("text/plain"), "got: {err}");
 }
@@ -152,7 +152,7 @@ fn empty_response_surfaces_error() {
     let empty = serde_json::json!({ "candidates": [] }).to_string();
     let server = MockServer::start(empty, 200);
     let client = GeminiClient::with_base_url("k", server.base_url());
-    let err = client.generate_image("m", "p").expect_err("empty");
+    let err = client.generate_image("m", "p", None).expect_err("empty");
     assert!(err.to_string().contains("empty response"), "got: {err}");
 }
 
@@ -168,7 +168,7 @@ fn filtered_candidate_surfaces_finish_reason() {
     .to_string();
     let server = MockServer::start(body, 200);
     let client = GeminiClient::with_base_url("k", server.base_url());
-    let err = client.generate_image("m", "p").expect_err("filtered");
+    let err = client.generate_image("m", "p", None).expect_err("filtered");
     let s = err.to_string();
     assert!(s.contains("IMAGE_SAFETY"), "got: {s}");
     assert!(s.contains("finishReason"), "got: {s}");
@@ -183,7 +183,7 @@ fn recitation_retry_succeeds_after_first_failure() {
     ]);
     let client = GeminiClient::with_base_url("k", server.base_url());
 
-    let img = generate_with_recitation_retry(&client, "m", "albedo of oak", 3)
+    let img = generate_with_recitation_retry(&client, "m", "albedo of oak", 3, None)
         .expect("retry should recover");
 
     assert_eq!(img.png_bytes, bytes);
@@ -205,7 +205,7 @@ fn recitation_retry_gives_up_after_max_attempts() {
     ]);
     let client = GeminiClient::with_base_url("k", server.base_url());
 
-    let err = generate_with_recitation_retry(&client, "m", "p", 2)
+    let err = generate_with_recitation_retry(&client, "m", "p", 2, None)
         .expect_err("should give up");
     let s = err.to_string();
     assert!(s.contains("IMAGE_RECITATION"), "got: {s}");
@@ -218,7 +218,7 @@ fn api_error_status_propagates() {
     let body = r#"{"error":{"message":"quota exceeded"}}"#.to_string();
     let server = MockServer::start(body, 429);
     let client = GeminiClient::with_base_url("k", server.base_url());
-    let err = client.generate_image("m", "p").expect_err("429");
+    let err = client.generate_image("m", "p", None).expect_err("429");
     let s = err.to_string();
     assert!(s.contains("429"), "got: {s}");
     assert!(s.contains("quota exceeded"), "got: {s}");

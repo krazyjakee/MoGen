@@ -50,12 +50,38 @@ impl MogenStudioApp {
                     let i = self.files.len() - 1;
                     self.activate(i);
                 }
-                self.viewer.frame_view();
                 self.remember_last_opened();
+                self.persist_open_tabs();
             }
             Err(e) => {
                 self.active_mut().status = format!("open failed: {e}");
             }
+        }
+    }
+
+    /// Snapshot the current tab strip into `settings.open_tabs` (titled files
+    /// only, in order) and the active tab's path into `last_opened`, then save
+    /// if either changed. Saves are best-effort — a failed write is ignored
+    /// since this is convenience persistence, not load-bearing state.
+    pub(super) fn persist_open_tabs(&mut self) {
+        let paths: Vec<String> = self
+            .files
+            .iter()
+            .filter_map(|f| f.path.as_ref().map(|p| p.display().to_string()))
+            .collect();
+        let active_path = self
+            .files
+            .get(self.active)
+            .and_then(|f| f.path.as_ref())
+            .map(|p| p.display().to_string());
+        let tabs_changed = self.settings.open_tabs != paths;
+        let active_changed = active_path.is_some() && self.settings.last_opened != active_path;
+        self.settings.open_tabs = paths;
+        if active_path.is_some() {
+            self.settings.last_opened = active_path;
+        }
+        if tabs_changed || active_changed {
+            let _ = self.settings.save();
         }
     }
 
@@ -109,6 +135,7 @@ impl MogenStudioApp {
         if let Some(snap) = self.files[self.active].camera {
             self.viewer.restore_camera(snap);
         }
+        self.persist_open_tabs();
     }
 
     pub(super) fn refresh_viewer_from_active(&mut self) {
@@ -118,7 +145,9 @@ impl MogenStudioApp {
         match &self.files[i].last_result {
             Some(r) if matches!(r.stage, Stage::Ok) => {
                 if let Some(scene) = &r.scene {
-                    self.viewer.set_scene(scene, base_dir);
+                    let fit = self.files[i].first_render;
+                    self.viewer.set_scene(scene, base_dir, fit);
+                    self.files[i].first_render = false;
                     return;
                 }
             }
@@ -150,6 +179,7 @@ impl MogenStudioApp {
             self.files[0] = FileState::untitled();
             self.active = 0;
             self.viewer.clear();
+            self.persist_open_tabs();
             return;
         }
         self.files.remove(i);
@@ -168,6 +198,7 @@ impl MogenStudioApp {
         } else if i < self.active {
             self.active -= 1;
         }
+        self.persist_open_tabs();
     }
 
     pub(super) fn save_to(&mut self, path: &Path) {
@@ -191,6 +222,9 @@ impl MogenStudioApp {
         if i == self.active {
             self.remember_last_opened();
         }
+        // Always persist — a save on any tab can promote an untitled buffer
+        // into a titled one, which mutates the open-tabs list.
+        self.persist_open_tabs();
     }
 
     pub(super) fn save(&mut self) {

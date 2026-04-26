@@ -5,13 +5,12 @@ use std::path::Path;
 use anyhow::{anyhow, bail, Context, Result};
 use image::codecs::png::{CompressionType, FilterType as PngFilterType, PngEncoder};
 use image::imageops::FilterType as ResampleFilter;
-use image::{ExtendedColorType, ImageEncoder, ImageFormat};
+use image::{DynamicImage, ExtendedColorType, ImageEncoder, ImageFormat, Rgba, RgbaImage};
 use mogen_core::Span;
 use mogen_dsl::ast::{Node, Value};
 
 use crate::gemini::{GeminiClient, GeminiError};
 use crate::image::GeneratedImage;
-use crate::image_cache::{default_image_cache_dir, ImageCache};
 use crate::pbr_maps::{derive_pbr_maps, PbrMapOptions};
 
 use super::plan::{Plan, PlanAction, SlotKind, TexturesArgs};
@@ -39,12 +38,23 @@ pub struct TextureProgress {
 pub enum TextureStage {
     /// Calling the image model for the albedo.
     Generating,
-    /// Albedo was served from the on-disk cache instead of a fresh API call.
-    CacheHit,
+    /// A PNG already existed at the planned path; we're splicing the attr
+    /// into the source without burning API credit or re-deriving anything.
+    Existing,
     /// Deriving the PBR companion maps (normal/MR/AO) locally.
     Deriving,
     /// All slots for this material wrote successfully.
     Done,
+}
+
+/// True when the plan represents an action that touches the source or disk
+/// (everything except `Skip`). `UseExisting` counts because it still splices
+/// the `*_texture` attribute into the .mog even though it bypasses the API.
+fn plan_has_work(action: &PlanAction) -> bool {
+    matches!(
+        action,
+        PlanAction::Generate | PlanAction::Derive | PlanAction::UseExisting
+    )
 }
 
 fn pbr_opts(_args: &TexturesArgs, material: &Node) -> PbrMapOptions {
@@ -74,10 +84,10 @@ fn pbr_opts(_args: &TexturesArgs, material: &Node) -> PbrMapOptions {
     opts
 }
 
-/// Execute the plan: generate/cache-hit each PNG, write it into the `.mog`
-/// directory's texture folder, and return the [`Edit`]s the splicer should
-/// apply. `progress_cb`, when supplied, is invoked once per stage transition
-/// of each material (see [`TextureProgress`]).
+/// Execute the plan: generate each PNG, write it into the `.mog` directory's
+/// texture folder, and return the [`Edit`]s the splicer should apply.
+/// `progress_cb`, when supplied, is invoked once per stage transition of each
+/// material (see [`TextureProgress`]).
 pub fn run_plan(
     client: Option<&GeminiClient>,
     model: &str,
@@ -85,7 +95,6 @@ pub fn run_plan(
     ast: &[Node],
     plans: &[Plan],
     base_dir: &Path,
-    cache: Option<&ImageCache>,
     progress_cb: Option<&dyn Fn(TextureProgress)>,
 ) -> Result<Vec<Edit>> {
     // Group plans by (span, material) so we process each material's slots
@@ -112,14 +121,7 @@ pub fn run_plan(
     // filter the GUI uses to decide whether to bail early).
     let total_materials: u32 = by_material
         .iter()
-        .filter(|(_, _, ps)| {
-            ps.iter().any(|p| {
-                matches!(
-                    p.action,
-                    PlanAction::Generate | PlanAction::CacheHit | PlanAction::Derive
-                )
-            })
-        })
+        .filter(|(_, _, ps)| ps.iter().any(|p| plan_has_work(&p.action)))
         .count() as u32;
 
     let mut edits = Vec::new();
@@ -128,12 +130,7 @@ pub fn run_plan(
     for (mat_name, _span, mat_plans) in by_material {
         // Skip materials where every slot is a no-op — no need to surface them
         // in progress, they just clutter the status line.
-        let has_work = mat_plans.iter().any(|p| {
-            matches!(
-                p.action,
-                PlanAction::Generate | PlanAction::CacheHit | PlanAction::Derive
-            )
-        });
+        let has_work = mat_plans.iter().any(|p| plan_has_work(&p.action));
         if !has_work {
             continue;
         }
@@ -154,16 +151,39 @@ pub fn run_plan(
 
         if let Some(p) = albedo_plan {
             match &p.action {
-                PlanAction::Generate | PlanAction::CacheHit => {
-                    let stage = if matches!(p.action, PlanAction::CacheHit) {
-                        TextureStage::CacheHit
+                PlanAction::Generate => {
+                    emit(TextureStage::Generating);
+                    let bytes = resolve_albedo_bytes(client, model, p, args.texture_size)?;
+                    // Mask-mode materials want a foliage cutout: chroma-key
+                    // the pure-black backdrop into alpha=0 so the leaf
+                    // silhouette becomes the visible shape on the leaf_card.
+                    let bytes = if p.is_mask {
+                        chroma_key_black_to_alpha(&bytes)
+                            .with_context(|| {
+                                format!("chroma-keying mask albedo for material {}", p.material)
+                            })?
                     } else {
-                        TextureStage::Generating
+                        bytes
                     };
-                    emit(stage);
-                    let bytes = resolve_albedo_bytes(client, model, p, cache, args.texture_size)?;
                     let abs = base_dir.join(&p.rel_path);
                     write_png(&abs, &bytes)?;
+                    edits.push(Edit {
+                        span: p.span,
+                        attr: p.kind.attr(),
+                        rel_path: to_forward_slashes(&p.rel_path),
+                    });
+                    albedo_bytes = Some(bytes);
+                }
+                PlanAction::UseExisting => {
+                    // PNG already on disk at the planned path. Splice the
+                    // attr into the source without an API call, and load the
+                    // bytes so any sibling Derive plans can still produce
+                    // their maps from the existing albedo.
+                    emit(TextureStage::Existing);
+                    let abs = base_dir.join(&p.rel_path);
+                    let bytes = fs::read(&abs).with_context(|| {
+                        format!("reading existing albedo {}", abs.display())
+                    })?;
                     edits.push(Edit {
                         span: p.span,
                         attr: p.kind.attr(),
@@ -186,6 +206,24 @@ pub fn run_plan(
                     bail!("albedo plan should not carry Derive action");
                 }
             }
+        }
+
+        // Derived slots whose PNGs already exist on disk: just splice the
+        // attrs in, no derivation needed. Done before the Derive block so
+        // materials with all-existing slots still get spliced even when the
+        // derive block is a no-op.
+        for p in &mat_plans {
+            if !matches!(p.action, PlanAction::UseExisting) {
+                continue;
+            }
+            if p.kind == SlotKind::Albedo {
+                continue;
+            }
+            edits.push(Edit {
+                span: p.span,
+                attr: p.kind.attr(),
+                rel_path: to_forward_slashes(&p.rel_path),
+            });
         }
 
         // Derived maps — one call to `derive_pbr_maps` per material with the
@@ -250,38 +288,31 @@ fn resolve_albedo_bytes(
     client: Option<&GeminiClient>,
     model: &str,
     plan: &Plan,
-    cache: Option<&ImageCache>,
     max_side: u32,
 ) -> Result<Vec<u8>> {
-    let key = ImageCache::key(model, &plan.prompt);
-    if let Some(c) = cache {
-        if let Some(cached_path) = c.lookup(&key) {
-            let raw = fs::read(&cached_path)
-                .with_context(|| format!("reading cached image {}", cached_path.display()))?;
-            return resize_and_recompress_albedo(&raw, max_side);
-        }
-    }
     let client = client.ok_or_else(|| {
-        anyhow!(
-            "no GeminiClient available and no cache hit for material {}",
-            plan.material
-        )
+        anyhow!("no GeminiClient available for material {}", plan.material)
     })?;
-    let img = generate_with_recitation_retry(client, model, &plan.prompt, RECITATION_RETRIES)
-        .map_err(|e: GeminiError| anyhow!("gemini image: {e}"))?;
-    if let Some(c) = cache {
-        // Cache the *original* model output under the base prompt key so that
-        // changing `--texture-size` on a future run re-resizes from the full
-        // resolution instead of a pre-shrunk copy.
-        let _ = c.store(&key, &img.png_bytes);
-    }
+    // Fresh per-material random seed so repeated runs over the same prompt
+    // don't keep landing on the same Gemini sample.
+    let seed = Some(random_seed());
+    let img = generate_with_recitation_retry(
+        client,
+        model,
+        &plan.prompt,
+        RECITATION_RETRIES,
+        seed,
+    )
+    .map_err(|e: GeminiError| anyhow!("gemini image: {e}"))?;
     resize_and_recompress_albedo(&img.png_bytes, max_side)
 }
 
 /// Downscale the albedo so its longer side is at most `max_side` and
 /// re-encode with the PNG `Best` compression preset. Returns the original
 /// bytes when `max_side == 0` or the image is already within the cap — no
-/// point re-encoding if we have nothing to change.
+/// point re-encoding if we have nothing to change. RGBA inputs (foliage
+/// cutouts produced by [`chroma_key_black_to_alpha`]) keep their alpha
+/// channel through the resize and re-encode.
 fn resize_and_recompress_albedo(png: &[u8], max_side: u32) -> Result<Vec<u8>> {
     if max_side == 0 {
         return Ok(png.to_vec());
@@ -292,21 +323,73 @@ fn resize_and_recompress_albedo(png: &[u8], max_side: u32) -> Result<Vec<u8>> {
     if w <= max_side && h <= max_side {
         return Ok(png.to_vec());
     }
+    let has_alpha = image_has_alpha(&img);
     // Lanczos3 is the slowest-but-sharpest resampler in the image crate.
     // PBR textures downscale once at generation time and are then read many
     // times, so quality wins over speed here.
-    let resized = img
-        .resize(max_side, max_side, ResampleFilter::Lanczos3)
-        .to_rgb8();
+    let resized = img.resize(max_side, max_side, ResampleFilter::Lanczos3);
+    let mut buf = Vec::new();
+    if has_alpha {
+        let rgba = resized.to_rgba8();
+        PngEncoder::new_with_quality(&mut buf, CompressionType::Best, PngFilterType::Adaptive)
+            .write_image(
+                rgba.as_raw(),
+                rgba.width(),
+                rgba.height(),
+                ExtendedColorType::Rgba8,
+            )
+            .context("encoding resized RGBA albedo PNG")?;
+    } else {
+        let rgb = resized.to_rgb8();
+        PngEncoder::new_with_quality(&mut buf, CompressionType::Best, PngFilterType::Adaptive)
+            .write_image(
+                rgb.as_raw(),
+                rgb.width(),
+                rgb.height(),
+                ExtendedColorType::Rgb8,
+            )
+            .context("encoding resized RGB albedo PNG")?;
+    }
+    Ok(buf)
+}
+
+fn image_has_alpha(img: &DynamicImage) -> bool {
+    use image::DynamicImage::*;
+    matches!(
+        img,
+        ImageLumaA8(_) | ImageLumaA16(_) | ImageRgba8(_) | ImageRgba16(_) | ImageRgba32F(_)
+    )
+}
+
+/// Convert a Gemini-generated foliage cutout (leaf cluster on uniform
+/// pure-black background) into an RGBA8 PNG with alpha=0 outside the leaf
+/// silhouette. The hard luminance threshold is what matters at render time —
+/// glTF `alphaMode=MASK` discards on a single cutoff, so a binary alpha map
+/// reads cleanly without producing the gray fringes a soft alpha would leave.
+///
+/// `LUMA_THRESHOLD = 0.10` (in [0, 1]) is well below any natural leaf colour
+/// the model produces (even very dark green veins land near 0.15) and well
+/// above the residual noise Gemini puts on a "pure black" backdrop (~0.02).
+pub(crate) fn chroma_key_black_to_alpha(png: &[u8]) -> Result<Vec<u8>> {
+    const LUMA_THRESHOLD: f32 = 0.10;
+    let img = image::load_from_memory_with_format(png, ImageFormat::Png)
+        .context("decoding foliage cutout PNG")?;
+    let rgb = img.to_rgb8();
+    let (w, h) = (rgb.width(), rgb.height());
+    let mut out = RgbaImage::new(w, h);
+    for (x, y, p) in rgb.enumerate_pixels() {
+        let r = p[0] as f32 / 255.0;
+        let g = p[1] as f32 / 255.0;
+        let b = p[2] as f32 / 255.0;
+        // Rec. 709 luminance — matches what the human eye reads as "dark".
+        let luma = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        let alpha = if luma < LUMA_THRESHOLD { 0u8 } else { 255u8 };
+        out.put_pixel(x, y, Rgba([p[0], p[1], p[2], alpha]));
+    }
     let mut buf = Vec::new();
     PngEncoder::new_with_quality(&mut buf, CompressionType::Best, PngFilterType::Adaptive)
-        .write_image(
-            resized.as_raw(),
-            resized.width(),
-            resized.height(),
-            ExtendedColorType::Rgb8,
-        )
-        .context("encoding resized albedo PNG")?;
+        .write_image(out.as_raw(), w, h, ExtendedColorType::Rgba8)
+        .context("encoding keyed foliage RGBA PNG")?;
     Ok(buf)
 }
 
@@ -328,11 +411,16 @@ fn to_forward_slashes(rel: &Path) -> String {
 /// same prompt — re-issuing as-is just burns quota — so each retry appends a
 /// distinct hint that nudges the model toward a different sample without
 /// changing what the texture is supposed to depict.
+///
+/// `seed` is forwarded to every attempt so the caller controls sampling
+/// variation across whole runs, while the variation hint handles intra-call
+/// variety on recitation retries.
 pub fn generate_with_recitation_retry(
     client: &GeminiClient,
     model: &str,
     base_prompt: &str,
     max_retries: u32,
+    seed: Option<u64>,
 ) -> Result<GeneratedImage, GeminiError> {
     let mut attempt: u32 = 0;
     loop {
@@ -342,7 +430,7 @@ pub fn generate_with_recitation_retry(
             let hint = recitation_variation_hint(attempt);
             format!("{base_prompt}\nVariation hint: {hint}")
         };
-        match client.generate_image(model, &prompt) {
+        match client.generate_image(model, &prompt, seed) {
             Ok(img) => return Ok(img),
             Err(GeminiError::InvalidResponse(msg))
                 if msg.contains("IMAGE_RECITATION") && attempt < max_retries =>
@@ -355,6 +443,27 @@ pub fn generate_with_recitation_retry(
     }
 }
 
+/// Mint a fresh seed for an image generation call.
+///
+/// Combines wall-clock nanoseconds with a process-wide atomic counter and
+/// runs the result through SplitMix64, so back-to-back calls that land in the
+/// same nanosecond still produce independent seeds. Avoids pulling in a `rand`
+/// dependency for what's effectively one u64 per material per run.
+fn random_seed() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(0);
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let mut x = nanos.wrapping_add(n.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+    x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    x ^ (x >> 31)
+}
+
 fn recitation_variation_hint(attempt: u32) -> &'static str {
     // Keep the hints short, neutral, and texture-relevant so they don't
     // override the material's own descriptors.
@@ -365,15 +474,6 @@ fn recitation_variation_hint(attempt: u32) -> &'static str {
         "introduce uncommon imperfections and a fresh distribution of detail",
     ];
     HINTS[(attempt as usize - 1) % HINTS.len()]
-}
-
-/// Resolve the cache (if enabled) without panicking — mirrors the pattern
-/// used by the text-side system-instruction cache.
-pub fn maybe_cache(no_cache: bool) -> Option<ImageCache> {
-    if no_cache {
-        return None;
-    }
-    default_image_cache_dir().map(ImageCache::new)
 }
 
 #[cfg(test)]
@@ -432,5 +532,79 @@ mod tests {
         let png = synth_albedo_png(256, 128);
         let out = resize_and_recompress_albedo(&png, 64).unwrap();
         assert_eq!(png_dims(&out), (64, 32));
+    }
+
+    /// Synthesise a "leaf cluster on black": a centred filled disc on solid
+    /// pure-black RGB. Mirrors what Gemini is being prompted to emit.
+    fn synth_leaf_on_black_png(side: u32) -> Vec<u8> {
+        let mut img = image::RgbImage::new(side, side);
+        let cx = side as f32 * 0.5;
+        let cy = side as f32 * 0.5;
+        let r = side as f32 * 0.35;
+        for y in 0..side {
+            for x in 0..side {
+                let dx = x as f32 - cx;
+                let dy = y as f32 - cy;
+                let inside = (dx * dx + dy * dy) <= r * r;
+                let pix = if inside {
+                    image::Rgb([60, 140, 60])
+                } else {
+                    image::Rgb([0, 0, 0])
+                };
+                img.put_pixel(x, y, pix);
+            }
+        }
+        let mut buf = Vec::new();
+        img.write_to(&mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png)
+            .unwrap();
+        buf
+    }
+
+    #[test]
+    fn chroma_key_makes_black_transparent_and_keeps_leaves() {
+        // The RGBA output must have:
+        //  - alpha=0 on every pixel of the black backdrop,
+        //  - alpha=255 inside the leaf disc,
+        //  - leaf RGB preserved (chroma-key is not supposed to recolour).
+        let png = synth_leaf_on_black_png(64);
+        let keyed = chroma_key_black_to_alpha(&png).unwrap();
+        let img = image::load_from_memory_with_format(&keyed, image::ImageFormat::Png)
+            .unwrap()
+            .to_rgba8();
+        let cx = img.width() / 2;
+        let cy = img.height() / 2;
+        // Centre of the disc must read solid leaf colour with full alpha.
+        let centre = img.get_pixel(cx, cy);
+        assert_eq!(centre[3], 255, "leaf centre should be opaque");
+        assert!(centre[1] > 100, "leaf colour preserved through key");
+        // Corner is pure background — must have been keyed out.
+        let corner = img.get_pixel(0, 0);
+        assert_eq!(corner[3], 0, "black corner must key to alpha=0");
+    }
+
+    #[test]
+    fn chroma_key_produces_rgba_png() {
+        // The output must declare RGBA8 in the PNG header — without this,
+        // glTF readers won't see an alpha channel and `alpha_mode=MASK`
+        // becomes a no-op.
+        let png = synth_leaf_on_black_png(32);
+        let keyed = chroma_key_black_to_alpha(&png).unwrap();
+        let img = image::load_from_memory_with_format(&keyed, image::ImageFormat::Png).unwrap();
+        assert!(matches!(img, image::DynamicImage::ImageRgba8(_)));
+    }
+
+    #[test]
+    fn resize_preserves_alpha_for_keyed_input() {
+        // Routing an RGBA PNG through the resize path used to silently drop
+        // alpha (the old code unconditionally hit `to_rgb8()`). Regression
+        // guard: the post-resize PNG still carries the alpha channel.
+        let keyed = chroma_key_black_to_alpha(&synth_leaf_on_black_png(256)).unwrap();
+        let resized = resize_and_recompress_albedo(&keyed, 64).unwrap();
+        let img = image::load_from_memory_with_format(&resized, image::ImageFormat::Png).unwrap();
+        assert!(
+            matches!(img, image::DynamicImage::ImageRgba8(_)),
+            "resized image lost its alpha channel"
+        );
+        assert_eq!((img.width(), img.height()), (64, 64));
     }
 }

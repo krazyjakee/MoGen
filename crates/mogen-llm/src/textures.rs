@@ -18,6 +18,6 @@ pub use plan::{
 };
 pub use prompt::{build_prompt, collect_materials, parse_prompt_header, MaterialHit};
 pub use run::{
-    generate_with_recitation_retry, maybe_cache, run_plan, TextureProgress, TextureStage,
+    generate_with_recitation_retry, run_plan, TextureProgress, TextureStage,
 };
 pub use splice::{safe_filename_stem, splice_textures, Edit};

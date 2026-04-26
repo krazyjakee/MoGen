@@ -29,3 +29,4 @@
 !examples/*.glb
 .claude
 generated
+AGENTS.local.db

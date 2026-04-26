@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
@@ -16,6 +16,50 @@ use crate::viewer::CameraSnapshot;
 /// holding a key (or pasting) doesn't recompile mid-word; short enough that
 /// the diagnostics panel feels live.
 pub(super) const COMPILE_DEBOUNCE: Duration = Duration::from_millis(180);
+
+/// Hard cap on the per-tab undo history. Snapshots are full source strings,
+/// so a runaway editing session can't grow this unbounded — oldest entries
+/// fall off when the cap is hit.
+pub(super) const UNDO_STACK_CAP: usize = 200;
+
+/// Time window within which a follow-up edit on the same surface/attr/node
+/// merges into the previous undo entry instead of pushing a new one. Tuned
+/// short enough that distinct user actions stay separate but long enough
+/// that an inspector DragValue burst is one undoable unit.
+pub(super) const UNDO_COALESCE_WINDOW: Duration = Duration::from_millis(500);
+
+/// One reversible source-text edit on a single tab. `before` / `after` are
+/// full snapshots — apply just writes one of them back to `FileState.source`
+/// and triggers the same recompile path a normal edit takes.
+pub(super) struct UndoEntry {
+    pub(super) before: String,
+    pub(super) after: String,
+    /// Stable node path captured before/after the edit so a delete-undo can
+    /// re-highlight the restored node after recompile. `None` when nothing
+    /// was selected.
+    pub(super) selection_before: Option<Vec<String>>,
+    pub(super) selection_after: Option<Vec<String>>,
+}
+
+/// Coalesce key. Two entries merge only when every field matches AND the
+/// time window is open — switching nodes / attrs / surfaces breaks the chain.
+#[derive(Clone, PartialEq, Eq)]
+pub(super) struct UndoKey {
+    pub(super) surface: &'static str,
+    pub(super) attr: Option<String>,
+    pub(super) node_path: Option<Vec<String>>,
+}
+
+/// Per-tab undo history. Newest entries at the back of `past`; redo lives in
+/// `future` (also newest-at-back). `last_*` track the head of `past` for
+/// time-window coalescing — reset on any boundary event.
+#[derive(Default)]
+pub(super) struct UndoStack {
+    pub(super) past: VecDeque<UndoEntry>,
+    pub(super) future: Vec<UndoEntry>,
+    pub(super) last_push_at: Option<Instant>,
+    pub(super) last_key: Option<UndoKey>,
+}
 
 /// TTL on the texture-existence cache. Texture roster runs every paint and
 /// would otherwise stat every PNG every frame.
@@ -391,7 +435,6 @@ pub(super) struct TextureUiConfig {
     pub(super) no_metallic_roughness: bool,
     pub(super) no_occlusion: bool,
     pub(super) force: bool,
-    pub(super) no_cache: bool,
     /// Whether the "Advanced" expander is open. Persisted per-file so users
     /// can leave it open on the file they're iterating on.
     pub(super) expanded: bool,
@@ -406,7 +449,6 @@ impl Default for TextureUiConfig {
             no_metallic_roughness: false,
             no_occlusion: false,
             force: false,
-            no_cache: false,
             expanded: false,
         }
     }
@@ -492,6 +534,13 @@ pub(super) struct FileState {
     /// active tab.
     pub(super) camera: Option<CameraSnapshot>,
 
+    /// True until this file's scene has been displayed in the viewer at least
+    /// once. The first successful render (compile or refresh) re-fits the
+    /// camera to the new geometry, then clears this flag so subsequent edits
+    /// keep the user's framing. LLM Generate flips this back to true so the
+    /// camera also re-fits over the brand-new geometry it produces.
+    pub(super) first_render: bool,
+
     /// Wall-clock time of the last edit. Drives the compile debounce so the
     /// AST isn't re-built on every keystroke.
     pub(super) last_edit_at: Option<Instant>,
@@ -502,6 +551,12 @@ pub(super) struct FileState {
     /// next frame and then clear the field. Populated when the viewport
     /// selection changes so clicking a leg in 3D jumps the editor caret.
     pub(super) pending_caret: Option<usize>,
+
+    /// Per-tab undo / redo stack covering programmatic source mutations
+    /// (gizmo drags, inspector transform writes). The code editor's TextEdit
+    /// keeps its own native history for typed source edits and is NOT pushed
+    /// onto this stack — the two surfaces stay independent by design.
+    pub(super) undo: UndoStack,
 
     pub(super) status: String,
 }
@@ -528,9 +583,11 @@ impl FileState {
             llm_error: None,
             llm_last_prompt: None,
             camera: None,
+            first_render: true,
             last_edit_at: None,
             needs_compile: false,
             pending_caret: None,
+            undo: UndoStack::default(),
             status: "new scene".into(),
         }
     }
@@ -558,9 +615,11 @@ impl FileState {
             llm_error: None,
             llm_last_prompt: None,
             camera: None,
+            first_render: true,
             last_edit_at: None,
             needs_compile: false,
             pending_caret: None,
+            undo: UndoStack::default(),
             status,
         }
     }

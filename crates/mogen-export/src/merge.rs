@@ -312,6 +312,7 @@ fn build_merged_node(
         source_span: None,
         editable: false,
         relative_placed: false,
+        attach_binding: None,
     }
 }
 

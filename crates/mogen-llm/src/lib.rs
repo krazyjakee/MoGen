@@ -13,7 +13,6 @@
 pub mod cache;
 pub mod gemini;
 pub mod image;
-pub mod image_cache;
 pub mod pbr_maps;
 pub mod prompt;
 pub mod repair;
@@ -25,7 +24,6 @@ pub use gemini::{
     DEFAULT_FAST_MODEL,
 };
 pub use image::{GeneratedImage, DEFAULT_IMAGE_MODEL};
-pub use image_cache::{default_image_cache_dir, ImageCache};
 pub use prompt::{system_instruction, StdlibIndex};
 pub use repair::{
     generate_with_repair, repair_message, validate_text, GenerateOutcome, RepairConfig,

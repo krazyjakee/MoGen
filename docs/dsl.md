@@ -42,6 +42,32 @@ and `clip` declarations; `scene { ... }` holds the geometry itself.
 
 ---
 
+## Global settings
+
+Top-level directives that tune the build itself rather than describing
+geometry. They sit at the file level (alongside `material` / `module`) and are
+consumed during lowering.
+
+| directive | value | effect |
+|---|---|---|
+| `lod_scale (value=N)` | number, default `1.0` | multiplies primitive default `segments` / `rings` / `samples`. `0.5` halves them, `2.0` doubles them. `icosphere` `subdivisions` step by `round(log2(N))` instead, since each step quadruples its triangle count. Per-primitive values (`segments=24`, `rings=16`, …) are absolute and are **not** scaled. |
+
+```
+lod_scale (value=0.5)
+
+scene {
+  sphere "head" (radius=0.5)         // 12 rings, 12 segments (default 16/24 halved)
+  sphere "lod0" (radius=0.5, segments=48, rings=32)  // explicit values keep 48/32
+}
+```
+
+The studio's "LOD scale" slider (under the build summary) edits this directive
+in place — drag it down to iterate quickly on big scenes, then drag back to
+`1.0` for export. The slider clears the directive when it returns to `1.0` so
+saved files stay clean by default.
+
+---
+
 ## Values and expressions
 
 Every `value` on the right side of an attribute is one of:

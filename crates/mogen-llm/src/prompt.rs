@@ -199,10 +199,15 @@ from a validator failure.
    stay as rigid `attach`-joined primitives with per-part procedural \
    animation — do not rig them.
 8. **Organic shapes** (people, animals, plants): prefer `use \"humanoid_*\"` \
-   / `use \"quadruped_*\"` / `use \"branch\"` / `use \"leaf\"` from the \
-   stdlib over rebuilding limbs and foliage from raw primitives — the \
-   stdlib parts already smin-blend their internal joints (no shoulder or \
-   knee crease). When two parts of one body must visually merge into one \
+   / `use \"quadruped_*\"` from the stdlib over rebuilding limbs from raw \
+   primitives — the stdlib parts already smin-blend their internal joints \
+   (no shoulder or knee crease). For **whole trees / large bushes** reach \
+   for the recursive `branch (...)` node — one declaration emits a tapered \
+   trunk + recursive forks + alpha-cutout `leaf_card` foliage at every \
+   tip; pair it with `material (alpha_mode=\"mask\", double_sided=1)` for \
+   the leaf material. Use `use \"leaf\"` only when you need a single \
+   curved-plane leaf cluster on something that *isn't* a procedural tree \
+   (potted plant, single hanging vine). When two parts of one body must visually merge into one \
    surface — neck-into-torso, hip-cap-into-leg, jaw-into-skull — wrap them \
    in `union \"joint\" (smooth=K) { ... }` with `K ≈ 0.04–0.10` for \
    human-scale parts (`K` is a fillet radius in metres; too large and the \
@@ -348,6 +353,24 @@ const CONVENTIONS: &str = "\
 - `spline_tube`: the right primitive for bananas, stems, tentacles, horns, \
   elephant trunks, rope handles. `radii` (one per control point) tapers \
   the tube; a Catmull–Rom path keeps the curve smooth between points.
+- `branch`: **recursive procedural tree** in one declaration. Emits a tapered \
+  trunk + recursive forks (Catmull–Rom swept tubes) + optional alpha-cutout \
+  leaf cards at the tips. Use for trees, large bushes, antlers, coral. Key \
+  params: `length` (base trunk length), `radius` (base radius), `depth` \
+  (recursion levels — 4–6 is typical for a tree), `splits` (forks per node, \
+  2–3), `length_falloff`/`radius_falloff` (per-level multipliers, ~0.7/0.6), \
+  `branch_angle` (deg off parent axis, ~30), `bend` (intra-segment curve, \
+  ~10°), `tropism` (gravity droop; negative droops, positive lifts), \
+  `seed` (regrow a different tree from the same params), `jitter` (0–1 \
+  randomness on each fork), `leaves=1`, `leaf_size`, `leaf_mat=\"name\"`. \
+  The wrapper accepts the usual `pos=`/`rot=`/`mat=` (bark goes on `mat=`).
+- `leaf_card`: cross-quad / fan-quad foliage card. Two (or three) alpha- \
+  cutout planes meeting at the +Y axis with their bottom edges at y=0, so \
+  the `stem` connector mounts cleanly to a branch tip. Pair with a \
+  `material (alpha_mode=\"mask\", alpha_cutoff=0.5, double_sided=1)` and \
+  a leaf-shaped albedo texture for real foliage. `cards=2` (cross, default) \
+  or `cards=3` (fan — defeats the edge-on-disappear artefact when the \
+  camera circles).
 - `torus`: flat in XZ, hole faces ±Y.
 - `plane`, `disc`: flat in XZ, facing +Y. Single-sided like `curved_plane` — \
   set `double_sided=1` on the material if the underside is visible.
@@ -403,6 +426,8 @@ const KINDS_REFERENCE: &str = "\
 | `curved_plane` | `size=[x,z]` | `bend_u`, `bend_v` degrees; leaves, petals, shells, fins |
 | `lathe` | `profile=[[r,y], …]` (bottom→top) | `segments`, `cap_ends`; vases, gourds, bulbs, onions |
 | `spline_tube` | `points=[[x,y,z], …]` | `radius` or `radii=[…]`, `segments`, `samples`; bananas, stems, horns, handles |
+| `leaf_card` | `size=[w,h]` | `cards` (2 cross / 3 fan); paired alpha-cutout planes for foliage — pair with `alpha_mode=\"mask\", double_sided=1` |
+| `branch` | `length`, `radius`, `depth` | `splits`, `length_falloff`, `radius_falloff`, `branch_angle`, `roll`, `tropism`, `bend`, `seed`, `jitter`, `leaves`, `leaf_size`, `leaf_cards`, `leaf_mat`; **recursive procedural tree — one declaration becomes a whole tree** |
 | `slab` | `size=[x,y,z]` | `box` alias; default `anchor=bottom` (sits on ground) |
 | `post` | `size=[x,y,z]` | `box` alias; default `anchor=bottom` (pillar/leg/column) |
 | `panel` | `size=[x,y,z]` | `box` alias; default `anchor=back` (wall-hung panel, flush to +Z face) |
@@ -436,6 +461,7 @@ const KINDS_REFERENCE: &str = "\
 | `curved_plane` | `top` (+Y), `bottom` (-Y) — unbent frame; bent geometry lifts off the origin |
 | `lathe` | `top` (last profile row, +Y), `bottom` (first profile row, -Y) |
 | `spline_tube` | `start` (first control point, -tangent), `end` (last control point, +tangent) |
+| `leaf_card` | `stem` / `base` (origin, -Y mounting point), `tip` / `top` (top edge, +Y) |
 | `capsule` | `top`, `bottom` (include the hemispherical caps) |
 | `torus` | `top`, `bottom`, `outer`, `inner` |
 | `plane`, `disc` | `top` (+Y), `bottom` (-Y) |
@@ -646,21 +672,19 @@ scene {
 ### Prompt: \"a young oak tree\"
 ### Output:
 material \"oak_bark\" (color=[0.36, 0.25, 0.15], roughness=0.95)
-material \"oak_leaf\" (color=[0.18, 0.45, 0.20], roughness=0.65, double_sided=1)
+material \"oak_leaf\" (
+  color=[0.20, 0.50, 0.22], roughness=0.65,
+  alpha_mode=\"mask\", alpha_cutoff=0.5, double_sided=1
+)
 
 scene {
-  group \"trunk\" (mat=\"oak_bark\", scale=2.5) { use \"branch\" () }
-
-  group \"limb_a\" (pos=[0, 1.5, 0], rot=[0,   0, 35], mat=\"oak_bark\") { use \"branch\" () }
-  group \"limb_b\" (pos=[0, 1.5, 0], rot=[0, 120, 35], mat=\"oak_bark\") { use \"branch\" () }
-  group \"limb_c\" (pos=[0, 1.5, 0], rot=[0, 240, 35], mat=\"oak_bark\") { use \"branch\" () }
-
-  group \"leaves_a\"  (pos=[ 0.5, 2.0,  0.0],                  tags=\"floating\", mat=\"oak_leaf\") { use \"leaf\" () }
-  group \"leaves_b\"  (pos=[-0.25, 2.0,  0.43],                tags=\"floating\", mat=\"oak_leaf\") { use \"leaf\" () }
-  group \"leaves_c\"  (pos=[-0.25, 2.0, -0.43],                tags=\"floating\", mat=\"oak_leaf\") { use \"leaf\" () }
-  group \"leaves_a2\" (pos=[ 0.45, 1.95, 0.15], rot=[0,  60, 0], tags=\"floating\", mat=\"oak_leaf\") { use \"leaf\" () }
-  group \"leaves_b2\" (pos=[-0.18, 1.95, 0.36], rot=[0,  30, 0], tags=\"floating\", mat=\"oak_leaf\") { use \"leaf\" () }
-  group \"leaves_c2\" (pos=[-0.18, 1.95,-0.36], rot=[0, -30, 0], tags=\"floating\", mat=\"oak_leaf\") { use \"leaf\" () }
+  branch \"oak\" (
+    length=1.4, radius=0.18, depth=5, splits=2,
+    length_falloff=0.72, radius_falloff=0.62,
+    branch_angle=32, bend=12, tropism=-0.05, jitter=0.25, seed=7,
+    leaves=1, leaf_size=0.32, leaf_cards=2, leaf_mat=\"oak_leaf\",
+    mat=\"oak_bark\"
+  )
 }";
 
 const OUTPUT_CONTRACT: &str = "\n\n## Output contract\n\n\
@@ -772,6 +796,8 @@ mod tests {
             "wedge", "frustum", "tube", "hemisphere", "half_cylinder",
             "torus_arc", "ellipsoid", "superellipsoid", "curved_plane",
             "lathe", "spline_tube",
+            // Foliage card + recursive procedural tree.
+            "leaf_card", "branch",
             // Box aliases + hole-punched wall.
             "slab", "post", "panel", "wall",
         ] {
@@ -882,8 +908,14 @@ mod tests {
         // fewshots (tiger / humanoid mid-stride / oak tree) and the new
         // organic-shapes preamble rule added ~3.6 KB — they're what makes
         // the LLM reach for the body-part stdlib instead of rebuilding
-        // limbs from raw primitives. The cap now sits at ~36 KB — still
-        // small enough to catch a revived long-form section.
+        // limbs from raw primitives. Adding the recursive `branch` node +
+        // `leaf_card` primitive (kinds table, conventions paragraphs,
+        // connectors row, organic-shapes preamble update) was net-neutral:
+        // the new prose added ~1.4 KB but rewriting the oak-tree fewshot
+        // from a hand-stacked 18-line layout into a single procedural
+        // `branch (...)` declaration shaved ~1.1 KB back off. The cap now
+        // sits at ~36 KB — still small enough to catch a revived long-form
+        // section.
         let s = system_instruction(&StdlibIndex::default());
         assert!(
             s.len() < 36_000,
@@ -907,6 +939,48 @@ mod tests {
         // Empty-allowlist kinds still appear so the model sees they take no
         // kind-specific attrs (only common ones).
         assert!(s.contains("- `scene`: (no kind-specific attrs)"));
+    }
+
+    #[test]
+    fn exposes_recursive_branch_and_leaf_card() {
+        // The procedural-tree path: kinds table, conventions paragraph,
+        // attribute allowlist, organic-shapes preamble, and the oak-tree
+        // fewshot all need to push `branch` so the model reaches for it
+        // instead of stacking `use \"branch\"` modules manually.
+        let s = system_instruction(&StdlibIndex::default());
+        // Kinds table rows.
+        assert!(s.contains("`branch`"), "kinds table missing branch row");
+        assert!(s.contains("`leaf_card`"), "kinds table missing leaf_card row");
+        // Conventions paragraph names the recursive-tree feature.
+        assert!(
+            s.contains("recursive procedural tree"),
+            "conventions missing recursive procedural tree blurb"
+        );
+        // Allowlist auto-renders; spot-check a few critical attrs.
+        assert!(
+            s.contains("`branch_angle`"),
+            "allowlist missing branch_angle for branch"
+        );
+        assert!(
+            s.contains("`leaf_mat`"),
+            "allowlist missing leaf_mat for branch"
+        );
+        // Default connectors row for leaf_card so attach math knows where
+        // a leaf mounts on a branch tip.
+        assert!(
+            s.contains("`stem`"),
+            "connectors table missing leaf_card stem"
+        );
+        // Oak fewshot uses the procedural branch node now.
+        assert!(
+            s.contains("branch \"oak\""),
+            "oak fewshot should use procedural branch"
+        );
+        // The leaf material in the fewshot demonstrates alpha-mask + double-sided.
+        assert!(
+            s.contains("alpha_mode=\"mask\""),
+            "oak fewshot missing alpha_mode=mask on leaf material"
+        );
     }
 
     #[test]

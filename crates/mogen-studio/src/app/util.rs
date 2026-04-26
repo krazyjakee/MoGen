@@ -7,7 +7,7 @@ use mogen_core::SceneGraph;
 use mogen_export::ExportOptions;
 use mogen_llm::gemini::{GeminiClient, GenerateConfig, Usage};
 use mogen_llm::textures::{
-    build_plan, default_textures_dir, maybe_cache, run_plan, splice_textures, PlanAction,
+    build_plan, default_textures_dir, run_plan, splice_textures, PlanAction,
     TextureProgress, TexturesArgs,
 };
 use mogen_llm::{
@@ -180,6 +180,83 @@ pub(super) fn delete_texture_group(path: &Path) -> String {
             errors.join("; "),
         )
     }
+}
+
+/// Slot attribute names that get cleared when the user deletes a material's
+/// textures from the right-click menu. Kept aligned with the slots reported
+/// by [`gather_texture_refs`] so the on-disk sweep and the source rewrite
+/// agree on what counts as "the textures" for a material.
+const MATERIAL_TEXTURE_ATTRS: [&str; 5] = [
+    "base_color_texture",
+    "metallic_roughness_texture",
+    "normal_texture",
+    "occlusion_texture",
+    "emissive_texture",
+];
+
+/// Delete every PNG belonging to `material`'s slots and strip the
+/// corresponding `*_texture` attrs from the source. Returns the rewritten
+/// source plus a footer-status string. `refs` is the result of
+/// [`gather_texture_refs`] for the current scene; only refs whose material
+/// matches are touched. The source is left untouched when no attrs are
+/// present (e.g. material lives inside an imported module so its span isn't
+/// in this file).
+pub(super) fn delete_material_textures(
+    source: &str,
+    source_dir: Option<&Path>,
+    material: &str,
+    refs: &[(String, &'static str, PathBuf)],
+) -> (String, String) {
+    // File sweep — `delete_texture_group` finds the material stem from any
+    // one ref and unlinks every companion in its `_albedo/_normal/...`
+    // family. Deduplicate by stem so we don't double-report.
+    let mut file_status = String::new();
+    let mut seen_stems: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for (m, _, rel) in refs.iter().filter(|(m, _, _)| m == material) {
+        let abs = resolve_for_check(rel, source_dir);
+        let stem_key = texture_material_stem(&abs)
+            .unwrap_or_else(|| abs.to_string_lossy().into_owned());
+        if !seen_stems.insert(stem_key) {
+            continue;
+        }
+        let _ = m;
+        if !file_status.is_empty() {
+            file_status.push_str("; ");
+        }
+        file_status.push_str(&delete_texture_group(&abs));
+    }
+
+    // Source rewrite — strip every `*_texture` attr from this material. The
+    // span shifts after each delete, so re-resolve between iterations.
+    let mut new_source = source.to_string();
+    let mut stripped: u32 = 0;
+    for attr in MATERIAL_TEXTURE_ATTRS {
+        let Some(span) = find_material_source_span(&new_source, material) else {
+            break;
+        };
+        let after = crate::edit::delete_attr(&new_source, span, attr);
+        if after != new_source {
+            new_source = after;
+            stripped += 1;
+        }
+    }
+
+    let cleared_msg = if stripped > 0 {
+        format!(
+            "; cleared {stripped} attr{} on \"{material}\"",
+            if stripped == 1 { "" } else { "s" },
+        )
+    } else {
+        String::new()
+    };
+    let status = if file_status.is_empty() && stripped == 0 {
+        format!("textures: nothing to remove for \"{material}\"")
+    } else if file_status.is_empty() {
+        format!("textures: cleared {stripped} attr(s) on \"{material}\"")
+    } else {
+        format!("{file_status}{cleared_msg}")
+    };
+    (new_source, status)
 }
 
 /// Show "…/dir/filename.png", keeping the filename intact and ellipsizing
@@ -589,6 +666,7 @@ pub(super) fn run_llm_textures(
     mg_path: PathBuf,
     api_key: String,
     cfg: TextureUiConfig,
+    material_filter: Option<Vec<String>>,
     tx: Sender<LlmMessage>,
 ) -> LlmOutcome {
     let send_progress = |p: LlmProgress| {
@@ -617,6 +695,10 @@ pub(super) fn run_llm_textures(
         }
     };
 
+    // A per-material regenerate (right-click → Regenerate) implies "redo this
+    // material's slots from scratch", so override `force` for the filtered
+    // run regardless of what the panel checkbox says.
+    let force = cfg.force || material_filter.is_some();
     let args = TexturesArgs {
         textures_dir: default_textures_dir(&mg_path),
         input: mg_path.clone(),
@@ -624,10 +706,9 @@ pub(super) fn run_llm_textures(
         glb: None,
         style: cfg.style.clone(),
         model: texture_model.clone(),
-        force: cfg.force,
+        force,
         dry_run: false,
         no_build: true,
-        no_cache: cfg.no_cache,
         api_key: Some(api_key.clone()),
         no_pbr: false,
         no_normal: cfg.no_normal,
@@ -636,15 +717,20 @@ pub(super) fn run_llm_textures(
         texture_size: cfg.texture_size,
     };
 
-    let cache = maybe_cache(cfg.no_cache);
-    let plans = build_plan(&src, &ast, &args, cache.as_ref());
+    let plans: Vec<_> = build_plan(&ast, &args)
+        .into_iter()
+        .filter(|p| match &material_filter {
+            Some(only) => only.iter().any(|m| m == &p.material),
+            None => true,
+        })
+        .collect();
 
     // If nothing needs generating *or* deriving, leave the source untouched so
     // the editor doesn't get marked dirty.
     let anything_to_do = plans.iter().any(|p| {
         matches!(
             p.action,
-            PlanAction::Generate | PlanAction::CacheHit | PlanAction::Derive
+            PlanAction::Generate | PlanAction::Derive | PlanAction::UseExisting
         )
     });
     if !anything_to_do {
@@ -697,7 +783,6 @@ pub(super) fn run_llm_textures(
         &ast,
         &plans,
         &base_dir,
-        cache.as_ref(),
         Some(&progress_cb),
     ) {
         Ok(e) => e,
@@ -777,60 +862,53 @@ pub(super) fn run_prompt_enhance(
 ) -> Result<String, String> {
     let client = GeminiClient::new(api_key);
     let raw = raw_prompt.trim();
-    // Templates deliberately scope the rewrite to what the MoGen DSL can
-    // express — primitives, CSG, transforms/hierarchy, mirror/array, PBR,
-    // and the fixed animation templates — so the rewriter doesn't ask for
-    // UV/polygon/topology edits the pipeline can't perform.
+    // Templates focus the rewrite on enriching the user's high-level
+    // description — what the object looks like or how a part should change —
+    // and deliberately stay silent about primitives, CSG, mirror/array, or
+    // animation templates. The downstream generate/modify/animate prompts
+    // already carry the DSL contract; bleeding it into the enhanced prompt
+    // pre-bakes implementation choices and steers the actual generation step.
     let user = match target {
         EnhanceTarget::Generate => format!(
-            "Rewrite the following asset prompt for a declarative scene-composition \
-             pipeline that builds objects from parametric primitives (box, cylinder, \
-             sphere, cone, capsule, torus, prism, pyramid, disc, plane, rounded box), \
-             combines them with CSG boolean ops (union, difference, intersect), \
-             arranges them with hierarchy, transforms, mirror, and array, and applies \
-             PBR materials. The pipeline does NOT sculpt polygons, edit UVs, or \
-             change mesh topology — stay at the level of shape composition, \
-             proportion, symmetry, and material/style cues. Make it vivid but \
-             compact (1–3 sentences). Preserve the subject — do not invent a \
-             different object. Do NOT use any DSL, do NOT use code fences, do NOT \
-             prefix with \"Enhanced prompt:\" or similar. Reply with only the \
-             rewritten prompt.\n\nPrompt: {raw}",
+            "Enrich the following asset description with vivid, concrete visual \
+             detail — overall silhouette and proportion, character or mood, era or \
+             setting, surface materials and colour cues. Stay focused on what the \
+             object looks like; do not prescribe how it should be modelled, list \
+             parts, or suggest construction steps. Keep it compact (1–3 \
+             sentences). The original subject phrase \"{raw}\" MUST appear \
+             verbatim in your rewrite (typically as the opening noun phrase) — \
+             you are adding detail to it, not replacing it with a synonym or a \
+             different object. Do NOT use code fences, do NOT prefix with \
+             \"Enhanced prompt:\" or similar. Reply with only the rewritten \
+             prompt.\n\nPrompt: {raw}",
         ),
         EnhanceTarget::Modify => format!(
             "Rewrite the following instruction as a clear, specific edit request \
-             against an EXISTING scene graph. Valid edits are: translate / rotate / \
-             scale on named parts, swapping a primitive kind, adding or removing \
-             child nodes, tweaking a CSG combination, adjusting mirror / array \
-             counts or spacing, and changing material or colour. The pipeline \
-             cannot edit UVs, sculpt polygons, or alter topology — do not ask for \
-             any of that. Keep it imperative (\"make…\", \"replace…\", \"scale…\"), \
-             1–3 sentences, precise about which part changes, which axis, and by \
-             how much when possible. Assume the scene already exists; do not \
-             redesign the whole object. Do NOT use any DSL, do NOT use code \
-             fences, do NOT prefix with labels. Reply with only the rewritten \
-             instruction.\n\nInstruction: {raw}",
+             against an existing 3D scene. Be precise about which named part \
+             changes, in which direction, and by how much when it matters. Keep \
+             it imperative (\"make…\", \"replace…\", \"scale…\"), 1–3 sentences. \
+             Assume the scene already exists; do not redesign the whole object \
+             and do not prescribe modelling steps or implementation details. Do \
+             NOT use code fences, do NOT prefix with labels. Reply with only the \
+             rewritten instruction.\n\nInstruction: {raw}",
         ),
         EnhanceTarget::Animate => format!(
-            "Rewrite the following animation request for an EXISTING scene. \
-             Animation in this pipeline is node-transform tracks only, built from \
-             a fixed set of templates: spin, open_close, wave, flap, idle. There \
-             is no morph-target, vertex, or UV animation. Be specific about which \
-             named part moves, which template fits best, axis, amplitude, speed or \
-             duration, and whether it loops. 1–3 sentences, imperative tone. Do \
-             not redesign the object. Do NOT use any DSL, do NOT use code fences, \
-             do NOT prefix with labels. Reply with only the rewritten \
-             request.\n\nRequest: {raw}",
+            "Rewrite the following animation request for an existing 3D scene. \
+             Be specific about which named part moves, what kind of motion \
+             (rotation, swing, bob, …), the axis or direction, the amplitude or \
+             angle, the speed or duration, and whether it loops. 1–3 sentences, \
+             imperative tone. Do not redesign the object and do not prescribe \
+             implementation details. Do NOT use code fences, do NOT prefix with \
+             labels. Reply with only the rewritten request.\n\nRequest: {raw}",
         ),
         EnhanceTarget::TextureStyle => format!(
             "Rewrite the following texture / material hint into a compact PBR \
-             style descriptor (colour palette, finish, wear, era or setting cues). \
-             This text is appended to every material's albedo-image generation \
-             prompt, so it must read as stylistic guidance for flat PBR \
-             materials — not as a scene description, and not as a UV layout or \
-             polygon-level instruction. ≤ 20 words, comma-separated adjectives \
-             and short noun phrases, no full sentences, no leading label. Do NOT \
-             use any DSL, do NOT use code fences. Reply with only the rewritten \
-             hint.\n\nHint: {raw}",
+             style descriptor — colour palette, finish, wear, era or setting \
+             cues. This text is appended to every material's albedo-image \
+             generation prompt, so it must read as stylistic guidance, not as a \
+             scene description. ≤ 20 words, comma-separated adjectives and short \
+             noun phrases, no full sentences, no leading label. Do NOT use code \
+             fences. Reply with only the rewritten hint.\n\nHint: {raw}",
         ),
     };
 

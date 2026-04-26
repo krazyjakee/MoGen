@@ -1,27 +1,80 @@
-// Windmill: a tower with a rotating blade assembly driven by the `spin`
-// procedural animation template. The `rotor` group is the animated node —
-// its four blades ride along as children.
+// mogen-generate seed=1777171693478907000
+// mogen-generate thinking=high
+// prompt: A high detail dutch windmill rises with a sturdy, octagonal silhouette of weathered red brick and dark thatch, its massive timber sails casting long shadows across a misty 17th-century polder. The structure exudes a rustic, industrious mood through its moss-edged masonry, salt-bleached wood grain, and heavy cream-colored canvas stretched over intricate lattice arms.
 
-material "wood"  (color=[0.55, 0.35, 0.18], metallic=0.0, roughness=0.8)
-material "white" (color=[0.92, 0.92, 0.92], metallic=0.0, roughness=0.4)
+material "brick" (color=[0.55, 0.28, 0.22], roughness=0.9, uv_mode="tile", uv_scale=[0.4, 0.4], base_color_texture="textures/windmill/brick_albedo.png", normal_texture="textures/windmill/brick_normal.png", metallic_roughness_texture="textures/windmill/brick_metallicRoughness.png", occlusion_texture="textures/windmill/brick_ao.png")
+material "thatch" (color=[0.22, 0.18, 0.14], roughness=0.95, base_color_texture="textures/windmill/thatch_albedo.png", normal_texture="textures/windmill/thatch_normal.png", metallic_roughness_texture="textures/windmill/thatch_metallicRoughness.png", occlusion_texture="textures/windmill/thatch_ao.png", uv_scale=[0.3, 0.3])
+material "wood" (color=[0.55, 0.48, 0.42], roughness=0.85, base_color_texture="textures/windmill/wood_albedo.png", normal_texture="textures/windmill/wood_normal.png", metallic_roughness_texture="textures/windmill/wood_metallicRoughness.png", occlusion_texture="textures/windmill/wood_ao.png")
+material "canvas" (color=[0.88, 0.85, 0.78], roughness=0.9, double_sided=1, base_color_texture="textures/windmill/canvas_albedo.png", normal_texture="textures/windmill/canvas_normal.png", metallic_roughness_texture="textures/windmill/canvas_metallicRoughness.png", occlusion_texture="textures/windmill/canvas_ao.png")
 
-scene {
-  // Static tower.
-  cylinder "tower" (pos=[0, 1.5, 0], radius=0.25, height=3.0, mat="wood", role="tower")
-
-  // The rotor pivots around +Z at the top of the tower; blades are children
-  // so they follow the rotation.
-  group "rotor" (pos=[0, 3.0, 0.3], role="rotor") {
-    // Hub: a short cylinder oriented along +Z.
-    cylinder "hub" (rot=[90, 0, 0], radius=0.1, height=0.15, mat="wood")
-
-    // Four blades, 90° apart around the rotor's local Z axis.
-    array "blades" (count=4, around=z) {
-      box "blade" (pos=[0, 0.6, 0], size=[0.1, 1.2, 0.03], mat="white")
+module "sail" () {
+  group "sail_root" {
+    // Main timber mast extending outward radially
+    box "mast" (size=[5.5, 0.15, 0.15], mat="wood", anchor=left)
+    
+    // Canvas stretched over the trailing edge
+    box "cloth" (size=[4.5, 1.2, 0.02], pos=[3.0, -0.675, 0], mat="canvas")
+    
+    // Lattice crossbeams supporting the canvas
+    grid "lattice_rungs" (count=[10, 1, 1], step=[0.45, 0, 0], center=1, pos=[3.0, -0.675, 0]) {
+      box "rung" (size=[0.04, 1.2, 0.06], mat="wood")
     }
+    
+    // Outer longitudinal beam framing the lattice
+    box "outer_beam" (size=[4.5, 0.06, 0.08], pos=[3.0, -1.25, 0], mat="wood")
   }
 }
 
-// Drive the rotor at 30 RPM around the +Z axis. The template builds a
-// 2-second clip (60 / 30) with 5 keyframes so slerp traces a full revolution.
-spin "windmill_spin" (target="rotor", axis=[0, 0, 1], rpm=30)
+scene {
+  // Main octagonal brick tower
+  lathe "tower" (profile=[[3.8, 0], [2.4, 11.0]], segments=8, mat="brick") {
+    connector "cap_mount" (at=[0, 11.0, 0], dir=[0, 1, 0])
+    
+    // Rustic wooden door at the base
+    box "door" (size=[1.2, 2.2, 0.2], pos=[0, 1.1, -3.6], mat="wood")
+    
+    // Wraparound wooden gallery (balcony)
+    group "gallery" (pos=[0, 4.5, 0]) {
+      tube "floor" (outer=4.8, inner=2.8, height=0.1, mat="wood")
+      tube "rail" (outer=4.8, inner=4.7, height=0.9, pos=[0, 0.5, 0], mat="wood")
+      
+      // Gallery supports
+      array "brackets" (count=8, around=y) {
+        box "bracket" (size=[0.1, 0.8, 1.5], pos=[0, -0.4, -3.5], rot=[30, 0, 0], mat="wood")
+      }
+    }
+  }
+
+  // Dark thatch cap
+  group "cap" {
+    hemisphere "dome" (radius=2.4, mat="thatch", scale=[1, 1.2, 1]) {
+      // Mount point for the main rotor shaft, angled slightly upward
+      connector "shaft_mount" (at=[0, 1.2, -2.2], dir=[0, 0.15, -1])
+      // Mount point for the rear steering tail
+      connector "tail_mount" (at=[0, 0.5, 2.2], dir=[0, -0.5, 1])
+    }
+  }
+  attach (parent="tower", child="cap", socket="cap_mount", plug="bottom")
+
+  // Rear steering pole
+  cylinder "tail_pole" (radius=0.08, height=5.0, mat="wood")
+  attach (parent="dome", child="tail_pole", socket="tail_mount", plug="top")
+
+  // Main rotor shaft
+  cylinder "shaft" (radius=0.25, height=1.2, mat="wood")
+  attach (parent="dome", child="shaft", socket="shaft_mount", plug="bottom")
+
+  // Rotor hub and sails
+  cylinder "hub" (radius=0.45, height=0.8, mat="wood") {
+    // Sails are embedded slightly into the top of the hub and radiate outward
+    group "sails" (pos=[0, 0.2, 0]) {
+      array "sail_array" (count=4, around=y) {
+        use "sail" ()
+      }
+    }
+  }
+  attach (parent="shaft", child="hub", socket="top", plug="bottom")
+}
+
+// Spin the hub around its local Y axis (which points forward along the shaft)
+spin "windmill_spin" (target="hub", axis=[0, 1, 0], rpm=12)

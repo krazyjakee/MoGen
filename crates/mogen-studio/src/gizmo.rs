@@ -42,14 +42,6 @@ impl Axis {
         }
     }
 
-    pub fn index(self) -> usize {
-        match self {
-            Axis::X => 0,
-            Axis::Y => 1,
-            Axis::Z => 2,
-        }
-    }
-
     pub const ALL: [Axis; 3] = [Axis::X, Axis::Y, Axis::Z];
 }
 

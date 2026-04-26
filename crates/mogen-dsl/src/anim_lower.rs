@@ -12,6 +12,42 @@ use mogen_core::{
 };
 use mogen_anim as anim;
 
+/// Procedural templates author keyframes as deltas from rest (e.g. `spin`
+/// emits `q(0)=I`), but glTF rotation/translation/scale channels REPLACE the
+/// node's rest TRS at runtime. If the target node already carries a non-rest
+/// transform — typically because `attach` rotated it to align connectors —
+/// playback would snap that rest pose away. Bake the rest pose into every
+/// keyframe so the channel reproduces rest at t=0 and applies the procedural
+/// motion on top.
+fn compose_with_rest_pose(clip: &mut Clip, graph: &SceneGraph) {
+    for track in &mut clip.tracks {
+        let rest = graph.get(track.node).transform;
+        match track.property {
+            TrackProperty::Rotation => {
+                for v in &mut track.values {
+                    let q = Quat::from_xyzw(v[0], v[1], v[2], v[3]);
+                    let composed = (rest.rotation * q).normalize();
+                    *v = [composed.x, composed.y, composed.z, composed.w];
+                }
+            }
+            TrackProperty::Translation => {
+                for v in &mut track.values {
+                    v[0] += rest.translation.x;
+                    v[1] += rest.translation.y;
+                    v[2] += rest.translation.z;
+                }
+            }
+            TrackProperty::Scale => {
+                for v in &mut track.values {
+                    v[0] *= rest.scale.x;
+                    v[1] *= rest.scale.y;
+                    v[2] *= rest.scale.z;
+                }
+            }
+        }
+    }
+}
+
 use crate::ast::{Node, Value};
 
 /// Lower a top-level or scene-level `joint` node.
@@ -233,7 +269,7 @@ pub fn lower_template(node: &Node, graph: &mut SceneGraph) -> Result<()> {
         } else {
             clip_name.clone()
         };
-        let clip = match node.kind.as_str() {
+        let mut clip = match node.kind.as_str() {
             "spin" => {
                 let rpm = node.attr_number("rpm").unwrap_or(60.0);
                 anim::spin(&name, target, axis, rpm)
@@ -260,6 +296,7 @@ pub fn lower_template(node: &Node, graph: &mut SceneGraph) -> Result<()> {
             }
             other => bail!("unknown animation template `{other}`"),
         };
+        compose_with_rest_pose(&mut clip, graph);
         graph.clips.push(clip);
     }
     Ok(())
@@ -403,5 +440,62 @@ mod tests {
         let t = &g.clips[0].tracks[0];
         assert_eq!(t.times, vec![0.0, 0.8]);
         assert_eq!(t.values.len(), 2);
+    }
+
+    #[test]
+    fn template_spin_preserves_rest_rotation_at_t0() {
+        // When `attach` rotates a node, the procedural `spin` template must
+        // start from the rest pose (q(0) == rest.rotation), not snap back to
+        // identity. Otherwise playback flips the visible axis.
+        let g = lower(&parse(
+            r#"
+            scene {
+              box "anchor" (size=[0.1, 0.1, 0.1]) {
+                connector "side" (at=[0.05, 0, 0], dir=[1, 0, 0])
+              }
+              box "hub" (size=[0.4, 0.4, 0.1])
+              attach (parent="anchor", child="hub", socket="side", plug="back")
+            }
+            spin "hub_spin" (target="hub", axis=[0, 0, 1], rpm=60)
+            "#,
+        ).expect("parse")).expect("lower");
+
+        let hub_id = g.find_node("hub").expect("hub");
+        let rest = g.get(hub_id).transform.rotation;
+        // Attach should have produced a non-identity rest rotation.
+        assert!(
+            (rest.dot(glam::Quat::IDENTITY).abs() - 1.0).abs() > 1e-4,
+            "expected attach to rotate hub away from identity (got {:?})",
+            rest
+        );
+
+        let track = &g.clips[0].tracks[0];
+        let q0 = glam::Quat::from_xyzw(
+            track.values[0][0], track.values[0][1], track.values[0][2], track.values[0][3],
+        );
+        // First keyframe should match rest pose (within shortest-arc sign).
+        assert!(
+            q0.dot(rest).abs() > 1.0 - 1e-4,
+            "expected baked t=0 to equal rest rotation: q0={:?} rest={:?}",
+            q0,
+            rest,
+        );
+    }
+
+    #[test]
+    fn template_spin_on_identity_node_is_unchanged() {
+        // Common case: target has identity rest. Bake must be a no-op so we
+        // don't perturb existing examples (drone.mog, windmill examples).
+        let g = lower(&parse(
+            r#"
+            scene { box "rotor" (size=[1, 0.1, 0.1]) }
+            spin "r" (target="rotor", axis=[0, 1, 0], rpm=60)
+            "#,
+        ).expect("parse")).expect("lower");
+        let track = &g.clips[0].tracks[0];
+        let q0 = glam::Quat::from_xyzw(
+            track.values[0][0], track.values[0][1], track.values[0][2], track.values[0][3],
+        );
+        assert!(q0.dot(glam::Quat::IDENTITY).abs() > 1.0 - 1e-5);
     }
 }

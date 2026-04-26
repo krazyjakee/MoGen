@@ -5,11 +5,8 @@ use mogen_dsl::ast::{Node, Value};
 
 #[cfg(test)]
 use crate::image::DEFAULT_IMAGE_MODEL;
-use crate::image_cache::ImageCache;
 
-use super::prompt::{
-    build_prompt, collect_material_anatomy, collect_materials, parse_prompt_header,
-};
+use super::prompt::{build_prompt, collect_material_anatomy, collect_materials, is_mask_material};
 use super::splice::safe_filename_stem;
 
 /// Default `textures_dir` for a given input `.mog` — `textures/<stem>` so
@@ -80,7 +77,6 @@ pub struct TexturesArgs {
     pub force: bool,
     pub dry_run: bool,
     pub no_build: bool,
-    pub no_cache: bool,
     pub api_key: Option<String>,
     /// Disable every derived PBR map. Albedo still gets generated.
     pub no_pbr: bool,
@@ -107,7 +103,6 @@ impl TexturesArgs {
             force: false,
             dry_run: false,
             no_build: false,
-            no_cache: false,
             api_key: None,
             no_pbr: false,
             no_normal: false,
@@ -133,15 +128,22 @@ pub struct Plan {
     /// already textured. Lets [`super::run::run_plan`] read those bytes from
     /// disk so derived maps can still be produced without re-running the LLM.
     pub existing_albedo_path: Option<PathBuf>,
+    /// True when the material is `alpha_mode="mask"`. Routes the albedo
+    /// through the foliage-cutout post-process (chroma-key the pure-black
+    /// backdrop into alpha=0) and preserves RGBA through resize / re-encode.
+    pub is_mask: bool,
 }
 
 pub enum PlanAction {
     /// Call the LLM (albedo only).
     Generate,
-    /// Load a cached LLM PNG (albedo only).
-    CacheHit,
     /// Derive locally from the albedo PNG (PBR maps only).
     Derive,
+    /// A PNG already exists at the planned `rel_path` on disk. Splice the
+    /// `*_texture` attribute into the source but skip the API call / local
+    /// derivation. Avoids burning API credit on a regenerate when the file
+    /// is already there but the source attr just hasn't been spliced yet.
+    UseExisting,
     /// Do nothing — either the attr is already present, or the user disabled
     /// this map kind via a flag.
     Skip(&'static str),
@@ -149,41 +151,36 @@ pub enum PlanAction {
 
 /// Build the plan without calling the API. Used by `--dry-run` and exposed
 /// for testing.
-pub fn build_plan(
-    src: &str,
-    ast: &[Node],
-    args: &TexturesArgs,
-    cache: Option<&ImageCache>,
-) -> Vec<Plan> {
-    let subject = parse_prompt_header(src);
+pub fn build_plan(ast: &[Node], args: &TexturesArgs) -> Vec<Plan> {
     let hits = collect_materials(ast);
     let anatomy = collect_material_anatomy(ast);
+    // On-disk existence checks resolve relative to the .mog directory, the
+    // same base [`super::run::run_plan`] uses when reading/writing PNGs.
+    let base_dir = args
+        .input
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."));
     let mut plans = Vec::new();
 
     for h in hits {
         let stem = safe_filename_stem(&h.name);
+        let is_mask = is_mask_material(h.node);
 
         // --- albedo slot ---
         let albedo_path = args.textures_dir.join(format!("{stem}{}", SlotKind::Albedo.suffix()));
         let existing_albedo = attr_path(h.node, SlotKind::Albedo.attr());
         let (albedo_action, albedo_prompt) = if existing_albedo.is_some() && !args.force {
             (PlanAction::Skip("already has base_color_texture"), String::new())
+        } else if !args.force && base_dir.join(&albedo_path).is_file() {
+            (PlanAction::UseExisting, String::new())
         } else {
             let prompt = build_prompt(
                 &h,
                 &args.style,
-                subject.as_deref(),
                 anatomy.get(&h.name).map(|s| s.as_str()),
             );
-            let cached = cache
-                .map(|c| c.lookup(&ImageCache::key(&args.model, &prompt)).is_some())
-                .unwrap_or(false);
-            let action = if cached {
-                PlanAction::CacheHit
-            } else {
-                PlanAction::Generate
-            };
-            (action, prompt)
+            (PlanAction::Generate, prompt)
         };
         plans.push(Plan {
             material: h.name.clone(),
@@ -193,6 +190,7 @@ pub fn build_plan(
             rel_path: albedo_path,
             prompt: albedo_prompt,
             existing_albedo_path: existing_albedo.clone(),
+            is_mask,
         });
 
         // --- derived maps ---
@@ -207,6 +205,8 @@ pub fn build_plan(
             let rel_path = args.textures_dir.join(format!("{stem}{}", kind.suffix()));
             let action = if attr_path(h.node, kind.attr()).is_some() && !args.force {
                 PlanAction::Skip("already present")
+            } else if !args.force && base_dir.join(&rel_path).is_file() {
+                PlanAction::UseExisting
             } else {
                 PlanAction::Derive
             };
@@ -218,6 +218,7 @@ pub fn build_plan(
                 rel_path,
                 prompt: String::new(),
                 existing_albedo_path: None,
+                is_mask,
             });
         }
     }
@@ -245,7 +246,7 @@ mod tests {
         let src = r#"material "a" (color=[1,0,0])"#;
         let ast = parse_or_panic(src);
         let args = TexturesArgs::with_defaults(PathBuf::from("x.mog"));
-        let plans = build_plan(src, &ast, &args, None);
+        let plans = build_plan(&ast, &args);
         assert_eq!(plans.len(), 4);
         assert_eq!(plans[0].kind, SlotKind::Albedo);
         assert!(matches!(plans[0].action, PlanAction::Generate));
@@ -260,7 +261,7 @@ mod tests {
         let ast = parse_or_panic(src);
         let mut args = TexturesArgs::with_defaults(PathBuf::from("x.mog"));
         args.no_pbr = true;
-        let plans = build_plan(src, &ast, &args, None);
+        let plans = build_plan(&ast, &args);
         assert_eq!(plans.len(), 1);
         assert_eq!(plans[0].kind, SlotKind::Albedo);
     }
@@ -270,7 +271,7 @@ mod tests {
         let src = r#"material "a" (color=[1,0,0], base_color_texture="existing.png")"#;
         let ast = parse_or_panic(src);
         let args = TexturesArgs::with_defaults(PathBuf::from("x.mog"));
-        let plans = build_plan(src, &ast, &args, None);
+        let plans = build_plan(&ast, &args);
         // Albedo skipped but captures existing path for derivation.
         let albedo = &plans[0];
         assert!(matches!(albedo.action, PlanAction::Skip(_)));
@@ -309,7 +310,7 @@ mod tests {
         let src = r#"material "wood" (color=[1,0,0])"#;
         let ast = parse_or_panic(src);
         let args = TexturesArgs::with_defaults(PathBuf::from("axe.mog"));
-        let plans = build_plan(src, &ast, &args, None);
+        let plans = build_plan(&ast, &args);
         assert_eq!(
             plans[0].rel_path,
             PathBuf::from("textures").join("axe").join("wood_albedo.png"),
@@ -322,7 +323,93 @@ mod tests {
         let ast = parse_or_panic(src);
         let mut args = TexturesArgs::with_defaults(PathBuf::from("x.mog"));
         args.force = true;
-        let plans = build_plan(src, &ast, &args, None);
+        let plans = build_plan(&ast, &args);
         assert!(matches!(plans[0].action, PlanAction::Generate));
+    }
+
+    fn fresh_tempdir(label: &str) -> PathBuf {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let ns = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let p = std::env::temp_dir().join(format!("mogen-plan-{label}-{ns}"));
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    #[test]
+    fn build_plan_uses_existing_files_on_disk_without_force() {
+        // Material has no `*_texture` attrs in the source, but every PNG it
+        // would otherwise generate already lives at the planned rel_path on
+        // disk. Without --force, plans should reflect that and skip the API.
+        let dir = fresh_tempdir("use-existing");
+        let mog = dir.join("x.mog");
+        std::fs::write(&mog, "").unwrap();
+        // Pre-create every PNG `build_plan` would target.
+        let tex_dir = dir.join("textures").join("x");
+        std::fs::create_dir_all(&tex_dir).unwrap();
+        for suffix in [
+            SlotKind::Albedo.suffix(),
+            SlotKind::Normal.suffix(),
+            SlotKind::MetallicRoughness.suffix(),
+            SlotKind::Occlusion.suffix(),
+        ] {
+            std::fs::write(tex_dir.join(format!("a{suffix}")), b"png").unwrap();
+        }
+
+        let src = r#"material "a" (color=[1,0,0])"#;
+        let ast = parse_or_panic(src);
+        let args = TexturesArgs::with_defaults(mog);
+        let plans = build_plan(&ast, &args);
+        assert_eq!(plans.len(), 4);
+        for p in &plans {
+            assert!(
+                matches!(p.action, PlanAction::UseExisting),
+                "{:?} slot expected UseExisting, got {:?}",
+                p.kind,
+                std::mem::discriminant(&p.action),
+            );
+        }
+    }
+
+    #[test]
+    fn build_plan_force_overrides_on_disk_existence() {
+        // Same setup as above but with --force: the on-disk PNGs should be
+        // ignored and the plan should call Generate / Derive again.
+        let dir = fresh_tempdir("force-overrides-disk");
+        let mog = dir.join("x.mog");
+        std::fs::write(&mog, "").unwrap();
+        let tex_dir = dir.join("textures").join("x");
+        std::fs::create_dir_all(&tex_dir).unwrap();
+        std::fs::write(tex_dir.join("a_albedo.png"), b"png").unwrap();
+
+        let src = r#"material "a" (color=[1,0,0])"#;
+        let ast = parse_or_panic(src);
+        let mut args = TexturesArgs::with_defaults(mog);
+        args.force = true;
+        let plans = build_plan(&ast, &args);
+        assert!(matches!(plans[0].action, PlanAction::Generate));
+    }
+
+    #[test]
+    fn build_plan_partial_disk_coverage_mixes_actions() {
+        // Albedo PNG exists but derived maps don't: albedo should be
+        // UseExisting (no API call), derived should still Derive from it.
+        let dir = fresh_tempdir("partial-disk");
+        let mog = dir.join("x.mog");
+        std::fs::write(&mog, "").unwrap();
+        let tex_dir = dir.join("textures").join("x");
+        std::fs::create_dir_all(&tex_dir).unwrap();
+        std::fs::write(tex_dir.join("a_albedo.png"), b"png").unwrap();
+
+        let src = r#"material "a" (color=[1,0,0])"#;
+        let ast = parse_or_panic(src);
+        let args = TexturesArgs::with_defaults(mog);
+        let plans = build_plan(&ast, &args);
+        assert!(matches!(plans[0].action, PlanAction::UseExisting));
+        assert!(matches!(plans[1].action, PlanAction::Derive));
+        assert!(matches!(plans[2].action, PlanAction::Derive));
+        assert!(matches!(plans[3].action, PlanAction::Derive));
     }
 }

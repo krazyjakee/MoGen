@@ -1,6 +1,8 @@
 use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
 
+use crate::Span;
+
 /// An oriented frame exposed by a node for attaching other parts.
 /// `rotation` turns the canonical +Y axis into the connector's `dir`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -11,6 +13,13 @@ pub struct Connector {
     pub tag: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub radius: Option<f32>,
+    /// Byte range of the AST `connector` declaration that produced this
+    /// frame. `None` for synthesized defaults (primitive faces, AABB
+    /// fallbacks). The viewport's gizmo redirect path uses this to rewrite
+    /// the connector's `at=` when an attach-bound child is translated —
+    /// without a span there's no DSL slice to mutate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_span: Option<Span>,
 }
 
 impl Connector {
@@ -31,6 +40,7 @@ impl Connector {
             rotation,
             tag: tag.into(),
             radius,
+            source_span: None,
         }
     }
 }

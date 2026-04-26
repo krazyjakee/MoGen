@@ -1,37 +1,33 @@
-// A young oak tree built from the organic stdlib.
-//
-// One trunk + a few branches at the top + scattered leaves. Branches are
-// stdlib `branch` modules rotated to spread out from the trunk; leaves are
-// stdlib `leaf` modules clustered near each branch tip. Demonstrates how
-// recursive-looking organic forms compose from a small set of stdlib parts.
+// mogen-generate seed=1777166379305653000
+// mogen-generate thinking=high
+// prompt: oak tree
 
-material "oak_bark"  (color=[0.36, 0.25, 0.15], roughness=0.95)
-material "oak_leaf"  (color=[0.18, 0.45, 0.20], roughness=0.65, double_sided=1)
+material "oak_bark" (color=[0.35, 0.28, 0.20], roughness=1, base_color_texture="textures/oak_tree/oak_bark_albedo.png", normal_texture="textures/oak_tree/oak_bark_normal.png", metallic_roughness_texture="textures/oak_tree/oak_bark_metallicRoughness.png", occlusion_texture="textures/oak_tree/oak_bark_ao.png", occlusion_strength=0.63, double_sided=0, normal_strength=1.5)
+material "oak_leaf" (
+  color=[0.25, 0.45, 0.15], 
+  roughness=1,
+  alpha_mode="mask", 
+  alpha_cutoff=0.5, 
+  double_sided=1
+, base_color_texture="textures/oak_tree/oak_leaf_albedo.png", normal_texture="textures/oak_tree/oak_leaf_normal.png", metallic_roughness_texture="textures/oak_tree/oak_leaf_metallicRoughness.png", metallic=0, normal_strength=0, uv_mode="tile", transmission=0, occlusion_strength=1)
 
 scene {
-  // Trunk — a tapered spline_tube via stdlib branch, scaled up for size.
-  group "trunk" (mat="oak_bark", scale=2.5) {
-    use "branch" ()
-  }
-
-  // Three primary limbs spreading from the crown (~1.5 m up).
-  group "limb_a" (pos=[0, 1.5, 0], rot=[0, 0, 35], mat="oak_bark") {
-    use "branch" ()
-  }
-  group "limb_b" (pos=[0, 1.5, 0], rot=[0, 120, 35], mat="oak_bark") {
-    use "branch" ()
-  }
-  group "limb_c" (pos=[0, 1.5, 0], rot=[0, 240, 35], mat="oak_bark") {
-    use "branch" ()
-  }
-
-  // Leaf cloud — small curved planes scattered around the canopy. Tagged
-  // floating because individual leaves don't structurally touch limbs;
-  // visually they read as foliage above the branches.
-  group "leaves_a"  (pos=[ 0.5, 2.0,  0.0],  tags="floating", mat="oak_leaf") { use "leaf" () }
-  group "leaves_a2" (pos=[ 0.45, 1.95, 0.15], rot=[0, 60, 0], tags="floating", mat="oak_leaf") { use "leaf" () }
-  group "leaves_b"  (pos=[-0.25, 2.0,  0.43], tags="floating", mat="oak_leaf") { use "leaf" () }
-  group "leaves_b2" (pos=[-0.18, 1.95, 0.36], rot=[0, 30, 0], tags="floating", mat="oak_leaf") { use "leaf" () }
-  group "leaves_c"  (pos=[-0.25, 2.0, -0.43], tags="floating", mat="oak_leaf") { use "leaf" () }
-  group "leaves_c2" (pos=[-0.18, 1.95,-0.36], rot=[0, -30, 0], tags="floating", mat="oak_leaf") { use "leaf" () }
+  branch "oak" (
+    length=1.8, 
+    radius=0.25, 
+    depth=5, 
+    splits=2,
+    length_falloff=0.75, 
+    radius_falloff=0.65,
+    branch_angle=45, 
+    bend=15, 
+    tropism=-0.1, 
+    jitter=0.3, 
+    seed=42,
+    leaves=1, 
+    leaf_size=2, 
+    leaf_cards=3, 
+    leaf_mat="oak_leaf",
+    mat="oak_bark"
+  )
 }

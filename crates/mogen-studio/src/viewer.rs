@@ -1,5 +1,6 @@
 mod anim;
 mod camera;
+mod cinema;
 pub(crate) mod flatten;
 mod gizmo_gl;
 mod gl_util;
@@ -40,22 +41,23 @@ impl Viewer {
         })
     }
 
-    pub fn set_scene(&self, scene: &SceneGraph, base_dir: Option<&Path>) {
+    pub fn set_scene(&self, scene: &SceneGraph, base_dir: Option<&Path>, fit_camera: bool) {
         // Fit the camera using the static (unanimated) pose so the framing
         // stays stable across animation frames — using an animated mesh would
         // make the camera jump as the bounding box swings.
         let base_mesh = flatten::flatten(scene, base_dir);
         let mut st = self.state.lock().unwrap();
-        let first_load = st.scene.is_none();
-        // Only auto-fit on the FIRST compile of a buffer. Subsequent compiles
-        // (including every gizmo release, every keystroke debounce) must not
-        // touch `camera.target` / `camera.fit_distance` — resetting those
-        // recenters the view on the scene origin and makes it look like the
-        // object didn't move when the author just dragged it. The user still
-        // has the Frame button (`frame_view`) to re-fit on demand, which
-        // reads `static_center` / `static_radius` below.
-        if first_load {
+        let viewer_was_empty = st.scene.is_none();
+        // Camera fit is caller-driven: the App knows whether this is the first
+        // time a given file's scene is being shown. Subsequent compiles
+        // (gizmo release, keystroke debounce) pass `false` so `camera.target` /
+        // `camera.fit_distance` stay put — recentering on every compile would
+        // make it look like the user's edit was rejected. The Frame button
+        // (`frame_view`) re-fits on demand using `static_center` /
+        // `static_radius` below.
+        if fit_camera {
             st.camera.fit(&base_mesh);
+            st.camera.zoom = 1.0;
         }
         st.static_center = base_mesh.center;
         st.static_radius = base_mesh.radius;
@@ -79,7 +81,7 @@ impl Viewer {
         };
 
         let mut clip_active: Vec<bool> = vec![false; scene.clips.len()];
-        if first_load {
+        if viewer_was_empty {
             for a in &mut clip_active {
                 *a = true;
             }
@@ -121,6 +123,24 @@ impl Viewer {
 
     pub fn selection(&self) -> Option<NodeId> {
         self.state.lock().unwrap().selected
+    }
+
+    /// Stable name-path of the current selection (`["root", "torso", "arm_l"]`),
+    /// used by the undo stack to capture / restore selection across recompiles
+    /// when raw `NodeId` indices may have shifted.
+    pub fn selected_path(&self) -> Option<Vec<String>> {
+        self.state.lock().unwrap().selected_path.clone()
+    }
+
+    /// Set the desired selection by stable path. The live `selected` NodeId
+    /// is cleared so the inspector doesn't render against a stale index;
+    /// the next `set_scene` call resolves the path back to a NodeId once the
+    /// recompile lands.
+    pub fn set_selected_path(&self, path: Option<Vec<String>>) {
+        let mut st = self.state.lock().unwrap();
+        st.selected_path = path;
+        st.selected = None;
+        st.gizmo_drag = None;
     }
 
     pub fn gizmo_mode(&self) -> crate::gizmo::GizmoMode {
@@ -203,6 +223,14 @@ impl Viewer {
         self.state.lock().unwrap().anim_playing = playing;
     }
 
+    pub fn playback_speed(&self) -> f32 {
+        self.state.lock().unwrap().playback_speed
+    }
+
+    pub fn set_playback_speed(&self, speed: f32) {
+        self.state.lock().unwrap().playback_speed = speed;
+    }
+
     pub fn reset_anim_times(&self) {
         let mut st = self.state.lock().unwrap();
         for t in st.anim_times.iter_mut() {
@@ -241,11 +269,6 @@ impl Viewer {
         }
     }
 
-    pub fn reset_view(&self) {
-        let mut st = self.state.lock().unwrap();
-        st.camera.zoom = 1.0;
-    }
-
     pub fn frame_view(&self) {
         let mut st = self.state.lock().unwrap();
         let center = st.static_center;
@@ -263,6 +286,39 @@ impl Viewer {
 
     pub fn restore_camera(&self, snap: CameraSnapshot) {
         self.state.lock().unwrap().camera.restore(snap);
+    }
+
+    pub fn is_cinema_active(&self) -> bool {
+        self.state.lock().unwrap().cinema.active
+    }
+
+    pub fn cinema_shot_label(&self) -> Option<&'static str> {
+        self.state.lock().unwrap().cinema.shot_label()
+    }
+
+    /// Toggle cinema mode. On enable, latches the current camera pose and
+    /// re-frames against the static bounding sphere so each shot composes
+    /// around the model itself; force-plays animations so the subject moves
+    /// while the camera pans. On disable, restores the latched pose.
+    pub fn set_cinema_active(&self, on: bool) {
+        let mut st = self.state.lock().unwrap();
+        if on == st.cinema.active {
+            return;
+        }
+        if on {
+            let center = st.static_center;
+            let radius = st.static_radius.max(0.001);
+            st.camera.target = center;
+            st.camera.fit_distance = radius * 2.8;
+            // Split the guard's deref into a single &mut ViewerState so the
+            // borrow checker can prove `cinema` and `camera` are disjoint.
+            let st = &mut *st;
+            st.cinema.activate(&st.camera);
+            st.gizmo_drag = None;
+            st.anim_playing = true;
+        } else if let Some(snap) = st.cinema.deactivate() {
+            st.camera.restore(snap);
+        }
     }
 
     pub fn destroy(&self, gl: &glow::Context) {
@@ -295,8 +351,21 @@ impl Viewer {
         {
             let mut st = self.state.lock().unwrap();
 
+            // Cinema mode owns the camera: tick the director and skip all
+            // user-input handling below (orbit, pan, zoom, gizmo, click-to-
+            // select). Animations still advance — the model performs while
+            // the camera pans.
+            let cinema_active = st.cinema.active;
+            if cinema_active {
+                // Split the guard so the borrow checker sees `cinema` and
+                // `camera` as disjoint fields.
+                let st_ref = &mut *st;
+                st_ref.cinema.tick(dt, &mut st_ref.camera);
+                needs_repaint = true;
+            }
+
             let mut gizmo_handled_primary = false;
-            if primary_pressed_on_widget && !shift_held {
+            if !cinema_active && primary_pressed_on_widget && !shift_held {
                 if let (Some(cursor), Some(sel)) = (press_pos_raw, st.selected) {
                     let drag_opt = begin_gizmo_drag(&st, sel, rect, cursor, aspect_for(rect));
                     if std::env::var_os("MOGEN_GIZMO_TRACE").is_some() {
@@ -320,7 +389,7 @@ impl Viewer {
                 }
             }
 
-            let gizmo_in_progress = st.gizmo_drag.is_some();
+            let gizmo_in_progress = !cinema_active && st.gizmo_drag.is_some();
             if gizmo_in_progress && primary_dragging {
                 if let Some(cursor) = cursor_now {
                     update_gizmo_drag(&mut st, rect, cursor, aspect_for(rect), ctrl_held);
@@ -333,14 +402,16 @@ impl Viewer {
             // co-press during a gizmo gesture used to steal the camera and
             // the user saw the camera tumble alongside the model, making
             // the edit look like it was rejected.
-            let panning = !gizmo_in_progress
+            let panning = !cinema_active
+                && !gizmo_in_progress
                 && !gizmo_handled_primary
                 && (response.dragged_by(egui::PointerButton::Middle)
                     || response.dragged_by(egui::PointerButton::Secondary)
                     || (shift_held && primary_dragging));
             if panning {
                 st.camera.pan(response.drag_delta(), rect.height());
-            } else if primary_dragging
+            } else if !cinema_active
+                && primary_dragging
                 && !gizmo_in_progress
                 && !gizmo_handled_primary
             {
@@ -348,7 +419,7 @@ impl Viewer {
                 st.camera.yaw -= d.x * 0.01;
                 st.camera.pitch = (st.camera.pitch - d.y * 0.01).clamp(-1.54, 1.54);
             }
-            if response.hovered() {
+            if !cinema_active && response.hovered() {
                 let scroll = ui.input(|i| i.smooth_scroll_delta.y);
                 if scroll != 0.0 {
                     let factor = (1.0 - scroll * 0.0015).clamp(0.5, 1.5);
@@ -360,10 +431,6 @@ impl Viewer {
                 let maybe_edit = commit_gizmo_drag(&mut st);
                 if std::env::var_os("MOGEN_GIZMO_TRACE").is_some() {
                     match &maybe_edit {
-                        Some(PendingEdit::SetAttr { node, attr, value }) => eprintln!(
-                            "[gizmo] commit SetAttr node={} attr={} value={}",
-                            node.0, attr, value
-                        ),
                         Some(PendingEdit::SetAttrCanonical {
                             node,
                             attr,
@@ -372,6 +439,16 @@ impl Viewer {
                         }) => eprintln!(
                             "[gizmo] commit SetAttrCanonical node={} attr={} value={} delete={:?}",
                             node.0, attr, value, delete
+                        ),
+                        Some(PendingEdit::SetAttrAtSpan {
+                            node,
+                            span,
+                            attr,
+                            value,
+                            delete,
+                        }) => eprintln!(
+                            "[gizmo] commit SetAttrAtSpan node={} span={:?} attr={} value={} delete={:?}",
+                            node.0, span, attr, value, delete
                         ),
                         None => eprintln!("[gizmo] commit SKIPPED (trivial delta)"),
                     }
@@ -389,7 +466,7 @@ impl Viewer {
                 needs_repaint = true;
             }
 
-            if response.clicked() && !gizmo_in_progress {
+            if !cinema_active && response.clicked() && !gizmo_in_progress {
                 if let Some(cursor) = cursor_now {
                     if let Some(id) = crate::pick::pick_node(
                         &st.camera,
@@ -406,6 +483,8 @@ impl Viewer {
             }
 
             if st.anim_playing && st.any_active() {
+                let speed = st.playback_speed;
+                let scaled_dt = dt * speed;
                 let mut advanced = false;
                 let n = st.clip_active.len();
                 for i in 0..n {
@@ -418,8 +497,8 @@ impl Viewer {
                         .and_then(|s| s.clips.get(i))
                         .map(|c| c.duration)
                         .unwrap_or(0.0);
-                    if duration > 0.0 {
-                        st.anim_times[i] = (st.anim_times[i] + dt).rem_euclid(duration);
+                    if duration > 0.0 && scaled_dt != 0.0 {
+                        st.anim_times[i] = (st.anim_times[i] + scaled_dt).rem_euclid(duration);
                         advanced = true;
                     }
                 }
@@ -454,22 +533,26 @@ impl Viewer {
                 st.preview_shader.wants_wireframe(),
             );
             rr.draw(gl, viewproj, eye);
-            rr.draw_grid(gl, viewproj, eye);
-            if let (Some(sel), Some(scene)) = (st.selected, st.scene.as_ref()) {
-                if let Some(node) = scene.nodes.get(sel.0 as usize) {
-                    // Skip gizmo handles for non-editable (replicator/CSG)
-                    // nodes AND for relative-placed nodes: both have derived
-                    // transforms that a direct writeback can't change
-                    // coherently. `begin_gizmo_drag` mirrors both gates.
-                    if node.editable && !node.relative_placed {
-                        let worlds = scene.world_transforms();
-                        let base_world = worlds
-                            .get(sel.0 as usize)
-                            .copied()
-                            .unwrap_or(Mat4::IDENTITY);
-                        let origin = base_world.w_axis.truncate();
-                        let scale = crate::gizmo::handle_scale(origin, eye, viewport_height);
-                        rr.draw_gizmo(gl, viewproj, origin, scale, st.gizmo_mode);
+            // Cinema mode hides the grid + gizmo handles so the framing
+            // reads as a clean presentation rather than an editor view.
+            if !st.cinema.active {
+                rr.draw_grid(gl, viewproj, eye);
+                if let (Some(sel), Some(scene)) = (st.selected, st.scene.as_ref()) {
+                    if let Some(node) = scene.nodes.get(sel.0 as usize) {
+                        // Skip gizmo handles for non-editable (replicator/CSG)
+                        // nodes AND for relative-placed nodes: both have derived
+                        // transforms that a direct writeback can't change
+                        // coherently. `begin_gizmo_drag` mirrors both gates.
+                        if node.editable && !node.relative_placed {
+                            let worlds = scene.world_transforms();
+                            let base_world = worlds
+                                .get(sel.0 as usize)
+                                .copied()
+                                .unwrap_or(Mat4::IDENTITY);
+                            let origin = base_world.w_axis.truncate();
+                            let scale = crate::gizmo::handle_scale(origin, eye, viewport_height);
+                            rr.draw_gizmo(gl, viewproj, origin, scale, st.gizmo_mode);
+                        }
                     }
                 }
             }

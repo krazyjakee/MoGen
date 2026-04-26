@@ -97,6 +97,26 @@ impl MogenStudioApp {
     }
 
     pub(super) fn start_llm_textures(&mut self, ctx: egui::Context) {
+        self.start_llm_textures_inner(ctx, None);
+    }
+
+    /// Right-click → Regenerate on a single texture preview lands here. The
+    /// pipeline runs with `force=true` (overridden inside `run_llm_textures`)
+    /// and a one-element material filter, so only that material's slots are
+    /// touched even if the rest of the scene is fully textured.
+    pub(super) fn start_llm_textures_for_material(
+        &mut self,
+        ctx: egui::Context,
+        material: String,
+    ) {
+        self.start_llm_textures_inner(ctx, Some(vec![material]));
+    }
+
+    fn start_llm_textures_inner(
+        &mut self,
+        ctx: egui::Context,
+        material_filter: Option<Vec<String>>,
+    ) {
         let (src_empty, path_opt, src, cfg) = {
             let f = self.active();
             (
@@ -128,22 +148,29 @@ impl MogenStudioApp {
         let af = self.active_mut();
         af.llm_rx = Some(rx);
         af.llm_in_flight = Some(LlmKind::Textures);
-        af.llm_progress = Some(LlmProgress::Status(
-            "generating textures with Gemini Image…".into(),
-        ));
+        let banner = match &material_filter {
+            Some(m) if m.len() == 1 => {
+                format!("regenerating textures for \"{}\"…", m[0])
+            }
+            _ => "generating textures with Gemini Image…".to_string(),
+        };
+        af.llm_progress = Some(LlmProgress::Status(banner.clone()));
         af.llm_started_at = Some(Instant::now());
         af.llm_events.clear();
         af.llm_events.push(LlmEvent {
             at: Instant::now(),
-            text: "starting texture pipeline".into(),
+            text: match &material_filter {
+                Some(m) if m.len() == 1 => format!("regenerating textures for \"{}\"", m[0]),
+                _ => "starting texture pipeline".into(),
+            },
             tone: LlmEventTone::Info,
         });
         af.llm_error = None;
-        af.status = "generating textures with Gemini Image…".into();
+        af.status = banner;
 
         let worker_tx = tx.clone();
         std::thread::spawn(move || {
-            let outcome = run_llm_textures(src, path, api_key, cfg, worker_tx);
+            let outcome = run_llm_textures(src, path, api_key, cfg, material_filter, worker_tx);
             let _ = tx.send(LlmMessage::Done(outcome));
             ctx.request_repaint();
         });
@@ -578,12 +605,21 @@ impl MogenStudioApp {
             }
         }
 
-        // Only reset the camera when the file that just completed is the one
+        // Only refit the camera when the file that just completed is the one
         // currently on screen — otherwise a background job would yank the
-        // user's view out from under them.
+        // user's view out from under them. Generate produces brand-new
+        // geometry, so flag the file for a fresh fit; `compile_file` below
+        // will re-frame against the new bounding sphere.
         if matches!(outcome.kind, LlmKind::Generate) && i == self.active {
-            self.viewer.reset_view();
+            self.files[i].first_render = true;
         }
+
+        // LLM completions are deliberately NOT undoable — the wholesale
+        // source replacement is treated as a "commit" the user has to react
+        // to with another LLM run or a manual edit. Break the coalesce chain
+        // so a subsequent gizmo / inspector edit doesn't merge into a stack
+        // entry whose `before` predates the LLM run.
+        self.break_undo_chain(i);
 
         self.compile_file(i);
 
@@ -659,7 +695,7 @@ fn event_for_progress(p: &LlmProgress) -> (String, LlmEventTone) {
         } => {
             let verb = match stage {
                 TextureStage::Generating => "generating",
-                TextureStage::CacheHit => "cache hit",
+                TextureStage::Existing => "using existing PNG",
                 TextureStage::Deriving => "deriving PBR",
                 TextureStage::Done => "finished",
             };
