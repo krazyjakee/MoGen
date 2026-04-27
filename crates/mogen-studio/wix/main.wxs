@@ -25,7 +25,7 @@
 
         <Media Id="1" Cabinet="media1.cab" EmbedCab="yes"/>
 
-        <Icon Id="AppIcon.ico" SourceFile="wix\AppIcon.ico"/>
+        <Icon Id="AppIcon.ico" SourceFile="$(var.CargoTargetBinDir)\AppIcon.ico"/>
         <Property Id="ARPPRODUCTICON" Value="AppIcon.ico"/>
 
         <Directory Id="TARGETDIR" Name="SourceDir">
