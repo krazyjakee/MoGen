@@ -20,7 +20,8 @@ use std::collections::BTreeSet;
 
 use mogen_core::{has_errors, Diagnostic, Severity, Span};
 
-use crate::gemini::{GeminiClient, GeminiError, GenerateConfig, Usage};
+use crate::provider::{LlmClient, ProviderError};
+use crate::types::{GenerateConfig, Usage};
 
 pub struct RepairConfig {
     /// How many follow-up calls we allow after the first one. Default 2.
@@ -54,7 +55,7 @@ pub struct GenerateOutcome {
     /// Validator diagnostics for `dsl`. If empty, the DSL parsed cleanly and
     /// validated with no errors.
     pub diagnostics: Vec<Diagnostic>,
-    /// Gemini usage summed across all calls in this session.
+    /// LLM usage summed across all calls in this session.
     pub usage: Usage,
     /// How many calls we actually made (initial + repair). Always `>= 1` on success.
     pub call_count: u32,
@@ -68,10 +69,10 @@ impl GenerateOutcome {
 
 /// Run `generate` then up to `repair.max_iters` repair passes.
 pub fn generate_with_repair(
-    client: &GeminiClient,
+    client: &LlmClient,
     cfg: GenerateConfig,
     repair: &RepairConfig,
-) -> Result<GenerateOutcome, GeminiError> {
+) -> Result<GenerateOutcome, ProviderError> {
     let mut cfg = cfg;
     let mut total_usage = Usage::default();
     let mut calls = 0u32;

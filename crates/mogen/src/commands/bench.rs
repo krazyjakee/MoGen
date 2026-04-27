@@ -2,25 +2,27 @@ use std::fs;
 use std::path::PathBuf;
 
 use anyhow::{bail, Context, Result};
-use mogen_llm::gemini::{GeminiClient, GenerateConfig};
 use mogen_llm::{
     default_cache_path, generate_with_repair, resolve_or_create_cache, system_instruction,
-    RepairConfig, StdlibIndex, ThinkingLevel, DEFAULT_TTL_SECONDS,
+    GenerateConfig, LlmClient, Provider, RepairConfig, StdlibIndex, ThinkingLevel,
+    DEFAULT_TTL_SECONDS,
 };
 
-use crate::common::resolve_api_key;
+use crate::common::{resolve_api_key, resolve_model};
 
 pub(crate) fn bench(
     prompts_path: PathBuf,
-    model: String,
+    provider: Provider,
+    model: Option<String>,
     max_repair_iters: u32,
     budget_tokens: Option<u32>,
     api_key: Option<String>,
     no_cache: bool,
     thinking: ThinkingLevel,
 ) -> Result<()> {
-    let api_key = resolve_api_key(api_key)?;
-    let client = GeminiClient::new(api_key);
+    let api_key = resolve_api_key(provider, api_key)?;
+    let client = LlmClient::new(provider, api_key);
+    let model = resolve_model(provider, model);
 
     let content = fs::read_to_string(&prompts_path)
         .with_context(|| format!("reading {}", prompts_path.display()))?;
@@ -36,20 +38,32 @@ pub(crate) fn bench(
 
     // Resolve the cache once up front — every prompt in the batch shares the
     // same system instruction, so a single cache entry serves the whole run.
+    // Only Gemini honours `cachedContents`; on other providers we fall back
+    // to inline.
     let system = system_instruction(&StdlibIndex::from_registry(
         mogen_dsl::stdlib_registry(),
     ));
     let cached_name: Option<String> = if no_cache {
         None
-    } else if let Some(cache_path) = default_cache_path() {
-        match resolve_or_create_cache(&client, &model, &system, &cache_path, DEFAULT_TTL_SECONDS) {
-            Ok(name) => Some(name),
-            Err(e) => {
-                eprintln!(
-                    "mogen bench: cache unavailable ({e}); sending system instruction inline"
-                );
-                None
+    } else if let Some(gemini) = client.as_gemini() {
+        if let Some(cache_path) = default_cache_path() {
+            match resolve_or_create_cache(
+                gemini,
+                &model,
+                &system,
+                &cache_path,
+                DEFAULT_TTL_SECONDS,
+            ) {
+                Ok(name) => Some(name),
+                Err(e) => {
+                    eprintln!(
+                        "mogen bench: cache unavailable ({e}); sending system instruction inline"
+                    );
+                    None
+                }
             }
+        } else {
+            None
         }
     } else {
         None
@@ -60,8 +74,9 @@ pub(crate) fn bench(
     let mut total_calls = 0u32;
 
     println!(
-        "# mogen bench — {} prompts, model={}, max_repair_iters={}, cache={}",
+        "# mogen bench — {} prompts, provider={}, model={}, max_repair_iters={}, cache={}",
         prompts.len(),
+        provider.key(),
         model,
         max_repair_iters,
         if cached_name.is_some() { "on" } else { "off" },

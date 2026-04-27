@@ -5,10 +5,10 @@ use std::time::{Duration, Instant};
 
 use indicatif::{ProgressBar, ProgressStyle};
 
-/// Rotating "still working" lines shown after a Gemini call has been running
+/// Rotating "still working" lines shown after an LLM call has been running
 /// for more than 10s. They're deliberately vague — we don't actually know
 /// what the model is doing, we just want the wait to feel less dead.
-pub(crate) const GEMINI_FLAVORS: &[&str] = &[
+pub(crate) const LLM_FLAVORS: &[&str] = &[
     "still thinking",
     "reasoning about geometry",
     "planning the scene",

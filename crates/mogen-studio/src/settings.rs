@@ -2,7 +2,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use mogen_llm::gemini::{DEFAULT_FAST_MODEL, DEFAULT_MODEL, DEFAULT_TEMPERATURE};
-use mogen_llm::ThinkingLevel;
+use mogen_llm::{Provider, ThinkingLevel};
 use serde::{Deserialize, Serialize};
 
 use crate::preview_shader::{
@@ -84,6 +84,33 @@ pub struct Settings {
     /// flow again.
     #[serde(default)]
     pub onboarded: bool,
+
+    /// Selected LLM provider, persisted as a lowercase [`Provider::key`]
+    /// (`"gemini"`, `"openai"`, `"anthropic"`, `"ollama"`). Empty / unknown
+    /// falls back to [`Provider::default`] at read time so adding new
+    /// providers later doesn't invalidate old settings files.
+    #[serde(default)]
+    pub provider: String,
+
+    /// API key for the OpenAI provider. Stored alongside the Gemini key so
+    /// switching providers in Options doesn't require re-pasting credentials.
+    #[serde(default)]
+    pub openai_api_key: String,
+
+    /// API key for the Anthropic (Claude) provider.
+    #[serde(default)]
+    pub anthropic_api_key: String,
+
+    /// Optional bearer token for an Ollama endpoint sitting behind an
+    /// authenticating reverse proxy. Usually empty — local Ollama is keyless.
+    #[serde(default)]
+    pub ollama_api_key: String,
+
+    /// Optional override for the Ollama base URL. Empty → library default
+    /// (`http://localhost:11434`). Set this to point at a self-hosted
+    /// instance.
+    #[serde(default)]
+    pub ollama_base_url: String,
 }
 
 impl Settings {
@@ -186,6 +213,58 @@ impl Settings {
         self.seed_override
     }
 
+    /// Resolve the persisted provider key to a [`Provider`], falling back to
+    /// [`Provider::default`] when the field is empty or unknown. Stable
+    /// across upgrades — old settings files (pre-multi-provider) read as the
+    /// default Gemini.
+    pub fn provider(&self) -> Provider {
+        Provider::parse(&self.provider).unwrap_or_default()
+    }
+
+    /// API key for the currently-selected provider. Returns `None` for an
+    /// empty value (including for Ollama — callers that need a keyless
+    /// Ollama client construct one directly with an empty string).
+    pub fn provider_api_key(&self) -> Option<&str> {
+        let raw = match self.provider() {
+            Provider::Gemini => self.gemini_api_key.as_str(),
+            Provider::OpenAI => self.openai_api_key.as_str(),
+            Provider::Anthropic => self.anthropic_api_key.as_str(),
+            Provider::Ollama => self.ollama_api_key.as_str(),
+        };
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    }
+
+    /// Heavy / "thinking" model id for the active provider. For Gemini this
+    /// reuses [`Self::gemini_model`] for backwards compat; other providers
+    /// fall back to [`Provider::default_model`] (no per-provider override
+    /// fields yet).
+    pub fn provider_model(&self) -> String {
+        match self.provider() {
+            Provider::Gemini => self.gemini_model(),
+            other => other.default_model().to_string(),
+        }
+    }
+
+    /// Fast / cheap model id for the active provider. Symmetric with
+    /// [`Self::provider_model`] — Gemini reuses [`Self::gemini_fast_model`],
+    /// the rest fall back to [`Provider::default_fast_model`].
+    pub fn provider_fast_model(&self) -> String {
+        match self.provider() {
+            Provider::Gemini => self.gemini_fast_model(),
+            other => other.default_fast_model().to_string(),
+        }
+    }
+
+    /// Persist a fresh provider selection.
+    pub fn set_provider(&mut self, p: Provider) {
+        self.provider = p.key().to_string();
+    }
+
     /// Promote `path` to the front of [`Self::recent_files`], dedup'ing any
     /// previous occurrence and trimming the list to [`Self::MAX_RECENT`].
     pub fn push_recent(&mut self, path: &str) {
@@ -226,6 +305,15 @@ pub const THINKING_LEVELS: [ThinkingLevel; 4] = [
     ThinkingLevel::Medium,
     ThinkingLevel::High,
     ThinkingLevel::XHigh,
+];
+
+/// Order in which providers appear in the Options dropdown. Gemini is first
+/// because it's the historical default and the only image-capable backend.
+pub const PROVIDERS: [Provider; 4] = [
+    Provider::Gemini,
+    Provider::OpenAI,
+    Provider::Anthropic,
+    Provider::Ollama,
 ];
 
 fn settings_path() -> Option<PathBuf> {

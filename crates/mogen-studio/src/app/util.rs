@@ -5,14 +5,15 @@ use std::sync::{Arc, Mutex};
 
 use mogen_core::SceneGraph;
 use mogen_export::ExportOptions;
-use mogen_llm::gemini::{GeminiClient, GenerateConfig, ImageInput, Usage};
+use mogen_llm::gemini::GeminiClient;
 use mogen_llm::textures::{
     build_plan, default_textures_dir, run_plan, splice_textures, PlanAction,
     TextureProgress, TexturesArgs,
 };
 use mogen_llm::{
     embed_seed_header, generate_with_repair, parse_prompt_header, parse_seed_header,
-    repair_message, validate_text, RepairConfig, ThinkingLevel, DEFAULT_IMAGE_MODEL,
+    repair_message, validate_text, GenerateConfig, ImageInput, LlmClient, Provider, RepairConfig,
+    ThinkingLevel, Usage, DEFAULT_IMAGE_MODEL,
 };
 
 use crate::pipeline::write_glb_with_source_and_options;
@@ -462,6 +463,7 @@ pub(super) fn run_llm(
     kind: LlmKind,
     prompt: String,
     existing: Option<String>,
+    provider: Provider,
     image: Option<ImageInput>,
     api_key: String,
     run_cfg: LlmRunConfig,
@@ -475,7 +477,7 @@ pub(super) fn run_llm(
         let _ = tx.send(LlmMessage::Progress(p));
     };
 
-    let client = GeminiClient::new(api_key);
+    let client = LlmClient::new(provider, api_key);
     let seed = run_cfg.seed_override.unwrap_or_else(|| {
         existing
             .as_deref()
@@ -636,7 +638,8 @@ pub(super) fn run_llm(
     }
 
     send_progress(LlmProgress::Status(format!(
-        "calling Gemini ({}) — thinking={:?}",
+        "calling {} ({}) — thinking={:?}",
+        provider.label(),
         kind.label(),
         run_cfg.thinking,
     )));
@@ -806,6 +809,11 @@ pub(super) fn run_llm_textures(
         .filter(|p| matches!(p.action, PlanAction::Generate))
         .count() as u32;
 
+    // Image generation is Gemini-only — `LlmClient::new(provider, …)` doesn't
+    // expose a synthesis API for the other backends. Callers MUST pass the
+    // `GEMINI_API_KEY` here regardless of `settings.provider()` so this path
+    // keeps working even when the user has selected OpenAI/Anthropic/Ollama
+    // for the text DSL.
     let client = GeminiClient::new(api_key);
     let base_dir = mg_path
         .parent()
@@ -903,10 +911,11 @@ pub(super) fn run_llm_textures(
 pub(super) fn run_prompt_enhance(
     target: EnhanceTarget,
     raw_prompt: String,
+    provider: Provider,
     api_key: String,
     model: String,
 ) -> Result<String, String> {
-    let client = GeminiClient::new(api_key);
+    let client = LlmClient::new(provider, api_key);
     let raw = raw_prompt.trim();
     // Templates focus the rewrite on enriching the user's high-level
     // description — what the object looks like or how a part should change —
@@ -977,7 +986,7 @@ pub(super) fn run_prompt_enhance(
                 .trim_end_matches("```")
                 .trim();
             if cleaned.is_empty() {
-                Err("empty response from Gemini".into())
+                Err(format!("empty response from {}", provider.label()))
             } else {
                 Ok(cleaned.to_string())
             }

@@ -13,7 +13,7 @@
 use std::sync::Arc;
 
 use eframe::egui;
-use mogen_llm::gemini::{GeminiClient, GenerateConfig, ThinkingLevel};
+use mogen_llm::{GenerateConfig, LlmClient, Provider, ThinkingLevel};
 
 use super::types::AskInFlight;
 use super::MogenStudioApp;
@@ -94,16 +94,18 @@ impl MogenStudioApp {
             self.ask_answer = Some(Err("type a question first".into()));
             return;
         }
+        let provider = self.settings.provider();
         let api_key = match self.resolve_api_key() {
             Some(k) => k,
             None => {
-                self.ask_answer = Some(Err(
-                    "no Gemini API key — set one in Edit → Preferences…".into(),
-                ));
+                self.ask_answer = Some(Err(format!(
+                    "no {} API key — set one in Edit → Preferences…",
+                    provider.label(),
+                )));
                 return;
             }
         };
-        let model = self.settings.gemini_fast_model();
+        let model = self.settings.provider_fast_model();
         let sys_instr = self.cached_system_instruction();
         let code = self.ask_code_context.clone();
         let context_label = self.ask_context_label.clone();
@@ -116,7 +118,15 @@ impl MogenStudioApp {
         self.ask_in_flight = Some(AskInFlight { rx });
 
         std::thread::spawn(move || {
-            let result = run_ask_question(question, code, context_label, api_key, model, sys_instr);
+            let result = run_ask_question(
+                question,
+                code,
+                context_label,
+                provider,
+                api_key,
+                model,
+                sys_instr,
+            );
             let _ = tx.send(result);
             ctx.request_repaint();
         });
@@ -141,19 +151,20 @@ impl MogenStudioApp {
     }
 }
 
-/// Synchronous worker that calls Gemini Flash with a teaching prompt about
-/// the captured code. The system instruction (cached, shared with the rest
-/// of the LLM paths) carries the full DSL grammar + stdlib so answers stay
-/// grounded.
+/// Synchronous worker that calls the active provider's fast model with a
+/// teaching prompt about the captured code. The system instruction (cached,
+/// shared with the rest of the LLM paths) carries the full DSL grammar +
+/// stdlib so answers stay grounded.
 fn run_ask_question(
     question: String,
     code: String,
     context_label: String,
+    provider: Provider,
     api_key: String,
     model: String,
     sys_instr: Arc<String>,
 ) -> Result<String, String> {
-    let client = GeminiClient::new(api_key);
+    let client = LlmClient::new(provider, api_key);
 
     // Tag the code so the model knows whether it's looking at a snippet or
     // the whole file. The "do not rewrite" guidance keeps replies pedagogical
@@ -197,7 +208,7 @@ fn run_ask_question(
         Ok(resp) => {
             let cleaned = resp.text.trim().to_string();
             if cleaned.is_empty() {
-                Err("empty response from Gemini".into())
+                Err(format!("empty response from {}", provider.label()))
             } else {
                 Ok(cleaned)
             }

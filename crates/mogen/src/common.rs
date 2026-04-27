@@ -4,10 +4,9 @@ use std::path::Path;
 
 use anyhow::{bail, Context, Result};
 use mogen_core::{Diagnostic, Severity};
-use mogen_llm::gemini::{GeminiClient, GenerateConfig};
 use mogen_llm::{
-    default_cache_path, resolve_or_create_cache, system_instruction, StdlibIndex,
-    DEFAULT_TTL_SECONDS,
+    default_cache_path, resolve_or_create_cache, system_instruction, GenerateConfig, LlmClient,
+    Provider, StdlibIndex, DEFAULT_TTL_SECONDS,
 };
 
 /// Group error diagnostics by category (derived from the code prefix) so the
@@ -47,18 +46,40 @@ pub(crate) fn diag_category(code: &str) -> &'static str {
     }
 }
 
-pub(crate) fn resolve_api_key(flag: Option<String>) -> Result<String> {
+/// Resolve the API key for `provider`. Precedence: explicit `--api-key` flag,
+/// then the provider's environment variable ([`Provider::env_var`]). Ollama
+/// is allowed to start with a blank key — most local installs don't require
+/// auth.
+pub(crate) fn resolve_api_key(provider: Provider, flag: Option<String>) -> Result<String> {
     if let Some(k) = flag {
         if k.trim().is_empty() {
             bail!("--api-key is empty");
         }
         return Ok(k);
     }
-    let from_env = std::env::var("GEMINI_API_KEY").ok();
-    match from_env {
-        Some(k) if !k.trim().is_empty() => Ok(k),
-        _ => bail!("missing GEMINI_API_KEY (set env var or pass --api-key)"),
+    let var = provider.env_var();
+    let from_env = std::env::var(var).unwrap_or_default();
+    if from_env.trim().is_empty() {
+        if matches!(provider, Provider::Ollama) {
+            // Ollama is keyless by default — fall through with empty string
+            // so the client constructs without auth.
+            return Ok(String::new());
+        }
+        bail!("missing {var} (set env var or pass --api-key)");
     }
+    Ok(from_env)
+}
+
+/// Resolve the model id for the call. Falls back to the provider-specific
+/// default when the user passed nothing.
+pub(crate) fn resolve_model(provider: Provider, flag: Option<String>) -> String {
+    flag.filter(|m| !m.trim().is_empty())
+        .unwrap_or_else(|| provider.default_model().to_string())
+}
+
+/// Construct the right [`LlmClient`] for `provider` with `api_key`.
+pub(crate) fn build_client(provider: Provider, api_key: String) -> LlmClient {
+    LlmClient::new(provider, api_key)
 }
 
 /// Create the parent directory for `path` if it doesn't already exist. Called
@@ -77,14 +98,17 @@ pub(crate) fn ensure_parent_dir(path: &Path) -> Result<()> {
 /// Set `cfg.cached_content` or `cfg.system_instruction` based on flags.
 ///
 /// Precedence:
-///   1. `--cached-content <name>` — use that resource name verbatim (no local cache read/write).
-///   2. `--no-cache` — send the system instruction inline.
-///   3. Default — try to resolve or create a persistent cache entry under
-///      `$MOGEN_CACHE_DIR` / `$HOME/.cache/mogen/`, falling back to inline on
-///      any failure (printed to stderr so the user notices repeat failures).
+///   1. `--cached-content <name>` — use that resource name verbatim (Gemini
+///      only; ignored on other providers).
+///   2. `--no-cache`, or non-Gemini provider — send the system instruction
+///      inline.
+///   3. Default (Gemini only) — try to resolve or create a persistent cache
+///      entry under `$MOGEN_CACHE_DIR` / `$HOME/.cache/mogen/`, falling back
+///      to inline on any failure (printed to stderr so the user notices
+///      repeat failures).
 pub(crate) fn attach_system_instruction(
     cfg: &mut GenerateConfig,
-    client: &GeminiClient,
+    client: &LlmClient,
     pinned: Option<String>,
     no_cache: bool,
     label: &str,
@@ -93,22 +117,38 @@ pub(crate) fn attach_system_instruction(
         mogen_dsl::stdlib_registry(),
     ));
 
+    // Non-Gemini providers don't honour `cachedContents`. Force inline.
+    let gemini = match client {
+        LlmClient::Gemini(c) => Some(c),
+        _ => None,
+    };
+
     if let Some(name) = pinned {
-        cfg.cached_content = Some(name);
+        if gemini.is_some() {
+            cfg.cached_content = Some(name);
+        } else {
+            // Politely warn and fall through — the flag is silently ignored
+            // on backends that have no equivalent feature.
+            eprintln!(
+                "mogen {label}: --cached-content is Gemini-only; sending system instruction inline"
+            );
+            cfg.system_instruction = Some(system_text);
+        }
         return;
     }
-    if no_cache {
+    if no_cache || gemini.is_none() {
         cfg.system_instruction = Some(system_text);
         return;
     }
 
+    let gemini = gemini.expect("matched above");
     let Some(cache_path) = default_cache_path() else {
         cfg.system_instruction = Some(system_text);
         return;
     };
 
     match resolve_or_create_cache(
-        client,
+        gemini,
         &cfg.model,
         &system_text,
         &cache_path,
@@ -126,7 +166,7 @@ pub(crate) fn attach_system_instruction(
     }
 }
 
-/// Render the cached-token portion of a Gemini usage record. Returns an empty
+/// Render the cached-token portion of a usage record. Returns an empty
 /// string when the call didn't hit a cache, so the summary doesn't grow a
 /// noisy "cached=0" suffix for inline runs.
 pub(crate) fn format_cached_tokens(usage: &mogen_llm::Usage) -> String {

@@ -1,34 +1,55 @@
-//! Natural-language → DSL generation via the Gemini API.
+//! Natural-language → DSL generation across multiple LLM providers.
 //!
-//! The crate exposes three concerns that compose into `mogen generate`:
+//! The crate exposes four concerns that compose into the `mogen generate`,
+//! `modify`, `animate`, `repair`, `bench`, and `textures` commands:
 //!
-//! - [`gemini`] — HTTP client for Google's `generateContent` endpoint.
-//! - [`prompt`] — assembles the system instruction (grammar + stdlib index + examples).
-//! - [`repair`] — drives parse → validate → feed JSON diagnostics back on error.
+//! - [`provider`] — the [`LlmClient`] enum dispatches to the right backend
+//!   (Gemini, OpenAI, Anthropic, Ollama). [`Provider`] describes the
+//!   selector and per-provider defaults; [`ProviderError`] is the unified
+//!   error returned by [`LlmClient::generate`].
+//! - [`gemini`] / [`openai`] / [`anthropic`] / [`ollama`] — per-backend
+//!   HTTP clients, each with its own request/response wire types.
+//! - [`prompt`] — assembles the system instruction (grammar + stdlib index +
+//!   examples). Provider-agnostic — the same string ships to all four.
+//! - [`repair`] — drives parse → validate → feed JSON diagnostics back on
+//!   error. Takes [`LlmClient`] so it works against any provider.
 //!
-//! The top-level [`generate`] function ties them together and returns DSL text
-//! plus usage metadata. Seed handling (for reproducibility) is the caller's
-//! responsibility — wrap the output in [`embed_seed_header`] before writing to disk.
+//! The top-level [`generate_with_repair`] function ties the provider client
+//! and the repair loop together. Seed handling (for reproducibility) is the
+//! caller's responsibility — wrap the output in [`embed_seed_header`] before
+//! writing to disk.
 
+pub mod anthropic;
 pub mod cache;
 pub mod gemini;
 pub mod image;
+pub mod ollama;
+pub mod openai;
 pub mod pbr_maps;
 pub mod prompt;
+pub mod provider;
 pub mod repair;
 pub mod textures;
+pub mod types;
 
 pub use cache::{default_cache_path, resolve_or_create as resolve_or_create_cache, DEFAULT_TTL_SECONDS};
-pub use gemini::{
-    CachedContent, GeminiClient, GeminiError, GenerateConfig, ImageInput, ThinkingLevel, Usage,
-    DEFAULT_FAST_MODEL,
-};
+pub use gemini::{CachedContent, GeminiClient, GeminiError};
 pub use image::{GeneratedImage, DEFAULT_IMAGE_MODEL};
 pub use prompt::{system_instruction, StdlibIndex};
+pub use provider::{LlmClient, Provider, ProviderError};
 pub use repair::{
     generate_with_repair, repair_message, validate_text, GenerateOutcome, RepairConfig,
 };
 pub use textures::parse_prompt_header;
+pub use types::{
+    GenerateConfig, GenerateResponse, ImageInput, Role, ThinkingLevel, Turn, Usage,
+    DEFAULT_TEMPERATURE,
+};
+
+/// Default heavy text model — kept as the legacy alias so existing callers
+/// (CLI clap defaults, Studio settings) keep compiling. New code should
+/// pick the per-provider default via [`Provider::default_model`].
+pub const DEFAULT_FAST_MODEL: &str = gemini::DEFAULT_FAST_MODEL;
 
 /// Prepend a seed comment to DSL text so rebuilds are reproducible.
 ///
