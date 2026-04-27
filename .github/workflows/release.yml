@@ -40,18 +40,10 @@ jobs:
 
       - name: Install Linux deps (eframe/rfd)
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libgtk-3-dev \
-            libxkbcommon-dev \
-            libwayland-dev \
-            libxcb-render0-dev \
-            libxcb-shape0-dev \
-            libxcb-xfixes0-dev \
-            libxcb1-dev \
-            libssl-dev \
-            pkg-config
+        uses: awalsh128/cache-apt-pkgs-action@v1
+        with:
+          packages: libgtk-3-dev libxkbcommon-dev libwayland-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxcb1-dev libssl-dev pkg-config
+          version: 1.0
 
       - name: Build mogen (CLI)
         run: cargo build -p mogen --release --locked --target ${{ matrix.target }}
@@ -93,7 +85,9 @@ jobs:
 
       - name: Install cargo-deb
         if: runner.os == 'Linux'
-        run: cargo install cargo-deb --locked
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deb
 
       - name: Package .deb (linux)
         if: runner.os == 'Linux'
@@ -108,7 +102,9 @@ jobs:
 
       - name: Install cargo-wix
         if: runner.os == 'Windows'
-        run: cargo install cargo-wix --locked
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-wix
 
       - name: Generate Windows app icon (.ico)
         if: runner.os == 'Windows'
