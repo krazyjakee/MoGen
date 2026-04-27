@@ -270,8 +270,9 @@
     if (!rel || !rel.assets || !rel.assets.length) {
       container.innerHTML = `
         <div class="dl-empty">
-          No published releases yet. Build from source — instructions are below.<br>
-          <small>This page checks <code>github.com/${REPO}/releases/latest</code> on load.</small>
+          Couldn't reach the GitHub releases API — grab the latest build directly from
+          <a href="https://github.com/${REPO}/releases/latest">github.com/${REPO}/releases/latest</a>,
+          or build from source using the instructions below.
         </div>`;
       return;
     }

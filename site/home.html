@@ -167,13 +167,21 @@ scene {
 </section>
 
 <section>
+  <h2 id="install">Install</h2>
+  <p>Linux and macOS — one-liner. Pulls the latest release, verifies the SHA-256, drops <code>mogen</code> and <code>mogen-studio</code> into <code>$HOME/.local/bin</code>:</p>
+<pre><code class="language-sh">curl -fsSL https://raw.githubusercontent.com/krazyjakee/MoGen/master/scripts/install.sh | bash</code></pre>
+  <p>Pass options after <code>-s --</code>: <code>--version</code>, <code>--bin-dir</code>, <code>--cli-only</code>, <code>--studio-only</code>, <code>--force</code>.</p>
+  <p>Windows — grab the <code>.msi</code> (Studio) or <code>.zip</code> (CLI) from the <a href="#downloads">downloads above</a>.</p>
+</section>
+
+<section>
   <h2>Build from source</h2>
   <p>Requires a recent stable Rust toolchain. On Linux you also need the GTK / Wayland / X11 dev headers that <code>eframe</code> links against.</p>
 <pre><code class="language-sh">git clone https://github.com/krazyjakee/MoGen.git
 cd MoGen
-./build.sh                              # cargo build --release --workspace
-./mogen.sh build examples/chair.mog --out chair.glb
-cargo run --release -p mogen-studio     # launch MoGen Studio</code></pre>
+./scripts/build-release.sh                          # cargo build --release --workspace
+./scripts/run-mogen.sh build examples/chair.mog --out chair.glb
+./scripts/run-studio.sh                             # launch MoGen Studio</code></pre>
   <p>On Debian/Ubuntu, the Studio's runtime deps are <code>libgtk-3-dev libxkbcommon-dev libwayland-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxcb1-dev libssl-dev pkg-config</code>.</p>
 </section>
 
