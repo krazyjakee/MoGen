@@ -10,6 +10,14 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+// Re-export the shared types so existing callers using `mogen_llm::gemini::*`
+// keep compiling after the multi-provider refactor. New code should import
+// these directly from `mogen_llm`.
+pub use crate::types::{
+    GenerateConfig, GenerateResponse, ImageInput, Role, ThinkingLevel, Turn, Usage,
+    DEFAULT_TEMPERATURE,
+};
+
 /// Default model for `mogen generate`. Alias auto-rolls to the newest Pro tier.
 pub const DEFAULT_MODEL: &str = "gemini-pro-latest";
 
@@ -18,65 +26,7 @@ pub const DEFAULT_MODEL: &str = "gemini-pro-latest";
 /// use — callers that need the Pro tier can still override.
 pub const DEFAULT_FAST_MODEL: &str = "gemini-flash-latest";
 
-/// Default sampling temperature. Low because `mogen` DSL is a structured
-/// output task that compiles — creative variance costs repair iterations.
-pub const DEFAULT_TEMPERATURE: f32 = 0.3;
-
 const DEFAULT_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta";
-
-/// Preset buckets for Gemini's `thinkingConfig.thinkingBudget`. Gemini 2.5 Pro
-/// enables reasoning by default and will happily spend 60–120 s "thinking"
-/// before emitting a token — bounding the budget is the biggest single lever
-/// on end-to-end latency for a structured-output task like DSL generation.
-///
-/// Concrete token counts are chosen to stay within both Pro (128–32768) and
-/// Flash (0–24576) ranges, so the same preset works across models.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ThinkingLevel {
-    /// 512 tokens — fast path. Usually enough for a well-specified DSL prompt.
-    Low,
-    /// 2048 tokens — modest reasoning for slightly ambiguous prompts.
-    Medium,
-    /// 8192 tokens — for complex scenes where the model benefits from planning.
-    High,
-    /// 24576 tokens — near-max; use when you're willing to trade 2 min for quality.
-    XHigh,
-}
-
-impl ThinkingLevel {
-    /// Token budget sent as `generationConfig.thinkingConfig.thinkingBudget`.
-    pub fn budget(self) -> u32 {
-        match self {
-            ThinkingLevel::Low => 512,
-            ThinkingLevel::Medium => 2048,
-            ThinkingLevel::High => 8192,
-            ThinkingLevel::XHigh => 24576,
-        }
-    }
-
-    /// Parse a case-insensitive label. Accepts `low`, `medium`, `high`, `xhigh`
-    /// (with an `x-high` / `x_high` alias for the last, since some shells mangle it).
-    pub fn parse(s: &str) -> Option<Self> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "low" => Some(Self::Low),
-            "medium" | "med" => Some(Self::Medium),
-            "high" => Some(Self::High),
-            "xhigh" | "x-high" | "x_high" => Some(Self::XHigh),
-            _ => None,
-        }
-    }
-
-    /// Canonical lowercase key; round-trips through [`Self::parse`]. Used when
-    /// writing the `// mogen-generate thinking=…` DSL header.
-    pub fn key(self) -> &'static str {
-        match self {
-            ThinkingLevel::Low => "low",
-            ThinkingLevel::Medium => "medium",
-            ThinkingLevel::High => "high",
-            ThinkingLevel::XHigh => "xhigh",
-        }
-    }
-}
 
 #[derive(Debug, Error)]
 pub enum GeminiError {
@@ -94,114 +44,6 @@ pub enum GeminiError {
     InvalidResponse(String),
 }
 
-/// One image attached to the user turn. Sent to Gemini as an `inline_data`
-/// part alongside the text prompt — vision-capable models (the Pro tier and
-/// the multimodal Flash variants) interpret these as visual context. Used by
-/// the Studio "New from Prompt" dialog to support image-to-3D generation.
-#[derive(Debug, Clone)]
-pub struct ImageInput {
-    /// MIME type, e.g. `"image/png"` or `"image/jpeg"`. Must start with
-    /// `image/` — Gemini rejects anything else on a vision turn.
-    pub mime_type: String,
-    /// Raw bytes of the image. Encoded as base64 in the request body; not
-    /// kept in memory after [`GeminiClient::generate`] returns.
-    pub data: Vec<u8>,
-}
-
-/// One full request to `generateContent`.
-#[derive(Debug, Clone)]
-pub struct GenerateConfig {
-    pub model: String,
-    /// Single-shot prompt from the user (e.g. `"a wooden stool"`). May be
-    /// empty when [`Self::user_images`] is non-empty — the image alone is a
-    /// valid input on vision-capable models.
-    pub user_prompt: String,
-    /// Optional images attached to the user turn (image-to-3D). Encoded as
-    /// `inline_data` parts on every call, including repair iterations, so the
-    /// model retains the visual reference while it fixes validation errors.
-    pub user_images: Vec<ImageInput>,
-    /// Prior turns (e.g. first attempt's DSL + diagnostic feedback for repair).
-    pub history: Vec<Turn>,
-    /// System instruction (grammar + stdlib). See [`crate::prompt`].
-    pub system_instruction: Option<String>,
-    /// Name of a `cachedContents` resource — if set, skips re-uploading
-    /// the system instruction. Overrides `system_instruction`.
-    pub cached_content: Option<String>,
-    /// Output cap enforced client-side after the response arrives.
-    /// `None` means no cap.
-    pub budget_tokens: Option<u32>,
-    /// Sampling temperature. `None` uses the API default (typically 1.0);
-    /// [`Self::new`] sets this to [`DEFAULT_TEMPERATURE`].
-    pub temperature: Option<f32>,
-    /// Server-side seed request — note that Gemini does not currently
-    /// guarantee determinism, so we also embed the seed in the DSL header.
-    pub seed: Option<u64>,
-    /// Cap on server-side reasoning. `None` lets the model use its default
-    /// (dynamic, up to ~32k tokens on Pro) — which is what produces the
-    /// 2-minute latencies. Library default is `Some(ThinkingLevel::High)` —
-    /// a middle ground that still bounds latency while leaving room for the
-    /// model to plan complex scenes.
-    pub thinking_level: Option<ThinkingLevel>,
-}
-
-impl GenerateConfig {
-    pub fn new(user_prompt: impl Into<String>) -> Self {
-        Self {
-            model: DEFAULT_MODEL.to_string(),
-            user_prompt: user_prompt.into(),
-            user_images: Vec::new(),
-            history: Vec::new(),
-            system_instruction: None,
-            cached_content: None,
-            budget_tokens: None,
-            temperature: Some(DEFAULT_TEMPERATURE),
-            seed: None,
-            thinking_level: Some(ThinkingLevel::High),
-        }
-    }
-}
-
-/// One turn of conversation, from either side.
-#[derive(Debug, Clone)]
-pub struct Turn {
-    pub role: Role,
-    pub text: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Role {
-    User,
-    Model,
-}
-
-impl Role {
-    fn as_str(self) -> &'static str {
-        match self {
-            Role::User => "user",
-            Role::Model => "model",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct Usage {
-    pub prompt_tokens: u32,
-    pub response_tokens: u32,
-    pub total_tokens: u32,
-    /// Portion of `prompt_tokens` served from a `cachedContents` resource —
-    /// billed at a reduced rate. Reported by the API when caching is used.
-    pub cached_tokens: u32,
-}
-
-impl Usage {
-    pub fn add(&mut self, other: &Usage) {
-        self.prompt_tokens += other.prompt_tokens;
-        self.response_tokens += other.response_tokens;
-        self.total_tokens += other.total_tokens;
-        self.cached_tokens += other.cached_tokens;
-    }
-}
-
 /// Handle returned after creating a `cachedContents` resource. The resource
 /// name is what you pass to [`GenerateConfig::cached_content`] on subsequent
 /// calls; `expires_at_unix` lets callers persist cache state locally and
@@ -211,12 +53,6 @@ pub struct CachedContent {
     pub name: String,
     pub expires_at_unix: u64,
     pub token_count: Option<u32>,
-}
-
-#[derive(Debug, Clone)]
-pub struct GenerateResponse {
-    pub text: String,
-    pub usage: Usage,
 }
 
 pub struct GeminiClient {
@@ -261,9 +97,10 @@ impl GeminiClient {
     }
 
     pub fn generate(&self, cfg: &GenerateConfig) -> Result<GenerateResponse, GeminiError> {
+        let model = if cfg.model.is_empty() { DEFAULT_MODEL } else { cfg.model.as_str() };
         let url = format!(
             "{}/models/{}:generateContent?key={}",
-            self.base_url, cfg.model, self.api_key
+            self.base_url, model, self.api_key
         );
 
         let body = build_request(cfg);
@@ -374,7 +211,7 @@ fn build_request(cfg: &GenerateConfig) -> serde_json::Value {
     let mut contents: Vec<serde_json::Value> = Vec::new();
     for turn in &cfg.history {
         contents.push(serde_json::json!({
-            "role": turn.role.as_str(),
+            "role": turn.role.gemini_str(),
             "parts": [{ "text": turn.text }],
         }));
     }

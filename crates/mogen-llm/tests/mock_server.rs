@@ -6,8 +6,10 @@ use std::io::Read;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use mogen_llm::gemini::{GeminiClient, GenerateConfig, ImageInput};
-use mogen_llm::{generate_with_repair, RepairConfig};
+use mogen_llm::gemini::GeminiClient;
+use mogen_llm::{
+    generate_with_repair, GenerateConfig, ImageInput, LlmClient, Provider, RepairConfig,
+};
 
 struct MockServer {
     port: u16,
@@ -80,7 +82,7 @@ fn candidate_body(text: &str) -> String {
 fn first_call_succeeds_when_dsl_is_valid() {
     let dsl = "scene { box \"b\" (size=[1,1,1]) }";
     let server = MockServer::start(vec![&candidate_body(dsl)]);
-    let client = GeminiClient::with_base_url("test-key", server.base_url());
+    let client = LlmClient::with_base_url(Provider::Gemini, "test-key", server.base_url());
 
     let outcome = generate_with_repair(
         &client,
@@ -103,7 +105,7 @@ fn repair_loop_succeeds_on_second_attempt() {
     let bad = "scene { wombat \"oops\" (size=[1,1,1]) }";
     let good = "scene { box \"b\" (size=[1,1,1]) }";
     let server = MockServer::start(vec![&candidate_body(bad), &candidate_body(good)]);
-    let client = GeminiClient::with_base_url("test-key", server.base_url());
+    let client = LlmClient::with_base_url(Provider::Gemini, "test-key", server.base_url());
 
     let outcome = generate_with_repair(
         &client,
@@ -137,7 +139,7 @@ fn repair_loop_respects_max_iters_and_returns_last_attempt() {
     // Both attempts bad; we cap at 1 repair iter so only 2 calls total.
     let bad = "scene { wombat \"oops\" (size=[1,1,1]) }";
     let server = MockServer::start(vec![&candidate_body(bad), &candidate_body(bad)]);
-    let client = GeminiClient::with_base_url("test-key", server.base_url());
+    let client = LlmClient::with_base_url(Provider::Gemini, "test-key", server.base_url());
 
     let outcome = generate_with_repair(
         &client,
@@ -155,7 +157,7 @@ fn repair_loop_respects_max_iters_and_returns_last_attempt() {
 fn fenced_markdown_output_is_stripped_before_validation() {
     let fenced = "```mogen\nscene { box \"b\" (size=[1,1,1]) }\n```";
     let server = MockServer::start(vec![&candidate_body(fenced)]);
-    let client = GeminiClient::with_base_url("test-key", server.base_url());
+    let client = LlmClient::with_base_url(Provider::Gemini, "test-key", server.base_url());
 
     let outcome = generate_with_repair(
         &client,
@@ -176,7 +178,7 @@ fn user_images_become_inline_data_parts_on_the_user_turn() {
     // is attached (covered by the other tests in this file).
     let dsl = "scene { box \"b\" (size=[1,1,1]) }";
     let server = MockServer::start(vec![&candidate_body(dsl)]);
-    let client = GeminiClient::with_base_url("test-key", server.base_url());
+    let client = LlmClient::with_base_url(Provider::Gemini, "test-key", server.base_url());
 
     let mut cfg = GenerateConfig::new("a box");
     cfg.user_images.push(ImageInput {

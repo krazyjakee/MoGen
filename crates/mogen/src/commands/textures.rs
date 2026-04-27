@@ -4,6 +4,7 @@ use std::time::Instant;
 
 use anyhow::{Context, Result};
 use mogen_llm::gemini::GeminiClient;
+use mogen_llm::Provider;
 
 use crate::commands::build::build;
 use crate::common::{ensure_parent_dir, resolve_api_key};
@@ -65,8 +66,13 @@ pub(crate) fn textures_cmd(args: mogen_llm::textures::TexturesArgs) -> Result<()
 
     // Only bring up a client if we'll actually need one. Cache-only and
     // derive-only runs don't need a key.
+    // Image generation only ships against Gemini today — non-Gemini providers
+    // would need a separate image endpoint that doesn't exist in OpenAI's
+    // chat-completions or Anthropic's messages APIs (and Ollama has no
+    // image-out path at all). Always read GEMINI_API_KEY here regardless of
+    // any `--provider` selection on the parent command.
     let client = if to_gen > 0 {
-        let api_key = resolve_api_key(args.api_key.clone())?;
+        let api_key = resolve_api_key(Provider::Gemini, args.api_key.clone())?;
         Some(GeminiClient::new(api_key))
     } else {
         None

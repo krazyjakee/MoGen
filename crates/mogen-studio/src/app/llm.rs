@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use eframe::egui;
 use mogen_core::Severity;
-use mogen_llm::{system_instruction, StdlibIndex};
+use mogen_llm::{system_instruction, Provider, StdlibIndex};
 
 use mogen_llm::textures::TextureStage;
 
@@ -137,7 +137,10 @@ impl MogenStudioApp {
                 "save the file first — textures writes PNGs next to it".into();
             return;
         };
-        let api_key = match self.resolve_api_key() {
+        // Texture generation is Gemini-only (no other backend has an image
+        // synthesis API in mogen-llm), so this path bypasses the active
+        // provider and reads `GEMINI_API_KEY` directly.
+        let api_key = match self.resolve_gemini_api_key() {
             Some(k) => k,
             None => {
                 self.active_mut().status =
@@ -246,17 +249,21 @@ impl MogenStudioApp {
                 Some((target, "enter a prompt first".into()));
             return;
         }
+        let provider = self.settings.provider();
         let api_key = match self.resolve_api_key() {
             Some(k) => k,
             None => {
                 self.enhance_error = Some((
                     target,
-                    "no Gemini API key — set one in Edit → Preferences…".into(),
+                    format!(
+                        "no {} API key — set one in Edit → Preferences…",
+                        provider.label(),
+                    ),
                 ));
                 return;
             }
         };
-        let model = self.settings.gemini_fast_model();
+        let model = self.settings.provider_fast_model();
         let file_index = self.active;
         // Clear any stale error for this target; a fresh attempt gets a fresh
         // error slot.
@@ -273,7 +280,7 @@ impl MogenStudioApp {
 
         let payload = trimmed.to_string();
         std::thread::spawn(move || {
-            let result = run_prompt_enhance(target, payload, api_key, model);
+            let result = run_prompt_enhance(target, payload, provider, api_key, model);
             let _ = tx.send(result);
             ctx.request_repaint();
         });
@@ -370,9 +377,34 @@ impl MogenStudioApp {
         f.status = "llm: cancelled (background call may still finish but result is dropped)".into();
     }
 
-    /// Prefer a key saved in Options; fall back to the `GEMINI_API_KEY` env
-    /// var so existing shell-exported setups keep working.
+    /// Prefer a key saved in Options for the active provider; fall back to the
+    /// matching environment variable so existing shell-exported setups keep
+    /// working. For Ollama (which is keyless by default), returns
+    /// `Some(String::new())` even when neither setting nor env var is set so
+    /// callers can construct a keyless `LlmClient`.
     pub(super) fn resolve_api_key(&self) -> Option<String> {
+        let provider = self.settings.provider();
+        if let Some(k) = self.settings.provider_api_key() {
+            return Some(k.to_string());
+        }
+        let env_key = std::env::var(provider.env_var())
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
+        if env_key.is_some() {
+            return env_key;
+        }
+        if matches!(provider, Provider::Ollama) {
+            return Some(String::new());
+        }
+        None
+    }
+
+    /// Provider-agnostic Gemini key resolution for paths that hard-require
+    /// Gemini regardless of the active provider — currently just texture
+    /// image generation. Mirrors [`Self::resolve_api_key`] but always reads
+    /// the persisted `gemini_api_key` and the `GEMINI_API_KEY` env var.
+    pub(super) fn resolve_gemini_api_key(&self) -> Option<String> {
         if let Some(k) = self.settings.gemini_api_key() {
             return Some(k.to_string());
         }
@@ -399,7 +431,7 @@ impl MogenStudioApp {
     /// Settings) so defaulting logic lives next to the worker.
     pub(super) fn build_run_config(&self) -> LlmRunConfig {
         LlmRunConfig {
-            model: self.settings.gemini_model(),
+            model: self.settings.provider_model(),
             thinking: self.settings.thinking_level(),
             temperature: self.settings.temperature(),
             max_repair_iters: self.settings.max_repair_iters(),
@@ -415,11 +447,15 @@ impl MogenStudioApp {
         existing: Option<String>,
         image: Option<crate::app::types::GenImageInput>,
     ) {
+        let provider = self.settings.provider();
         let api_key = match self.resolve_api_key() {
             Some(k) => k,
             None => {
-                self.active_mut().status =
-                    "no Gemini API key — set one in Options… or export GEMINI_API_KEY".into();
+                self.active_mut().status = format!(
+                    "no {} API key — set one in Options… or export {}",
+                    provider.label(),
+                    provider.env_var(),
+                );
                 return;
             }
         };
@@ -432,15 +468,16 @@ impl MogenStudioApp {
         }
         let sys_instr = self.cached_system_instruction();
 
+        let provider_label = provider.label();
         let (tx, rx) = std::sync::mpsc::channel();
         let f = self.active_mut();
         f.llm_rx = Some(rx);
         f.llm_in_flight = Some(kind);
         f.llm_progress = Some(LlmProgress::Status(match kind {
-            LlmKind::Generate => "calling Gemini (generate)…".into(),
-            LlmKind::Modify => "calling Gemini (modify)…".into(),
-            LlmKind::Animate => "calling Gemini (animate)…".into(),
-            LlmKind::Repair => "calling Gemini (repair)…".into(),
+            LlmKind::Generate => format!("calling {provider_label} (generate)…"),
+            LlmKind::Modify => format!("calling {provider_label} (modify)…"),
+            LlmKind::Animate => format!("calling {provider_label} (animate)…"),
+            LlmKind::Repair => format!("calling {provider_label} (repair)…"),
             LlmKind::Textures => unreachable!("spawn_llm is text-only"),
         }));
         f.llm_started_at = Some(Instant::now());
@@ -459,10 +496,10 @@ impl MogenStudioApp {
         f.llm_error = None;
         f.llm_last_prompt = Some((kind, prompt.clone()));
         f.status = match kind {
-            LlmKind::Generate => "calling Gemini (generate)…".into(),
-            LlmKind::Modify => "calling Gemini (modify)…".into(),
-            LlmKind::Animate => "calling Gemini (animate)…".into(),
-            LlmKind::Repair => "calling Gemini (repair)…".into(),
+            LlmKind::Generate => format!("calling {provider_label} (generate)…"),
+            LlmKind::Modify => format!("calling {provider_label} (modify)…"),
+            LlmKind::Animate => format!("calling {provider_label} (animate)…"),
+            LlmKind::Repair => format!("calling {provider_label} (repair)…"),
             // Textures takes its own path via `start_llm_textures` and never
             // reaches spawn_llm.
             LlmKind::Textures => unreachable!("spawn_llm is text-only"),
@@ -477,7 +514,15 @@ impl MogenStudioApp {
         });
         std::thread::spawn(move || {
             let outcome = run_llm(
-                kind, prompt, existing, llm_image, api_key, run_cfg, sys_instr, worker_tx,
+                kind,
+                prompt,
+                existing,
+                provider,
+                llm_image,
+                api_key,
+                run_cfg,
+                sys_instr,
+                worker_tx,
             );
             let _ = tx.send(LlmMessage::Done(outcome));
             ctx.request_repaint();

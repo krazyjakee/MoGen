@@ -2,22 +2,25 @@ use std::fs;
 use std::path::PathBuf;
 
 use anyhow::{anyhow, bail, Context, Result};
-use mogen_llm::gemini::{GeminiClient, GenerateConfig};
-use mogen_llm::{embed_seed_header, generate_with_repair, RepairConfig, ThinkingLevel};
+use mogen_llm::{
+    embed_seed_header, generate_with_repair, GenerateConfig, Provider, RepairConfig, ThinkingLevel,
+};
 
 use crate::commands::build::build;
 use crate::common::{
-    attach_system_instruction, ensure_parent_dir, format_cached_tokens, pick_default_seed,
-    resolve_api_key, summarize_repair_errors,
+    attach_system_instruction, build_client, ensure_parent_dir, format_cached_tokens,
+    pick_default_seed, resolve_api_key, resolve_model, summarize_repair_errors,
 };
-use crate::spinner::{Spinner, GEMINI_FLAVORS};
+use crate::spinner::{Spinner, LLM_FLAVORS};
 
 pub(crate) struct GenerateArgs {
     pub prompt: String,
     pub out: Option<PathBuf>,
     pub dsl_out: Option<PathBuf>,
     pub seed: Option<u64>,
-    pub model: String,
+    pub provider: Provider,
+    /// `None` -> use the provider's default model.
+    pub model: Option<String>,
     pub dry_run: bool,
     pub budget_tokens: Option<u32>,
     pub max_repair_iters: u32,
@@ -53,13 +56,14 @@ pub(crate) fn generate(args: GenerateArgs) -> Result<()> {
         ensure_parent_dir(p)?;
     }
 
-    let api_key = resolve_api_key(args.api_key)?;
-    let client = GeminiClient::new(api_key);
+    let api_key = resolve_api_key(args.provider, args.api_key)?;
+    let client = build_client(args.provider, api_key);
+    let model = resolve_model(args.provider, args.model);
 
     let seed = args.seed.unwrap_or_else(pick_default_seed);
 
     let mut cfg = GenerateConfig::new(&args.prompt);
-    cfg.model = args.model;
+    cfg.model = model.clone();
     cfg.budget_tokens = args.budget_tokens;
     if let Some(t) = args.temperature {
         cfg.temperature = Some(t);
@@ -70,10 +74,11 @@ pub(crate) fn generate(args: GenerateArgs) -> Result<()> {
     cfg.thinking_level = Some(effective_thinking);
     attach_system_instruction(&mut cfg, &client, args.cached_content, args.no_cache, "generate");
 
+    let provider_label = args.provider.label();
     let total_attempts = args.max_repair_iters + 1;
     let mut pb = Spinner::new(
-        &format!("generate: calling Gemini (attempt 1/{total_attempts})"),
-        GEMINI_FLAVORS,
+        &format!("generate: calling {provider_label} (attempt 1/{total_attempts})"),
+        LLM_FLAVORS,
     );
 
     let pb_cb = pb.handle();
@@ -91,8 +96,8 @@ pub(crate) fn generate(args: GenerateArgs) -> Result<()> {
     let outcome = match generate_with_repair(&client, cfg, &repair) {
         Ok(o) => o,
         Err(e) => {
-            pb.abandon_with_message(format!("generate: Gemini error — {e}"));
-            return Err(anyhow!("gemini: {e}"));
+            pb.abandon_with_message(format!("generate: {provider_label} error — {e}"));
+            return Err(anyhow!("{}: {e}", provider_label.to_lowercase()));
         }
     };
 

@@ -7,8 +7,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use mogen_llm::gemini::DEFAULT_MODEL;
-use mogen_llm::{ThinkingLevel, DEFAULT_IMAGE_MODEL};
+use mogen_llm::{Provider, ThinkingLevel, DEFAULT_IMAGE_MODEL};
 
 use commands::animate::{animate, AnimateArgs};
 use commands::bench::bench;
@@ -36,6 +35,27 @@ impl From<ThinkingArg> for ThinkingLevel {
             ThinkingArg::Medium => ThinkingLevel::Medium,
             ThinkingArg::High => ThinkingLevel::High,
             ThinkingArg::Xhigh => ThinkingLevel::XHigh,
+        }
+    }
+}
+
+/// CLI-facing mirror of [`Provider`]. Same separation as `ThinkingArg` —
+/// keeps `clap::ValueEnum` out of the library crate.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum ProviderArg {
+    Gemini,
+    Openai,
+    Anthropic,
+    Ollama,
+}
+
+impl From<ProviderArg> for Provider {
+    fn from(p: ProviderArg) -> Self {
+        match p {
+            ProviderArg::Gemini => Provider::Gemini,
+            ProviderArg::Openai => Provider::OpenAI,
+            ProviderArg::Anthropic => Provider::Anthropic,
+            ProviderArg::Ollama => Provider::Ollama,
         }
     }
 }
@@ -73,8 +93,8 @@ enum Cmd {
     },
     /// Read a GLB and print its structure.
     Inspect { input: PathBuf },
-    /// Generate a DSL file from a natural-language prompt via Gemini, then
-    /// validate and compile it.
+    /// Generate a DSL file from a natural-language prompt via the configured
+    /// LLM provider, then validate and compile it.
     Generate {
         /// Natural-language description of the asset, e.g. "a wooden stool".
         prompt: String,
@@ -88,9 +108,15 @@ enum Cmd {
         /// Seed embedded in the DSL header for reproducibility. Randomized if omitted.
         #[arg(long)]
         seed: Option<u64>,
-        /// Gemini model name.
-        #[arg(long, default_value = DEFAULT_MODEL)]
-        model: String,
+        /// LLM provider. The matching API key env var is read for the call
+        /// (`GEMINI_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` /
+        /// `OLLAMA_API_KEY`). Ollama runs locally and is keyless by default.
+        #[arg(long, value_enum, default_value_t = ProviderArg::Gemini)]
+        provider: ProviderArg,
+        /// Model name. When omitted, falls back to the provider's default
+        /// (Gemini Pro / GPT-4o / Claude Sonnet / llama3.1).
+        #[arg(long)]
+        model: Option<String>,
         /// Print the generated DSL but skip compilation and GLB output.
         #[arg(long)]
         dry_run: bool,
@@ -100,30 +126,31 @@ enum Cmd {
         /// Max number of repair iterations after the first attempt.
         #[arg(long, default_value_t = 2)]
         max_repair_iters: u32,
-        /// Override GEMINI_API_KEY.
+        /// Override the provider's API key env var.
         #[arg(long)]
         api_key: Option<String>,
         /// `cachedContents/...` resource name to use for the system instruction.
-        /// If set, we skip uploading the grammar/stdlib reference on each call.
+        /// **Gemini only** — silently ignored for other providers.
         #[arg(long)]
         cached_content: Option<String>,
         /// Disable the automatic system-instruction cache (see `MOGEN_CACHE_DIR`).
-        /// By default, mogen creates and reuses a `cachedContents` resource so
-        /// repeated calls skip re-uploading the grammar reference.
+        /// Cache is Gemini-only; other providers always send the system
+        /// instruction inline.
         #[arg(long)]
         no_cache: bool,
-        /// Sampling temperature. Gemini default is used when omitted.
+        /// Sampling temperature. Provider default is used when omitted.
         #[arg(long)]
         temperature: Option<f32>,
-        /// Cap on server-side reasoning. `low` is fastest; `xhigh` near-maximises
-        /// quality but can take ~2 minutes on Pro. If omitted, falls back to the
+        /// Cap on server-side reasoning. Maps to Gemini's `thinkingBudget`,
+        /// Anthropic's `thinking.budget_tokens`, and OpenAI's
+        /// `reasoning.effort`. Ignored by Ollama. Falls back to the
         /// `// mogen-generate thinking=…` header (modify/animate/repair only)
         /// and then to `high`.
         #[arg(long, value_enum)]
         thinking: Option<ThinkingArg>,
     },
-    /// Modify an existing DSL file with a natural-language prompt via Gemini,
-    /// then validate and recompile the GLB.
+    /// Modify an existing DSL file with a natural-language prompt via the
+    /// configured LLM provider, then validate and recompile the GLB.
     Modify {
         /// Existing .mog file to modify.
         input: PathBuf,
@@ -139,9 +166,12 @@ enum Cmd {
         /// the input's header, or a random seed if absent.
         #[arg(long)]
         seed: Option<u64>,
-        /// Gemini model name.
-        #[arg(long, default_value = DEFAULT_MODEL)]
-        model: String,
+        /// LLM provider. See `generate --provider`.
+        #[arg(long, value_enum, default_value_t = ProviderArg::Gemini)]
+        provider: ProviderArg,
+        /// Model name. When omitted, falls back to the provider's default.
+        #[arg(long)]
+        model: Option<String>,
         /// Print the modified DSL but skip compilation and file writes.
         #[arg(long)]
         dry_run: bool,
@@ -151,27 +181,28 @@ enum Cmd {
         /// Max number of repair iterations after the first attempt.
         #[arg(long, default_value_t = 2)]
         max_repair_iters: u32,
-        /// Override GEMINI_API_KEY.
+        /// Override the provider's API key env var.
         #[arg(long)]
         api_key: Option<String>,
         /// `cachedContents/...` resource name to use for the system instruction.
+        /// **Gemini only.**
         #[arg(long)]
         cached_content: Option<String>,
         /// Disable the automatic system-instruction cache (see `--no-cache`
         /// on `generate` for details).
         #[arg(long)]
         no_cache: bool,
-        /// Sampling temperature. Gemini default is used when omitted.
+        /// Sampling temperature. Provider default is used when omitted.
         #[arg(long)]
         temperature: Option<f32>,
         /// Cap on server-side reasoning. See `generate --thinking`.
         #[arg(long, value_enum)]
         thinking: Option<ThinkingArg>,
     },
-    /// Add or edit animations on an existing DSL file via Gemini, then
-    /// validate and recompile the GLB. The LLM is restricted to animation
-    /// top-level declarations (`joint`, `clip`/`track`, and the procedural
-    /// templates `spin`, `open_close`, `wave`, `flap`, `idle`).
+    /// Add or edit animations on an existing DSL file via the configured LLM
+    /// provider, then validate and recompile the GLB. The LLM is restricted
+    /// to animation top-level declarations (`joint`, `clip`/`track`, and the
+    /// procedural templates `spin`, `open_close`, `wave`, `flap`, `idle`).
     Animate {
         /// Existing .mog file whose animations should be edited.
         input: PathBuf,
@@ -188,9 +219,12 @@ enum Cmd {
         /// the input's header, or a random seed if absent.
         #[arg(long)]
         seed: Option<u64>,
-        /// Gemini model name.
-        #[arg(long, default_value = DEFAULT_MODEL)]
-        model: String,
+        /// LLM provider. See `generate --provider`.
+        #[arg(long, value_enum, default_value_t = ProviderArg::Gemini)]
+        provider: ProviderArg,
+        /// Model name. When omitted, falls back to the provider's default.
+        #[arg(long)]
+        model: Option<String>,
         /// Print the updated DSL but skip compilation and file writes.
         #[arg(long)]
         dry_run: bool,
@@ -200,27 +234,29 @@ enum Cmd {
         /// Max number of repair iterations after the first attempt.
         #[arg(long, default_value_t = 2)]
         max_repair_iters: u32,
-        /// Override GEMINI_API_KEY.
+        /// Override the provider's API key env var.
         #[arg(long)]
         api_key: Option<String>,
         /// `cachedContents/...` resource name to use for the system instruction.
+        /// **Gemini only.**
         #[arg(long)]
         cached_content: Option<String>,
         /// Disable the automatic system-instruction cache (see `--no-cache`
         /// on `generate` for details).
         #[arg(long)]
         no_cache: bool,
-        /// Sampling temperature. Gemini default is used when omitted.
+        /// Sampling temperature. Provider default is used when omitted.
         #[arg(long)]
         temperature: Option<f32>,
         /// Cap on server-side reasoning. See `generate --thinking`.
         #[arg(long, value_enum)]
         thinking: Option<ThinkingArg>,
     },
-    /// Repair validation errors in an existing .mog file via Gemini. Runs the
-    /// validator first and passes each diagnostic (with source excerpt, caret,
-    /// and fix hint) back to the model, then re-validates. Exits successfully
-    /// as a no-op if the file already validates.
+    /// Repair validation errors in an existing .mog file via the configured
+    /// LLM provider. Runs the validator first and passes each diagnostic
+    /// (with source excerpt, caret, and fix hint) back to the model, then
+    /// re-validates. Exits successfully as a no-op if the file already
+    /// validates.
     Repair {
         /// Existing .mog file to repair.
         input: PathBuf,
@@ -234,9 +270,12 @@ enum Cmd {
         /// the input's header, or a random seed if absent.
         #[arg(long)]
         seed: Option<u64>,
-        /// Gemini model name.
-        #[arg(long, default_value = DEFAULT_MODEL)]
-        model: String,
+        /// LLM provider. See `generate --provider`.
+        #[arg(long, value_enum, default_value_t = ProviderArg::Gemini)]
+        provider: ProviderArg,
+        /// Model name. When omitted, falls back to the provider's default.
+        #[arg(long)]
+        model: Option<String>,
         /// Print the repaired DSL but skip compilation and file writes.
         #[arg(long)]
         dry_run: bool,
@@ -249,17 +288,18 @@ enum Cmd {
         /// Max number of repair iterations after the first attempt.
         #[arg(long, default_value_t = 2)]
         max_repair_iters: u32,
-        /// Override GEMINI_API_KEY.
+        /// Override the provider's API key env var.
         #[arg(long)]
         api_key: Option<String>,
         /// `cachedContents/...` resource name to use for the system instruction.
+        /// **Gemini only.**
         #[arg(long)]
         cached_content: Option<String>,
         /// Disable the automatic system-instruction cache (see `--no-cache`
         /// on `generate` for details).
         #[arg(long)]
         no_cache: bool,
-        /// Sampling temperature. Gemini default is used when omitted.
+        /// Sampling temperature. Provider default is used when omitted.
         #[arg(long)]
         temperature: Option<f32>,
         /// Cap on server-side reasoning. See `generate --thinking`.
@@ -272,8 +312,10 @@ enum Cmd {
     /// variance-based, cavity-based). PNGs are written next to the .mog and
     /// the matching `*_texture="…"` attrs are spliced into each material.
     ///
-    /// Per-slot, materials that already declare a given `*_texture` attr — or
-    /// whose target PNG already exists at the planned path on disk — are
+    /// **This command is Gemini-only** — image generation isn't part of the
+    /// abstraction, so OpenAI / Anthropic / Ollama are not selectable here.
+    /// Per-slot, materials that already declare a given `*_texture` attr —
+    /// or whose target PNG already exists at the planned path on disk — are
     /// skipped unless `--force` is passed. Existing on-disk PNGs still get
     /// their `*_texture` attr spliced into the source, just without an API
     /// call or local re-derivation.
@@ -337,8 +379,12 @@ enum Cmd {
         /// `benches/prompts.txt` in the project root.
         #[arg(long, default_value = "benches/prompts.txt")]
         prompts: PathBuf,
-        #[arg(long, default_value = DEFAULT_MODEL)]
-        model: String,
+        /// LLM provider. See `generate --provider`.
+        #[arg(long, value_enum, default_value_t = ProviderArg::Gemini)]
+        provider: ProviderArg,
+        /// Model name. When omitted, falls back to the provider's default.
+        #[arg(long)]
+        model: Option<String>,
         #[arg(long, default_value_t = 2)]
         max_repair_iters: u32,
         #[arg(long)]
@@ -370,6 +416,7 @@ fn main() -> ExitCode {
             out,
             dsl_out,
             seed,
+            provider,
             model,
             dry_run,
             budget_tokens,
@@ -384,6 +431,7 @@ fn main() -> ExitCode {
             out,
             dsl_out,
             seed,
+            provider: provider.into(),
             model,
             dry_run,
             budget_tokens,
@@ -400,6 +448,7 @@ fn main() -> ExitCode {
             out,
             dsl_out,
             seed,
+            provider,
             model,
             dry_run,
             budget_tokens,
@@ -415,6 +464,7 @@ fn main() -> ExitCode {
             out,
             dsl_out,
             seed,
+            provider: provider.into(),
             model,
             dry_run,
             budget_tokens,
@@ -431,6 +481,7 @@ fn main() -> ExitCode {
             out,
             dsl_out,
             seed,
+            provider,
             model,
             dry_run,
             budget_tokens,
@@ -446,6 +497,7 @@ fn main() -> ExitCode {
             out,
             dsl_out,
             seed,
+            provider: provider.into(),
             model,
             dry_run,
             budget_tokens,
@@ -461,6 +513,7 @@ fn main() -> ExitCode {
             out,
             dsl_out,
             seed,
+            provider,
             model,
             dry_run,
             no_build,
@@ -476,6 +529,7 @@ fn main() -> ExitCode {
             out,
             dsl_out,
             seed,
+            provider: provider.into(),
             model,
             dry_run,
             no_build,
@@ -523,6 +577,7 @@ fn main() -> ExitCode {
         }),
         Cmd::Bench {
             prompts,
+            provider,
             model,
             max_repair_iters,
             budget_tokens,
@@ -531,6 +586,7 @@ fn main() -> ExitCode {
             thinking,
         } => bench(
             prompts,
+            provider.into(),
             model,
             max_repair_iters,
             budget_tokens,

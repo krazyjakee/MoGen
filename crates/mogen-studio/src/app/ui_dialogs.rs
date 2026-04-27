@@ -1,9 +1,11 @@
 use std::path::Path;
 
 use eframe::egui;
+use mogen_llm::Provider;
 
 use crate::settings::{
-    thinking_level_key, thinking_level_label, DEFAULT_MAX_REPAIR_ITERS, THINKING_LEVELS,
+    thinking_level_key, thinking_level_label, DEFAULT_MAX_REPAIR_ITERS, PROVIDERS,
+    THINKING_LEVELS,
 };
 use crate::theme::{apply_theme, theme_label, Theme, THEMES};
 
@@ -95,17 +97,70 @@ impl MogenStudioApp {
             .default_width(420.0)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
-                ui.heading("Gemini API key");
+                ui.heading("LLM provider");
                 ui.label(
-                    "Used by Generate / Modify / Animate / Textures. Stored in your user \
-                     config directory and persists between sessions.",
+                    "Backend used for Generate / Modify / Animate / Ask / Prompt \
+                     Enhance. Texture image generation is always Gemini regardless \
+                     of this setting (no other backend has an image API).",
                 );
                 ui.add_space(6.0);
-                let key_id = egui::Id::new("opts_api_key");
+                let current_provider = self.settings.provider();
+                egui::ComboBox::from_id_salt("opts_provider")
+                    .selected_text(current_provider.label())
+                    .show_ui(ui, |ui| {
+                        for p in PROVIDERS {
+                            let selected = p == current_provider;
+                            if ui
+                                .selectable_label(selected, p.label())
+                                .clicked()
+                                && !selected
+                            {
+                                self.settings.set_provider(p);
+                            }
+                        }
+                    });
+
+                ui.add_space(12.0);
+                let active_provider = self.settings.provider();
+                let key_heading = match active_provider {
+                    Provider::Gemini => "Gemini API key",
+                    Provider::OpenAI => "OpenAI API key",
+                    Provider::Anthropic => "Anthropic API key",
+                    Provider::Ollama => "Ollama API key (optional)",
+                };
+                ui.heading(key_heading);
+                ui.label(match active_provider {
+                    Provider::Gemini => {
+                        "Used by Generate / Modify / Animate / Textures. Stored in your \
+                         user config directory and persists between sessions."
+                    }
+                    Provider::OpenAI => {
+                        "Used by Generate / Modify / Animate / Ask. Stored in your \
+                         user config directory and persists between sessions."
+                    }
+                    Provider::Anthropic => {
+                        "Used by Generate / Modify / Animate / Ask. Stored in your \
+                         user config directory and persists between sessions."
+                    }
+                    Provider::Ollama => {
+                        "Optional bearer token for an Ollama endpoint behind an \
+                         authenticating proxy. Leave blank for a local install."
+                    }
+                });
+                ui.add_space(6.0);
+                // Show only the field for the active provider to reduce clutter.
+                // Switching providers above swaps which field is visible here.
+                let key_id = egui::Id::new(("opts_api_key", active_provider.key()));
+                let key_buf: &mut String = match active_provider {
+                    Provider::Gemini => &mut self.options_api_key_draft,
+                    Provider::OpenAI => &mut self.settings.openai_api_key,
+                    Provider::Anthropic => &mut self.settings.anthropic_api_key,
+                    Provider::Ollama => &mut self.settings.ollama_api_key,
+                };
                 super::text_menu::text_edit_with_menu(
                     ui,
                     key_id,
-                    &mut self.options_api_key_draft,
+                    key_buf,
                     |ui, text| {
                         ui.add(
                             egui::TextEdit::singleline(text)
@@ -116,15 +171,32 @@ impl MogenStudioApp {
                         )
                     },
                 );
-                if std::env::var("GEMINI_API_KEY")
+
+                if matches!(active_provider, Provider::Ollama) {
+                    ui.add_space(6.0);
+                    ui.label("Ollama base URL (optional)").on_hover_text(
+                        "Override for self-hosted Ollama. Leave blank for the \
+                         library default (http://localhost:11434).",
+                    );
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.settings.ollama_base_url)
+                            .hint_text("http://localhost:11434")
+                            .desired_width(f32::INFINITY),
+                    );
+                }
+
+                let env_var = active_provider.env_var();
+                if std::env::var(env_var)
                     .map(|v| !v.trim().is_empty())
                     .unwrap_or(false)
                 {
                     ui.add_space(4.0);
                     ui.colored_label(
                         egui::Color32::from_rgb(150, 180, 230),
-                        "GEMINI_API_KEY is also set in your environment — \
-                         the saved key here takes precedence when non-empty.",
+                        format!(
+                            "{env_var} is also set in your environment — \
+                             the saved key here takes precedence when non-empty.",
+                        ),
                     );
                 }
 
@@ -350,14 +422,31 @@ impl MogenStudioApp {
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
                     if ui.button("Save").clicked() {
+                        // The Gemini key uses an editor-buffered draft so the
+                        // user can clear/re-paste without instantly mutating
+                        // settings; commit it on Save. Other providers' keys
+                        // are written directly into settings as the user
+                        // types because they don't share that legacy draft.
                         self.settings.gemini_api_key =
                             self.options_api_key_draft.trim().to_string();
+                        // Trim whitespace from per-provider keys / URL on
+                        // save so users can paste with surrounding spaces.
+                        self.settings.openai_api_key =
+                            self.settings.openai_api_key.trim().to_string();
+                        self.settings.anthropic_api_key =
+                            self.settings.anthropic_api_key.trim().to_string();
+                        self.settings.ollama_api_key =
+                            self.settings.ollama_api_key.trim().to_string();
+                        self.settings.ollama_base_url =
+                            self.settings.ollama_base_url.trim().to_string();
                         match self.settings.save() {
                             Ok(()) => {
-                                let msg = if self.settings.gemini_api_key.is_empty() {
-                                    "options: cleared saved Gemini API key".to_string()
-                                } else {
-                                    "options: settings saved".to_string()
+                                let active = self.settings.provider();
+                                let msg = match active {
+                                    Provider::Gemini if self.settings.gemini_api_key.is_empty() => {
+                                        "options: cleared saved Gemini API key".to_string()
+                                    }
+                                    _ => "options: settings saved".to_string(),
                                 };
                                 self.active_mut().status = msg;
                                 close_after = true;

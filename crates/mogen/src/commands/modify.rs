@@ -2,18 +2,17 @@ use std::fs;
 use std::path::PathBuf;
 
 use anyhow::{anyhow, bail, Context, Result};
-use mogen_llm::gemini::{GeminiClient, GenerateConfig};
 use mogen_llm::{
     embed_seed_header, generate_with_repair, parse_prompt_header, parse_seed_header,
-    parse_thinking_header, RepairConfig, ThinkingLevel,
+    parse_thinking_header, GenerateConfig, Provider, RepairConfig, ThinkingLevel,
 };
 
 use crate::commands::build::build;
 use crate::common::{
-    attach_system_instruction, ensure_parent_dir, format_cached_tokens, pick_default_seed,
-    resolve_api_key, summarize_repair_errors,
+    attach_system_instruction, build_client, ensure_parent_dir, format_cached_tokens,
+    pick_default_seed, resolve_api_key, resolve_model, summarize_repair_errors,
 };
-use crate::spinner::{Spinner, GEMINI_FLAVORS};
+use crate::spinner::{Spinner, LLM_FLAVORS};
 
 pub(crate) struct ModifyArgs {
     pub input: PathBuf,
@@ -21,7 +20,9 @@ pub(crate) struct ModifyArgs {
     pub out: Option<PathBuf>,
     pub dsl_out: Option<PathBuf>,
     pub seed: Option<u64>,
-    pub model: String,
+    pub provider: Provider,
+    /// `None` -> use the provider's default model.
+    pub model: Option<String>,
     pub dry_run: bool,
     pub budget_tokens: Option<u32>,
     pub max_repair_iters: u32,
@@ -65,8 +66,10 @@ pub(crate) fn modify(args: ModifyArgs) -> Result<()> {
         ensure_parent_dir(&resolved_out)?;
     }
 
-    let api_key = resolve_api_key(args.api_key)?;
-    let client = GeminiClient::new(api_key);
+    let api_key = resolve_api_key(args.provider, args.api_key)?;
+    let client = build_client(args.provider, api_key);
+    let model = resolve_model(args.provider, args.model);
+    let provider_label = args.provider.label();
 
     let user_prompt = format!(
         "You are editing an existing mogen DSL file. Apply this modification:\n\n\
@@ -91,7 +94,7 @@ Existing file:\n\n{existing}",
     );
 
     let mut cfg = GenerateConfig::new(user_prompt);
-    cfg.model = args.model;
+    cfg.model = model;
     cfg.budget_tokens = args.budget_tokens;
     if let Some(t) = args.temperature {
         cfg.temperature = Some(t);
@@ -102,8 +105,8 @@ Existing file:\n\n{existing}",
 
     let total_attempts = args.max_repair_iters + 1;
     let mut pb = Spinner::new(
-        &format!("modify: calling Gemini (attempt 1/{total_attempts})"),
-        GEMINI_FLAVORS,
+        &format!("modify: calling {provider_label} (attempt 1/{total_attempts})"),
+        LLM_FLAVORS,
     );
 
     let pb_cb = pb.handle();
@@ -121,8 +124,8 @@ Existing file:\n\n{existing}",
     let outcome = match generate_with_repair(&client, cfg, &repair) {
         Ok(o) => o,
         Err(e) => {
-            pb.abandon_with_message(format!("modify: Gemini error — {e}"));
-            return Err(anyhow!("gemini: {e}"));
+            pb.abandon_with_message(format!("modify: {provider_label} error — {e}"));
+            return Err(anyhow!("{}: {e}", provider_label.to_lowercase()));
         }
     };
 
