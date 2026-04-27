@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 
 use eframe::egui;
 use mogen_llm::textures::TextureStage;
+use mogen_llm::Provider;
 
 use super::pricing::{format_usd, image_pricing, text_pricing};
 use super::types::{EnhanceTarget, LlmErrorClass, LlmEvent, LlmEventTone, LlmKind, LlmProgress};
@@ -18,7 +19,10 @@ impl MogenStudioApp {
         if !has_key {
             ui.colored_label(
                 egui::Color32::from_rgb(230, 200, 100),
-                "no Gemini API key — set one in Edit → Preferences…",
+                format!(
+                    "no {} API key — set one in Edit → Preferences…",
+                    self.settings.provider().display_name(),
+                ),
             );
         }
 
@@ -122,13 +126,14 @@ impl MogenStudioApp {
                     .count()
             })
             .unwrap_or(0);
+        let provider_name = self.settings.provider().display_name();
         ui.label("Repair current:");
         ui.label(
-            egui::RichText::new(
-                "hand the current file's validation errors back to Gemini — \
+            egui::RichText::new(format!(
+                "hand the current file's validation errors back to {provider_name} — \
                  each diagnostic is sent with a source excerpt, caret, and \
                  per-code fix hint",
-            )
+            ))
             .weak(),
         );
         let repair_enabled = has_key && !busy && !src_empty && error_count > 0;
@@ -145,7 +150,7 @@ impl MogenStudioApp {
         } else if error_count == 0 {
             "No validation errors to repair".to_string()
         } else {
-            "Feed the diagnostics (with spans and fix hints) back to Gemini".to_string()
+            format!("Feed the diagnostics (with spans and fix hints) back to {provider_name}")
         };
         if ui
             .add_enabled(repair_enabled, egui::Button::new(repair_label))
@@ -273,9 +278,10 @@ impl MogenStudioApp {
         ui.horizontal(|ui| {
             ui.label("Thinking (this file):")
                 .on_hover_text(
-                    "Per-file cap on Gemini's reasoning budget. Saved into \
-                     the .mog header so it applies to CLI runs too. Leave as \
-                     \"Use global default\" to defer to Options.",
+                    "Per-file cap on the model's reasoning budget (applies to \
+                     providers that support a thinking budget — Gemini, OpenAI). \
+                     Saved into the .mog header so it applies to CLI runs too. \
+                     Leave as \"Use global default\" to defer to Options.",
                 );
             egui::ComboBox::from_id_salt(("mog_thinking_override", self.active))
                 .selected_text(preview)
@@ -322,6 +328,7 @@ impl MogenStudioApp {
         let started_at = self.active().llm_started_at;
         let progress = self.active().llm_progress.clone();
         let max_iters = self.settings.max_repair_iters();
+        let provider = self.settings.provider();
         let events: Vec<LlmEvent> = self.active().llm_events.clone();
 
         let card_bg = ui.visuals().faint_bg_color;
@@ -338,7 +345,7 @@ impl MogenStudioApp {
                     draw_kind_pill(ui, kind, accent);
                     ui.add_space(6.0);
                     ui.spinner();
-                    ui.label(egui::RichText::new(stage_headline(&progress, kind)));
+                    ui.label(egui::RichText::new(stage_headline(&progress, kind, provider)));
                     ui.with_layout(
                         egui::Layout::right_to_left(egui::Align::Center),
                         |ui| {
@@ -923,11 +930,12 @@ fn draw_timeline_row(
 /// Headline string shown next to the spinner. Prefers the most recent
 /// progress event; falls back to a kind-appropriate "starting…" when the
 /// worker hasn't emitted anything yet.
-fn stage_headline(p: &Option<LlmProgress>, kind: LlmKind) -> String {
+fn stage_headline(p: &Option<LlmProgress>, kind: LlmKind, provider: Provider) -> String {
+    let provider_name = provider.display_name();
     match p {
         Some(LlmProgress::Status(s)) => s.clone(),
         Some(LlmProgress::Repair { iter, max, errors }) => format!(
-            "repair {iter}/{max} — {errors} error{} → re-calling Gemini",
+            "repair {iter}/{max} — {errors} error{} → re-calling {provider_name}",
             if *errors == 1 { "" } else { "s" }
         ),
         Some(LlmProgress::Texture {
@@ -945,10 +953,10 @@ fn stage_headline(p: &Option<LlmProgress>, kind: LlmKind) -> String {
             format!("{current}/{total} — {verb} {material}")
         }
         None => match kind {
-            LlmKind::Generate => "waiting for Gemini…".into(),
-            LlmKind::Modify => "waiting for Gemini…".into(),
-            LlmKind::Animate => "waiting for Gemini…".into(),
-            LlmKind::Repair => "waiting for Gemini…".into(),
+            LlmKind::Generate
+            | LlmKind::Modify
+            | LlmKind::Animate
+            | LlmKind::Repair => format!("waiting for {provider_name}…"),
             LlmKind::Textures => "preparing texture plan…".into(),
         },
     }

@@ -164,8 +164,8 @@ impl MogenStudioApp {
                         if ui
                             .add(egui::Button::new("Ask…"))
                             .on_hover_text(
-                                "Ask Gemini Flash a question about the selected code \
-                                 (or the whole file if nothing is selected)",
+                                "Ask the active provider's fast model a question about the \
+                                 selected code (or the whole file if nothing is selected)",
                             )
                             .clicked()
                         {

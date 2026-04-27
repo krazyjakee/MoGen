@@ -4,7 +4,7 @@ use std::time::Instant;
 
 use eframe::egui;
 use mogen_core::Severity;
-use mogen_llm::{system_instruction, Provider, StdlibIndex};
+use mogen_llm::{system_instruction, StdlibIndex};
 
 use mogen_llm::textures::TextureStage;
 
@@ -264,6 +264,7 @@ impl MogenStudioApp {
             }
         };
         let model = self.settings.provider_fast_model();
+        let claude_code_path = self.settings.claude_code_path();
         let file_index = self.active;
         // Clear any stale error for this target; a fresh attempt gets a fresh
         // error slot.
@@ -280,7 +281,14 @@ impl MogenStudioApp {
 
         let payload = trimmed.to_string();
         std::thread::spawn(move || {
-            let result = run_prompt_enhance(target, payload, provider, api_key, model);
+            let result = run_prompt_enhance(
+                target,
+                payload,
+                provider,
+                api_key,
+                model,
+                claude_code_path,
+            );
             let _ = tx.send(result);
             ctx.request_repaint();
         });
@@ -379,7 +387,7 @@ impl MogenStudioApp {
 
     /// Prefer a key saved in Options for the active provider; fall back to the
     /// matching environment variable so existing shell-exported setups keep
-    /// working. For Ollama (which is keyless by default), returns
+    /// working. For keyless providers (Ollama, Claude Code), returns
     /// `Some(String::new())` even when neither setting nor env var is set so
     /// callers can construct a keyless `LlmClient`.
     pub(super) fn resolve_api_key(&self) -> Option<String> {
@@ -387,14 +395,17 @@ impl MogenStudioApp {
         if let Some(k) = self.settings.provider_api_key() {
             return Some(k.to_string());
         }
-        let env_key = std::env::var(provider.env_var())
-            .ok()
-            .map(|v| v.trim().to_string())
-            .filter(|v| !v.is_empty());
-        if env_key.is_some() {
-            return env_key;
+        let env_var = provider.env_var();
+        if !env_var.is_empty() {
+            let env_key = std::env::var(env_var)
+                .ok()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty());
+            if env_key.is_some() {
+                return env_key;
+            }
         }
-        if matches!(provider, Provider::Ollama) {
+        if provider.is_keyless() {
             return Some(String::new());
         }
         None
@@ -436,6 +447,7 @@ impl MogenStudioApp {
             temperature: self.settings.temperature(),
             max_repair_iters: self.settings.max_repair_iters(),
             seed_override: self.settings.seed_override(),
+            claude_code_path: self.settings.claude_code_path(),
         }
     }
 

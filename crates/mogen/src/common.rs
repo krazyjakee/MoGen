@@ -57,14 +57,23 @@ pub(crate) fn resolve_api_key(provider: Provider, flag: Option<String>) -> Resul
         }
         return Ok(k);
     }
+    if provider.is_keyless() {
+        // Ollama (local) and Claude Code (subscription via `claude` CLI) are
+        // keyless by default — fall through with empty string so the client
+        // constructs without auth. An env var is still consulted for users
+        // running Ollama behind an authenticating reverse proxy.
+        let var = provider.env_var();
+        if !var.is_empty() {
+            let from_env = std::env::var(var).unwrap_or_default();
+            if !from_env.trim().is_empty() {
+                return Ok(from_env);
+            }
+        }
+        return Ok(String::new());
+    }
     let var = provider.env_var();
     let from_env = std::env::var(var).unwrap_or_default();
     if from_env.trim().is_empty() {
-        if matches!(provider, Provider::Ollama) {
-            // Ollama is keyless by default — fall through with empty string
-            // so the client constructs without auth.
-            return Ok(String::new());
-        }
         bail!("missing {var} (set env var or pass --api-key)");
     }
     Ok(from_env)

@@ -457,6 +457,25 @@ pub(super) struct LlmRunConfig {
     /// `None` → pick from the DSL header if present, else random; `Some(v)` →
     /// use exactly that seed (so the user can reproduce a prior generation).
     pub seed_override: Option<u64>,
+    /// Path to the `claude` binary. Honoured only when the active provider is
+    /// [`Provider::ClaudeCode`] (other providers ignore it). Empty/blank is a
+    /// valid value — the underlying client falls back to `claude` on `PATH`.
+    pub claude_code_path: String,
+}
+
+/// Construct an [`LlmClient`] honoring Studio-only settings that don't fit
+/// the bare `LlmClient::new(provider, api_key)` signature. Today that's just
+/// the Claude Code binary path.
+pub(super) fn build_provider_client(
+    provider: Provider,
+    api_key: String,
+    claude_code_path: &str,
+) -> LlmClient {
+    if matches!(provider, Provider::ClaudeCode) {
+        LlmClient::with_base_url(provider, api_key, claude_code_path)
+    } else {
+        LlmClient::new(provider, api_key)
+    }
 }
 
 pub(super) fn run_llm(
@@ -477,7 +496,7 @@ pub(super) fn run_llm(
         let _ = tx.send(LlmMessage::Progress(p));
     };
 
-    let client = LlmClient::new(provider, api_key);
+    let client = build_provider_client(provider, api_key, &run_cfg.claude_code_path);
     let seed = run_cfg.seed_override.unwrap_or_else(|| {
         existing
             .as_deref()
@@ -914,8 +933,9 @@ pub(super) fn run_prompt_enhance(
     provider: Provider,
     api_key: String,
     model: String,
+    claude_code_path: String,
 ) -> Result<String, String> {
-    let client = LlmClient::new(provider, api_key);
+    let client = build_provider_client(provider, api_key, &claude_code_path);
     let raw = raw_prompt.trim();
     // Templates focus the rewrite on enriching the user's high-level
     // description — what the object looks like or how a part should change —
@@ -925,17 +945,19 @@ pub(super) fn run_prompt_enhance(
     // pre-bakes implementation choices and steers the actual generation step.
     let user = match target {
         EnhanceTarget::Generate => format!(
-            "Enrich the following asset description with vivid, concrete visual \
-             detail — overall silhouette and proportion, character or mood, era or \
-             setting, surface materials and colour cues. Stay focused on what the \
-             object looks like; do not prescribe how it should be modelled, list \
-             parts, or suggest construction steps. Keep it compact (1–3 \
-             sentences). The original subject phrase \"{raw}\" MUST appear \
-             verbatim in your rewrite (typically as the opening noun phrase) — \
-             you are adding detail to it, not replacing it with a synonym or a \
-             different object. Do NOT use code fences, do NOT prefix with \
-             \"Enhanced prompt:\" or similar. Reply with only the rewritten \
-             prompt.\n\nPrompt: {raw}",
+             "Enrich the following asset description with vivid, concrete visual \
+              detail about the object itself — overall silhouette and proportion, \
+              character or mood, surface materials and colour cues. Describe ONLY \
+              the object. Do NOT add a setting, scene, environment, background, \
+              location, lighting, weather, surroundings, or any other object \
+              (companions, props, base, pedestal, ground, etc.). Do not prescribe \
+              how it should be modelled, list parts, or suggest construction \
+              steps. Keep it compact (1–3 sentences). The original subject phrase \
+              \"{raw}\" MUST appear verbatim in your rewrite (typically as the \
+              opening noun phrase) — you are adding detail to it, not replacing \
+              it with a synonym or a different object. Do NOT use code fences, \
+              do NOT prefix with \"Enhanced prompt:\" or similar. Reply with \
+              only the rewritten prompt.\n\nPrompt: {raw}",
         ),
         EnhanceTarget::Modify => format!(
             "Rewrite the following instruction as a clear, specific edit request \

@@ -72,16 +72,50 @@ fn guess_image_mime(bytes: &[u8], path: &Path) -> String {
     .to_string()
 }
 
-/// Models surfaced in the Preferences dropdown. Free-form text still wins if
-/// a user types one in, but these cover the tiers almost every user will
-/// want and give pricing expectations a named anchor.
-const MODEL_PRESETS: &[&str] = &[
-    "gemini-pro-latest",
-    "gemini-2.5-pro",
-    "gemini-flash-latest",
-    "gemini-2.5-flash",
-    "gemini-2.5-flash-lite",
-];
+/// Models surfaced in the Preferences dropdown for each provider. Free-form
+/// text still wins if a user types one in, but these cover the tiers almost
+/// every user will want and give pricing expectations a named anchor.
+fn model_presets(provider: Provider) -> &'static [&'static str] {
+    match provider {
+        Provider::Gemini => &[
+            "gemini-pro-latest",
+            "gemini-flash-latest",
+            "gemini-2.5-pro",
+            "gemini-2.5-flash",
+            "gemini-2.5-flash-lite",
+        ],
+        Provider::OpenAI => &[
+            "gpt-5",
+            "gpt-5-mini",
+            "gpt-5-nano",
+            "gpt-4.1",
+            "gpt-4.1-mini",
+            "o4-mini",
+            "o3",
+        ],
+        Provider::Anthropic => &[
+            "claude-opus-4-7",
+            "claude-sonnet-4-6",
+            "claude-sonnet-4-5",
+            "claude-haiku-4-5",
+        ],
+        Provider::Ollama => &[
+            "llama3.3",
+            "llama3.2",
+            "qwen3",
+            "qwen2.5",
+            "deepseek-r1",
+            "mistral",
+            "phi4",
+            "gemma3",
+        ],
+        Provider::ClaudeCode => &[
+            "sonnet",
+            "haiku",
+            "opus",
+        ],
+    }
+}
 
 impl MogenStudioApp {
     pub(super) fn ui_options(&mut self, ctx: &egui::Context) {
@@ -122,82 +156,205 @@ impl MogenStudioApp {
 
                 ui.add_space(12.0);
                 let active_provider = self.settings.provider();
-                let key_heading = match active_provider {
-                    Provider::Gemini => "Gemini API key",
-                    Provider::OpenAI => "OpenAI API key",
-                    Provider::Anthropic => "Anthropic API key",
-                    Provider::Ollama => "Ollama API key (optional)",
-                };
-                ui.heading(key_heading);
-                ui.label(match active_provider {
-                    Provider::Gemini => {
-                        "Used by Generate / Modify / Animate / Textures. Stored in your \
-                         user config directory and persists between sessions."
-                    }
-                    Provider::OpenAI => {
-                        "Used by Generate / Modify / Animate / Ask. Stored in your \
-                         user config directory and persists between sessions."
-                    }
-                    Provider::Anthropic => {
-                        "Used by Generate / Modify / Animate / Ask. Stored in your \
-                         user config directory and persists between sessions."
-                    }
-                    Provider::Ollama => {
-                        "Optional bearer token for an Ollama endpoint behind an \
-                         authenticating proxy. Leave blank for a local install."
-                    }
-                });
-                ui.add_space(6.0);
-                // Show only the field for the active provider to reduce clutter.
-                // Switching providers above swaps which field is visible here.
-                let key_id = egui::Id::new(("opts_api_key", active_provider.key()));
-                let key_buf: &mut String = match active_provider {
-                    Provider::Gemini => &mut self.options_api_key_draft,
-                    Provider::OpenAI => &mut self.settings.openai_api_key,
-                    Provider::Anthropic => &mut self.settings.anthropic_api_key,
-                    Provider::Ollama => &mut self.settings.ollama_api_key,
-                };
-                super::text_menu::text_edit_with_menu(
-                    ui,
-                    key_id,
-                    key_buf,
-                    |ui, text| {
-                        ui.add(
-                            egui::TextEdit::singleline(text)
-                                .password(true)
-                                .hint_text("paste key (leave blank to clear)")
-                                .desired_width(f32::INFINITY)
-                                .id(key_id),
-                        )
-                    },
-                );
-
-                if matches!(active_provider, Provider::Ollama) {
+                if matches!(active_provider, Provider::ClaudeCode) {
+                    // Claude Code authenticates through the user's local
+                    // `claude` CLI install — no key to paste here. We only
+                    // expose a binary-path override for non-PATH installs.
+                    ui.heading("Claude Code binary");
+                    ui.label(
+                        "Auth is handled by your local `claude` install \
+                         (run `claude /login` if you haven't yet). Used by \
+                         Generate / Modify / Animate / Ask. Image generation \
+                         (Textures) still requires Gemini.",
+                    );
                     ui.add_space(6.0);
-                    ui.label("Ollama base URL (optional)").on_hover_text(
-                        "Override for self-hosted Ollama. Leave blank for the \
-                         library default (http://localhost:11434).",
+                    ui.label("Path (optional)").on_hover_text(
+                        "Absolute path to the `claude` binary. Leave blank to \
+                         resolve `claude` from PATH.",
                     );
                     ui.add(
-                        egui::TextEdit::singleline(&mut self.settings.ollama_base_url)
-                            .hint_text("http://localhost:11434")
+                        egui::TextEdit::singleline(&mut self.settings.claude_code_path)
+                            .hint_text("claude")
                             .desired_width(f32::INFINITY),
                     );
+                } else {
+                    let key_heading = match active_provider {
+                        Provider::Gemini => "Gemini API key",
+                        Provider::OpenAI => "OpenAI API key",
+                        Provider::Anthropic => "Anthropic API key",
+                        Provider::Ollama => "Ollama API key (optional)",
+                        Provider::ClaudeCode => unreachable!(),
+                    };
+                    ui.heading(key_heading);
+                    ui.label(match active_provider {
+                        Provider::Gemini => {
+                            "Used by Generate / Modify / Animate / Textures. Stored in your \
+                             user config directory and persists between sessions."
+                        }
+                        Provider::OpenAI => {
+                            "Used by Generate / Modify / Animate / Ask. Stored in your \
+                             user config directory and persists between sessions."
+                        }
+                        Provider::Anthropic => {
+                            "Used by Generate / Modify / Animate / Ask. Stored in your \
+                             user config directory and persists between sessions."
+                        }
+                        Provider::Ollama => {
+                            "Optional bearer token for an Ollama endpoint behind an \
+                             authenticating proxy. Leave blank for a local install."
+                        }
+                        Provider::ClaudeCode => unreachable!(),
+                    });
+                    ui.add_space(6.0);
+                    // Show only the field for the active provider to reduce clutter.
+                    // Switching providers above swaps which field is visible here.
+                    let key_id = egui::Id::new(("opts_api_key", active_provider.key()));
+                    let key_buf: &mut String = match active_provider {
+                        Provider::Gemini => &mut self.options_api_key_draft,
+                        Provider::OpenAI => &mut self.settings.openai_api_key,
+                        Provider::Anthropic => &mut self.settings.anthropic_api_key,
+                        Provider::Ollama => &mut self.settings.ollama_api_key,
+                        Provider::ClaudeCode => unreachable!(),
+                    };
+                    super::text_menu::text_edit_with_menu(
+                        ui,
+                        key_id,
+                        key_buf,
+                        |ui, text| {
+                            ui.add(
+                                egui::TextEdit::singleline(text)
+                                    .password(true)
+                                    .hint_text("paste key (leave blank to clear)")
+                                    .desired_width(f32::INFINITY)
+                                    .id(key_id),
+                            )
+                        },
+                    );
+
+                    if matches!(active_provider, Provider::Ollama) {
+                        ui.add_space(6.0);
+                        ui.label("Ollama base URL (optional)").on_hover_text(
+                            "Override for self-hosted Ollama. Leave blank for the \
+                             library default (http://localhost:11434).",
+                        );
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.settings.ollama_base_url)
+                                .hint_text("http://localhost:11434")
+                                .desired_width(f32::INFINITY),
+                        );
+                    }
+
+                    let env_var = active_provider.env_var();
+                    if !env_var.is_empty()
+                        && std::env::var(env_var)
+                            .map(|v| !v.trim().is_empty())
+                            .unwrap_or(false)
+                    {
+                        ui.add_space(4.0);
+                        ui.colored_label(
+                            egui::Color32::from_rgb(150, 180, 230),
+                            format!(
+                                "{env_var} is also set in your environment — \
+                                 the saved key here takes precedence when non-empty.",
+                            ),
+                        );
+                    }
                 }
 
-                let env_var = active_provider.env_var();
-                if std::env::var(env_var)
-                    .map(|v| !v.trim().is_empty())
-                    .unwrap_or(false)
+                // --- Models (provider-aware: presets and target fields swap
+                // when the LLM provider above changes) ---
+                if self
+                    .settings
+                    .thinking_model_field_mut(active_provider)
+                    .is_some()
                 {
-                    ui.add_space(4.0);
-                    ui.colored_label(
-                        egui::Color32::from_rgb(150, 180, 230),
-                        format!(
-                            "{env_var} is also set in your environment — \
-                             the saved key here takes precedence when non-empty.",
-                        ),
+                    ui.add_space(12.0);
+                    ui.heading("Models");
+                    ui.label(format!(
+                        "Thinking model runs the heavy DSL paths (generate / modify / \
+                         animate). Fast model runs cheap rewrites like the Prompt \
+                         Enhancer. Showing presets for {}.",
+                        active_provider.label(),
+                    ));
+                    ui.add_space(6.0);
+
+                    let thinking_default = active_provider.default_model();
+                    let fast_default = active_provider.default_fast_model();
+                    let presets = model_presets(active_provider);
+
+                    // --- thinking model picker ---
+                    ui.label("Thinking model").on_hover_text(
+                        "Used for generate / modify / animate and their repair loops. \
+                         Pick a preset or type a custom model id.",
                     );
+                    let mut thinking_draft = self
+                        .settings
+                        .thinking_model_field(active_provider)
+                        .to_string();
+                    let thinking_selected = if thinking_draft.is_empty() {
+                        format!("(library default: {thinking_default})")
+                    } else {
+                        thinking_draft.clone()
+                    };
+                    egui::ComboBox::from_id_salt((
+                        "opts_model_thinking",
+                        active_provider.key(),
+                    ))
+                    .selected_text(thinking_selected)
+                    .show_ui(ui, |ui| {
+                        for m in presets {
+                            if ui
+                                .selectable_label(thinking_draft == *m, *m)
+                                .clicked()
+                            {
+                                thinking_draft = (*m).to_string();
+                            }
+                        }
+                    });
+                    ui.add(
+                        egui::TextEdit::singleline(&mut thinking_draft)
+                            .hint_text(thinking_default)
+                            .desired_width(f32::INFINITY),
+                    );
+                    if let Some(buf) = self.settings.thinking_model_field_mut(active_provider) {
+                        *buf = thinking_draft;
+                    }
+
+                    ui.add_space(6.0);
+
+                    // --- fast model picker ---
+                    ui.label("Fast model").on_hover_text(
+                        "Used for low-stakes text rewrites like the Prompt Enhancer.",
+                    );
+                    let mut fast_draft = self
+                        .settings
+                        .fast_model_field(active_provider)
+                        .to_string();
+                    let fast_selected = if fast_draft.is_empty() {
+                        format!("(library default: {fast_default})")
+                    } else {
+                        fast_draft.clone()
+                    };
+                    egui::ComboBox::from_id_salt((
+                        "opts_model_fast",
+                        active_provider.key(),
+                    ))
+                    .selected_text(fast_selected)
+                    .show_ui(ui, |ui| {
+                        for m in presets {
+                            if ui.selectable_label(fast_draft == *m, *m).clicked() {
+                                fast_draft = (*m).to_string();
+                            }
+                        }
+                    });
+                    ui.add(
+                        egui::TextEdit::singleline(&mut fast_draft)
+                            .hint_text(fast_default)
+                            .desired_width(f32::INFINITY),
+                    );
+                    if let Some(buf) = self.settings.fast_model_field_mut(active_provider) {
+                        *buf = fast_draft;
+                    }
                 }
 
                 ui.add_space(12.0);
@@ -228,8 +385,9 @@ impl MogenStudioApp {
                 ui.add_space(12.0);
                 ui.heading("Thinking budget");
                 ui.label(
-                    "Cap on Gemini's hidden reasoning tokens per call. Higher = better DSL on \
-                     hard prompts but slower and more expensive.",
+                    "Cap on the model's hidden reasoning tokens per call (Gemini, OpenAI \
+                     reasoning models). Higher = better DSL on hard prompts but slower and \
+                     more expensive. Ignored by providers that don't expose a budget.",
                 );
                 ui.add_space(6.0);
                 let current = self.settings.thinking_level();
@@ -248,75 +406,6 @@ impl MogenStudioApp {
                             }
                         }
                     });
-
-                ui.add_space(12.0);
-                ui.heading("Models");
-                ui.label(
-                    "Thinking model runs the heavy DSL paths (generate / modify / animate). \
-                     Fast model runs cheap rewrites like the Prompt Enhancer. Flash is \
-                     ~4× cheaper than Pro — keep the two split so a polish call doesn't \
-                     pay Pro rates.",
-                );
-                ui.add_space(6.0);
-
-                // --- thinking model picker ---
-                ui.label("Thinking model")
-                    .on_hover_text(
-                        "Used for generate / modify / animate and their repair loops. \
-                         Pick a preset or type a custom model id.",
-                    );
-                let mut thinking_draft = self.settings.gemini_model.clone();
-                egui::ComboBox::from_id_salt("opts_model_thinking")
-                    .selected_text(if thinking_draft.is_empty() {
-                        "(library default: gemini-pro-latest)"
-                    } else {
-                        thinking_draft.as_str()
-                    })
-                    .show_ui(ui, |ui| {
-                        for m in MODEL_PRESETS {
-                            if ui
-                                .selectable_label(thinking_draft == *m, *m)
-                                .clicked()
-                            {
-                                thinking_draft = m.to_string();
-                            }
-                        }
-                    });
-                ui.add(
-                    egui::TextEdit::singleline(&mut thinking_draft)
-                        .hint_text("gemini-pro-latest")
-                        .desired_width(f32::INFINITY),
-                );
-                self.settings.gemini_model = thinking_draft;
-
-                ui.add_space(6.0);
-
-                // --- fast model picker ---
-                ui.label("Fast model")
-                    .on_hover_text(
-                        "Used for low-stakes text rewrites like the Prompt Enhancer. \
-                         Default is gemini-flash-latest.",
-                    );
-                let mut fast_draft = self.settings.gemini_fast_model.clone();
-                egui::ComboBox::from_id_salt("opts_model_fast")
-                    .selected_text(if fast_draft.is_empty() {
-                        "(library default: gemini-flash-latest)"
-                    } else {
-                        fast_draft.as_str()
-                    })
-                    .show_ui(ui, |ui| {
-                        for m in MODEL_PRESETS {
-                            if ui.selectable_label(fast_draft == *m, *m).clicked() {
-                                fast_draft = m.to_string();
-                            }
-                        }
-                    });
-                ui.add(
-                    egui::TextEdit::singleline(&mut fast_draft)
-                        .hint_text("gemini-flash-latest")
-                        .desired_width(f32::INFINITY),
-                );
-                self.settings.gemini_fast_model = fast_draft;
 
                 ui.add_space(12.0);
                 egui::CollapsingHeader::new("Advanced (sampling, repair, seed)")
@@ -358,8 +447,9 @@ impl MogenStudioApp {
                         // --- max repair iters ---
                         ui.label("Max repair iterations")
                             .on_hover_text(
-                                "How many times to re-call Gemini when the generated DSL fails \
-                                 validation. Higher = more API cost but fewer invalid outputs.",
+                                "How many times to re-call the active provider when the \
+                                 generated DSL fails validation. Higher = more API cost but \
+                                 fewer invalid outputs.",
                             );
                         let mut iters =
                             self.settings.max_repair_iters.unwrap_or(DEFAULT_MAX_REPAIR_ITERS);
@@ -439,6 +529,8 @@ impl MogenStudioApp {
                             self.settings.ollama_api_key.trim().to_string();
                         self.settings.ollama_base_url =
                             self.settings.ollama_base_url.trim().to_string();
+                        self.settings.claude_code_path =
+                            self.settings.claude_code_path.trim().to_string();
                         match self.settings.save() {
                             Ok(()) => {
                                 let active = self.settings.provider();
@@ -750,11 +842,15 @@ impl MogenStudioApp {
                     self.ask_focus_pending = false;
                 }
 
+                let provider = self.settings.provider();
+                let provider_name = provider.display_name();
                 if !has_key {
                     ui.add_space(4.0);
                     ui.colored_label(
                         egui::Color32::from_rgb(230, 200, 100),
-                        "no Gemini API key — set one in Edit → Preferences…",
+                        format!(
+                            "no {provider_name} API key — set one in Edit → Preferences…",
+                        ),
                     );
                 }
 
@@ -764,14 +860,16 @@ impl MogenStudioApp {
                     let can_ask = has_key && question_ok && !in_flight;
                     if ui
                         .add_enabled(can_ask, egui::Button::new("Ask"))
-                        .on_hover_text("Send the question to Gemini Flash")
+                        .on_hover_text(format!(
+                            "Send the question to the active {provider_name} fast model",
+                        ))
                         .clicked()
                     {
                         submit_now = true;
                     }
                     if in_flight {
                         ui.spinner();
-                        ui.label("asking Gemini…");
+                        ui.label(format!("asking {provider_name}…"));
                     }
                     if ui.button("Close").clicked() {
                         close_after = true;
@@ -857,7 +955,10 @@ impl MogenStudioApp {
             .default_width(500.0)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
-                ui.label("Describe the scene you want Gemini to generate:");
+                ui.label(format!(
+                    "Describe the scene you want {} to generate:",
+                    self.settings.provider().display_name(),
+                ));
                 let prompt_id = egui::Id::new("new_prompt_draft");
                 super::text_menu::text_edit_with_menu(
                     ui,
@@ -934,7 +1035,10 @@ impl MogenStudioApp {
                     ui.add_space(4.0);
                     ui.colored_label(
                         egui::Color32::from_rgb(230, 200, 100),
-                        "no Gemini API key — set one in Edit → Preferences…",
+                        format!(
+                            "no {} API key — set one in Edit → Preferences…",
+                            self.settings.provider().display_name(),
+                        ),
                     );
                 }
                 ui.add_space(8.0);

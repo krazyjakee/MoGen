@@ -47,6 +47,9 @@ enum ProviderArg {
     Openai,
     Anthropic,
     Ollama,
+    /// Local `claude` CLI (Claude Code subscription). Auth is handled by
+    /// the user's `claude /login`; no API key flag is required.
+    ClaudeCode,
 }
 
 impl From<ProviderArg> for Provider {
@@ -56,6 +59,7 @@ impl From<ProviderArg> for Provider {
             ProviderArg::Openai => Provider::OpenAI,
             ProviderArg::Anthropic => Provider::Anthropic,
             ProviderArg::Ollama => Provider::Ollama,
+            ProviderArg::ClaudeCode => Provider::ClaudeCode,
         }
     }
 }

@@ -21,6 +21,7 @@
 
 pub mod anthropic;
 pub mod cache;
+pub mod claude_code;
 pub mod gemini;
 pub mod image;
 pub mod ollama;

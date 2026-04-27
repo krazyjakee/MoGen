@@ -40,9 +40,12 @@ impl MogenStudioApp {
                 );
                 ui.add_space(8.0);
                 ui.label(
-                    "Gemini-powered features (Generate, Modify, Animate, Textures) \
-                     need a Google AI Studio API key. The rest of the app — editor, \
-                     viewer, build — works without one.",
+                    "Generate, Modify, Animate, and Textures need an LLM. Gemini is \
+                     the recommended starting point (the only backend that can also \
+                     generate textures), so paste a Google AI Studio key below — or \
+                     skip and pick a different provider (OpenAI, Anthropic, Ollama, \
+                     Claude Code) later in Edit → Preferences. The rest of the app — \
+                     editor, viewer, build — works without any key.",
                 );
 
                 ui.add_space(12.0);

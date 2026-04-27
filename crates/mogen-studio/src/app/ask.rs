@@ -13,7 +13,7 @@
 use std::sync::Arc;
 
 use eframe::egui;
-use mogen_llm::{GenerateConfig, LlmClient, Provider, ThinkingLevel};
+use mogen_llm::{GenerateConfig, Provider, ThinkingLevel};
 
 use super::types::AskInFlight;
 use super::MogenStudioApp;
@@ -106,6 +106,7 @@ impl MogenStudioApp {
             }
         };
         let model = self.settings.provider_fast_model();
+        let claude_code_path = self.settings.claude_code_path();
         let sys_instr = self.cached_system_instruction();
         let code = self.ask_code_context.clone();
         let context_label = self.ask_context_label.clone();
@@ -126,6 +127,7 @@ impl MogenStudioApp {
                 api_key,
                 model,
                 sys_instr,
+                claude_code_path,
             );
             let _ = tx.send(result);
             ctx.request_repaint();
@@ -163,8 +165,9 @@ fn run_ask_question(
     api_key: String,
     model: String,
     sys_instr: Arc<String>,
+    claude_code_path: String,
 ) -> Result<String, String> {
-    let client = LlmClient::new(provider, api_key);
+    let client = super::util::build_provider_client(provider, api_key, &claude_code_path);
 
     // Tag the code so the model knows whether it's looking at a snippet or
     // the whole file. The "do not rewrite" guidance keeps replies pedagogical

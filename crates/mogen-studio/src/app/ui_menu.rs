@@ -49,7 +49,7 @@ impl MogenStudioApp {
                     ui,
                     "New from Prompt…",
                     ShortcutAction::OpenNewPromptModal,
-                    "Generate a new MOG file from a natural-language prompt via Gemini",
+                    "Generate a new MOG file from a natural-language prompt via the active LLM provider",
                 )
                 .clicked()
                 {
@@ -246,7 +246,7 @@ impl MogenStudioApp {
                     ui,
                     "Preferences…",
                     ShortcutAction::OpenOptions,
-                    "Gemini API key, thinking budget, theme",
+                    "LLM provider, API key, thinking budget, theme",
                 )
                 .clicked()
                 {

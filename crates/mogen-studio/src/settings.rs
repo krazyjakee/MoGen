@@ -49,17 +49,46 @@ pub struct Settings {
     pub preview_shader: String,
 
     /// "Thinking" model id used for the heavy text paths (generate, modify,
-    /// animate and their repair loops). Empty -> library default
-    /// (`gemini-pro-latest`). Exposed in Options → Models.
+    /// animate and their repair loops) when the active provider is Gemini.
+    /// Empty -> library default (`gemini-pro-latest`). Exposed in
+    /// Options → Models.
     #[serde(default)]
     pub gemini_model: String,
 
-    /// "Fast" model id used for low-stakes rewrites like the Prompt Enhancer.
-    /// Empty -> [`DEFAULT_FAST_MODEL`] (`gemini-flash-latest`). Kept separate
-    /// from `gemini_model` so users can pay Flash rates for prompt polish
-    /// while still running Pro for the actual DSL generation.
+    /// "Fast" model id used for low-stakes rewrites like the Prompt Enhancer
+    /// when the active provider is Gemini. Empty -> [`DEFAULT_FAST_MODEL`]
+    /// (`gemini-flash-latest`). Kept separate from `gemini_model` so users
+    /// can pay Flash rates for prompt polish while still running Pro for the
+    /// actual DSL generation.
     #[serde(default)]
     pub gemini_fast_model: String,
+
+    /// OpenAI thinking-model override. Empty -> [`mogen_llm::openai::DEFAULT_MODEL`].
+    #[serde(default)]
+    pub openai_model: String,
+
+    /// OpenAI fast-model override. Empty -> [`mogen_llm::openai::DEFAULT_FAST_MODEL`].
+    #[serde(default)]
+    pub openai_fast_model: String,
+
+    /// Anthropic thinking-model override. Empty -> [`mogen_llm::anthropic::DEFAULT_MODEL`].
+    #[serde(default)]
+    pub anthropic_model: String,
+
+    /// Anthropic fast-model override. Empty -> [`mogen_llm::anthropic::DEFAULT_FAST_MODEL`].
+    #[serde(default)]
+    pub anthropic_fast_model: String,
+
+    /// Ollama thinking-model override. Empty -> [`mogen_llm::ollama::DEFAULT_MODEL`].
+    /// Ollama only ships one default model id; the "fast" slot reuses the
+    /// same string unless the user overrides it explicitly below.
+    #[serde(default)]
+    pub ollama_model: String,
+
+    /// Ollama fast-model override. Empty -> falls back to [`Self::ollama_model`]
+    /// (or the library default when both are empty).
+    #[serde(default)]
+    pub ollama_fast_model: String,
 
     /// Sampling temperature. `None` uses the library default (0.3).
     /// Serialised as f32 so downgrades to older binaries don't crash on
@@ -111,6 +140,12 @@ pub struct Settings {
     /// instance.
     #[serde(default)]
     pub ollama_base_url: String,
+
+    /// Optional override for the Claude Code binary path. Empty → resolve
+    /// `claude` from `PATH`. Set this when the user's install lives outside
+    /// `PATH` (e.g. a `~/.local/bin/claude` they haven't shimmed in yet).
+    #[serde(default)]
+    pub claude_code_path: String,
 }
 
 impl Settings {
@@ -224,12 +259,15 @@ impl Settings {
     /// API key for the currently-selected provider. Returns `None` for an
     /// empty value (including for Ollama — callers that need a keyless
     /// Ollama client construct one directly with an empty string).
+    /// Claude Code is keyless (auth lives in the user's `claude` install)
+    /// and always returns `None` here.
     pub fn provider_api_key(&self) -> Option<&str> {
         let raw = match self.provider() {
             Provider::Gemini => self.gemini_api_key.as_str(),
             Provider::OpenAI => self.openai_api_key.as_str(),
             Provider::Anthropic => self.anthropic_api_key.as_str(),
             Provider::Ollama => self.ollama_api_key.as_str(),
+            Provider::ClaudeCode => "",
         };
         let trimmed = raw.trim();
         if trimmed.is_empty() {
@@ -239,24 +277,94 @@ impl Settings {
         }
     }
 
-    /// Heavy / "thinking" model id for the active provider. For Gemini this
-    /// reuses [`Self::gemini_model`] for backwards compat; other providers
-    /// fall back to [`Provider::default_model`] (no per-provider override
-    /// fields yet).
+    /// Path to the Claude Code binary, falling back to `claude` (resolved
+    /// against `PATH`) when unset.
+    pub fn claude_code_path(&self) -> String {
+        let p = self.claude_code_path.trim();
+        if p.is_empty() {
+            mogen_llm::claude_code::DEFAULT_BINARY.to_string()
+        } else {
+            p.to_string()
+        }
+    }
+
+    /// Heavy / "thinking" model id for the active provider. Reads the
+    /// per-provider override; falls back to [`Provider::default_model`]
+    /// when the override is empty.
     pub fn provider_model(&self) -> String {
-        match self.provider() {
-            Provider::Gemini => self.gemini_model(),
-            other => other.default_model().to_string(),
+        let provider = self.provider();
+        let override_str = self.thinking_model_field(provider).trim();
+        if override_str.is_empty() {
+            provider.default_model().to_string()
+        } else {
+            override_str.to_string()
         }
     }
 
     /// Fast / cheap model id for the active provider. Symmetric with
-    /// [`Self::provider_model`] — Gemini reuses [`Self::gemini_fast_model`],
-    /// the rest fall back to [`Provider::default_fast_model`].
+    /// [`Self::provider_model`].
     pub fn provider_fast_model(&self) -> String {
-        match self.provider() {
-            Provider::Gemini => self.gemini_fast_model(),
-            other => other.default_fast_model().to_string(),
+        let provider = self.provider();
+        let override_str = self.fast_model_field(provider).trim();
+        if !override_str.is_empty() {
+            return override_str.to_string();
+        }
+        // Ollama is the only provider whose library default for fast == thinking,
+        // so let the user's thinking override apply to fast too when fast is blank.
+        if matches!(provider, Provider::Ollama) {
+            let thinking = self.ollama_model.trim();
+            if !thinking.is_empty() {
+                return thinking.to_string();
+            }
+        }
+        provider.default_fast_model().to_string()
+    }
+
+    /// Borrow the per-provider thinking-model setting field. Used by the
+    /// Preferences UI so the same combobox can read/write whichever provider
+    /// is currently selected. Returns `""` for providers that don't yet have
+    /// a dedicated override slot (e.g. Claude Code).
+    pub fn thinking_model_field(&self, provider: Provider) -> &str {
+        match provider {
+            Provider::Gemini => &self.gemini_model,
+            Provider::OpenAI => &self.openai_model,
+            Provider::Anthropic => &self.anthropic_model,
+            Provider::Ollama => &self.ollama_model,
+            _ => "",
+        }
+    }
+
+    /// Borrow the per-provider fast-model setting field.
+    pub fn fast_model_field(&self, provider: Provider) -> &str {
+        match provider {
+            Provider::Gemini => &self.gemini_fast_model,
+            Provider::OpenAI => &self.openai_fast_model,
+            Provider::Anthropic => &self.anthropic_fast_model,
+            Provider::Ollama => &self.ollama_fast_model,
+            _ => "",
+        }
+    }
+
+    /// Mutably borrow the per-provider thinking-model field for editing.
+    /// Returns `None` for providers without a dedicated override slot.
+    pub fn thinking_model_field_mut(&mut self, provider: Provider) -> Option<&mut String> {
+        match provider {
+            Provider::Gemini => Some(&mut self.gemini_model),
+            Provider::OpenAI => Some(&mut self.openai_model),
+            Provider::Anthropic => Some(&mut self.anthropic_model),
+            Provider::Ollama => Some(&mut self.ollama_model),
+            _ => None,
+        }
+    }
+
+    /// Mutably borrow the per-provider fast-model field for editing.
+    pub fn fast_model_field_mut(&mut self, provider: Provider) -> Option<&mut String> {
+        match provider {
+            Provider::Gemini => Some(&mut self.gemini_fast_model),
+            Provider::OpenAI => Some(&mut self.openai_fast_model),
+            Provider::Anthropic => Some(&mut self.anthropic_fast_model),
+            Provider::Ollama => Some(&mut self.ollama_fast_model),
+            _ => None,
         }
     }
 
@@ -309,11 +417,12 @@ pub const THINKING_LEVELS: [ThinkingLevel; 4] = [
 
 /// Order in which providers appear in the Options dropdown. Gemini is first
 /// because it's the historical default and the only image-capable backend.
-pub const PROVIDERS: [Provider; 4] = [
+pub const PROVIDERS: [Provider; 5] = [
     Provider::Gemini,
     Provider::OpenAI,
     Provider::Anthropic,
     Provider::Ollama,
+    Provider::ClaudeCode,
 ];
 
 fn settings_path() -> Option<PathBuf> {
