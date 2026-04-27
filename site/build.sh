@@ -25,6 +25,15 @@ cp -R "$SITE/assets/." "$OUT/assets/"
 cp "$ROOT/assets/icon.png"   "$OUT/icon.png"
 cp "$ROOT/assets/splash.png" "$OUT/splash.png"
 
+# Gallery media + Studio screenshots (referenced from home.html).
+mkdir -p "$OUT/gallery" "$OUT/screenshots"
+if [ -d "$SITE/gallery" ]; then
+  cp -R "$SITE/gallery/." "$OUT/gallery/"
+fi
+if [ -d "$SITE/screenshots" ]; then
+  cp -R "$SITE/screenshots/." "$OUT/screenshots/"
+fi
+
 # Home page is hand-crafted (hero, dynamic downloads, build-from-source).
 cp "$SITE/home.html" "$OUT/index.html"
 
@@ -50,7 +59,6 @@ echo "building gh-pages site -> $OUT"
 build_md "$ROOT/docs/dsl.md"     "$OUT/dsl.html"     "DSL reference"     "DSL reference"   "Every node kind, attribute, and feature in the .mog DSL."
 build_md "$ROOT/docs/cli.md"     "$OUT/cli.html"     "CLI reference"     "CLI reference"   "Every mogen subcommand and flag, with examples."
 build_md "$ROOT/docs/studio.md"  "$OUT/studio.html"  "MoGen Studio"      "Studio guide"    "MoGen Studio — the desktop editor for .mog scenes."
-build_md "$ROOT/docs/modules.md" "$OUT/modules.html" "Module catalog"    "Module catalog"  "Reusable parametric modules shipped with MoGen."
 
 # .nojekyll prevents GitHub Pages from running Jekyll on the output.
 touch "$OUT/.nojekyll"

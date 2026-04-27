@@ -18,7 +18,9 @@ use mogen_core::{NodeId, SceneGraph};
 
 pub use camera::{CameraSnapshot, OrbitCamera};
 pub use flatten::{ClipSummary, FlatMesh, FLOATS_PER_VERTEX};
-pub use state::PendingEdit;
+pub use state::{
+    CaptureFrame, CaptureKind, CaptureOutcome, CaptureRequest, PendingEdit,
+};
 
 use crate::preview_shader::PreviewShader;
 
@@ -48,19 +50,18 @@ impl Viewer {
         let base_mesh = flatten::flatten(scene, base_dir);
         let mut st = self.state.lock().unwrap();
         let viewer_was_empty = st.scene.is_none();
+        st.static_center = base_mesh.center;
+        st.static_radius = base_mesh.radius;
         // Camera fit is caller-driven: the App knows whether this is the first
         // time a given file's scene is being shown. Subsequent compiles
         // (gizmo release, keystroke debounce) pass `false` so `camera.target` /
         // `camera.fit_distance` stay put — recentering on every compile would
-        // make it look like the user's edit was rejected. The Frame button
-        // (`frame_view`) re-fits on demand using `static_center` /
-        // `static_radius` below.
+        // make it look like the user's edit was rejected. First-render uses
+        // the same helper as the Frame button so a freshly-loaded model
+        // composes identically to pressing Frame (yaw/pitch reset included).
         if fit_camera {
-            st.camera.fit(&base_mesh);
-            st.camera.zoom = 1.0;
+            Self::frame_camera_to_static(&mut st);
         }
-        st.static_center = base_mesh.center;
-        st.static_radius = base_mesh.radius;
         st.base_dir = base_dir.map(|p| p.to_path_buf());
         st.selected = match &st.selected_path {
             Some(path) => resolve_node_path(scene, path),
@@ -79,9 +80,23 @@ impl Viewer {
                 .collect(),
             None => Vec::new(),
         };
+        // Only treat the incoming scene as a recompile of the current scene
+        // (and preserve user toggles) when at least one clip name is shared
+        // with the previous scene. A swap to an unrelated scene — including
+        // the cascade of `set_scene` calls when the studio restores multiple
+        // tabs at startup — has no overlap, so default its clips to active
+        // instead of leaving them all off and hiding the user's animations.
+        let prev_clip_names: std::collections::HashSet<&str> = match &st.scene {
+            Some(prev) => prev.clips.iter().map(|c| c.name.as_str()).collect(),
+            None => std::collections::HashSet::new(),
+        };
+        let names_overlap = scene
+            .clips
+            .iter()
+            .any(|c| prev_clip_names.contains(c.name.as_str()));
 
         let mut clip_active: Vec<bool> = vec![false; scene.clips.len()];
-        if viewer_was_empty {
+        if viewer_was_empty || (!names_overlap && !scene.clips.is_empty()) {
             for a in &mut clip_active {
                 *a = true;
             }
@@ -149,6 +164,10 @@ impl Viewer {
 
     pub fn set_preview_shader(&self, shader: PreviewShader) {
         self.state.lock().unwrap().preview_shader = shader;
+    }
+
+    pub fn set_show_grid(&self, on: bool) {
+        self.state.lock().unwrap().show_grid = on;
     }
 
     pub fn set_gizmo_mode(&self, mode: crate::gizmo::GizmoMode) {
@@ -271,6 +290,10 @@ impl Viewer {
 
     pub fn frame_view(&self) {
         let mut st = self.state.lock().unwrap();
+        Self::frame_camera_to_static(&mut st);
+    }
+
+    fn frame_camera_to_static(st: &mut ViewerState) {
         let center = st.static_center;
         let radius = st.static_radius.max(0.001);
         st.camera.target = center;
@@ -325,6 +348,48 @@ impl Viewer {
         if let Ok(r) = self.renderer.lock() {
             r.destroy(gl);
         }
+    }
+
+    /// Queue an offscreen render. The next paint callback consumes the
+    /// request, renders each frame at `request.size × request.size` to a
+    /// fresh FBO, and writes a `CaptureOutcome` back into the viewer state.
+    /// The app drains it via [`Self::take_capture_outcome`] on subsequent
+    /// frames. Replaces any earlier in-flight request — the studio wires a
+    /// single capture-in-flight slot at the app level so this never collides
+    /// in practice.
+    pub fn submit_capture(&self, mut request: CaptureRequest) {
+        // Re-initialise progress bookkeeping every submission so callers
+        // don't have to know about `total` / `written` / `error` — they just
+        // hand us the work and we record the denominator here.
+        request.total = request.frames.len() as u32;
+        request.written = Vec::with_capacity(request.frames.len());
+        request.error = None;
+        let mut st = self.state.lock().unwrap();
+        st.capture_request = Some(request);
+        st.capture_outcome = None;
+    }
+
+    /// Drain any completed capture. Returns `None` when no request is
+    /// pending and none has completed since the last drain.
+    pub fn take_capture_outcome(&self) -> Option<CaptureOutcome> {
+        self.state.lock().unwrap().capture_outcome.take()
+    }
+
+    /// Whether a capture request is queued or actively rendering. The app
+    /// uses this to gate menu items so the user can't pile up captures.
+    pub fn is_capturing(&self) -> bool {
+        self.state.lock().unwrap().capture_request.is_some()
+    }
+
+    /// Snapshot the in-flight capture's progress for the modal: the kind
+    /// (so the dialog can title itself "thumbnail" vs "video"), how many
+    /// frames have already been written, and the original frame count.
+    /// Returns `None` when no capture is queued.
+    pub fn capture_progress(&self) -> Option<(CaptureKind, u32, u32)> {
+        let st = self.state.lock().unwrap();
+        st.capture_request
+            .as_ref()
+            .map(|r| (r.kind, r.written.len() as u32, r.total))
     }
 
     pub fn show(&self, ui: &mut egui::Ui) -> egui::Response {
@@ -522,6 +587,16 @@ impl Viewer {
                 rr.upload_palettes(&st.mesh.palettes);
                 st.palettes_dirty = false;
             }
+            // Service any queued offscreen capture before the on-screen draw.
+            // Doing it first keeps the path independent: the on-screen pass
+            // restores state egui_glow expects, and the capture path restores
+            // the bound FBO + viewport itself, so neither leaks into the
+            // other. Only one frame is processed per paint so the UI thread
+            // gets to redraw between renders (otherwise a 180-frame video
+            // freezes the window for the whole encode).
+            if st.capture_request.is_some() {
+                process_capture_step(&mut rr, gl, &mut st);
+            }
             let viewproj = st.camera.view_proj(aspect);
             let eye = st.camera.eye();
             rr.set_preview(
@@ -532,7 +607,9 @@ impl Viewer {
             // Cinema mode hides the grid + gizmo handles so the framing
             // reads as a clean presentation rather than an editor view.
             if !st.cinema.active {
-                rr.draw_grid(gl, viewproj, eye);
+                if st.show_grid {
+                    rr.draw_grid(gl, viewproj, eye);
+                }
                 if let (Some(sel), Some(scene)) = (st.selected, st.scene.as_ref()) {
                     // Single source of truth shared with `begin_gizmo_drag`:
                     // skip drawing for non-editable / relative-placed nodes,
@@ -564,6 +641,171 @@ impl Viewer {
     }
 }
 
+
+/// Render one pending frame and hand the pixels to a background encoder.
+/// Runs inside the paint callback because that's where we have access to
+/// a `glow::Context`; the renderer's `render_to_pixels` already restores
+/// the bound FBO + viewport before returning, so this never leaks into
+/// egui's draw state. PNG encoding + disk I/O happen on the
+/// [`state::EncodePool`] worker threads so the GL thread can render the
+/// next frame as soon as `glReadPixels` returns instead of blocking on
+/// deflate.
+fn process_capture_step(
+    rr: &mut renderer::Renderer,
+    gl: &glow::Context,
+    st: &mut state::ViewerState,
+) {
+    // Phase 1: drain whatever the encoder pool has finished since last
+    // paint. Each completed encode either contributes a path to `written`
+    // or sets the request's first-fatal-error slot.
+    drain_encode_results(st);
+
+    // Phase 2: decide whether to finalise. We can only finalise once
+    // `frames` is drained AND there are no encodes still in flight —
+    // otherwise the outcome's `frame_paths` would be missing PNGs that
+    // workers are still writing.
+    let in_flight = st.encode_pool.as_ref().map(|p| p.in_flight).unwrap_or(0);
+    let (frames_done, errored) = match st.capture_request.as_ref() {
+        Some(req) => (req.frames.is_empty(), req.error.is_some()),
+        None => return,
+    };
+    if (frames_done || errored) && in_flight == 0 {
+        // Drop the pool first: workers exit as soon as `job_tx` closes,
+        // and dropping here means a fresh capture starts with a fresh
+        // pool rather than reusing one that's already been signalled.
+        st.encode_pool = None;
+        let req = st.capture_request.take().expect("checked above");
+        st.capture_outcome = Some(CaptureOutcome {
+            kind: req.kind,
+            frame_paths: req.written,
+            error: req.error,
+        });
+        return;
+    }
+    if errored {
+        // Don't queue any more renders once a fatal error is recorded;
+        // just keep paint cycles ticking so phase 1 can drain whatever
+        // encodes were already in flight when the error fired.
+        return;
+    }
+    if frames_done {
+        // Frames all submitted but encodes still pending — nothing to do
+        // on the GL side this paint, just wait for the pool to catch up.
+        return;
+    }
+
+    // Phase 3: render the next frame. The borrow scoping here mirrors the
+    // pre-async version: pull the per-frame inputs out of `req` in a
+    // narrow scope so we can call `st.update_palettes()` later without
+    // holding two mutable borrows.
+    let (size, bg, kind, frame) = {
+        let req = st.capture_request.as_mut().expect("checked above");
+        let f = req.frames.remove(0);
+        (req.size, req.bg, req.kind, f)
+    };
+
+    let center = st.static_center;
+    // Floor on the framing radius so a one-vertex / empty scene still picks
+    // a sane orbit distance — without this, `radius * 2.8` collapses to 0
+    // and the camera ends up inside the model.
+    let radius = st.static_radius.max(0.001);
+    let cam = camera::OrbitCamera {
+        yaw: frame.yaw,
+        pitch: frame.pitch,
+        fit_distance: radius * 2.8,
+        zoom: 1.0,
+        target: center,
+    };
+    let viewproj = cam.view_proj(1.0);
+    let eye = cam.eye();
+    let frame_time = frame.time;
+    // Video frames want the animation sampled at `frame.time` so the encoded
+    // mp4 plays clips back across the rotation. Thumbnails ignore time and
+    // capture whatever pose is currently visible.
+    let anim_override = kind == CaptureKind::Video
+        && st.any_active()
+        && st
+            .scene
+            .as_ref()
+            .map(|s| !s.clips.is_empty())
+            .unwrap_or(false);
+    let saved_anim_times = if anim_override {
+        let snapshot = st.anim_times.clone();
+        // Collect durations up front so we can index `st.anim_times` mutably
+        // without holding a `&Scene` borrow across the loop.
+        let durations: Vec<f32> = st
+            .scene
+            .as_ref()
+            .map(|s| s.clips.iter().map(|c| c.duration).collect())
+            .unwrap_or_default();
+        for i in 0..st.clip_active.len() {
+            if !st.clip_active[i] {
+                continue;
+            }
+            let duration = durations.get(i).copied().unwrap_or(0.0);
+            if duration > 0.0 {
+                st.anim_times[i] = frame_time.rem_euclid(duration);
+            }
+        }
+        st.update_palettes();
+        rr.upload_palettes(&st.mesh.palettes);
+        st.palettes_dirty = false;
+        Some(snapshot)
+    } else {
+        None
+    };
+    let render_result = rr.render_to_pixels(gl, size, viewproj, eye, bg);
+    // Restore palettes before touching anything else so an on-screen draw
+    // that follows in this same paint callback matches the user's pose.
+    if let Some(snapshot) = saved_anim_times {
+        st.anim_times = snapshot;
+        st.update_palettes();
+        rr.upload_palettes(&st.mesh.palettes);
+        st.palettes_dirty = false;
+    }
+    match render_result {
+        Ok(pixels) => {
+            // Lazy-init the pool so a never-captured studio session never
+            // pays for the worker threads.
+            let pool = st
+                .encode_pool
+                .get_or_insert_with(state::EncodePool::new);
+            pool.submit(pixels, size, frame.path);
+        }
+        Err(e) => {
+            if let Some(req) = st.capture_request.as_mut() {
+                req.error = Some(format!("render: {e}"));
+            }
+        }
+    }
+}
+
+/// Drain everything the encoder pool has produced since last paint into
+/// the live `CaptureRequest`. Successful encodes append to `written`;
+/// the first failure latches into `error` and short-circuits future
+/// frames in the next `process_capture_step` call.
+fn drain_encode_results(st: &mut state::ViewerState) {
+    let Some(pool) = st.encode_pool.as_mut() else {
+        return;
+    };
+    while let Ok((path, res)) = pool.result_rx.try_recv() {
+        // Underflow guard: in-flight should always match the number of
+        // outstanding sends, but a stray send from a dropped-and-recreated
+        // pool would otherwise wrap to usize::MAX and freeze finalisation.
+        pool.in_flight = pool.in_flight.saturating_sub(1);
+        let Some(req) = st.capture_request.as_mut() else {
+            continue;
+        };
+        match res {
+            Ok(()) => req.written.push(path),
+            Err(e) => {
+                if req.error.is_none() {
+                    req.error = Some(e);
+                }
+            }
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests;

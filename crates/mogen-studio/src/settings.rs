@@ -146,7 +146,25 @@ pub struct Settings {
     /// `PATH` (e.g. a `~/.local/bin/claude` they haven't shimmed in yet).
     #[serde(default)]
     pub claude_code_path: String,
+
+    /// Persisted 3D viewport background colour, as `[r, g, b]` 0..=255. `None`
+    /// falls back to [`DEFAULT_VIEWER_BG_RGB`] — a neutral charcoal that
+    /// matches the look of every major DCC app. Stored as bytes so the JSON
+    /// stays readable; alpha is implied 255.
+    #[serde(default)]
+    pub viewer_bg_rgb: Option<[u8; 3]>,
+
+    /// Whether the ground-plane reference grid is drawn in the 3D viewport.
+    /// `None` falls back to `true` so existing settings files keep the grid
+    /// visible after upgrade.
+    #[serde(default)]
+    pub show_grid: Option<bool>,
 }
+
+/// Default viewer background. Independent of the UI theme so the model's
+/// colours read consistently regardless of the panel scheme. Tuned to match
+/// Blender / Maya / Modo defaults.
+pub const DEFAULT_VIEWER_BG_RGB: [u8; 3] = [54, 58, 64];
 
 impl Settings {
     /// Maximum number of entries kept in [`Self::recent_files`].
@@ -371,6 +389,29 @@ impl Settings {
     /// Persist a fresh provider selection.
     pub fn set_provider(&mut self, p: Provider) {
         self.provider = p.key().to_string();
+    }
+
+    /// Persisted viewport background as raw `[r, g, b]`, falling back to
+    /// [`DEFAULT_VIEWER_BG_RGB`] when unset.
+    pub fn viewer_bg_rgb(&self) -> [u8; 3] {
+        self.viewer_bg_rgb.unwrap_or(DEFAULT_VIEWER_BG_RGB)
+    }
+
+    /// Replace the viewport background. Pass [`DEFAULT_VIEWER_BG_RGB`] to
+    /// clear back to the default — we still persist it explicitly so the
+    /// chosen colour is what survives a downgrade-then-upgrade.
+    pub fn set_viewer_bg_rgb(&mut self, rgb: [u8; 3]) {
+        self.viewer_bg_rgb = Some(rgb);
+    }
+
+    /// Whether the viewport grid is currently visible. Defaults to `true`
+    /// when unset.
+    pub fn show_grid(&self) -> bool {
+        self.show_grid.unwrap_or(true)
+    }
+
+    pub fn set_show_grid(&mut self, on: bool) {
+        self.show_grid = Some(on);
     }
 
     /// Promote `path` to the front of [`Self::recent_files`], dedup'ing any

@@ -9,13 +9,13 @@ material "enamel_navy"    (color=[0.05, 0.10, 0.25], metallic=0.2, roughness=0.1
 material "leather"        (color=[0.12, 0.08, 0.06], roughness=0.85)
 
 scene {
-  group "grip_assembly" (y=0.5) {
+  group "grip_assembly" (y=-0.5) {
     cylinder "grip"  (radius=0.014, height=0.18, mat="leather")
     torus    "ring1" (major=0.015, minor=0.002, pos=[0,  0.05, 0], mat="gold")
     torus    "ring2" (major=0.015, minor=0.002, pos=[0, -0.05, 0], mat="gold")
   }
 
-  group "pommel" (below="grip_assembly") {
+  group "pommel" (below="grip_assembly", pos=[0,-0.39,0]) {
     // Rotated 90 degrees on X so the flat disc faces front/back
     cylinder "p_disc"   (radius=0.045, height=0.02, rot=[90, 0, 0], mat="gold")
     cylinder "p_enamel" (radius=0.032, height=0.022, rot=[90, 0, 0], mat="enamel_navy")
@@ -23,7 +23,7 @@ scene {
     sphere   "p_ruby_b" (radius=0.008, pos=[0, 0, -0.011], mat="ruby")
   }
 
-  group "crossguard" (above="grip_assembly") {
+  group "crossguard" (above="grip_assembly", pos=[0,-0.39,0]) {
     box  "cg_center" (size=[0.06, 0.03, 0.025], mat="gold")
     
     // Cones point outward along X. Center of a 0.1m cone is 0.05m from its base.
@@ -35,10 +35,10 @@ scene {
     sphere "cg_ruby_r" (radius=0.006, pos=[ 0.13, 0, 0], mat="ruby")
   }
 
-  group "blade" (above="crossguard", rot=[180, 0, 0]) {
+  group "blade" (above="crossguard", rot=[0, 0, 0]) {
     cylinder "b_main" (
       radius=0.025, 
-      height=0.85, 
+      height=0.75, 
       segments=4,
       scale=[1, 1, 0.2],
       mat="damascus_steel"

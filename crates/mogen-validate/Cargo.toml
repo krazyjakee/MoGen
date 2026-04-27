@@ -3,9 +3,13 @@ name = "mogen-validate"
 version.workspace = true
 edition.workspace = true
 
+[features]
+default = ["csg"]
+csg = ["mogen-dsl/csg"]
+
 [dependencies]
 mogen-core = { workspace = true }
-mogen-dsl = { workspace = true }
+mogen-dsl = { workspace = true, default-features = false }
 codespan-reporting = "0.12"
 serde = { workspace = true }
 serde_json = { workspace = true }

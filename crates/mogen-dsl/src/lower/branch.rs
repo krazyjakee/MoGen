@@ -231,13 +231,19 @@ fn emit_segment(
     } else if cfg.leaves && cfg.leaf_size > 0.0 {
         // Leaf at the tip, oriented so its +Y matches the branch tangent —
         // the leaf "grows out" of the branch rather than sitting at right
-        // angles to the world.
+        // angles to the world. `leaf_card_mesh` is bottom-anchored (mesh
+        // y=0..leaf_size), but the cutout texture pipeline produces a
+        // foliage cluster centred in the frame with a transparent margin
+        // around it — so we pull the leaf back by half its height along
+        // the tangent, putting the texture's visible centre on the tip.
+        // Without this, the cluster floats half a leaf_size past the end.
         let q = quat_from_y_to(tip_tangent);
+        let leaf_origin = tip_pos - tip_tangent * cfg.leaf_size * 0.5;
         let leaf_id = graph.add_child(
             parent_id,
             "leaf",
             "leaf_card",
-            Transform::from_trs(tip_pos, q, Vec3::ONE),
+            Transform::from_trs(leaf_origin, q, Vec3::ONE),
         );
         let leaf_mesh = leaf_card_mesh(
             [cfg.leaf_size, cfg.leaf_size],

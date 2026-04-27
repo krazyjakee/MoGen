@@ -24,10 +24,10 @@
     </a>
     <div class="nav-links">
       <a href="index.html">Home</a>
+      <a href="index.html#gallery">Gallery</a>
       <a href="dsl.html">DSL</a>
       <a href="cli.html">CLI</a>
       <a href="studio.html">Studio</a>
-      <a href="modules.html">Modules</a>
       <a class="gh" href="https://github.com/krazyjakee/MoGen" target="_blank" rel="noopener">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5C5.6.5.5 5.6.5 12c0 5.1 3.3 9.4 7.9 11 .6.1.8-.3.8-.6v-2c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.2-1.7-1.2-1.7-1-.7.1-.7.1-.7 1.1.1 1.7 1.2 1.7 1.2 1 1.7 2.7 1.2 3.4.9.1-.7.4-1.2.7-1.5-2.5-.3-5.2-1.3-5.2-5.7 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2a11 11 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.6 1.6.2 2.8.1 3.1.7.8 1.2 1.8 1.2 3.1 0 4.4-2.7 5.4-5.2 5.7.4.3.8 1 .8 2.1v3.1c0 .3.2.7.8.6 4.6-1.6 7.9-5.9 7.9-11C23.5 5.6 18.4.5 12 .5z"/></svg>
         GitHub
@@ -79,6 +79,37 @@
 </section>
 
 <section>
+  <h2 id="gallery">Gallery</h2>
+  <p>Each of these started as a one-line prompt fed to <code>mogen generate</code> — the LLM wrote the <code>.mog</code>, MoGen lowered it to glTF, and the output below is the raw GLB rendered in MoGen Studio. Hover any tile to play.</p>
+  <div class="gallery">
+    <figure class="gallery-item">
+      <video src="gallery/axe.mp4" poster="gallery/axe.thumb.png" muted loop playsinline preload="none"></video>
+      <figcaption>Axe</figcaption>
+    </figure>
+    <figure class="gallery-item">
+      <video src="gallery/sword.mp4" poster="gallery/sword.thumb.png" muted loop playsinline preload="none"></video>
+      <figcaption>Sword</figcaption>
+    </figure>
+    <figure class="gallery-item">
+      <video src="gallery/oak_tree.mp4" poster="gallery/oak_tree.thumb.png" muted loop playsinline preload="none"></video>
+      <figcaption>Oak tree</figcaption>
+    </figure>
+    <figure class="gallery-item">
+      <video src="gallery/windmill.mp4" poster="gallery/windmill.thumb.png" muted loop playsinline preload="none"></video>
+      <figcaption>Windmill</figcaption>
+    </figure>
+    <figure class="gallery-item">
+      <video src="gallery/scorpion.mp4" poster="gallery/scorpion.thumb.png" muted loop playsinline preload="none"></video>
+      <figcaption>Scorpion</figcaption>
+    </figure>
+    <figure class="gallery-item">
+      <video src="gallery/robot_cat.mp4" poster="gallery/robot_cat.thumb.png" muted loop playsinline preload="none"></video>
+      <figcaption>Robot cat</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section>
   <h2>Hello, chair.</h2>
   <p>This is a real, complete <code>.mog</code> file. Save it as <code>chair.mog</code> and run <code>mogen build chair.mog --out chair.glb</code>:</p>
 <pre><code class="language-mog">// A simple four-legged chair.
@@ -107,6 +138,19 @@ scene {
   attach (parent="seat", child="backrest", socket="c_back", plug="bottom")
 }</code></pre>
   <p>The whole language is one shape — <code>kind "name" (attrs) { children }</code> — repeated. <a href="dsl.html">Full reference →</a></p>
+</section>
+
+<section>
+  <h2 id="studio-screenshots">MoGen Studio</h2>
+  <p>The desktop editor pairs the DSL source with a live 3D viewer — type, see, repeat. Click a screenshot to open full size.</p>
+  <div class="screenshots">
+    <a class="screenshot" href="screenshots/ksnip_20260427-230415.png" target="_blank" rel="noopener">
+      <img src="screenshots/ksnip_20260427-230415.png" alt="MoGen Studio editor with live 3D preview" loading="lazy">
+    </a>
+    <a class="screenshot" href="screenshots/ksnip_20260427-230603.png" target="_blank" rel="noopener">
+      <img src="screenshots/ksnip_20260427-230603.png" alt="MoGen Studio inspector and gizmos" loading="lazy">
+    </a>
+  </div>
 </section>
 
 <section>

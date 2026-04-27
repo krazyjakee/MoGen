@@ -9,9 +9,11 @@ path = "src/main.rs"
 
 [dependencies]
 mogen-core = { workspace = true }
-mogen-dsl = { workspace = true }
-mogen-validate = { workspace = true }
-mogen-export = { workspace = true }
+# Workspace defaults are off so the wasm crate can disable CSG/textures/merge.
+# The CLI wants the full pipeline, so opt back in to every default feature.
+mogen-dsl = { workspace = true, features = ["csg"] }
+mogen-validate = { workspace = true, features = ["csg"] }
+mogen-export = { workspace = true, features = ["textures", "merge"] }
 mogen-llm = { workspace = true }
 anyhow = { workspace = true }
 clap = { workspace = true }

@@ -37,3 +37,8 @@ AppIcon.iconset/
 
 # gh-pages build output (the workflow rebuilds this on every push)
 /_site/
+web/node_modules
+
+# Generated example media
+examples/*.png
+examples/*.mp4

@@ -37,9 +37,9 @@ path-guid = "7C1A3B5D-9E4F-4C82-AF1B-2D3E4F5061A0"
 
 [dependencies]
 mogen-core = { workspace = true }
-mogen-dsl = { workspace = true }
-mogen-validate = { workspace = true }
-mogen-export = { workspace = true }
+mogen-dsl = { workspace = true, features = ["csg"] }
+mogen-validate = { workspace = true, features = ["csg"] }
+mogen-export = { workspace = true, features = ["textures", "merge"] }
 mogen-llm = { workspace = true }
 anyhow = { workspace = true }
 glam = { workspace = true }

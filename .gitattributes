@@ -17,6 +17,7 @@
 *.jpeg      binary
 *.webp      binary
 *.ico       binary
+*.mp4       binary
 
 # 3D assets -- tracked via Git LFS
 *.glb       filter=lfs diff=lfs merge=lfs -text

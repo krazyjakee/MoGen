@@ -3,7 +3,16 @@ name = "mogen-geom"
 version.workspace = true
 edition.workspace = true
 
+[features]
+default = ["csg"]
+# `csg` pulls in `manifold3d`, which builds the C++ Manifold library via cmake.
+# That toolchain is not available on `wasm32-unknown-unknown`, so the wasm
+# crate disables this feature. With the feature off, `union`/`difference`/
+# `intersect` and friends become panic stubs — callers must guard against
+# CSG ops upstream (e.g. by validating the AST and rejecting them).
+csg = ["dep:manifold3d"]
+
 [dependencies]
 mogen-core = { workspace = true }
 glam = { workspace = true }
-manifold3d = "0.1"
+manifold3d = { version = "0.1", optional = true }

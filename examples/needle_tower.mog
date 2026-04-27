@@ -1,0 +1,152 @@
+// mogen-generate seed=1777326657016268863
+// mogen-generate thinking=high
+// prompt: A futuristic skyscraper rises as a slender, twisting spire of iridescent polycarbonate and matte white ceramic, boasting a sleek, aerodynamic silhouette that tapers into a delicate needle-point. Its surface is characterized by deep, vertical grooves of brushed copper and recessed panels of translucent azure glass, lending the massive structure an ethereal and weightless character.
+
+material "ceramic" (color=[0.95, 0.95, 0.95], roughness=0.9, base_color_texture="textures/needle_tower/ceramic_albedo.png", normal_texture="textures/needle_tower/ceramic_normal.png", metallic_roughness_texture="textures/needle_tower/ceramic_metallicRoughness.png", occlusion_texture="textures/needle_tower/ceramic_ao.png")
+material "polycarbonate" (color=[0.85, 0.90, 0.95], metallic=0.4, roughness=0.2, base_color_texture="textures/needle_tower/polycarbonate_albedo.png", normal_texture="textures/needle_tower/polycarbonate_normal.png", metallic_roughness_texture="textures/needle_tower/polycarbonate_metallicRoughness.png", occlusion_texture="textures/needle_tower/polycarbonate_ao.png")
+material "copper" (color=[0.85, 0.45, 0.25], metallic=0.9, roughness=0.3, base_color_texture="textures/needle_tower/copper_albedo.png", normal_texture="textures/needle_tower/copper_normal.png", metallic_roughness_texture="textures/needle_tower/copper_metallicRoughness.png", occlusion_texture="textures/needle_tower/copper_ao.png")
+material "azure_glass" (color=[0.1, 0.35, 0.8], roughness=0.1, transmission=0.9, base_color_texture="textures/needle_tower/azure_glass_albedo.png", normal_texture="textures/needle_tower/azure_glass_normal.png", metallic_roughness_texture="textures/needle_tower/azure_glass_metallicRoughness.png", occlusion_texture="textures/needle_tower/azure_glass_ao.png")
+
+scene {
+  // Ground pad
+  cylinder "base_pad" (pos=[0, -1, 0], radius=10.0, height=2.0, mat="ceramic")
+
+  // Central translucent azure glass core
+  spline_tube "core" (
+    points=[
+      [0, 0, 0],
+      [0, 20, 0],
+      [0, 40, 0],
+      [0, 60, 0],
+      [0, 80, 0],
+      [0, 100, 0],
+      [0, 120, 0]
+    ],
+    radii=[7.5, 6.5, 5.5, 4.5, 3.5, 2.5, 0.8],
+    mat="azure_glass"
+  )
+
+  // The 9 spline tubes (core + 8 fins) are concentric and share the same origin.
+  // They interweave to form the twisting spire without needing attach math.
+
+  // --- Main Structural Fins (Alternating Ceramic and Polycarbonate) ---
+  
+  spline_tube "fin_ceramic_1" (
+    points=[
+      [ 8.00,   0,  0.00],
+      [ 4.95,  20,  4.95],
+      [ 0.00,  40,  6.00],
+      [-3.53,  60,  3.53],
+      [-4.00,  80,  0.00],
+      [-2.12, 100, -2.12],
+      [ 0.00, 120, -1.00]
+    ],
+    radii=[2.0, 1.8, 1.6, 1.4, 1.2, 1.0, 0.4],
+    mat="ceramic"
+  )
+
+  spline_tube "fin_poly_1" (
+    points=[
+      [ 0.00,   0,  8.00],
+      [-4.95,  20,  4.95],
+      [-6.00,  40,  0.00],
+      [-3.53,  60, -3.53],
+      [ 0.00,  80, -4.00],
+      [ 2.12, 100, -2.12],
+      [ 1.00, 120,  0.00]
+    ],
+    radii=[2.0, 1.8, 1.6, 1.4, 1.2, 1.0, 0.4],
+    mat="polycarbonate"
+  )
+
+  spline_tube "fin_ceramic_2" (
+    points=[
+      [-8.00,   0,  0.00],
+      [-4.95,  20, -4.95],
+      [ 0.00,  40, -6.00],
+      [ 3.53,  60, -3.53],
+      [ 4.00,  80,  0.00],
+      [ 2.12, 100,  2.12],
+      [ 0.00, 120,  1.00]
+    ],
+    radii=[2.0, 1.8, 1.6, 1.4, 1.2, 1.0, 0.4],
+    mat="ceramic"
+  )
+
+  spline_tube "fin_poly_2" (
+    points=[
+      [ 0.00,   0, -8.00],
+      [ 4.95,  20, -4.95],
+      [ 6.00,  40,  0.00],
+      [ 3.53,  60,  3.53],
+      [ 0.00,  80,  4.00],
+      [-2.12, 100,  2.12],
+      [-1.00, 120,  0.00]
+    ],
+    radii=[2.0, 1.8, 1.6, 1.4, 1.2, 1.0, 0.4],
+    mat="polycarbonate"
+  )
+
+  // --- Deep Vertical Grooves (Brushed Copper) ---
+
+  spline_tube "copper_groove_1" (
+    points=[
+      [ 5.65,   0,  5.65],
+      [ 0.00,  20,  7.00],
+      [-4.24,  40,  4.24],
+      [-5.00,  60,  0.00],
+      [-2.82,  80, -2.82],
+      [ 0.00, 100, -3.00],
+      [ 0.71, 120, -0.71]
+    ],
+    radii=[1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.2],
+    mat="copper"
+  )
+
+  spline_tube "copper_groove_2" (
+    points=[
+      [-5.65,   0,  5.65],
+      [-7.00,  20,  0.00],
+      [-4.24,  40, -4.24],
+      [ 0.00,  60, -5.00],
+      [ 2.82,  80, -2.82],
+      [ 3.00, 100,  0.00],
+      [ 0.71, 120,  0.71]
+    ],
+    radii=[1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.2],
+    mat="copper"
+  )
+
+  spline_tube "copper_groove_3" (
+    points=[
+      [-5.65,   0, -5.65],
+      [ 0.00,  20, -7.00],
+      [ 4.24,  40, -4.24],
+      [ 5.00,  60,  0.00],
+      [ 2.82,  80,  2.82],
+      [ 0.00, 100,  3.00],
+      [-0.71, 120,  0.71]
+    ],
+    radii=[1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.2],
+    mat="copper"
+  )
+
+  spline_tube "copper_groove_4" (
+    points=[
+      [ 5.65,   0, -5.65],
+      [ 7.00,  20,  0.00],
+      [ 4.24,  40,  4.24],
+      [ 0.00,  60,  5.00],
+      [-2.82,  80,  2.82],
+      [-3.00, 100,  0.00],
+      [-0.71, 120, -0.71]
+    ],
+    radii=[1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.2],
+    mat="copper"
+  )
+
+  // Delicate needle-point capping the spire
+  cone "needle" (radius=0.4, height=18.0, mat="polycarbonate")
+  
+  attach (parent="core", child="needle", socket="end", plug="bottom")
+}

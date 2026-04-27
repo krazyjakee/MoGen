@@ -19,6 +19,7 @@ mod compile;
 mod error_class;
 mod files;
 mod find;
+mod generate;
 mod indent;
 mod llm;
 mod onboarding;
@@ -34,9 +35,9 @@ mod util;
 mod watcher;
 
 use self::types::{
-    AskInFlight, AutocompleteState, BuildOutcome, EnhanceInFlight, EnhanceTarget,
-    ExternalConflict, FileState, FindState, GenImageInput, SessionUsage, ThumbCache,
-    VIEWER_BG_COLOR,
+    viewer_bg_color, AskInFlight, AutocompleteState, BuildOutcome, EnhanceInFlight,
+    EnhanceTarget, ExternalConflict, FileState, FindState, GenImageInput, SessionUsage,
+    ThumbCache,
 };
 use self::util::locate_project_root;
 
@@ -230,6 +231,15 @@ pub struct MogenStudioApp {
     /// loading dance lives behind this option so steady-state code paths
     /// don't pay any branch cost once startup is done.
     init: Option<InitProgress>,
+
+    /// Set when a video render is mid-flight: the GL worker is producing
+    /// frame PNGs and we're waiting for it to report back so we can hand
+    /// them to ffmpeg. None when no video is in progress.
+    pending_video: Option<self::generate::PendingVideo>,
+
+    /// In-flight ffmpeg encode after the GL frames landed on disk. Carries
+    /// the receiver and the cleanup paths we need on completion.
+    video_encode: Option<self::generate::VideoEncode>,
 }
 
 impl MogenStudioApp {
@@ -246,6 +256,7 @@ impl MogenStudioApp {
         let options_api_key_draft = settings.gemini_api_key.clone();
         apply_theme(&cc.egui_ctx, settings.theme());
         viewer.set_preview_shader(settings.preview_shader());
+        viewer.set_show_grid(settings.show_grid());
 
         // Hand the seed tab id 0 directly; the counter that hands out
         // subsequent ids starts at 1 so it never collides.
@@ -341,6 +352,8 @@ impl MogenStudioApp {
             find: FindState::default(),
             pending_external: None,
             init: Some(init),
+            pending_video: None,
+            video_encode: None,
         }
     }
 
@@ -515,6 +528,7 @@ impl eframe::App for MogenStudioApp {
         self.poll_prompt_enhance();
         self.poll_ask();
         self.poll_build();
+        self.poll_generate(ctx);
         self.drive_compile_debounce(ctx);
         self.check_external_changes(ctx);
 
@@ -618,7 +632,8 @@ impl eframe::App for MogenStudioApp {
             // a calibrated neutral charcoal matches the look of every major
             // DCC app (Blender, Maya, 3ds Max, Modo) and keeps the model's
             // colours reading consistently regardless of the panel scheme.
-            let fill = VIEWER_BG_COLOR;
+            // Users can still override the colour via View → Background.
+            let fill = viewer_bg_color(&self.settings);
             egui::Frame::canvas(ui.style()).fill(fill).show(ui, |ui| {
                 let resp = self.viewer.show(ui);
                 viewport_rect = Some(resp.rect);
@@ -647,6 +662,7 @@ impl eframe::App for MogenStudioApp {
         self.ui_external_conflict(ctx);
         self.ui_about(ctx);
         self.ui_ask(ctx);
+        self.ui_capture_progress(ctx);
 
         // Paint the autocomplete popup last so it floats above every panel.
         // The editor panel updated state earlier in the frame; here we just
@@ -665,6 +681,16 @@ impl eframe::App for MogenStudioApp {
             || self.build_rx.is_some()
         {
             ctx.request_repaint_after(std::time::Duration::from_millis(120));
+        }
+
+        // Capture loop: each paint callback consumes one frame of an
+        // in-flight video render, so we have to keep asking egui to repaint
+        // until the request drains. Without this, the app paints once after
+        // `submit_capture` and then sits idle — the modal stays up but no
+        // frames advance. ffmpeg's encode phase already nudges repaints
+        // from `poll_generate`, so we only need to cover the GL phase here.
+        if self.viewer.is_capturing() {
+            ctx.request_repaint();
         }
 
         // Idle-tick the on-disk watcher: even when nothing else needs a

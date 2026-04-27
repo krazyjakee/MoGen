@@ -1,0 +1,24 @@
+[package]
+name = "mogen-wasm"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Direct path dependencies (instead of `workspace = true`) so we can pass
+# `default-features = false` and actually have it stick — workspace
+# inheritance can't override defaults when the workspace entry leaves them
+# on. Disabling defaults across the chain drops `manifold3d` (CSG, C++ via
+# cmake) and `oxipng`/`image` (PNG re-encoding via libdeflate-sys), neither
+# of which builds for `wasm32-unknown-unknown`.
+mogen-core = { path = "../mogen-core" }
+mogen-dsl = { path = "../mogen-dsl", default-features = false }
+mogen-validate = { path = "../mogen-validate", default-features = false }
+mogen-export = { path = "../mogen-export", default-features = false }
+
+wasm-bindgen = "0.2"
+serde = { workspace = true }
+serde_json = { workspace = true }
+console_error_panic_hook = "0.1"

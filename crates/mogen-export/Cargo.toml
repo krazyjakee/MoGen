@@ -3,15 +3,26 @@ name = "mogen-export"
 version.workspace = true
 edition.workspace = true
 
+[features]
+default = ["textures", "merge"]
+# Texture packing (`pack_textures`) reads PNG/JPEG files from disk via
+# `std::fs` and re-encodes them with `image` + `oxipng`. Disabling this
+# feature stubs `pack_textures` to return an empty texture table — useful for
+# wasm where there is no filesystem and no parallel/zopfli toolchain.
+textures = ["dep:image", "dep:oxipng"]
+# Sibling-mesh merge depends on `mogen-geom`'s CSG path. Disable for builds
+# (e.g. wasm) that cannot link the manifold C++ library.
+merge = ["mogen-geom/csg"]
+
 [dependencies]
 mogen-core = { workspace = true }
-mogen-geom = { workspace = true }
+mogen-geom = { workspace = true, default-features = false }
 anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 glam = { workspace = true }
-image = { workspace = true }
-oxipng = { workspace = true }
+image = { workspace = true, optional = true }
+oxipng = { workspace = true, optional = true }
 
 [dev-dependencies]
-mogen-dsl = { workspace = true }
+mogen-dsl = { workspace = true, features = ["csg"] }

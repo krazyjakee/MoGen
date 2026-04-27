@@ -178,6 +178,64 @@ impl MogenStudioApp {
         }
     }
 
+    /// Close every tab strictly to the right of `anchor`. Dirty tabs are
+    /// skipped (the per-tab confirmation modal is single-shot, so a batch
+    /// close would clobber it); the remaining clean tabs are removed
+    /// right-to-left so indices stay valid mid-loop.
+    pub(super) fn close_tabs_to_right(&mut self, anchor: usize) {
+        if anchor + 1 >= self.files.len() {
+            return;
+        }
+        let mut closed = 0usize;
+        let mut skipped = 0usize;
+        let mut i = self.files.len();
+        while i > anchor + 1 {
+            i -= 1;
+            if self.files[i].dirty {
+                skipped += 1;
+            } else {
+                self.close_file(i);
+                closed += 1;
+            }
+        }
+        self.set_batch_close_status(closed, skipped);
+    }
+
+    /// Close every tab. Dirty tabs are skipped with a status message — the
+    /// user can save them and re-run. If only one clean tab remains,
+    /// `close_file` replaces it with a fresh untitled buffer.
+    pub(super) fn close_all_tabs(&mut self) {
+        let mut closed = 0usize;
+        let mut skipped = 0usize;
+        let mut i = self.files.len();
+        while i > 0 {
+            i -= 1;
+            if self.files[i].dirty {
+                skipped += 1;
+            } else {
+                self.close_file(i);
+                closed += 1;
+            }
+        }
+        self.set_batch_close_status(closed, skipped);
+    }
+
+    fn set_batch_close_status(&mut self, closed: usize, skipped: usize) {
+        let msg = match (closed, skipped) {
+            (0, 0) => return,
+            (n, 0) => format!("closed {n} tab{}", if n == 1 { "" } else { "s" }),
+            (0, n) => format!(
+                "skipped {n} tab{} with unsaved changes",
+                if n == 1 { "" } else { "s" }
+            ),
+            (c, s) => format!(
+                "closed {c} tab{}, skipped {s} with unsaved changes",
+                if c == 1 { "" } else { "s" }
+            ),
+        };
+        self.active_mut().status = msg;
+    }
+
     /// Close the tab at `i`. If it's the only open tab, replace it with a
     /// fresh untitled buffer rather than leaving the app with zero files.
     /// Dropping `llm_rx` silently abandons any in-flight Gemini call for

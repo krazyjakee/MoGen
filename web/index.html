@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MoGen Web</title>
+  </head>
+  <body>
+    <div id="app">
+      <header>
+        <span class="brand">MoGen Web</span>
+        <select id="example-picker" title="Load an example">
+          <option value="">Examples…</option>
+        </select>
+        <span class="spacer"></span>
+        <span id="status" class="status idle">idle</span>
+      </header>
+      <main>
+        <section id="editor"></section>
+        <section id="viewer"></section>
+      </main>
+      <footer id="diagnostics"></footer>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

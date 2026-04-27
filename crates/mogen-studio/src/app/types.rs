@@ -77,11 +77,14 @@ pub(super) const DOCS_URL: &str = "https://github.com/krazyjakee/model-gen/blob/
 /// License file URL, rendered on GitHub for convenience.
 pub(super) const LICENSE_URL: &str = "https://github.com/krazyjakee/model-gen/blob/master/LICENSE";
 
-/// Fixed background colour for the 3D viewport. Deliberately independent of
-/// the UI theme so the model's colours read consistently no matter which
-/// panel scheme the user picked. Neutral-dark, matching the default look of
-/// Blender / Maya / Modo.
-pub(super) const VIEWER_BG_COLOR: egui::Color32 = egui::Color32::from_rgb(54, 58, 64);
+/// Resolve the viewer background colour from `settings`, falling back to the
+/// neutral-charcoal default when the user hasn't picked one. Deliberately
+/// independent of the UI theme so the model's colours read consistently no
+/// matter which panel scheme the user picked.
+pub(super) fn viewer_bg_color(settings: &crate::settings::Settings) -> egui::Color32 {
+    let [r, g, b] = settings.viewer_bg_rgb();
+    egui::Color32::from_rgb(r, g, b)
+}
 
 /// Result from a background LLM call. Always includes the DSL we tried to
 /// compile so the UI can drop it into the editor even when validation failed.
@@ -287,6 +290,8 @@ pub(super) enum MenuAction {
     OpenOptions,
     Frame,
     OpenAbout,
+    GenerateThumbnail,
+    GenerateVideo,
 }
 
 /// The subset of `MenuAction` variants that are bound to a global keyboard

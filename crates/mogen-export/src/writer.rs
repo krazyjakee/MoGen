@@ -13,6 +13,7 @@ use crate::accessor::{
 };
 use crate::animation::emit_animation;
 use crate::material::{collect_material_extensions, emit_material};
+#[cfg(feature = "merge")]
 use crate::merge;
 use crate::skin::emit_skin;
 use crate::texture::{pack_textures, TextureTable};
@@ -24,23 +25,39 @@ pub fn write_glb(scene: &SceneGraph, out: &Path) -> Result<()> {
     write_glb_with_options(scene, out, &ExportOptions::default(), |_| {})
 }
 
-/// Like `write_glb` but honours an `ExportOptions` toggle set and reports
-/// per-stage progress via `progress(stage_label)`. Stages fire at coarse
-/// transitions ("merging sibling meshes", "packing textures", "writing glb");
-/// there is no sub-stage percent, so callers typically pair the callback with
-/// an indeterminate spinner.
+/// File-writing wrapper around [`build_glb_with_options`]. The pipeline is the
+/// same; this just streams the resulting bytes to disk. Use
+/// [`build_glb_with_options`] directly when you need the GLB in memory (e.g.
+/// from a wasm caller that has no filesystem).
 pub fn write_glb_with_options<F: Fn(&str)>(
     scene: &SceneGraph,
     out: &Path,
     opts: &ExportOptions,
     progress: F,
 ) -> Result<()> {
+    let bytes = build_glb_with_options(scene, opts, progress)?;
+    let mut f = File::create(out)?;
+    f.write_all(&bytes)?;
+    Ok(())
+}
+
+/// Build a GLB into a `Vec<u8>` instead of writing to disk. Same pipeline as
+/// `write_glb_with_options` — used by the wasm bindings (no filesystem) and
+/// by anywhere else that wants the bytes directly.
+pub fn build_glb_with_options<F: Fn(&str)>(
+    scene: &SceneGraph,
+    opts: &ExportOptions,
+    progress: F,
+) -> Result<Vec<u8>> {
     // Two-stage merge. First, the scoped `solid` pass runs whenever the scene
     // carries any `"solid"`-tagged nodes (opt-in from the DSL — no flag
     // needed). Its clone is skipped if no solid groups are present. Then, if
     // the caller also requested the global pass via ExportOptions, it runs on
     // top. Each stage clones so we hold the owning graph in an Option and
-    // rebind `scene` to the latest one.
+    // rebind `scene` to the latest one. The whole merge stage is feature-
+    // gated because it pulls in `mogen-geom`'s CSG path; wasm builds disable
+    // the `merge` feature and skip it entirely.
+    #[cfg(feature = "merge")]
     let solid_owned: Option<SceneGraph> = {
         let has_solid = scene
             .nodes
@@ -52,8 +69,12 @@ pub fn write_glb_with_options<F: Fn(&str)>(
             None
         }
     };
+    #[cfg(feature = "merge")]
     let scene_after_solid: &SceneGraph = solid_owned.as_ref().unwrap_or(scene);
+    #[cfg(not(feature = "merge"))]
+    let scene_after_solid: &SceneGraph = scene;
 
+    #[cfg(feature = "merge")]
     let merged_owned: Option<SceneGraph> = if opts.merge_sibling_meshes {
         Some(merge::merge_sibling_meshes(scene_after_solid, |s| {
             progress(s)
@@ -61,10 +82,13 @@ pub fn write_glb_with_options<F: Fn(&str)>(
     } else {
         None
     };
+    #[cfg(feature = "merge")]
     let scene: &SceneGraph = match &merged_owned {
         Some(s) => s,
         None => scene_after_solid,
     };
+    #[cfg(not(feature = "merge"))]
+    let scene: &SceneGraph = scene_after_solid;
 
     let mut bin: Vec<u8> = Vec::new();
     let mut buffer_views: Vec<BufferView> = Vec::new();
@@ -227,20 +251,20 @@ pub fn write_glb_with_options<F: Fn(&str)>(
 
     let total_len = 12 + 8 + json_padded.len() + 8 + bin_padded.len();
 
-    let mut f = File::create(out)?;
-    f.write_all(&GLB_MAGIC.to_le_bytes())?;
-    f.write_all(&2u32.to_le_bytes())?;
-    f.write_all(&(total_len as u32).to_le_bytes())?;
+    let mut out = Vec::with_capacity(total_len);
+    out.extend_from_slice(&GLB_MAGIC.to_le_bytes());
+    out.extend_from_slice(&2u32.to_le_bytes());
+    out.extend_from_slice(&(total_len as u32).to_le_bytes());
 
-    f.write_all(&(json_padded.len() as u32).to_le_bytes())?;
-    f.write_all(&CHUNK_JSON.to_le_bytes())?;
-    f.write_all(&json_padded)?;
+    out.extend_from_slice(&(json_padded.len() as u32).to_le_bytes());
+    out.extend_from_slice(&CHUNK_JSON.to_le_bytes());
+    out.extend_from_slice(&json_padded);
 
-    f.write_all(&(bin_padded.len() as u32).to_le_bytes())?;
-    f.write_all(&CHUNK_BIN.to_le_bytes())?;
-    f.write_all(&bin_padded)?;
+    out.extend_from_slice(&(bin_padded.len() as u32).to_le_bytes());
+    out.extend_from_slice(&CHUNK_BIN.to_le_bytes());
+    out.extend_from_slice(&bin_padded);
 
-    Ok(())
+    Ok(out)
 }
 
 fn emit_node(n: &SceneNode, mesh: Option<usize>) -> Value {

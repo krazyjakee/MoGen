@@ -1,6 +1,7 @@
 mod accessor;
 mod animation;
 mod material;
+#[cfg(feature = "merge")]
 pub mod merge;
 pub mod options;
 mod skin;
@@ -8,7 +9,7 @@ mod texture;
 mod writer;
 
 pub use options::ExportOptions;
-pub use writer::{write_glb, write_glb_with_options};
+pub use writer::{build_glb_with_options, write_glb, write_glb_with_options};
 
 use serde::Serialize;
 

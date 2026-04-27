@@ -1,13 +1,20 @@
 use std::collections::HashMap;
+#[cfg(feature = "textures")]
 use std::fs;
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
-use serde_json::{json, Value};
+use anyhow::Result;
+#[cfg(feature = "textures")]
+use anyhow::Context;
+use serde_json::Value;
+#[cfg(feature = "textures")]
+use serde_json::json;
 
 use mogen_core::{Material, TextureRef};
 
-use crate::{align_up, BufferView};
+#[cfg(feature = "textures")]
+use crate::align_up;
+use crate::BufferView;
 
 /// Whether a texture carries colour data (displayed to a human and safe to
 /// store as lossy JPEG) or linear numeric data packed into RGB channels
@@ -37,10 +44,23 @@ impl TextureTable {
     }
 }
 
+/// Stub used when the `textures` feature is disabled (e.g. wasm builds with
+/// no filesystem). Returns an empty table; downstream emit_material will then
+/// omit every `*Texture` slot and the materials export as pure PBR factors.
+#[cfg(not(feature = "textures"))]
+pub(crate) fn pack_textures(
+    _materials: &[Material],
+    _bin: &mut Vec<u8>,
+    _buffer_views: &mut Vec<BufferView>,
+) -> Result<TextureTable> {
+    Ok(TextureTable::default())
+}
+
 /// Read every unique texture file referenced by materials, re-encode it for
 /// its slot kind (colour → JPEG when alpha permits; linear or alpha-bearing
 /// → optimized PNG), embed the resulting bytes into the BIN chunk, and fill
 /// out the glTF image / texture / sampler tables.
+#[cfg(feature = "textures")]
 pub(crate) fn pack_textures(
     materials: &[Material],
     bin: &mut Vec<u8>,
@@ -130,6 +150,7 @@ pub(crate) fn pack_textures(
 ///   shrink them losslessly (re-pick filters, re-deflate with zopfli). JPEG
 ///   sources for linear slots are passed through as-is; the user opted in to
 ///   lossy data there and we don't second-guess them.
+#[cfg(feature = "textures")]
 fn encode_for_slot(source: &[u8], kind: SlotKind) -> Result<(Vec<u8>, &'static str)> {
     let fmt = image::guess_format(source).context("detecting texture image format")?;
     match kind {
@@ -138,6 +159,7 @@ fn encode_for_slot(source: &[u8], kind: SlotKind) -> Result<(Vec<u8>, &'static s
     }
 }
 
+#[cfg(feature = "textures")]
 fn encode_color_slot(source: &[u8], fmt: image::ImageFormat) -> Result<(Vec<u8>, &'static str)> {
     let img = image::load_from_memory_with_format(source, fmt)
         .context("decoding colour texture")?;
@@ -165,6 +187,7 @@ fn encode_color_slot(source: &[u8], fmt: image::ImageFormat) -> Result<(Vec<u8>,
     }
 }
 
+#[cfg(feature = "textures")]
 fn encode_linear_slot(source: &[u8], fmt: image::ImageFormat) -> Result<(Vec<u8>, &'static str)> {
     match fmt {
         image::ImageFormat::Png => Ok(optimize_png_bytes(source)),
@@ -180,6 +203,7 @@ fn encode_linear_slot(source: &[u8], fmt: image::ImageFormat) -> Result<(Vec<u8>
 /// size — it re-picks per-row filters and re-deflates, typically 10–30%
 /// smaller on un-optimized generator output. If oxipng fails or produces a
 /// larger file, keep the original.
+#[cfg(feature = "textures")]
 fn optimize_png_bytes(bytes: &[u8]) -> (Vec<u8>, &'static str) {
     let opts = oxipng::Options::from_preset(2);
     match oxipng::optimize_from_memory(bytes, &opts) {

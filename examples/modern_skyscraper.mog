@@ -1,0 +1,93 @@
+// mogen-generate seed=1777326640335895818
+// mogen-generate thinking=high
+// prompt: modern skyscraper
+
+material "glass" (color=[0.85, 0.90, 0.95], roughness=0.05, transmission=0.3, base_color_texture="textures/modern_skyscraper/glass_albedo.png", normal_texture="textures/modern_skyscraper/glass_normal.png", metallic_roughness_texture="textures/modern_skyscraper/glass_metallicRoughness.png", occlusion_texture="textures/modern_skyscraper/glass_ao.png")
+material "steel" (color=[0.20, 0.22, 0.25], metallic=0.9, roughness=0.2, base_color_texture="textures/modern_skyscraper/steel_albedo.png", normal_texture="textures/modern_skyscraper/steel_normal.png", metallic_roughness_texture="textures/modern_skyscraper/steel_metallicRoughness.png", occlusion_texture="textures/modern_skyscraper/steel_ao.png")
+material "concrete" (color=[0.55, 0.55, 0.55], roughness=0.9, base_color_texture="textures/modern_skyscraper/concrete_albedo.png", normal_texture="textures/modern_skyscraper/concrete_normal.png", metallic_roughness_texture="textures/modern_skyscraper/concrete_metallicRoughness.png", occlusion_texture="textures/modern_skyscraper/concrete_ao.png")
+material "wood" (color=[0.35, 0.25, 0.18], roughness=0.85, base_color_texture="textures/modern_skyscraper/wood_albedo.png", normal_texture="textures/modern_skyscraper/wood_normal.png", metallic_roughness_texture="textures/modern_skyscraper/wood_metallicRoughness.png", occlusion_texture="textures/modern_skyscraper/wood_ao.png")
+material "leaf" (color=[0.15, 0.40, 0.15], roughness=0.6, alpha_mode="mask", alpha_cutoff=0.5, double_sided=1, base_color_texture="textures/modern_skyscraper/leaf_albedo.png", normal_texture="textures/modern_skyscraper/leaf_normal.png", metallic_roughness_texture="textures/modern_skyscraper/leaf_metallicRoughness.png", occlusion_texture="textures/modern_skyscraper/leaf_ao.png")
+
+scene {
+  // Ground plaza
+  slab "base" (size=[55, 1, 55], mat="concrete", pos=[0, -0.3929, 0])
+
+  // Central structural elevator core (visible through the glass)
+  slab "core" (above="base", size=[10, 180, 10], x=-4, z=-4, mat="steel")
+
+  // Intersecting glass volumes (asymmetrical modern composition)
+  slab "wing1" (above="base", size=[16, 150, 16], x=2, z=2, mat="glass")
+  slab "wing2" (above="base", size=[24, 100, 14], x=-2, z=10, mat="glass")
+  slab "wing3" (above="base", size=[14, 120, 24], x=10, z=-2, mat="glass")
+
+  // Interior floors visible through the glass
+  group "interior_floors1" (above="base") {
+    grid (count=[1, 30, 1], step=[0, 5, 0]) {
+      slab "floor1" (size=[15.5, 0.2, 15.5], x=2, z=2, mat="concrete")
+    }
+  }
+  group "interior_floors2" (above="base") {
+    grid (count=[1, 20, 1], step=[0, 5, 0]) {
+      slab "floor2" (size=[23.5, 0.2, 13.5], x=-2, z=10, mat="concrete")
+    }
+  }
+  group "interior_floors3" (above="base") {
+    grid (count=[1, 24, 1], step=[0, 5, 0]) {
+      slab "floor3" (size=[13.5, 0.2, 23.5], x=10, z=-2, mat="concrete")
+    }
+  }
+
+  // Interior columns
+  group "interior_cols1" (above="base") {
+    grid (count=[2, 1, 2], step=[10, 0, 10], center=1) {
+      post "col1" (size=[0.6, 149.8, 0.6], x=2, z=2, mat="steel")
+    }
+  }
+  group "interior_cols2" (above="base") {
+    grid (count=[3, 1, 2], step=[8, 0, 8], center=1) {
+      post "col2" (size=[0.6, 99.8, 0.6], x=-2, z=10, mat="steel")
+    }
+  }
+  group "interior_cols3" (above="base") {
+    grid (count=[2, 1, 3], step=[8, 0, 8], center=1) {
+      post "col3" (size=[0.6, 119.8, 0.6], x=10, z=-2, mat="steel")
+    }
+  }
+
+  // Solid roof caps to frame the glass volumes
+  slab "roof1" (above="wing1", size=[15.5, 1.0, 15.5], x=2, z=2, mat="steel")
+  slab "roof2" (above="wing2", size=[23.5, 1.0, 13.5], x=-2, z=10, mat="steel")
+  slab "roof3" (above="wing3", size=[13.5, 1.0, 23.5], x=10, z=-2, mat="steel")
+
+  // Spire and antenna on the main core
+  cylinder "spire" (above="core", radius=0.8, height=25, mat="steel")
+  cylinder "antenna" (above="spire", radius=0.15, height=12, mat="steel")
+
+  // Helipad on the tallest glass wing
+  cylinder "helipad" (above="roof1", radius=6, height=0.4, mat="concrete")
+
+  // Ground level entrance canopy
+  post "pillar1" (above="base", size=[0.5, 4, 0.5], x=-7, z=18, mat="steel")
+  post "pillar2" (above="base", size=[0.5, 4, 0.5], x=3, z=18, mat="steel")
+  slab "canopy" (above="pillar1", size=[14, 0.5, 6], x=-2, z=17.5, mat="steel")
+
+  // Plaza landscaping
+  branch "tree1" (
+    above="base", x=-18, z=18,
+    length=2.5, radius=0.15, depth=4, splits=2,
+    leaves=1, leaf_size=0.4, leaf_cards=2,
+    mat="wood", leaf_mat="leaf", seed=1
+  )
+  branch "tree2" (
+    above="base", x=18, z=18,
+    length=3.0, radius=0.18, depth=4, splits=2,
+    leaves=1, leaf_size=0.4, leaf_cards=2,
+    mat="wood", leaf_mat="leaf", seed=2
+  )
+  branch "tree3" (
+    above="base", x=18, z=-18,
+    length=2.2, radius=0.12, depth=4, splits=2,
+    leaves=1, leaf_size=0.35, leaf_cards=2,
+    mat="wood", leaf_mat="leaf", seed=3
+  )
+}

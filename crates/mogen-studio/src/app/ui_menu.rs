@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use eframe::egui;
 
 use crate::preview_shader::{preview_shader_label, PreviewShader, PREVIEW_SHADERS};
+use crate::settings::DEFAULT_VIEWER_BG_RGB;
 use crate::theme::{apply_theme, theme_label, Theme, THEMES};
 
 use super::types::{
@@ -126,6 +127,44 @@ impl MogenStudioApp {
                     action = MenuAction::Build;
                     ui.close_menu();
                 }
+                ui.menu_button("Generate", |ui| {
+                    let busy = self.generate_in_flight();
+                    let busy_tip = if busy {
+                        "another render is in flight — wait for it to finish"
+                    } else {
+                        ""
+                    };
+                    let thumb = ui
+                        .add_enabled(
+                            !busy,
+                            egui::Button::new("Thumbnail (PNG)"),
+                        )
+                        .on_hover_text(if busy {
+                            busy_tip.to_string()
+                        } else {
+                            "Render a square 512px PNG of the current scene next to the .mog file"
+                                .into()
+                        });
+                    if thumb.clicked() {
+                        action = MenuAction::GenerateThumbnail;
+                        ui.close_menu();
+                    }
+                    let vid = ui
+                        .add_enabled(
+                            !busy,
+                            egui::Button::new("Rotating video (MP4)"),
+                        )
+                        .on_hover_text(if busy {
+                            busy_tip.to_string()
+                        } else {
+                            "Render a 6s 30fps mp4 of the model rotating, encoded with ffmpeg"
+                                .into()
+                        });
+                    if vid.clicked() {
+                        action = MenuAction::GenerateVideo;
+                        ui.close_menu();
+                    }
+                });
                 if shortcut_menu_item(
                     ui,
                     "Re-check",
@@ -269,6 +308,16 @@ impl MogenStudioApp {
                     action = MenuAction::Frame;
                     ui.close_menu();
                 }
+                let mut show_grid = self.settings.show_grid();
+                if ui
+                    .checkbox(&mut show_grid, "Show Grid")
+                    .on_hover_text("Toggle the ground-plane reference grid in the 3D viewport")
+                    .changed()
+                {
+                    self.settings.set_show_grid(show_grid);
+                    self.viewer.set_show_grid(show_grid);
+                    let _ = self.settings.save();
+                }
                 ui.separator();
                 ui.menu_button("Shader", |ui| {
                     let current = self.settings.preview_shader();
@@ -296,6 +345,33 @@ impl MogenStudioApp {
                             chosen_theme = Some(t);
                             ui.close_menu();
                         }
+                    }
+                });
+                ui.menu_button("Background", |ui| {
+                    // Inline picker (not `color_edit_button_srgb`): the button
+                    // form opens a child popup, and clicks inside that popup
+                    // count as "outside the menu", so the menu — and the
+                    // picker with it — closes on the first press. Drawing
+                    // the picker inline keeps every drag inside this menu's
+                    // area.
+                    let current = self.settings.viewer_bg_rgb();
+                    let mut srgba =
+                        egui::Color32::from_rgb(current[0], current[1], current[2]);
+                    if egui::widgets::color_picker::color_picker_color32(
+                        ui,
+                        &mut srgba,
+                        egui::widgets::color_picker::Alpha::Opaque,
+                    ) {
+                        let rgb = [srgba.r(), srgba.g(), srgba.b()];
+                        if rgb != current {
+                            self.settings.set_viewer_bg_rgb(rgb);
+                            let _ = self.settings.save();
+                        }
+                    }
+                    if ui.button("Reset to default").clicked() {
+                        self.settings.set_viewer_bg_rgb(DEFAULT_VIEWER_BG_RGB);
+                        let _ = self.settings.save();
+                        ui.close_menu();
                     }
                 });
             });
@@ -406,6 +482,8 @@ impl MogenStudioApp {
             MenuAction::OpenAbout => {
                 self.show_about = true;
             }
+            MenuAction::GenerateThumbnail => self.generate_thumbnail(ctx),
+            MenuAction::GenerateVideo => self.generate_video(ctx),
         }
     }
 
@@ -484,6 +562,8 @@ impl MogenStudioApp {
     pub(super) fn ui_tabs(&mut self, ui: &mut egui::Ui) {
         let mut activate: Option<usize> = None;
         let mut close: Option<usize> = None;
+        let mut close_to_right_of: Option<usize> = None;
+        let mut close_all = false;
         let mut duplicate: Option<usize> = None;
         let mut copy_path: Option<String> = None;
         let mut new_from_empty_area = false;
@@ -492,6 +572,7 @@ impl MogenStudioApp {
         // where a double-click should mint a fresh MOG file.
         let strip_rect = ui.available_rect_before_wrap();
         let mut last_item_right = strip_rect.min.x;
+        let total_tabs = self.files.len();
         egui::ScrollArea::horizontal()
             .auto_shrink([false, true])
             .show(ui, |ui| {
@@ -510,6 +591,7 @@ impl MogenStudioApp {
                             activate = Some(i);
                         }
                         let has_path = f.path.is_some();
+                        let has_right = i + 1 < total_tabs;
                         resp.context_menu(|ui| {
                             if ui.button("Duplicate").clicked() {
                                 duplicate = Some(i);
@@ -532,6 +614,28 @@ impl MogenStudioApp {
                             ui.separator();
                             if ui.button("Close tab").clicked() {
                                 close = Some(i);
+                                ui.close_menu();
+                            }
+                            if ui
+                                .add_enabled(has_right, egui::Button::new("Close to the right"))
+                                .on_hover_text(
+                                    "Close every tab to the right of this one. \
+                                     Tabs with unsaved changes are skipped.",
+                                )
+                                .clicked()
+                            {
+                                close_to_right_of = Some(i);
+                                ui.close_menu();
+                            }
+                            if ui
+                                .button("Close all")
+                                .on_hover_text(
+                                    "Close every open tab. Tabs with unsaved \
+                                     changes are skipped.",
+                                )
+                                .clicked()
+                            {
+                                close_all = true;
                                 ui.close_menu();
                             }
                         });
@@ -582,6 +686,12 @@ impl MogenStudioApp {
         }
         if let Some(i) = close {
             self.request_close_file(i);
+        }
+        if let Some(i) = close_to_right_of {
+            self.close_tabs_to_right(i);
+        }
+        if close_all {
+            self.close_all_tabs();
         }
     }
 }

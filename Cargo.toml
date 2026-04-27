@@ -10,6 +10,7 @@ members = [
     "crates/mogen-llm",
     "crates/mogen",
     "crates/mogen-studio",
+    "crates/mogen-wasm",
 ]
 
 [workspace.package]
@@ -29,9 +30,13 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg"]
 oxipng = { version = "9", default-features = false, features = ["parallel"] }
 
 mogen-core = { path = "crates/mogen-core" }
-mogen-dsl = { path = "crates/mogen-dsl" }
-mogen-geom = { path = "crates/mogen-geom" }
-mogen-validate = { path = "crates/mogen-validate" }
+# These three crates host opt-in features (`csg`, `merge`, `textures`) that
+# the wasm build needs to disable. Setting `default-features = false` here
+# lets each consumer turn defaults back on (or off) explicitly — workspace
+# inheritance can't override an upstream `default-features = true`.
+mogen-dsl = { path = "crates/mogen-dsl", default-features = false }
+mogen-geom = { path = "crates/mogen-geom", default-features = false }
+mogen-validate = { path = "crates/mogen-validate", default-features = false }
 mogen-anim = { path = "crates/mogen-anim" }
-mogen-export = { path = "crates/mogen-export" }
+mogen-export = { path = "crates/mogen-export", default-features = false }
 mogen-llm = { path = "crates/mogen-llm" }

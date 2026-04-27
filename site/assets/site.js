@@ -326,6 +326,32 @@
       .catch(() => renderReleases(null, container));
   }
 
+  /* ---------------- gallery hover-to-play ---------------- */
+
+  function setupGallery() {
+    document.querySelectorAll('.gallery-item').forEach((item) => {
+      const v = item.querySelector('video');
+      if (!v) return;
+      const play = () => {
+        // preload="none" defers loading until first play; subsequent hovers are instant.
+        const p = v.play();
+        if (p && typeof p.catch === 'function') p.catch(() => {});
+      };
+      const stop = () => {
+        v.pause();
+        try { v.currentTime = 0; } catch (_) {}
+      };
+      item.addEventListener('mouseenter', play);
+      item.addEventListener('mouseleave', stop);
+      // Touch devices have no hover — tap to play, tap again to stop.
+      item.addEventListener('click', (e) => {
+        if (!matchMedia('(hover: none)').matches) return;
+        e.preventDefault();
+        if (v.paused) play(); else stop();
+      });
+    });
+  }
+
   /* ---------------- year stamp ---------------- */
 
   function stampYear() {
@@ -341,6 +367,7 @@
     addHeadingAnchors();
     setupTocSpy();
     markActiveNav();
+    setupGallery();
     loadReleases();
     stampYear();
   });

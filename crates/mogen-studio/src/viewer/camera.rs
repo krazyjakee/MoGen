@@ -1,13 +1,11 @@
 use eframe::egui;
 use glam::{Mat4, Vec3};
 
-use super::flatten::FlatMesh;
-
 pub struct OrbitCamera {
     pub yaw: f32,
     pub pitch: f32,
     /// Distance that exactly fits the current model at the fixed FOV. Derived
-    /// from the mesh's bounding sphere on every `fit()` call.
+    /// from the mesh's bounding sphere on every framing pass.
     pub fit_distance: f32,
     /// User-controlled multiplier on top of `fit_distance`. 1.0 = auto-fit;
     /// scroll tweaks this. `Viewer::set_scene` resets it to 1.0 when the
@@ -43,11 +41,6 @@ impl Default for OrbitCamera {
 }
 
 impl OrbitCamera {
-    pub fn fit(&mut self, mesh: &FlatMesh) {
-        self.target = mesh.center;
-        self.fit_distance = mesh.radius * 2.8;
-    }
-
     pub fn snapshot(&self) -> CameraSnapshot {
         CameraSnapshot {
             yaw: self.yaw,
