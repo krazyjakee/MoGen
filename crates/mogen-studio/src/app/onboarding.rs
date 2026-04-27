@@ -21,6 +21,11 @@ impl MogenStudioApp {
         if !self.show_onboarding {
             return;
         }
+        // Defer the welcome flow while the privacy prompt is up so a brand-
+        // new user sees them one at a time, not stacked on top of each other.
+        if self.show_crash_consent {
+            return;
+        }
 
         let mut do_save = false;
         let mut do_skip = false;
@@ -79,7 +84,6 @@ impl MogenStudioApp {
                         "Stored in your user config directory. You can change or \
                          clear it any time from Edit → Preferences…",
                     )
-                    .small()
                     .weak(),
                 );
 

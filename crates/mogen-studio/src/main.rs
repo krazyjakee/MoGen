@@ -16,7 +16,12 @@ mod viewer;
 use eframe::egui;
 
 fn main() -> eframe::Result<()> {
-    let _sentry = crash::init();
+    // Load settings before crash init so we can honour the persisted
+    // crash-report consent — Sentry only attaches when the user has opted in
+    // on a prior launch. The App constructor reloads the same file and
+    // doesn't share this instance.
+    let startup_settings = settings::Settings::load();
+    let _sentry = crash::init(startup_settings.crash_reports_enabled);
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("MoGen Studio")

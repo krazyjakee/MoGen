@@ -16,6 +16,7 @@ mod ask;
 mod autocomplete;
 mod build;
 mod compile;
+mod crash_consent;
 mod error_class;
 mod files;
 mod find;
@@ -109,6 +110,11 @@ pub struct MogenStudioApp {
     /// key + Get Started, or by Skip. Either path latches `onboarded = true`
     /// so the modal never reopens on this install.
     show_onboarding: bool,
+    /// First-launch privacy prompt for crash reporting. Raised when
+    /// `settings.crash_reports_enabled` is `None` (and env vars don't already
+    /// hard-disable telemetry). Suppressed once the user picks Allow / Decline;
+    /// the saved choice gates `crash::init` on subsequent launches.
+    show_crash_consent: bool,
     /// Draft API key edited inside the onboarding modal. Kept separate from
     /// `options_api_key_draft` so closing one dialog never leaks state into
     /// the other.
@@ -312,6 +318,12 @@ impl MogenStudioApp {
         }
         let show_onboarding = !settings.onboarded;
 
+        // First-launch privacy prompt: only when the user has never been
+        // asked AND the env doesn't already opt them out (in which case the
+        // prompt would be cosmetic — `crash::init` is already a no-op).
+        let show_crash_consent = settings.crash_reports_enabled.is_none()
+            && !crate::crash::telemetry_blocked_by_env();
+
         Self {
             files: vec![initial],
             active: 0,
@@ -321,6 +333,7 @@ impl MogenStudioApp {
             show_options: false,
             options_api_key_draft,
             show_onboarding,
+            show_crash_consent,
             onboarding_api_key_draft: String::new(),
             show_new_prompt: false,
             new_prompt_draft: String::new(),
@@ -653,6 +666,9 @@ impl eframe::App for MogenStudioApp {
         let snap = self.viewer.camera_snapshot();
         self.files[self.active].camera = Some(snap);
 
+        // Privacy prompt comes before the welcome flow so the user makes
+        // exactly one decision per modal — they're sequenced, not stacked.
+        self.ui_crash_consent(ctx);
         self.ui_onboarding(ctx);
         self.ui_options(ctx);
         self.ui_new_prompt(ctx);

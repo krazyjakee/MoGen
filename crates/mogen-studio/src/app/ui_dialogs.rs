@@ -512,6 +512,36 @@ impl MogenStudioApp {
                     });
 
                 ui.add_space(12.0);
+                ui.heading("Privacy");
+                {
+                    // Tri-state in storage (`None` = undecided) collapses to a
+                    // simple bool here: opening Preferences past first launch
+                    // implies the user has been asked, so any change away from
+                    // the default is an explicit decision worth persisting.
+                    let env_blocked = crate::crash::telemetry_blocked_by_env();
+                    let mut on = self.settings.crash_reports_enabled.unwrap_or(false);
+                    let resp = ui.add_enabled(
+                        !env_blocked,
+                        egui::Checkbox::new(
+                            &mut on,
+                            "Send anonymous crash reports",
+                        ),
+                    );
+                    if resp.changed() {
+                        self.settings.crash_reports_enabled = Some(on);
+                    }
+                    let hover = if env_blocked {
+                        "Forced off by MOGEN_DISABLE_TELEMETRY / DO_NOT_TRACK in your \
+                         environment. Unset the variable to control this from here."
+                    } else {
+                        "Reports a stack trace, app version, and OS family when \
+                         MoGen Studio crashes. No source, .mog files, prompts, or \
+                         API keys. Takes effect on next launch."
+                    };
+                    resp.on_hover_text(hover);
+                }
+
+                ui.add_space(12.0);
                 ui.horizontal(|ui| {
                     if ui.button("Save").clicked() {
                         // The Gemini key uses an editor-buffered draft so the

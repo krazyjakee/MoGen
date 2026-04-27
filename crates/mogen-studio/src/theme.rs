@@ -122,9 +122,12 @@ fn nord() -> egui::Visuals {
     v.widgets.hovered.weak_bg_fill = Color32::from_rgb(76, 86, 106);
     v.widgets.hovered.bg_stroke = Stroke::new(1.0, Color32::from_rgb(129, 161, 193));
     v.widgets.hovered.fg_stroke = Stroke::new(1.5, Color32::from_rgb(236, 239, 244));
-    v.widgets.active.bg_fill = Color32::from_rgb(129, 161, 193);
+    // Active drives strong_text_color() — must contrast with the dark window
+    // bg, not just the selected-button fill. Use nord10 + nord6 so RichText
+    // .strong() stays legible on panels everywhere.
+    v.widgets.active.bg_fill = Color32::from_rgb(94, 129, 172);
     v.widgets.active.weak_bg_fill = Color32::from_rgb(94, 129, 172);
-    v.widgets.active.fg_stroke = Stroke::new(1.5, Color32::from_rgb(46, 52, 64));
+    v.widgets.active.fg_stroke = Stroke::new(1.5, Color32::from_rgb(236, 239, 244));
     v.widgets.open.bg_fill = Color32::from_rgb(76, 86, 106);
     v.widgets.open.fg_stroke = Stroke::new(1.0, Color32::from_rgb(216, 222, 233));
     v

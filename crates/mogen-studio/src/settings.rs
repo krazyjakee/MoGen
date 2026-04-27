@@ -159,6 +159,15 @@ pub struct Settings {
     /// visible after upgrade.
     #[serde(default)]
     pub show_grid: Option<bool>,
+
+    /// User decision on sending crash reports to MoGen's self-hosted
+    /// GlitchTip endpoint. `None` means undecided — the first-launch privacy
+    /// prompt asks the user, then latches `Some(true)` (allow) or
+    /// `Some(false)` (decline). The `MOGEN_DISABLE_TELEMETRY` and
+    /// `DO_NOT_TRACK` env vars short-circuit to disabled regardless of the
+    /// saved value, so users can opt out without touching this file.
+    #[serde(default)]
+    pub crash_reports_enabled: Option<bool>,
 }
 
 /// Default viewer background. Independent of the UI theme so the model's
