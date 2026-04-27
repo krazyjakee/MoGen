@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use mogen_core::SceneGraph;
 use mogen_export::ExportOptions;
-use mogen_llm::gemini::{GeminiClient, GenerateConfig, Usage};
+use mogen_llm::gemini::{GeminiClient, GenerateConfig, ImageInput, Usage};
 use mogen_llm::textures::{
     build_plan, default_textures_dir, run_plan, splice_textures, PlanAction,
     TextureProgress, TexturesArgs,
@@ -462,6 +462,7 @@ pub(super) fn run_llm(
     kind: LlmKind,
     prompt: String,
     existing: Option<String>,
+    image: Option<ImageInput>,
     api_key: String,
     run_cfg: LlmRunConfig,
     sys_instr: Arc<String>,
@@ -485,7 +486,22 @@ pub(super) fn run_llm(
     // For edit-an-existing-file kinds, keep the original `// prompt: …` header
     // so the provenance line isn't overwritten with the modify/animate text.
     let header_prompt = match kind {
-        LlmKind::Generate | LlmKind::Textures => prompt.clone(),
+        LlmKind::Generate | LlmKind::Textures => {
+            // When an image was attached, annotate the seed header so the
+            // `// prompt:` line records *why* the file looks the way it does
+            // (otherwise an image-only generate writes an empty `prompt:` line,
+            // which is misleading).
+            if image.is_some() {
+                let trimmed = prompt.trim();
+                if trimmed.is_empty() {
+                    "[image attached]".to_string()
+                } else {
+                    format!("[image attached] {trimmed}")
+                }
+            } else {
+                prompt.clone()
+            }
+        }
         LlmKind::Modify | LlmKind::Animate | LlmKind::Repair => existing
             .as_deref()
             .and_then(parse_prompt_header)
@@ -493,7 +509,31 @@ pub(super) fn run_llm(
     };
 
     let user_prompt = match kind {
-        LlmKind::Generate => prompt.clone(),
+        LlmKind::Generate => {
+            // When the only input is an image, a non-empty text part still
+            // helps the model commit to the DSL output mode (the system
+            // instruction handles the schema, but Gemini's vision path
+            // sometimes regresses to describing the image otherwise).
+            // Concatenate the user's text with a short directive when an
+            // image is attached; pass the prompt through unchanged when
+            // there's no image so the legacy flow stays bit-for-bit.
+            if image.is_some() {
+                let trimmed = prompt.trim();
+                if trimmed.is_empty() {
+                    "Generate a mogen DSL scene that recreates the attached \
+                     reference image as a 3D model."
+                        .to_string()
+                } else {
+                    format!(
+                        "Generate a mogen DSL scene that recreates the attached \
+                         reference image as a 3D model. Additional guidance from \
+                         the user:\n\n{trimmed}",
+                    )
+                }
+            } else {
+                prompt.clone()
+            }
+        }
         LlmKind::Modify => format!(
             "You are editing an existing mogen DSL file. Apply this modification:\n\n\
             {mod_prompt}\n\n\
@@ -588,6 +628,12 @@ pub(super) fn run_llm(
     cfg.thinking_level = Some(run_cfg.thinking);
     cfg.temperature = Some(run_cfg.temperature);
     cfg.system_instruction = Some((*sys_instr).clone());
+    if let Some(img) = image {
+        // Carried through every repair iteration: `repair.rs` rewrites
+        // `cfg.user_prompt` but leaves `cfg.user_images` alone, so the model
+        // keeps the visual reference while it fixes validator errors.
+        cfg.user_images.push(img);
+    }
 
     send_progress(LlmProgress::Status(format!(
         "calling Gemini ({}) — thinking={:?}",

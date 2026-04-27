@@ -19,11 +19,12 @@ use super::MogenStudioApp;
 impl MogenStudioApp {
     pub(super) fn start_llm_generate(&mut self, ctx: egui::Context) {
         let prompt = self.active().gen_prompt.trim().to_string();
-        if prompt.is_empty() {
+        let image = self.active().gen_image.clone();
+        if prompt.is_empty() && image.is_none() {
             self.active_mut().status = "enter a prompt first".into();
             return;
         }
-        self.spawn_llm(ctx, LlmKind::Generate, prompt, None);
+        self.spawn_llm(ctx, LlmKind::Generate, prompt, None, image);
     }
 
     pub(super) fn start_llm_modify(&mut self, ctx: egui::Context) {
@@ -43,7 +44,7 @@ impl MogenStudioApp {
             self.active_mut().status = "modify needs existing DSL to edit".into();
             return;
         }
-        self.spawn_llm(ctx, LlmKind::Modify, prompt, Some(existing));
+        self.spawn_llm(ctx, LlmKind::Modify, prompt, Some(existing), None);
     }
 
     /// Kick off a Gemini repair call on the current buffer. No prompt field —
@@ -73,6 +74,7 @@ impl MogenStudioApp {
             LlmKind::Repair,
             "repair validation errors".to_string(),
             Some(existing),
+            None,
         );
     }
 
@@ -93,7 +95,7 @@ impl MogenStudioApp {
             self.active_mut().status = "animate needs existing DSL to edit".into();
             return;
         }
-        self.spawn_llm(ctx, LlmKind::Animate, prompt, Some(existing));
+        self.spawn_llm(ctx, LlmKind::Animate, prompt, Some(existing), None);
     }
 
     pub(super) fn start_llm_textures(&mut self, ctx: egui::Context) {
@@ -411,6 +413,7 @@ impl MogenStudioApp {
         kind: LlmKind,
         prompt: String,
         existing: Option<String>,
+        image: Option<crate::app::types::GenImageInput>,
     ) {
         let api_key = match self.resolve_api_key() {
             Some(k) => k,
@@ -466,8 +469,16 @@ impl MogenStudioApp {
         };
 
         let worker_tx = tx.clone();
+        // The thumbnail handle is GUI-only; convert to the LLM crate's
+        // `ImageInput` shape so the worker thread carries just the bytes.
+        let llm_image = image.map(|img| mogen_llm::ImageInput {
+            mime_type: img.mime_type,
+            data: img.data,
+        });
         std::thread::spawn(move || {
-            let outcome = run_llm(kind, prompt, existing, api_key, run_cfg, sys_instr, worker_tx);
+            let outcome = run_llm(
+                kind, prompt, existing, llm_image, api_key, run_cfg, sys_instr, worker_tx,
+            );
             let _ = tx.send(LlmMessage::Done(outcome));
             ctx.request_repaint();
         });
