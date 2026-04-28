@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use mogen_llm::gemini::{DEFAULT_FAST_MODEL, DEFAULT_MODEL, DEFAULT_TEMPERATURE};
+use mogen_llm::gemini::{DEFAULT_MODEL, DEFAULT_TEMPERATURE};
 use mogen_llm::{Provider, ThinkingLevel};
 use serde::{Deserialize, Serialize};
 
@@ -56,7 +56,7 @@ pub struct Settings {
     pub gemini_model: String,
 
     /// "Fast" model id used for low-stakes rewrites like the Prompt Enhancer
-    /// when the active provider is Gemini. Empty -> [`DEFAULT_FAST_MODEL`]
+    /// when the active provider is Gemini. Empty -> [`mogen_llm::gemini::DEFAULT_FAST_MODEL`]
     /// (`gemini-flash-latest`). Kept separate from `gemini_model` so users
     /// can pay Flash rates for prompt polish while still running Pro for the
     /// actual DSL generation.
@@ -240,17 +240,6 @@ impl Settings {
         let m = self.gemini_model.trim();
         if m.is_empty() {
             DEFAULT_MODEL.to_string()
-        } else {
-            m.to_string()
-        }
-    }
-
-    /// Current "fast" Gemini model id, falling back to
-    /// [`DEFAULT_FAST_MODEL`] when the setting is empty.
-    pub fn gemini_fast_model(&self) -> String {
-        let m = self.gemini_fast_model.trim();
-        if m.is_empty() {
-            DEFAULT_FAST_MODEL.to_string()
         } else {
             m.to_string()
         }
