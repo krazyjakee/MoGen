@@ -38,6 +38,9 @@ AppIcon.iconset/
 # gh-pages build output (the workflow rebuilds this on every push)
 /_site/
 web/node_modules
+web/dist/
+web/wasm/
+web/tsconfig.tsbuildinfo
 
 # Generated example media
 examples/*.png

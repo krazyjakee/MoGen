@@ -3,16 +3,18 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>MoGen Web</title>
+    <title>MoGen Playground — edit .mog, preview GLB</title>
+    <meta name="description" content="Edit MoGen DSL and see the compiled glTF result in your browser. The full mogen pipeline running as wasm." />
   </head>
   <body>
     <div id="app">
       <header>
-        <span class="brand">MoGen Web</span>
+        <a class="brand" href="../index.html" title="Back to MoGen">← Mo<span class="mark">Gen</span> Playground</a>
         <select id="example-picker" title="Load an example">
           <option value="">Examples…</option>
         </select>
         <span class="spacer"></span>
+        <a class="docs-link" href="../dsl.html" target="_blank" rel="noopener">DSL reference ↗</a>
         <span id="status" class="status idle">idle</span>
       </header>
       <main>

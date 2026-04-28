@@ -22,3 +22,10 @@ wasm-bindgen = "0.2"
 serde = { workspace = true }
 serde_json = { workspace = true }
 console_error_panic_hook = "0.1"
+
+# Skip wasm-pack's wasm-opt post-processing pass — it downloads a binaryen
+# tarball at build time, which is brittle in restricted-network CI and adds
+# non-trivial build time. The unoptimized .wasm is well under the WASM
+# streaming threshold; size is fine.
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false

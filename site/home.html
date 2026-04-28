@@ -25,6 +25,7 @@
     <div class="nav-links">
       <a href="index.html">Home</a>
       <a href="index.html#gallery">Gallery</a>
+      <a href="playground/index.html">Playground</a>
       <a href="dsl.html">DSL</a>
       <a href="cli.html">CLI</a>
       <a href="studio.html">Studio</a>
@@ -47,7 +48,8 @@
         Single binary CLI, a desktop studio, and a Gemini-powered <code>generate</code> / <code>modify</code> / <code>animate</code> loop.
       </p>
       <div class="cta-row">
-        <a class="btn btn-primary" href="#downloads">↓ Download</a>
+        <a class="btn btn-primary" href="playground/index.html">▶ Try the Playground</a>
+        <a class="btn btn-ghost" href="#downloads">↓ Download</a>
         <a class="btn btn-ghost" href="dsl.html">Read the DSL →</a>
         <a class="btn btn-ghost" href="https://github.com/krazyjakee/MoGen" target="_blank" rel="noopener">Source on GitHub</a>
       </div>
@@ -75,6 +77,37 @@
       <h3><span class="dot"></span> LLM-aware pipeline</h3>
       <p><code>mogen generate "a wooden stool"</code> writes a <code>.mog</code>, validates it, repairs JSON diagnostics in a loop, and emits a GLB. Seeds are embedded for reproducibility.</p>
     </div>
+  </div>
+</section>
+
+<section>
+  <h2 id="playground">Playground</h2>
+  <p>The whole MoGen pipeline — parser, validator, lowering, glTF exporter — is compiled to WebAssembly and runs in your browser. Type on the left, see the GLB on the right, no installs and nothing leaves your machine. Examples from the repo are pre-loaded; pick one from the dropdown to start.</p>
+  <div class="playground-card">
+    <a class="playground-launch" href="playground/index.html">
+      <div class="playground-preview">
+        <div class="playground-source">
+          <pre><code class="language-mog">scene {
+  rounded_box "seat" (size=[0.45, 0.04, 0.45], radius=0.01)
+  cylinder "leg_fl" (radius=0.02, height=0.45)
+  cylinder "leg_fr" (radius=0.02, height=0.45)
+  cylinder "leg_bl" (radius=0.02, height=0.45)
+  cylinder "leg_br" (radius=0.02, height=0.45)
+  rounded_box "back" (size=[0.45, 0.45, 0.04], radius=0.01)
+}</code></pre>
+        </div>
+        <div class="playground-arrow" aria-hidden="true">→</div>
+        <div class="playground-render">
+          <img src="splash.png" alt="Rendered MoGen scene preview">
+        </div>
+      </div>
+      <div class="playground-cta">
+        <strong>Open the Playground</strong>
+        <span>Edit MoGen DSL with live diagnostics and a three.js GLB preview, all in-browser.</span>
+        <span class="playground-go">Launch ▶</span>
+      </div>
+    </a>
+    <p class="playground-note">Note: CSG (<code>union</code>/<code>difference</code>/<code>intersect</code>) and the texture pipeline aren't available in the wasm build — both rely on native libraries (<code>manifold</code>, <code>image</code>) that don't link for <code>wasm32-unknown-unknown</code>. Use the desktop <a href="cli.html"><code>mogen</code></a> CLI for those.</p>
   </div>
 </section>
 
