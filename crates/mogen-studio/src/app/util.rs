@@ -11,9 +11,10 @@ use mogen_llm::textures::{
     TextureProgress, TexturesArgs,
 };
 use mogen_llm::{
-    embed_seed_header, generate_with_repair, parse_prompt_header, parse_seed_header,
-    repair_message, validate_text, GenerateConfig, ImageInput, LlmClient, Provider, RepairConfig,
-    ThinkingLevel, Usage, DEFAULT_IMAGE_MODEL,
+    default_cache_path, embed_seed_header, generate_with_repair, parse_prompt_header,
+    parse_seed_header, repair_message, resolve_or_create_cache, validate_text, GenerateConfig,
+    ImageInput, LlmClient, Provider, RepairConfig, ThinkingLevel, Usage, DEFAULT_IMAGE_MODEL,
+    DEFAULT_TTL_SECONDS,
 };
 
 use crate::pipeline::write_glb_with_source_and_options;
@@ -463,6 +464,43 @@ pub(super) struct LlmRunConfig {
     pub claude_code_path: String,
 }
 
+/// Pin the system instruction onto `cfg`. For Gemini, try to upload it once
+/// as a `cachedContents` resource (persisted under `$HOME/.cache/mogen/`) so
+/// repeat calls — across this session and future ones with the same model +
+/// instruction — pay only the cached-input rate. Falls back to inline on any
+/// failure (no cache dir, API down, instruction below the model's minimum
+/// cacheable size). Mirrors the CLI's `attach_system_instruction` so the two
+/// frontends share cache state.
+fn attach_system_instruction(
+    cfg: &mut GenerateConfig,
+    client: &LlmClient,
+    sys_instr: &Arc<String>,
+    send_progress: &dyn Fn(LlmProgress),
+) {
+    if let Some(g) = client.as_gemini() {
+        if let Some(cache_path) = default_cache_path() {
+            match resolve_or_create_cache(
+                g,
+                &cfg.model,
+                sys_instr.as_str(),
+                &cache_path,
+                DEFAULT_TTL_SECONDS,
+            ) {
+                Ok(name) => {
+                    cfg.cached_content = Some(name);
+                    return;
+                }
+                Err(e) => {
+                    send_progress(LlmProgress::Status(format!(
+                        "cache unavailable ({e}); sending system instruction inline"
+                    )));
+                }
+            }
+        }
+    }
+    cfg.system_instruction = Some((**sys_instr).clone());
+}
+
 /// Construct an [`LlmClient`] honoring Studio-only settings that don't fit
 /// the bare `LlmClient::new(provider, api_key)` signature. Today that's just
 /// the Claude Code binary path.
@@ -648,7 +686,7 @@ pub(super) fn run_llm(
     cfg.seed = Some(seed);
     cfg.thinking_level = Some(run_cfg.thinking);
     cfg.temperature = Some(run_cfg.temperature);
-    cfg.system_instruction = Some((*sys_instr).clone());
+    attach_system_instruction(&mut cfg, &client, &sys_instr, &send_progress);
     if let Some(img) = image {
         // Carried through every repair iteration: `repair.rs` rewrites
         // `cfg.user_prompt` but leaves `cfg.user_images` alone, so the model
