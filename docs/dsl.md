@@ -674,8 +674,8 @@ clip "open" (seconds=1.2) {
 }
 ```
 
-Compile with `mogen build examples/<file>.mog -o out.glb` and open in Godot
-4.x or any glTF-2.0 viewer.
+Compile with `mogen build examples/<file>.mog -o out.glb` and open in any
+glTF-2.0 viewer or game engine.
 
 ---
 

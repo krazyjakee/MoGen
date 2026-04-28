@@ -6,7 +6,7 @@
   <title>MoGen — procedural 3D models from a tiny DSL</title>
   <meta name="description" content="MoGen turns a compact declarative DSL into glTF 2.0 GLB assets. The deterministic backend of an LLM-driven 3D generation pipeline.">
   <meta property="og:title" content="MoGen — procedural 3D models">
-  <meta property="og:description" content="Compile a tiny DSL into Godot-ready GLB. CLI + desktop studio + Gemini-driven generate/modify/animate.">
+  <meta property="og:description" content="Compile a tiny DSL into engine-ready GLB. CLI + desktop studio + LLM-driven generate/modify/animate (Gemini Pro recommended).">
   <meta property="og:image" content="splash.png">
   <link rel="icon" href="icon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -40,12 +40,13 @@
 <header class="hero">
   <div class="wrap hero-grid">
     <div>
-      <div class="eyebrow">Procedural · LLM-friendly · Godot-ready</div>
+      <div class="eyebrow">Procedural · LLM-friendly · Engine-ready</div>
       <h1>From a few lines of DSL to a <span class="grad">.glb</span> you can drop into your engine.</h1>
       <p class="lede">
         MoGen compiles a compact declarative language into glTF 2.0. It's the deterministic
         backend of an LLM-driven 3D generation pipeline: the model writes intent, MoGen writes triangles.
-        Single binary CLI, a desktop studio, and a Gemini-powered <code>generate</code> / <code>modify</code> / <code>animate</code> loop.
+        Single binary CLI, a desktop studio, and an LLM-powered <code>generate</code> / <code>modify</code> / <code>animate</code> loop.
+        Works with multiple LLM backends — <strong>Gemini Pro is the strongest model we've tested and the recommended default</strong>.
       </p>
       <div class="cta-row">
         <a class="btn btn-primary" href="playground/index.html">▶ Try the Playground</a>
@@ -71,7 +72,7 @@
     </div>
     <div class="feature">
       <h3><span class="dot"></span> Self-contained GLBs</h3>
-      <p>PBR materials, transmission, emissive HDR, <code>double_sided</code>, embedded PNG/JPEG textures. Drop the output into Godot 4, Blender, or three.js — no asset chasing.</p>
+      <p>PBR materials, transmission, emissive HDR, <code>double_sided</code>, embedded PNG/JPEG textures. Drop the output into your engine, Blender, or three.js — no asset chasing.</p>
     </div>
     <div class="feature">
       <h3><span class="dot"></span> LLM-aware pipeline</h3>
@@ -229,7 +230,7 @@ cd MoGen
       <tr><td><code>mogen-geom</code></td><td>Primitive meshers, CSG via <code>csgrs</code>, vertex welding, degenerate-tri cull, normal recompute.</td></tr>
       <tr><td><code>mogen-anim</code></td><td>Procedural animation templates — <code>spin</code>, <code>open_close</code>, <code>wave</code>, <code>flap</code>, <code>idle</code>.</td></tr>
       <tr><td><code>mogen-export</code></td><td>Hand-rolled GLB writer: PBR materials, embedded textures, animation channels, <code>JOINTS_0</code>/<code>WEIGHTS_0</code> skins, sibling-mesh merge pass.</td></tr>
-      <tr><td><code>mogen-llm</code></td><td>Gemini <code>generateContent</code> client, system-prompt assembly, repair loop, texture pipeline.</td></tr>
+      <tr><td><code>mogen-llm</code></td><td>LLM client (Gemini Pro recommended), system-prompt assembly, repair loop, texture pipeline.</td></tr>
       <tr><td><code>mogen</code></td><td>The CLI binary — clap subcommands wiring everything together.</td></tr>
       <tr><td><code>mogen-studio</code></td><td>The desktop GUI — eframe/egui editor, live 3D viewer, gizmos, theme presets, settings persistence.</td></tr>
     </tbody>
