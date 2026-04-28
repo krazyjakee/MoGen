@@ -293,6 +293,117 @@ blockquote p:last-child { margin-bottom: 0; }
 }
 .feature p { margin: 0; font-size: 14px; }
 
+/* --------------------------- playground card --------------------------- */
+
+.playground-card {
+  margin: 18px 0 8px;
+}
+
+.playground-launch {
+  display: block;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  color: inherit;
+  transition: border-color 200ms, transform 200ms, box-shadow 200ms;
+}
+.playground-launch:hover {
+  border-color: var(--accent);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-2);
+  color: inherit;
+}
+
+.playground-preview {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 0;
+  align-items: stretch;
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+}
+@media (max-width: 720px) {
+  .playground-preview { grid-template-columns: 1fr; }
+  .playground-arrow { display: none !important; }
+}
+
+.playground-source {
+  padding: 18px 20px;
+  background: var(--bg-1);
+  overflow: auto;
+  min-width: 0;
+}
+.playground-source pre {
+  margin: 0;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.playground-arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+  color: var(--accent);
+  font-size: 22px;
+  background: var(--bg-1);
+  border-left: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+}
+
+.playground-render {
+  position: relative;
+  background:
+    linear-gradient(180deg, rgba(108,180,255,0.05), transparent 60%),
+    var(--bg-1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  min-height: 180px;
+}
+.playground-render img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.playground-cta {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 14px;
+  align-items: center;
+  padding: 16px 20px;
+  font-size: 14px;
+}
+.playground-cta strong {
+  color: var(--text);
+  font-size: 15px;
+}
+.playground-cta span:not(.playground-go) {
+  color: var(--text-dim);
+}
+.playground-go {
+  color: var(--accent);
+  font-weight: 600;
+  white-space: nowrap;
+}
+@media (max-width: 540px) {
+  .playground-cta { grid-template-columns: 1fr; gap: 6px; }
+  .playground-go { justify-self: start; }
+}
+
+.playground-note {
+  margin: 10px 2px 0;
+  font-size: 13px;
+  color: var(--text-mute);
+}
+
 /* --------------------------- gallery (videos) --------------------------- */
 
 .gallery {

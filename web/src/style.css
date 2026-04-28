@@ -29,7 +29,25 @@ header {
   border-bottom: 1px solid var(--border);
   font-size: 13px;
 }
-header .brand { font-weight: 600; letter-spacing: 0.02em; }
+header .brand {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text);
+  text-decoration: none;
+}
+header .brand:hover { color: var(--accent); }
+header .brand .mark {
+  background: linear-gradient(135deg, #ffb454, #ff8a3d);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+header .docs-link {
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 12px;
+}
+header .docs-link:hover { color: var(--accent); }
 header .spacer { flex: 1; }
 header select {
   background: var(--bg);
