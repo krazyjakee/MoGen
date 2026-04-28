@@ -633,21 +633,30 @@ clip \"walk\" (seconds=1.0) {
 
 ### Prompt: \"a crouching tiger\"
 ### Output:
-material \"tiger_back_fur\"  (color=[0.85, 0.45, 0.15], roughness=0.85)
-material \"tiger_belly_fur\" (color=[0.96, 0.92, 0.85], roughness=0.85)
+material \"tiger_fur\" (color=[0.85, 0.45, 0.15], roughness=0.85)
 
 scene {
-  group \"body\" (y=0.4, mat=\"tiger_back_fur\") {
+  // Quadruped torso exposes neck/tail/leg_fl/fr/bl/br connectors; legs and
+  // tail attach to those instead of being hand-positioned.
+  group \"body\" (y=0.6, mat=\"tiger_fur\") {
     use \"quadruped_torso\" (length=0.95, height=0.32, width=0.32)
   }
-  group \"head\" (pos=[0, 0.5, 0.55], mat=\"tiger_back_fur\") {
-    use \"humanoid_head\" (size=0.13, jaw=0.5)
-  }
-  capsule \"leg_fl\" (pos=[ 0.13, 0.16,  0.32], radius=0.05, height=0.32, mat=\"tiger_back_fur\")
-  capsule \"leg_fr\" (pos=[-0.13, 0.16,  0.32], radius=0.05, height=0.32, mat=\"tiger_back_fur\")
-  capsule \"leg_bl\" (pos=[ 0.13, 0.18, -0.32], radius=0.05, height=0.28, mat=\"tiger_back_fur\")
-  capsule \"leg_br\" (pos=[-0.13, 0.18, -0.32], radius=0.05, height=0.28, mat=\"tiger_back_fur\")
-  group \"tail\" (pos=[0, 0.45, -0.45], mat=\"tiger_back_fur\") { use \"tail\" () }
+  ellipsoid \"head\" (size=[0.18, 0.20, 0.22], mat=\"tiger_fur\")
+  spline_tube \"tail\" (
+    points=[[0,0,0], [0,0,-0.12], [0,0,-0.25], [0,0.05,-0.38]],
+    radii=[0.045, 0.032, 0.020, 0.010], mat=\"tiger_fur\"
+  )
+  capsule \"leg_fl\" (radius=0.05, height=0.32, mat=\"tiger_fur\")
+  capsule \"leg_fr\" (radius=0.05, height=0.32, mat=\"tiger_fur\")
+  capsule \"leg_bl\" (radius=0.05, height=0.28, mat=\"tiger_fur\")
+  capsule \"leg_br\" (radius=0.05, height=0.28, mat=\"tiger_fur\")
+
+  attach (parent=\"torso\", child=\"head\",   socket=\"neck\",   plug=\"back\")
+  attach (parent=\"torso\", child=\"tail\",   socket=\"tail\",   plug=\"start\")
+  attach (parent=\"torso\", child=\"leg_fl\", socket=\"leg_fl\", plug=\"top\")
+  attach (parent=\"torso\", child=\"leg_fr\", socket=\"leg_fr\", plug=\"top\")
+  attach (parent=\"torso\", child=\"leg_bl\", socket=\"leg_bl\", plug=\"top\")
+  attach (parent=\"torso\", child=\"leg_br\", socket=\"leg_br\", plug=\"top\")
 }
 
 ### Prompt: \"a person mid-stride\"
@@ -657,16 +666,43 @@ material \"shirt\" (color=[0.20, 0.45, 0.75], roughness=0.85)
 material \"pants\" (color=[0.18, 0.20, 0.25], roughness=0.85)
 
 scene {
+  // Humanoid torso exposes neck/shoulder_l/shoulder_r/hip_l/hip_r connectors.
+  // attach pins each limb at its socket; `rot=` on the attached child poses
+  // the limb around that anchor, so a stride is one rot per leg, not pos math.
   group \"body\" (y=1.05, mat=\"shirt\") {
     use \"humanoid_torso\" (height=0.55, width=0.36, depth=0.22)
   }
-  group \"head\" (pos=[0, 1.4, 0], mat=\"skin\") {
-    use \"humanoid_head\" (size=0.11, jaw=0.55)
+  use \"humanoid_head\" (size=0.11, jaw=0.55)
+
+  capsule \"leg_l\" (radius=0.07, height=0.9, rot=[-20, 0, 0], mat=\"pants\")
+  capsule \"leg_r\" (radius=0.07, height=0.9, rot=[ 20, 0, 0], mat=\"pants\")
+  capsule \"arm_l\" (radius=0.05, height=0.55, mat=\"skin\")
+  capsule \"arm_r\" (radius=0.05, height=0.55, mat=\"skin\")
+
+  attach (parent=\"torso\", child=\"head\",  socket=\"neck\",       plug=\"neck\")
+  attach (parent=\"torso\", child=\"leg_l\", socket=\"hip_l\",      plug=\"top\")
+  attach (parent=\"torso\", child=\"leg_r\", socket=\"hip_r\",      plug=\"top\")
+  attach (parent=\"torso\", child=\"arm_l\", socket=\"shoulder_l\", plug=\"top\")
+  attach (parent=\"torso\", child=\"arm_r\", socket=\"shoulder_r\", plug=\"top\")
+}
+
+### Prompt: \"a small wooden cart\"
+### Output:
+material \"metal\"  (color=[0.65, 0.65, 0.68], metallic=0.85, roughness=0.4)
+material \"wood\"   (color=[0.5, 0.32, 0.18], roughness=0.85)
+material \"rubber\" (color=[0.08, 0.08, 0.08], roughness=0.9)
+
+scene {
+  // `mirror axis=x` reflects the wheel pair to the opposite side — declare
+  // one pair, get four wheels. Cheaper than four hand-positioned cylinders
+  // and keeps positions in lock-step if the chassis width changes.
+  box \"chassis\" (size=[1.2, 0.18, 1.8], y=0.45, mat=\"wood\")
+  cylinder \"axle_f\" (pos=[0, 0.36,  0.65], radius=0.04, height=1.4, rot=[0, 0, 90], mat=\"metal\")
+  cylinder \"axle_b\" (pos=[0, 0.36, -0.65], radius=0.04, height=1.4, rot=[0, 0, 90], mat=\"metal\")
+  mirror (axis=x) {
+    cylinder \"wheel_f\" (pos=[-0.7, 0.36,  0.65], radius=0.3, height=0.18, rot=[0, 0, 90], mat=\"rubber\")
+    cylinder \"wheel_b\" (pos=[-0.7, 0.36, -0.65], radius=0.3, height=0.18, rot=[0, 0, 90], mat=\"rubber\")
   }
-  group \"leg_r\" (pos=[-0.1, 1.0,  0.05], rot=[ 20, 0, 0], mat=\"pants\") { use \"humanoid_leg\" (length=0.9, radius=0.07) }
-  group \"leg_l\" (pos=[ 0.1, 1.0, -0.05], rot=[-20, 0, 0], mat=\"pants\") { use \"humanoid_leg\" (length=0.9, radius=0.07) }
-  group \"arm_l\" (pos=[ 0.22, 1.45, -0.05], rot=[ 15, 0, 0], mat=\"skin\") { use \"humanoid_arm\" (length=0.55, radius=0.05) }
-  group \"arm_r\" (pos=[-0.22, 1.45,  0.05], rot=[-15, 0, 0], mat=\"skin\") { use \"humanoid_arm\" (length=0.55, radius=0.05) }
 }
 
 ### Prompt: \"a young oak tree\"
@@ -913,12 +949,15 @@ mod tests {
         // connectors row, organic-shapes preamble update) was net-neutral:
         // the new prose added ~1.4 KB but rewriting the oak-tree fewshot
         // from a hand-stacked 18-line layout into a single procedural
-        // `branch (...)` declaration shaved ~1.1 KB back off. The cap now
-        // sits at ~36 KB — still small enough to catch a revived long-form
-        // section.
+        // `branch (...)` declaration shaved ~1.1 KB back off. Rewriting the
+        // tiger and mid-stride fewshots to use `attach` to module connectors
+        // (instead of hand-computed `pos=` placement that contradicted Rule 2)
+        // was net-flat, and adding a small mirrored-cart fewshot to demonstrate
+        // safe `mirror axis=x` use added ~1.5 KB. The cap now sits at ~38 KB —
+        // still small enough to catch a revived long-form section.
         let s = system_instruction(&StdlibIndex::default());
         assert!(
-            s.len() < 36_000,
+            s.len() < 38_000,
             "system instruction grew to {} bytes — did a section come back?",
             s.len()
         );
@@ -980,6 +1019,41 @@ mod tests {
         assert!(
             s.contains("alpha_mode=\"mask\""),
             "oak fewshot missing alpha_mode=mask on leaf material"
+        );
+    }
+
+    #[test]
+    fn organic_fewshots_attach_limbs_via_module_connectors() {
+        // Tiger and mid-stride used to place limbs by hand-computed `pos=`,
+        // which directly contradicted Rule 2 of the preamble. They now attach
+        // to the connectors that `quadruped_torso` / `humanoid_torso` already
+        // expose, so the rule and the demonstration agree.
+        let s = system_instruction(&StdlibIndex::default());
+        assert!(
+            s.contains("attach (parent=\"torso\", child=\"leg_fl\""),
+            "tiger fewshot should attach legs to torso connectors"
+        );
+        assert!(
+            s.contains("attach (parent=\"torso\", child=\"hip_l\"")
+                || s.contains("attach (parent=\"torso\", child=\"leg_l\", socket=\"hip_l\""),
+            "mid-stride fewshot should attach legs to humanoid_torso hip sockets"
+        );
+        assert!(
+            s.contains("attach (parent=\"torso\", child=\"arm_l\", socket=\"shoulder_l\""),
+            "mid-stride fewshot should attach arms to humanoid_torso shoulder sockets"
+        );
+    }
+
+    #[test]
+    fn mirror_has_a_concrete_fewshot() {
+        // `mirror` was described in the grammar reference but never demonstrated,
+        // so the model rarely reached for it. The cart fewshot pairs `mirror
+        // axis=x` with a wheel pair to show the symmetric-replication pattern.
+        let s = system_instruction(&StdlibIndex::default());
+        assert!(s.contains("mirror (axis=x)"), "expected a mirror fewshot");
+        assert!(
+            s.contains("Prompt: \"a small wooden cart\""),
+            "mirrored-cart fewshot missing"
         );
     }
 
