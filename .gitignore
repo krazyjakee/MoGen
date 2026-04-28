@@ -40,6 +40,7 @@ AppIcon.iconset/
 web/node_modules
 web/dist/
 web/wasm/
+web/tsconfig.tsbuildinfo
 
 # Generated example media
 examples/*.png
