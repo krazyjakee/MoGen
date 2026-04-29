@@ -60,7 +60,7 @@ scene {
   slab "roof3" (above="wing3", size=[13.5, 1.0, 23.5], x=10, z=-2, mat="steel")
 
   // Spire and antenna on the main core
-  cylinder "spire" (above="core", radius=0.8, height=25, mat="steel")
+  cylinder "spire" (above="core", radius=0.8, height=25, mat="steel", pos=[0, 180.5399, 0])
   cylinder "antenna" (above="spire", radius=0.15, height=12, mat="steel")
 
   // Helipad on the tallest glass wing
