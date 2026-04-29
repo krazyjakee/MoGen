@@ -13,14 +13,19 @@ module "humanoid_full" (height=1.7) {
     bone "hip" (pos=[0, 0, 0], envelope=$height * 0.13) {
       bone "spine" (pos=[0, $height * 0.17, 0], envelope=$height * 0.21) {
         bone "neck" (pos=[0, $height * 0.14, 0], envelope=$height * 0.10)
+        // Arm bones follow the A-pose axis from humanoid_torso's shoulder sockets:
+        // 20° outward from vertical, so elbow/wrist offsets are
+        // (length * sin20, -length * cos20, 0). Without this, the bones would
+        // run straight down while the geometry hangs diagonally and skinning
+        // would tear at the elbow when the shoulder rotates.
         bone "shoulder_l" (pos=[ $height * 0.115, $height * 0.10, 0], envelope=$height * 0.14) {
-          bone "elbow_l" (pos=[0, $height * -0.15, 0], envelope=$height * 0.18) {
-            bone "wrist_l" (pos=[0, $height * -0.16, 0], envelope=$height * 0.10)
+          bone "elbow_l" (pos=[$height *  0.0513, $height * -0.1410, 0], envelope=$height * 0.18) {
+            bone "wrist_l" (pos=[$height *  0.0547, $height * -0.1504, 0], envelope=$height * 0.10)
           }
         }
         bone "shoulder_r" (pos=[$height * -0.115, $height * 0.10, 0], envelope=$height * 0.14) {
-          bone "elbow_r" (pos=[0, $height * -0.15, 0], envelope=$height * 0.18) {
-            bone "wrist_r" (pos=[0, $height * -0.16, 0], envelope=$height * 0.10)
+          bone "elbow_r" (pos=[$height * -0.0513, $height * -0.1410, 0], envelope=$height * 0.18) {
+            bone "wrist_r" (pos=[$height * -0.0547, $height * -0.1504, 0], envelope=$height * 0.10)
           }
         }
       }
