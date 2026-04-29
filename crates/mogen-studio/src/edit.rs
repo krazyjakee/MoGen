@@ -733,7 +733,7 @@ mod tests {
         // Inserting a directive must produce source that compiles cleanly and
         // actually scales the mesh — the studio slider relies on this.
         let src = "scene {\n  sphere \"s\" (radius=0.5)\n}\n";
-        let baseline = crate::pipeline::compile(src);
+        let baseline = crate::pipeline::compile(src, None);
         let baseline_verts = baseline
             .scene
             .as_ref()
@@ -749,7 +749,7 @@ mod tests {
             .len();
 
         let scaled_src = set_lod_scale(src, 0.5);
-        let scaled = crate::pipeline::compile(&scaled_src);
+        let scaled = crate::pipeline::compile(&scaled_src, None);
         assert!(
             matches!(scaled.stage, crate::pipeline::Stage::Ok),
             "scaled scene should compile: stage={:?} diags={:?}",
@@ -786,7 +786,7 @@ mod tests {
         let out = set_attr(&with_delete, span, "rot", "[0, 45, 0]");
         assert!(out.contains("rot=[0, 45, 0]"), "rot written: {out}");
         // Recompile and confirm Y rotation actually landed (no shadow left).
-        let recompiled = crate::pipeline::compile(&out);
+        let recompiled = crate::pipeline::compile(&out, None);
         assert!(
             matches!(recompiled.stage, crate::pipeline::Stage::Ok),
             "scene compiles clean: stage={:?} diags={:?}",
@@ -818,7 +818,7 @@ mod tests {
         // snaps back on release" would look like — the scene still
         // compiles but the rotation doesn't stick.
         let src = "scene {\n  box \"seat\" (pos=[0, 0.5, 0], size=[1.0, 0.1, 1.0])\n}\n";
-        let compiled = crate::pipeline::compile(src);
+        let compiled = crate::pipeline::compile(src, None);
         assert!(
             matches!(compiled.stage, crate::pipeline::Stage::Ok),
             "baseline scene should compile cleanly: stage={:?} diags={:?}",
@@ -842,7 +842,7 @@ mod tests {
         assert!(out.contains("rot=[0, 45, 0]"), "rot attr missing: {out}");
 
         // Recompile and confirm the rotation is present on the seat.
-        let recompiled = crate::pipeline::compile(&out);
+        let recompiled = crate::pipeline::compile(&out, None);
         assert!(
             matches!(recompiled.stage, crate::pipeline::Stage::Ok),
             "rotated scene must still compile clean: stage={:?} diags={:?}",

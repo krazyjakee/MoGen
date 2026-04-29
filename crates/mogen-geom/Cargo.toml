@@ -15,4 +15,6 @@ csg = ["dep:manifold3d"]
 [dependencies]
 mogen-core = { workspace = true }
 glam = { workspace = true }
+anyhow = { workspace = true }
+gltf = { workspace = true }
 manifold3d = { version = "0.1", optional = true }

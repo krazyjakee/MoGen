@@ -9,7 +9,8 @@ mod node;
 mod primitive;
 
 use anyhow::Result;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
+use std::path::{Path, PathBuf};
 
 use mogen_core::SceneGraph;
 
@@ -28,6 +29,35 @@ thread_local! {
     // expanded AST and read by `primitive_mesh` so segment/ring defaults can be
     // scaled without threading an extra arg through every recursive call.
     pub(super) static LOD_SCALE: Cell<f32> = const { Cell::new(1.0) };
+    // Directory of the `.mog` file being lowered. Used by the `mesh`
+    // primitive to resolve relative `src` paths. None = no source path
+    // available; only `stdlib:` paths will load.
+    pub(super) static SOURCE_DIR: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+}
+
+/// Returns the source directory currently set on the lowering thread, if any.
+pub(super) fn source_dir() -> Option<PathBuf> {
+    SOURCE_DIR.with(|s| s.borrow().clone())
+}
+
+/// RAII guard that sets the source directory for the duration of a single
+/// `lower(_with_source)` call and restores the previous value on drop.
+struct SourceDirGuard {
+    prev: Option<PathBuf>,
+}
+
+impl SourceDirGuard {
+    fn set(dir: Option<PathBuf>) -> Self {
+        let prev = SOURCE_DIR.with(|s| s.replace(dir));
+        Self { prev }
+    }
+}
+
+impl Drop for SourceDirGuard {
+    fn drop(&mut self) {
+        let prev = self.prev.take();
+        SOURCE_DIR.with(|s| s.replace(prev));
+    }
 }
 
 struct LodScaleGuard {
@@ -55,6 +85,15 @@ fn is_anim_decl(kind: &str) -> bool {
 }
 
 pub fn lower(ast: &[Node]) -> Result<SceneGraph> {
+    lower_with_source(ast, None)
+}
+
+/// Like `lower`, but also sets the source directory used by the `mesh`
+/// primitive to resolve relative `src=` paths. Pass the directory of the
+/// `.mog` source — typically `path.parent()` for the file the user passed
+/// to `mogen build`.
+pub fn lower_with_source(ast: &[Node], source_dir: Option<&Path>) -> Result<SceneGraph> {
+    let _src = SourceDirGuard::set(source_dir.map(|p| p.to_path_buf()));
     // Top-level `lod_scale (value=N)` multiplies primitive default segment/
     // ring counts. Stash on a thread-local before lowering so `primitive_mesh`
     // can read it without threading an extra arg through every recursive call.

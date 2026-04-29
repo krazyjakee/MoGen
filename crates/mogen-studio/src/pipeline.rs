@@ -33,7 +33,7 @@ pub enum Stage {
     Ok,
 }
 
-pub fn compile(src: &str) -> CompileResult {
+pub fn compile(src: &str, source_dir: Option<&Path>) -> CompileResult {
     let ast = match mogen_dsl::parse(src) {
         Ok(a) => a,
         Err(e) => {
@@ -50,7 +50,7 @@ pub fn compile(src: &str) -> CompileResult {
         return CompileResult::new(None, diags, Stage::ValidateAst);
     }
 
-    let scene = match mogen_dsl::lower(&ast) {
+    let scene = match mogen_dsl::lower_with_source(&ast, source_dir) {
         Ok(s) => s,
         Err(e) => {
             diags.push(Diagnostic::error("E0701", format!("lowering: {e}")));

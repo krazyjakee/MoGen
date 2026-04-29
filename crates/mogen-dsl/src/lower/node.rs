@@ -78,7 +78,8 @@ pub(super) fn lower_into(
         .and_then(|mid| graph.materials.get(mid.0 as usize))
         .map(|m| m.uv_mode)
         .unwrap_or_default();
-    if let Some(mut mesh) = primitive_mesh(node, uv_mode) {
+    if let Some(mesh_res) = primitive_mesh(node, uv_mode) {
+        let mut mesh = mesh_res?;
         anchor_shift = apply_anchor_to_mesh(&mut mesh, anchor.as_deref());
         graph.set_mesh(id, mesh);
     } else {

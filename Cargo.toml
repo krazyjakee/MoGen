@@ -28,6 +28,11 @@ serde_json = "1"
 glam = { version = "0.30", features = ["serde"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 oxipng = { version = "9", default-features = false, features = ["parallel"] }
+# `import` is the simple high-level API for reading .glb/.gltf into typed
+# accessors. Default features pull in the `image` crate for embedded textures
+# (we strip materials/textures on import, but keeping defaults avoids one more
+# feature flag to maintain when someone adds texture support later).
+gltf = { version = "1", default-features = false, features = ["import", "names", "utils"] }
 
 mogen-core = { path = "crates/mogen-core" }
 # These three crates host opt-in features (`csg`, `merge`, `textures`) that

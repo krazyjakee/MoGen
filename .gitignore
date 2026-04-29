@@ -24,11 +24,9 @@
 # Logs
 *.log
 
-# Generated .glb outputs (keep curated examples)
-*.glb
+# Other
 .claude
 generated
-examples/textures
 AGENTS.local.db
 
 # Generated packaging icons (built in CI from assets/icon.png)
@@ -45,3 +43,7 @@ web/tsconfig.tsbuildinfo
 # Generated example media
 examples/*.png
 examples/*.mp4
+examples/*.glb
+examples/textures
+
+*.blend

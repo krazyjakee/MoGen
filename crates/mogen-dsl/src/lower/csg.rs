@@ -123,8 +123,8 @@ pub(super) fn lower_csg(
 /// inherited from the eventual material binding (CSG node's own material) so
 /// every operand contributes UVs in the same convention.
 fn eval_mesh(node: &Node, bake_transform: bool, uv_mode: UvMode) -> Result<Mesh> {
-    let local = if let Some(mesh) = primitive_mesh(node, uv_mode) {
-        mesh
+    let local = if let Some(mesh_res) = primitive_mesh(node, uv_mode) {
+        mesh_res?
     } else {
         match node.kind.as_str() {
         "union" | "difference" | "intersect" => {

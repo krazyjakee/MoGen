@@ -169,6 +169,16 @@ impl Node {
         }
     }
 
+    /// Returns `Some` for either a quoted `"…"` or a bare ident; the two are
+    /// interchangeable for scalar string attributes (path-like values, role
+    /// names, etc.).
+    pub fn attr_string(&self, key: &str) -> Option<&str> {
+        match self.attr(key)? {
+            Value::String(s) | Value::Ident(s) => Some(s.as_str()),
+            _ => None,
+        }
+    }
+
     /// `scale` accepts either a scalar (uniform) or a vec3.
     pub fn attr_scale(&self, key: &str) -> Option<Vec3> {
         match self.attr(key)? {

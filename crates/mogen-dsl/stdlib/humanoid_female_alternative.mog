@@ -1,0 +1,15 @@
+// summary: Imported humanoid mesh (Female Alternative) — 10 body-part GLBs grouped under one node, all using the caller-declared "skin" material. `scale` (default 1.0) uniformly resizes the figure; meshes are pre-baked from the source artwork with the hip near origin.
+module "humanoid_female_alternative" (scale=1.0) {
+  group "humanoid_female_alternative" (scale=$scale, mat="skin") {
+    mesh "head" (src="stdlib:humanoid/head_female_alternative.glb")
+    mesh "torso" (src="stdlib:humanoid/torso_female_alternative.glb")
+    mesh "arm_l" (src="stdlib:humanoid/arm_l_female_alternative.glb")
+    mesh "arm_r" (src="stdlib:humanoid/arm_r_female_alternative.glb")
+    mesh "hand_l" (src="stdlib:humanoid/hand_l_female_alternative.glb")
+    mesh "hand_r" (src="stdlib:humanoid/hand_r_female_alternative.glb")
+    mesh "leg_l" (src="stdlib:humanoid/leg_l_female_alternative.glb")
+    mesh "leg_r" (src="stdlib:humanoid/leg_r_female_alternative.glb")
+    mesh "foot_l" (src="stdlib:humanoid/foot_l_female_alternative.glb")
+    mesh "foot_r" (src="stdlib:humanoid/foot_r_female_alternative.glb")
+  }
+}

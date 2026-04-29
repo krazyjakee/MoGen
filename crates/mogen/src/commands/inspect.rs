@@ -20,7 +20,7 @@ pub(crate) fn check(input: PathBuf, json: bool) -> Result<()> {
     let scene = if mogen_core::has_errors(&diags) {
         None
     } else {
-        match mogen_dsl::lower(&ast) {
+        match mogen_dsl::lower_with_source(&ast, input.parent()) {
             Ok(g) => {
                 diags.extend(mogen_validate::validate_graph(&g));
                 Some(g)
@@ -60,7 +60,7 @@ pub(crate) fn check(input: PathBuf, json: bool) -> Result<()> {
 pub(crate) fn dump_scene(input: PathBuf, as_json: bool) -> Result<()> {
     let src = fs::read_to_string(&input)?;
     let ast = mogen_dsl::parse(&src)?;
-    let scene = mogen_dsl::lower(&ast)?;
+    let scene = mogen_dsl::lower_with_source(&ast, input.parent())?;
     if as_json {
         println!("{}", serde_json::to_string_pretty(&scene)?);
     } else {

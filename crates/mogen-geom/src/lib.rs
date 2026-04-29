@@ -16,8 +16,9 @@ pub use csg_smooth::union_smooth;
 pub use primitives::{
     box_mesh, capsule_mesh, cone_mesh, curved_plane_mesh, cylinder_mesh, disc_mesh, ellipsoid_mesh,
     frustum_mesh, half_cylinder_mesh, hemisphere_mesh, icosphere_mesh, lathe_mesh, leaf_card_mesh,
-    plane_mesh, prism_mesh, pyramid_mesh, quad_mesh, rounded_box_mesh, sphere_mesh,
-    spline_tube_mesh, superellipsoid_mesh, torus_arc_mesh, torus_mesh, tube_mesh, wedge_mesh,
+    mesh_from_glb_bytes, plane_mesh, prism_mesh, pyramid_mesh, quad_mesh, read_glb_bytes,
+    rounded_box_mesh, sphere_mesh, spline_tube_mesh, superellipsoid_mesh, torus_arc_mesh,
+    torus_mesh, tube_mesh, wedge_mesh, STDLIB_PREFIX,
 };
 pub use xform::transform_mesh;
 

@@ -50,7 +50,7 @@ pub(crate) fn build(input: PathBuf, out: PathBuf) -> Result<()> {
     }
 
     spinner.set_message(format!("build {label}: lowering scene"));
-    let mut scene = match mogen_dsl::lower(&ast) {
+    let mut scene = match mogen_dsl::lower_with_source(&ast, input.parent()) {
         Ok(s) => s,
         Err(e) => {
             spinner.abandon_with_message(format!("build {label}: lowering failed"));

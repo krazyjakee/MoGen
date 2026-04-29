@@ -9,7 +9,7 @@ pub const KNOWN_KINDS: &[&str] = &[
     "box", "plane", "quad", "cylinder", "cone", "sphere", "capsule", "torus",
     "prism", "pyramid", "disc", "icosphere", "rounded_box",
     "wedge", "frustum", "tube", "hemisphere", "half_cylinder", "torus_arc", "ellipsoid",
-    "superellipsoid", "curved_plane", "lathe", "spline_tube", "leaf_card",
+    "superellipsoid", "curved_plane", "lathe", "spline_tube", "leaf_card", "mesh",
     "slab", "post", "panel", "wall",
     "branch",
     "module", "use",
@@ -308,6 +308,7 @@ pub fn attrs_for_kind(kind: &str) -> &'static [&'static str] {
             "points", "radius", "radii", "segments", "samples", "cap_ends",
         ],
         "leaf_card" => &["size", "cards"],
+        "mesh" => &["src"],
         "branch" => &[
             "length", "radius", "depth", "splits", "length_falloff", "radius_falloff",
             "branch_angle", "roll", "tropism", "bend", "segments", "samples", "seed",
@@ -385,6 +386,7 @@ fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         ("spline_tube", "radii") => "list",
         ("leaf_card", "size") => "number or vec3",
         ("leaf_card", "cards") => "number",
+        ("mesh", "src") => "string",
         ("branch", "length")
         | ("branch", "radius")
         | ("branch", "depth")

@@ -13,11 +13,11 @@ impl MogenStudioApp {
     }
 
     pub(super) fn compile_file(&mut self, i: usize) {
-        let r = compile(&self.files[i].source);
+        let base_dir = self.files[i].path.as_deref().and_then(|p| p.parent());
+        let r = compile(&self.files[i].source, base_dir);
         if i == self.active {
             match &r.scene {
                 Some(scene) if matches!(r.stage, Stage::Ok) => {
-                    let base_dir = self.files[i].path.as_deref().and_then(|p| p.parent());
                     let fit = self.files[i].first_render;
                     self.viewer.set_scene(scene, base_dir, fit);
                     self.files[i].first_render = false;

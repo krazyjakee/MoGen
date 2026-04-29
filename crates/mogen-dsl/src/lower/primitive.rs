@@ -1,24 +1,28 @@
+use anyhow::{anyhow, Context, Result};
 use glam::{Mat4, Vec3};
 
 use mogen_core::{Mesh, UvMode};
 use mogen_geom::{
     box_mesh, capsule_mesh, clean_csg_output, cone_mesh, curved_plane_mesh, cylinder_mesh,
     difference_many, disc_mesh, ellipsoid_mesh, frustum_mesh, half_cylinder_mesh, hemisphere_mesh,
-    icosphere_mesh, lathe_mesh, leaf_card_mesh, plane_mesh, prism_mesh, pyramid_mesh, quad_mesh,
-    rounded_box_mesh, sphere_mesh, spline_tube_mesh, superellipsoid_mesh, torus_arc_mesh,
-    torus_mesh, transform_mesh, tube_mesh, wedge_mesh,
+    icosphere_mesh, lathe_mesh, leaf_card_mesh, mesh_from_glb_bytes, plane_mesh, prism_mesh,
+    pyramid_mesh, quad_mesh, read_glb_bytes, rounded_box_mesh, sphere_mesh, spline_tube_mesh,
+    superellipsoid_mesh, torus_arc_mesh, torus_mesh, transform_mesh, tube_mesh, wedge_mesh,
 };
 
 use crate::ast::Node;
+use crate::lower::source_dir;
 
 use super::helpers::{resolve_size3, resolve_size_xy, resolve_size_xz};
 use super::lod::{scaled_default, scaled_subdivisions};
 
 /// Dispatch a primitive `Node` to its mesh builder. Returns `None` for non-
 /// primitive kinds (group, scene, material, CSG ops, animation decls, …) so
-/// callers can handle those separately.
-pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Mesh> {
-    let m = match node.kind.as_str() {
+/// callers can handle those separately. The inner `Result` carries failures
+/// from primitives whose construction can fail at lowering time (e.g. `mesh`
+/// loading a `.glb` from disk).
+pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh>> {
+    let m: Mesh = match node.kind.as_str() {
         "box" | "slab" | "post" | "panel" => {
             let s = resolve_size3(node, Vec3::ONE);
             box_mesh([s.x, s.y, s.z], uv_mode)
@@ -225,7 +229,25 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Mesh> {
             let cap_ends = node.attr_number("cap_ends").map(|n| n != 0.0).unwrap_or(true);
             spline_tube_mesh(&points, &radii, segments, samples, cap_ends, uv_mode)
         }
+        "mesh" => {
+            let src = match node.attr_string("src") {
+                Some(s) => s,
+                None => {
+                    return Some(Err(anyhow!(
+                        "`mesh` primitive requires a `src` attribute (a file path or `stdlib:…` key)"
+                    )));
+                }
+            };
+            // Filesystem `src` resolves against the directory of the calling
+            // .mog. `stdlib:` paths are byte-keyed and don't need a base dir.
+            let base = source_dir();
+            let load = (|| -> Result<Mesh> {
+                let bytes = read_glb_bytes(src, base.as_deref())?;
+                mesh_from_glb_bytes(&bytes).with_context(|| format!("decoding mesh `{src}`"))
+            })();
+            return Some(load);
+        }
         _ => return None,
     };
-    Some(m)
+    Some(Ok(m))
 }
