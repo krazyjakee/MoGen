@@ -49,7 +49,10 @@ impl OpenAIClient {
     }
 
     pub fn with_base_url(api_key: impl Into<String>, base_url: impl Into<String>) -> Self {
+        // Short connect_timeout fails fast when offline; the long overall
+        // timeout still covers slow reasoning models.
         let http = reqwest::blocking::Client::builder()
+            .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(600))
             .build()
             .expect("reqwest client");

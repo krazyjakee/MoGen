@@ -68,8 +68,11 @@ impl GeminiClient {
 
     pub fn with_base_url(api_key: impl Into<String>, base_url: impl Into<String>) -> Self {
         // `gemini-pro-latest` with a large system instruction or thinking
-        // enabled can easily push past a couple of minutes end-to-end.
+        // enabled can easily push past a couple of minutes end-to-end. The
+        // short connect_timeout fails fast when the user is offline so they
+        // don't sit through the 600s overall budget.
         let http = reqwest::blocking::Client::builder()
+            .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(600))
             .build()
             .expect("reqwest client");

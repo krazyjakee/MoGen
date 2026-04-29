@@ -158,10 +158,28 @@ impl fmt::Display for Provider {
 /// per-provider error variant is mapped into one of these on the way out so
 /// callers (the repair loop, the Studio classifier) don't need to match on
 /// four error enums.
+///
+/// Network failures are split into [`Self::Offline`] / [`Self::Timeout`] /
+/// [`Self::Tls`] / [`Self::Transport`] so the UI can show "you appear to be
+/// offline" instead of a raw reqwest dump. The split is heuristic — see
+/// [`classify_reqwest`].
 #[derive(Debug, thiserror::Error)]
 pub enum ProviderError {
     #[error("missing {var} (set the environment variable or pass --api-key)")]
     MissingApiKey { var: &'static str },
+    /// Could not reach the provider at all — DNS failure, connection refused,
+    /// network unreachable. Most often "no internet".
+    #[error("offline: {0}")]
+    Offline(String),
+    /// Connect or read timed out. The server may be slow, blocked by a captive
+    /// portal, or routing the connection into a black hole.
+    #[error("timeout: {0}")]
+    Timeout(String),
+    /// TLS handshake or certificate validation failed. Usually a clock skew
+    /// problem, an MITM proxy, or a corporate firewall.
+    #[error("TLS error: {0}")]
+    Tls(String),
+    /// Other transport-layer failures (response decode, body stream, builder).
     #[error("transport error: {0}")]
     Transport(String),
     #[error("API error ({status}): {message}")]
@@ -180,7 +198,7 @@ impl From<GeminiError> for ProviderError {
     fn from(e: GeminiError) -> Self {
         match e {
             GeminiError::MissingApiKey => Self::MissingApiKey { var: "GEMINI_API_KEY" },
-            GeminiError::Transport(err) => Self::Transport(format_reqwest(&err)),
+            GeminiError::Transport(err) => classify_reqwest(&err),
             GeminiError::Api { status, message } => Self::Api { status, message },
             GeminiError::EmptyResponse => Self::EmptyResponse,
             GeminiError::BudgetExceeded { used, budget } => Self::BudgetExceeded { used, budget },
@@ -193,7 +211,7 @@ impl From<OpenAIError> for ProviderError {
     fn from(e: OpenAIError) -> Self {
         match e {
             OpenAIError::MissingApiKey => Self::MissingApiKey { var: "OPENAI_API_KEY" },
-            OpenAIError::Transport(err) => Self::Transport(format_reqwest(&err)),
+            OpenAIError::Transport(err) => classify_reqwest(&err),
             OpenAIError::Api { status, message } => Self::Api { status, message },
             OpenAIError::EmptyResponse => Self::EmptyResponse,
             OpenAIError::BudgetExceeded { used, budget } => Self::BudgetExceeded { used, budget },
@@ -206,7 +224,7 @@ impl From<AnthropicError> for ProviderError {
     fn from(e: AnthropicError) -> Self {
         match e {
             AnthropicError::MissingApiKey => Self::MissingApiKey { var: "ANTHROPIC_API_KEY" },
-            AnthropicError::Transport(err) => Self::Transport(format_reqwest(&err)),
+            AnthropicError::Transport(err) => classify_reqwest(&err),
             AnthropicError::Api { status, message } => Self::Api { status, message },
             AnthropicError::EmptyResponse => Self::EmptyResponse,
             AnthropicError::BudgetExceeded { used, budget } => Self::BudgetExceeded { used, budget },
@@ -218,7 +236,7 @@ impl From<AnthropicError> for ProviderError {
 impl From<OllamaError> for ProviderError {
     fn from(e: OllamaError) -> Self {
         match e {
-            OllamaError::Transport(err) => Self::Transport(format_reqwest(&err)),
+            OllamaError::Transport(err) => classify_reqwest(&err),
             OllamaError::Api { status, message } => Self::Api { status, message },
             OllamaError::EmptyResponse => Self::EmptyResponse,
             OllamaError::BudgetExceeded { used, budget } => Self::BudgetExceeded { used, budget },
@@ -257,6 +275,59 @@ fn format_reqwest(err: &reqwest::Error) -> String {
         src = e.source();
     }
     out
+}
+
+/// Bucket a `reqwest::Error` into the appropriate `ProviderError` network
+/// variant. The classification is heuristic: `is_timeout` / `is_connect` are
+/// authoritative when set, but reqwest collapses a lot of conditions into
+/// `is_request`, so we also pattern-match the formatted source chain.
+///
+/// The buckets exist so the UI can show a short, specific message
+/// ("You appear to be offline" vs. "TLS handshake failed") rather than a
+/// generic "transport error". The detail string still carries the full chain
+/// for callers that want it.
+pub(crate) fn classify_reqwest(err: &reqwest::Error) -> ProviderError {
+    let detail = format_reqwest(err);
+    let lower = detail.to_ascii_lowercase();
+
+    if err.is_timeout() || lower.contains("timed out") || lower.contains("operation timed out") {
+        return ProviderError::Timeout(detail);
+    }
+
+    // TLS markers come from rustls / native-tls / openssl error strings. Check
+    // before the connect bucket — a TLS handshake failure can be reported as
+    // either is_connect or is_request depending on where it fired.
+    let tls = lower.contains("tls")
+        || lower.contains("ssl")
+        || lower.contains("certificate")
+        || lower.contains("handshake")
+        || lower.contains("trust anchor")
+        || lower.contains("self-signed")
+        || lower.contains("self signed")
+        || lower.contains("unknownissuer")
+        || lower.contains("invalid peer certificate");
+    if tls {
+        return ProviderError::Tls(detail);
+    }
+
+    let offline = err.is_connect()
+        || lower.contains("dns error")
+        || lower.contains("failed to lookup address")
+        || lower.contains("name or service not known")
+        || lower.contains("nodename nor servname")
+        || lower.contains("no address associated")
+        || lower.contains("temporary failure in name resolution")
+        || lower.contains("network is unreachable")
+        || lower.contains("network is down")
+        || lower.contains("host is unreachable")
+        || lower.contains("no route to host")
+        || lower.contains("connection refused")
+        || lower.contains("connection reset");
+    if offline {
+        return ProviderError::Offline(detail);
+    }
+
+    ProviderError::Transport(detail)
 }
 
 /// Unified handle to any backend. Constructed via [`LlmClient::new`] or one of
@@ -413,6 +484,23 @@ mod tests {
             Err(ProviderError::MissingApiKey { var: "OPENAI_API_KEY" }) => {}
             Err(other) => panic!("wrong error: {other}"),
             Ok(_) => panic!("expected MissingApiKey but got Ok"),
+        }
+    }
+
+    #[test]
+    fn classify_reqwest_buckets_closed_port_as_offline() {
+        // Hitting a closed local port avoids DNS / network access entirely
+        // and reliably produces a connect error on every dev machine.
+        let http = reqwest::blocking::Client::builder()
+            .connect_timeout(std::time::Duration::from_millis(500))
+            .timeout(std::time::Duration::from_millis(500))
+            .build()
+            .unwrap();
+        let err = http.get("http://127.0.0.1:1/").send().unwrap_err();
+        match classify_reqwest(&err) {
+            ProviderError::Offline(_) => {}
+            ProviderError::Timeout(_) => {} // some platforms return ETIMEDOUT here
+            other => panic!("expected Offline/Timeout, got {other:?}"),
         }
     }
 

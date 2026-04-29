@@ -52,8 +52,11 @@ impl OllamaClient {
 
     pub fn with_base_url(api_key: impl Into<String>, base_url: impl Into<String>) -> Self {
         // Local generation can take many minutes on small CPUs; give it the
-        // same headroom as the cloud paths.
+        // same headroom as the cloud paths. The short connect_timeout fails
+        // fast when the local Ollama server isn't running, instead of waiting
+        // for the OS to give up on `localhost:11434`.
         let http = reqwest::blocking::Client::builder()
+            .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(600))
             .build()
             .expect("reqwest client");

@@ -20,6 +20,33 @@ pub(super) fn classify(err: &ProviderError) -> LlmErrorInfo {
             class: LlmErrorClass::MissingKey,
             retryable: false,
         },
+        ProviderError::Offline(s) => LlmErrorInfo {
+            headline: "You appear to be offline".into(),
+            detail: format!(
+                "Could not reach the provider. Check your internet connection, then try \
+                 again. ({s})"
+            ),
+            class: LlmErrorClass::Network,
+            retryable: true,
+        },
+        ProviderError::Timeout(s) => LlmErrorInfo {
+            headline: "The connection timed out".into(),
+            detail: format!(
+                "The provider did not respond in time. This usually means a slow or flaky \
+                 link, a captive portal, or a stalled server. Try again. ({s})"
+            ),
+            class: LlmErrorClass::Network,
+            retryable: true,
+        },
+        ProviderError::Tls(s) => LlmErrorInfo {
+            headline: "Secure connection failed".into(),
+            detail: format!(
+                "Could not establish a TLS session with the provider. Check your system \
+                 clock, antivirus / proxy, and any corporate certificate inspection. ({s})"
+            ),
+            class: LlmErrorClass::Network,
+            retryable: true,
+        },
         ProviderError::Transport(s) => LlmErrorInfo {
             headline: "Network error".into(),
             detail: format!("{s}. Check your connection and try again."),
@@ -202,6 +229,32 @@ mod tests {
         );
         let info = classify(&err);
         assert_eq!(info.class, LlmErrorClass::ContentBlocked);
+    }
+
+    #[test]
+    fn classify_offline_uses_specific_headline() {
+        let info = classify(&ProviderError::Offline(
+            "dns error: failed to lookup address".into(),
+        ));
+        assert_eq!(info.class, LlmErrorClass::Network);
+        assert!(info.retryable);
+        assert!(info.headline.to_ascii_lowercase().contains("offline"));
+    }
+
+    #[test]
+    fn classify_timeout_uses_specific_headline() {
+        let info = classify(&ProviderError::Timeout("operation timed out".into()));
+        assert_eq!(info.class, LlmErrorClass::Network);
+        assert!(info.retryable);
+        assert!(info.headline.to_ascii_lowercase().contains("timed out"));
+    }
+
+    #[test]
+    fn classify_tls_uses_specific_headline() {
+        let info = classify(&ProviderError::Tls("invalid peer certificate".into()));
+        assert_eq!(info.class, LlmErrorClass::Network);
+        assert!(info.retryable);
+        assert!(info.headline.to_ascii_lowercase().contains("secure"));
     }
 
     #[test]
