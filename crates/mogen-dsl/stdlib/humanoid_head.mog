@@ -1,4 +1,4 @@
-// summary: Smooth-blended humanoid head (cranium + jaw). Connector "neck" at the underside.
+// summary: Smooth-blended humanoid head (cranium + jaw). Connectors: neck (under), crown (top, hair), eye_l/eye_r (front), nose (front-mid), mouth (front-jaw), ear_l/ear_r (sides).
 module "humanoid_head" (size=0.11, jaw=0.7) {
   union "head" (smooth=0.04) {
     sphere "cranium" (radius=$size, rings=12, segments=18)
@@ -6,6 +6,13 @@ module "humanoid_head" (size=0.11, jaw=0.7) {
       pos=[0, $size * -0.55, $size * 0.15],
       size=[$size * 1.2, $size * $jaw, $size * 1.0]
     )
-    connector "neck" (at=[0, $size * -0.95, 0], dir=[0, -1, 0], tag=neck)
+    connector "neck"  (at=[0, $size * -0.95, 0],                dir=[0, -1, 0], tag=neck)
+    connector "crown" (at=[0, $size *  0.95, 0],                dir=[0,  1, 0], tag=crown)
+    connector "eye_l" (at=[ $size * 0.35, $size * 0.1, $size * -0.85], dir=[0, 0, -1], tag=eye)
+    connector "eye_r" (at=[$size * -0.35, $size * 0.1, $size * -0.85], dir=[0, 0, -1], tag=eye)
+    connector "nose"  (at=[0,             $size * -0.05, $size * -0.95], dir=[0, 0, -1], tag=nose)
+    connector "mouth" (at=[0,             $size * -0.5,  $size * -0.85], dir=[0, 0, -1], tag=mouth)
+    connector "ear_l" (at=[ $size * 0.95, $size * 0.1,  0],            dir=[ 1, 0, 0], tag=ear)
+    connector "ear_r" (at=[$size * -0.95, $size * 0.1,  0],            dir=[-1, 0, 0], tag=ear)
   }
 }

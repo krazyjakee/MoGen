@@ -25,7 +25,7 @@ pub const KNOWN_KINDS: &[&str] = &[
 /// Covers transforms, material binding, role/tags metadata, and the placement
 /// shortcuts (`x`/`y`/`z`, `anchor`, `from`/`to` corners, sibling relations).
 pub const GEOMETRY_COMMON_ATTRS: &[&str] = &[
-    "pos", "rot", "scale", "role", "tags", "mat", "skin",
+    "pos", "rot", "scale", "role", "tags", "mat", "skin", "bind",
     // Per-component shortcuts.
     "x", "y", "z", "rx", "ry", "rz", "w", "h", "d",
     // Placement ergonomics.
@@ -266,6 +266,15 @@ fn check_attrs(n: &Node, materials: &HashSet<String>, diags: &mut Vec<Diagnostic
                 }
             }
         }
+        if k == "bind" && n.attr("skin").is_none() {
+            diags.push(
+                Diagnostic::warning(
+                    "W0105",
+                    "`bind=\"...\"` has no effect without a `skin=\"...\"` attribute",
+                )
+                .with_span(n.span),
+            );
+        }
     }
 }
 
@@ -500,7 +509,7 @@ fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         | ("attach", "socket") | ("attach", "plug") => "string",
         ("attach", "offset") | ("attach", "twist") => "number",
         ("lod_scale", "value") => "number",
-        (_, "mat") | (_, "role") | (_, "skin") => "string",
+        (_, "mat") | (_, "role") | (_, "skin") | (_, "bind") => "string",
         (_, "tags") => "string",
         _ => return None,
     };

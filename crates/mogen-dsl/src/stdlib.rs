@@ -21,6 +21,11 @@ const STDLIB_FILES: &[(&str, &str)] = &[
     ("humanoid_arm.mog",          include_str!("../stdlib/humanoid_arm.mog")),
     ("humanoid_leg.mog",          include_str!("../stdlib/humanoid_leg.mog")),
     ("humanoid_hand_5fingers.mog",include_str!("../stdlib/humanoid_hand_5fingers.mog")),
+    ("humanoid_foot.mog",         include_str!("../stdlib/humanoid_foot.mog")),
+    ("humanoid_face.mog",         include_str!("../stdlib/humanoid_face.mog")),
+    ("humanoid_hair_short.mog",   include_str!("../stdlib/humanoid_hair_short.mog")),
+    ("humanoid_hair_long.mog",    include_str!("../stdlib/humanoid_hair_long.mog")),
+    ("humanoid_full.mog",         include_str!("../stdlib/humanoid_full.mog")),
     ("quadruped_torso.mog",       include_str!("../stdlib/quadruped_torso.mog")),
     ("quadruped_leg.mog",         include_str!("../stdlib/quadruped_leg.mog")),
     ("tail.mog",                  include_str!("../stdlib/tail.mog")),
@@ -116,6 +121,18 @@ mod tests {
     fn each_stdlib_module_lowers_in_isolation() {
         // Round-trip: instantiate every stdlib module from a minimal scene
         // and ensure it builds a valid scene graph end-to-end.
+        //
+        // Some humanoid modules reference materials by well-known names
+        // (`skin`, `cloth`, `hair`, `eye`, `mouth`, `boot`). Declare a
+        // standard palette up front so they can lower without the caller
+        // having to redeclare materials per-test.
+        let preamble = "\
+            material \"skin\"  (color=[0.85, 0.65, 0.55])\n\
+            material \"cloth\" (color=[0.30, 0.40, 0.60])\n\
+            material \"hair\"  (color=[0.20, 0.15, 0.10])\n\
+            material \"eye\"   (color=[0.08, 0.08, 0.10])\n\
+            material \"mouth\" (color=[0.50, 0.20, 0.20])\n\
+            material \"boot\"  (color=[0.15, 0.10, 0.05])\n";
         let reg = stdlib_registry();
         for name in reg.names() {
             let def = reg.get(name).unwrap();
@@ -124,10 +141,9 @@ mod tests {
             if def.params.iter().any(|p| p.default.is_none()) {
                 continue;
             }
-            let src = format!("scene {{ use \"{name}\" () }}");
-            let ast = parse(&src).unwrap_or_else(|e| panic!("parse: {e}"));
-            let scene = lower(&ast)
-                .unwrap_or_else(|e| panic!("lower {name} failed: {e}"));
+            let src = format!("{preamble}scene {{ use \"{name}\" () }}");
+            let ast = parse(&src).unwrap_or_else(|e| panic!("parse {name}: {e}"));
+            let scene = lower(&ast).unwrap_or_else(|e| panic!("lower {name} failed: {e}"));
             assert!(
                 !scene.nodes.is_empty(),
                 "stdlib module `{name}` produced an empty scene graph",

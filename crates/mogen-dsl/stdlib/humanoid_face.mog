@@ -1,0 +1,21 @@
+// summary: Humanoid face cluster — eye_l, eye_r, nose, mouth as separate top-level nodes; attach each to its matching connector on `humanoid_head` (eye_l→eye_l, eye_r→eye_r, nose→nose, mouth→mouth). Caller must declare materials `eye`, `skin`, `mouth`.
+module "humanoid_face" (size=0.11) {
+  sphere "eye_l" (radius=$size * 0.13, mat="eye", rings=8, segments=12) {
+    connector "back" (at=[0, 0, $size * 0.06], dir=[0, 0, 1], tag=eye)
+  }
+  sphere "eye_r" (radius=$size * 0.13, mat="eye", rings=8, segments=12) {
+    connector "back" (at=[0, 0, $size * 0.06], dir=[0, 0, 1], tag=eye)
+  }
+  capsule "nose" (
+    radius=$size * 0.09, height=$size * 0.18, rot=[90, 0, 0],
+    mat="skin", rings=2, segments=10
+  ) {
+    connector "back" (at=[0, 0, $size * 0.1], dir=[0, 0, 1], tag=nose)
+  }
+  rounded_box "mouth" (
+    size=[$size * 0.36, $size * 0.06, $size * 0.04],
+    radius=$size * 0.025, segments=2, mat="mouth"
+  ) {
+    connector "back" (at=[0, 0, $size * 0.02], dir=[0, 0, 1], tag=mouth)
+  }
+}

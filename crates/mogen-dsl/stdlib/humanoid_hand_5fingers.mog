@@ -1,17 +1,23 @@
-// summary: Five-fingered hand — palm with 4 fingers + thumb, smoothly blended.
+// summary: Five-fingered hand (left-handed). Wrist plug at +Y end, fingers extend in -Y so the hand hangs straight off an arm whose wrist socket points -Y. Thumb on the palm-front/-Z side, pinky on the back/+Z side. Mirror with `mirror axis=x` to produce a right hand. Connectors: `wrist` (+Y, attach to arm), `grip` (-Y, anchor for held cylinders).
 module "humanoid_hand_5fingers" (size=0.09) {
-  union "hand" (smooth=0.012) {
-    rounded_box "palm" (size=[$size, $size * 0.3, $size * 0.7], radius=$size * 0.15, segments=2)
-    capsule "thumb"  (pos=[ $size * 0.55, 0,             $size * 0.2],
-                      radius=$size * 0.16, height=$size * 0.55, rings=2, segments=10)
-    capsule "index"  (pos=[ $size * 0.35, $size * 0.05, $size * -0.55],
-                      radius=$size * 0.13, height=$size * 0.6,  rings=2, segments=10)
-    capsule "middle" (pos=[ $size * 0.10, $size * 0.05, $size * -0.6],
-                      radius=$size * 0.13, height=$size * 0.65, rings=2, segments=10)
-    capsule "ring"   (pos=[$size * -0.15, $size * 0.05, $size * -0.55],
-                      radius=$size * 0.13, height=$size * 0.6,  rings=2, segments=10)
-    capsule "pinky"  (pos=[$size * -0.40, $size * 0.05, $size * -0.45],
-                      radius=$size * 0.11, height=$size * 0.5,  rings=2, segments=10)
-    connector "wrist" (at=[$size * 0.5, 0, 0], dir=[1, 0, 0], tag=wrist)
+  union "hand" (smooth=$size * 0.06) {
+    rounded_box "palm"   (size=[$size * 0.22, $size * 0.65, $size * 0.40],
+                          radius=$size * 0.05, segments=2)
+    capsule "index"  (pos=[$size * -0.04, $size * -0.50, $size * -0.13],
+                      radius=$size * 0.08, height=$size * 0.36, rings=2, segments=10)
+    capsule "middle" (pos=[$size * -0.04, $size * -0.52, $size * -0.04],
+                      radius=$size * 0.08, height=$size * 0.40, rings=2, segments=10)
+    capsule "ring"   (pos=[$size * -0.04, $size * -0.50, $size *  0.06],
+                      radius=$size * 0.08, height=$size * 0.36, rings=2, segments=10)
+    capsule "pinky"  (pos=[$size * -0.04, $size * -0.45, $size *  0.16],
+                      radius=$size * 0.07, height=$size * 0.30, rings=2, segments=10)
+    // Thumb sits proximal, on the palm-front (-X) and radial (-Z) corner.
+    // rot=[-100,0,0] tilts the capsule's +Y long-axis toward (-Z, -Y), so
+    // the thumb angles forward and slightly down — relaxed, not splayed.
+    capsule "thumb"  (pos=[$size * -0.13, $size * -0.06, $size * -0.22],
+                      rot=[-100, 0, 0],
+                      radius=$size * 0.10, height=$size * 0.33, rings=2, segments=10)
+    connector "wrist" (at=[0, $size * 0.32, 0], dir=[0,  1, 0], tag=wrist)
+    connector "grip"  (at=[$size * -0.05, 0, 0], dir=[0, -1, 0], tag=grip)
   }
 }

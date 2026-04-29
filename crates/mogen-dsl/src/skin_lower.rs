@@ -107,16 +107,19 @@ fn lower_bone(
 
 /// Bind every scene node whose `skin` attribute names an existing skin. For
 /// each such node, compute per-vertex weights by nearest-bone + envelope
-/// falloff and populate `Mesh::joints` / `Mesh::weights`.
+/// falloff and populate `Mesh::joints` / `Mesh::weights`. If the node also
+/// carries `bind="<bone>"`, every vertex is rigidly weighted 1.0 to that
+/// single joint instead — used for accessories that should follow one bone
+/// without deforming (hats, backpacks, hand-held props).
 pub fn bind_meshes(ast: &[Node], graph: &mut SceneGraph) -> Result<()> {
-    let bindings: Vec<(String, String)> = collect_skin_bindings(ast);
+    let bindings = collect_skin_bindings(ast);
     if bindings.is_empty() {
         return Ok(());
     }
 
     let worlds = graph.world_transforms();
 
-    for (node_name, skin_name) in bindings {
+    for (node_name, skin_name, bind_to) in bindings {
         let skin_id = graph
             .find_skin(&skin_name)
             .ok_or_else(|| anyhow!("mesh \"{node_name}\" refers to unknown skin \"{skin_name}\""))?;
@@ -125,7 +128,7 @@ pub fn bind_meshes(ast: &[Node], graph: &mut SceneGraph) -> Result<()> {
             .ok_or_else(|| anyhow!("skin binding: unknown scene node \"{node_name}\""))?;
 
         let mesh_world = worlds[node_id.0 as usize];
-        let (joint_worlds, envelopes) = {
+        let (joint_worlds, envelopes, bind_index) = {
             let skin = &graph.skins[skin_id.0 as usize];
             let joint_worlds: Vec<Mat4> = skin
                 .joints
@@ -137,7 +140,22 @@ pub fn bind_meshes(ast: &[Node], graph: &mut SceneGraph) -> Result<()> {
             } else {
                 vec![DEFAULT_ENVELOPE; skin.joints.len()]
             };
-            (joint_worlds, envelopes)
+            let bind_index = match &bind_to {
+                Some(bone) => {
+                    let idx = skin
+                        .joints
+                        .iter()
+                        .position(|j| graph.nodes[j.0 as usize].name == *bone)
+                        .ok_or_else(|| {
+                            anyhow!(
+                                "mesh \"{node_name}\" `bind=\"{bone}\"` does not name a bone in skin \"{skin_name}\""
+                            )
+                        })?;
+                    Some(idx as u16)
+                }
+                None => None,
+            };
+            (joint_worlds, envelopes, bind_index)
         };
 
         let (joints, weights, baked_positions, baked_normals) = {
@@ -168,8 +186,15 @@ pub fn bind_meshes(ast: &[Node], graph: &mut SceneGraph) -> Result<()> {
                     [rotated.x, rotated.y, rotated.z]
                 })
                 .collect();
-            let (j, w) =
-                compute_skin_weights(&baked_positions, Mat4::IDENTITY, &joint_worlds, &envelopes);
+            let (j, w) = match bind_index {
+                Some(idx) => rigid_skin_weights(baked_positions.len(), idx),
+                None => compute_skin_weights(
+                    &baked_positions,
+                    Mat4::IDENTITY,
+                    &joint_worlds,
+                    &envelopes,
+                ),
+            };
             (j, w, baked_positions, baked_normals)
         };
 
@@ -194,37 +219,99 @@ fn transform_from_attrs(node: &Node) -> Transform {
     Transform::from_trs(t, r, s)
 }
 
-/// Walk the post-expansion AST collecting `(node_name, skin_name)` pairs from
-/// every node that carries a `skin="..."` attribute. Only nodes with an
-/// explicit `name` can be bound, since we resolve the scene target by name.
-fn collect_skin_bindings(ast: &[Node]) -> Vec<(String, String)> {
+/// Walk the post-expansion AST collecting `(node_name, skin_name, bind_to)`
+/// triples from every node that carries a `skin="..."` attribute. `bind_to`
+/// is the optional `bind="<bone>"` override that pins every vertex to a
+/// single joint with weight 1.0. Only nodes with an explicit `name` can be
+/// bound, since we resolve the scene target by name.
+fn collect_skin_bindings(ast: &[Node]) -> Vec<(String, String, Option<String>)> {
     let mut out = Vec::new();
     for n in ast {
-        walk_bindings(n, &mut out);
+        walk_bindings(n, None, &mut out);
     }
     out
 }
 
-fn walk_bindings(node: &Node, out: &mut Vec<(String, String)>) {
+/// Whether `kind` produces an actual mesh node that can carry skin weights.
+/// Group-like containers (`scene`, `group`, `solid`, `stack`, `grid`) only
+/// pass `skin=` down to their descendants; they don't bind meshes themselves.
+fn is_mesh_kind(kind: &str) -> bool {
+    !matches!(
+        kind,
+        "scene"
+            | "group"
+            | "solid"
+            | "stack"
+            | "grid"
+            | "array"
+            | "mirror"
+            | "module"
+            | "use"
+            | "skeleton"
+            | "bone"
+            | "material"
+            | "attach"
+            | "connector"
+            | "joint"
+            | "clip"
+            | "track"
+            | "spin"
+            | "open_close"
+            | "wave"
+            | "flap"
+            | "idle"
+    )
+}
+
+fn walk_bindings(
+    node: &Node,
+    inherited_skin: Option<&str>,
+    out: &mut Vec<(String, String, Option<String>)>,
+) {
     // Bones and skeletons can't be skin targets; don't descend into them.
     if node.kind == "skeleton" || node.kind == "bone" {
         return;
     }
-    if let Some(skin_ref) = skin_attr(node) {
-        if let Some(name) = &node.name {
-            out.push((name.clone(), skin_ref));
+    let own_skin = string_attr(node, "skin");
+    let effective_skin: Option<String> = own_skin
+        .as_deref()
+        .or(inherited_skin)
+        .map(|s| s.to_string());
+
+    // A node is a binding target only if it actually has a mesh. Groups that
+    // carry `skin=` propagate the binding to their mesh descendants instead.
+    if let (Some(skin_ref), Some(name)) = (&effective_skin, &node.name) {
+        if is_mesh_kind(&node.kind) {
+            let bind_to = string_attr(node, "bind");
+            out.push((name.clone(), skin_ref.clone(), bind_to));
         }
     }
+    // CSG operands (`union`/`difference`/`intersect` children) are fused into
+    // the parent node's mesh at lowering — they don't survive as separate
+    // scene nodes, so a propagated `skin=` would dangle. Stop the walk here.
+    if matches!(node.kind.as_str(), "union" | "difference" | "intersect") {
+        return;
+    }
     for c in &node.children {
-        walk_bindings(c, out);
+        walk_bindings(c, effective_skin.as_deref(), out);
     }
 }
 
-fn skin_attr(node: &Node) -> Option<String> {
-    match node.attr("skin")? {
+fn string_attr(node: &Node, key: &str) -> Option<String> {
+    match node.attr(key)? {
         crate::ast::Value::String(s) | crate::ast::Value::Ident(s) => Some(s.clone()),
         _ => None,
     }
+}
+
+/// Pin every vertex rigidly to a single joint — used by `bind="<bone>"`.
+/// Skips envelope falloff so accessories follow exactly one bone with no
+/// stretching across neighbours.
+fn rigid_skin_weights(count: usize, joint: u16) -> (Vec<[u16; 4]>, Vec<[f32; 4]>) {
+    (
+        vec![[joint, 0, 0, 0]; count],
+        vec![[1.0, 0.0, 0.0, 0.0]; count],
+    )
 }
 
 /// Assign each vertex up to `MAX_INFLUENCES` bones using a linear envelope

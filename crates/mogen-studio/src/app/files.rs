@@ -128,8 +128,12 @@ impl MogenStudioApp {
 
     pub(super) fn activate(&mut self, i: usize) {
         // Snapshot the previous tab's camera so we can restore it on return.
+        // Skip when prev == i: that's not a real tab switch (e.g. open_path
+        // replacing a pristine untitled, or activate called on the current
+        // tab) and would clobber a freshly-loaded file's `camera = None`
+        // with the stale viewer pose, defeating the first-render auto-fit.
         let prev = self.active;
-        if prev < self.files.len() {
+        if prev != i && prev < self.files.len() {
             self.files[prev].camera = Some(self.viewer.camera_snapshot());
         }
         self.active = i;

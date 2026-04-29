@@ -201,22 +201,37 @@ from a validator failure.
 8. **Organic shapes** (people, animals, plants): prefer `use \"humanoid_*\"` \
    / `use \"quadruped_*\"` from the stdlib over rebuilding limbs from raw \
    primitives — the stdlib parts already smin-blend their internal joints \
-   (no shoulder or knee crease). For **whole trees / large bushes** reach \
-   for the recursive `branch (...)` node — one declaration emits a tapered \
-   trunk + recursive forks + alpha-cutout `leaf_card` foliage at every \
-   tip; pair it with `material (alpha_mode=\"mask\", double_sided=1)` for \
-   the leaf material. Use `use \"leaf\"` only when you need a single \
-   curved-plane leaf cluster on something that *isn't* a procedural tree \
-   (potted plant, single hanging vine). When two parts of one body must visually merge into one \
-   surface — neck-into-torso, hip-cap-into-leg, jaw-into-skull — wrap them \
-   in `union \"joint\" (smooth=K) { ... }` with `K ≈ 0.04–0.10` for \
-   human-scale parts (`K` is a fillet radius in metres; too large and the \
-   parts melt together, too small and the seam stays visible). Allow \
-   ±3 % asymmetry on paired parts (one ear/leg slightly different) — \
-   biology is never perfectly mirrored. Material naming: \
-   `<creature>_<region>_<surface>` (e.g. `tiger_back_fur`, `oak_bark`, \
-   `koi_belly_scales`) so the texture pipeline picks anatomical priors \
-   when generating the albedo.";
+   (no shoulder or knee crease). **Detail floor for any humanoid or \
+   creature: hands (or paws/claws), feet (or hooves/pads), and facial \
+   features (eyes + nose/snout + mouth or beak) are required.** A bare \
+   torso + 4 capsule limbs reads as a placeholder, not a character. For a \
+   generic person the one-line `use \"humanoid_full\" (height=1.7)` is the \
+   correct default: it expands into torso + head + arms + hands + legs + \
+   feet + face + hair, pre-attached and pre-skinned to a `\"rig\"` \
+   skeleton. It expects the standard material palette `skin` / `cloth` / \
+   `hair` / `eye` / `mouth` / `boot` declared at the top of the scene; \
+   attach hats, packs, weapons, or armor to the figure with `attach`. \
+   Reach for the granular humanoid_* parts (`humanoid_torso`, \
+   `humanoid_head`, `humanoid_arm`, `humanoid_leg`, \
+   `humanoid_hand_5fingers`, `humanoid_foot`, `humanoid_face`, \
+   `humanoid_hair_short`/`_long`) only when proportions need to deviate \
+   from `humanoid_full`'s defaults. Use `humanoid_full` only ONCE per \
+   scene (it embeds a `\"rig\"` skeleton). For **whole trees / large \
+   bushes** reach for the recursive `branch (...)` node — one declaration \
+   emits a tapered trunk + recursive forks + alpha-cutout `leaf_card` \
+   foliage at every tip; pair it with `material (alpha_mode=\"mask\", \
+   double_sided=1)` for the leaf material. Use `use \"leaf\"` only when \
+   you need a single curved-plane leaf cluster on something that *isn't* \
+   a procedural tree (potted plant, single hanging vine). When two parts \
+   of one body must visually merge into one surface — neck-into-torso, \
+   hip-cap-into-leg, jaw-into-skull — wrap them in `union \"joint\" \
+   (smooth=K) { ... }` with `K ≈ 0.04–0.10` for human-scale parts \
+   (`K` is a fillet radius in metres; too large and the parts melt \
+   together, too small and the seam stays visible). Allow ±3 % asymmetry \
+   on paired parts (one ear/leg slightly different) — biology is never \
+   perfectly mirrored. Material naming: `<creature>_<region>_<surface>` \
+   (e.g. `tiger_back_fur`, `oak_bark`, `koi_belly_scales`) so the texture \
+   pipeline picks anatomical priors when generating the albedo.";
 
 const GRAMMAR_REFERENCE: &str = "\
 A `.mog` file is a sequence of nodes. Each node is:
@@ -591,44 +606,31 @@ scene {
 
 ### Prompt: \"a person walking\"
 ### Output:
-material \"skin_m\" (color=[0.82, 0.64, 0.55], roughness=0.7)
-material \"shirt\"  (color=[0.22, 0.38, 0.62], roughness=0.75)
-material \"pants\"  (color=[0.15, 0.16, 0.2],  roughness=0.8)
+material \"skin\"  (color=[0.85, 0.65, 0.55], roughness=0.7)
+material \"cloth\" (color=[0.22, 0.38, 0.62], roughness=0.85)
+material \"hair\"  (color=[0.20, 0.15, 0.10], roughness=0.9)
+material \"eye\"   (color=[0.08, 0.08, 0.10], roughness=0.4)
+material \"mouth\" (color=[0.55, 0.20, 0.20], roughness=0.7)
+material \"boot\"  (color=[0.15, 0.10, 0.05], roughness=0.85)
 
 scene {
-  skeleton \"rig\" {
-    bone \"hip\" (pos=[0, 0.95, 0], envelope=0.28) {
-      bone \"spine\" (pos=[0, 0.3, 0], envelope=0.32) {
-        bone \"neck\" (pos=[0, 0.2, 0], envelope=0.15)
-        bone \"shoulder_l\" (pos=[ 0.2, 0.18, 0], envelope=0.2) {
-          bone \"elbow_l\" (pos=[0, -0.25, 0], envelope=0.15)
-        }
-        bone \"shoulder_r\" (pos=[-0.2, 0.18, 0], envelope=0.2) {
-          bone \"elbow_r\" (pos=[0, -0.25, 0], envelope=0.15)
-        }
-      }
-      bone \"hip_l\" (pos=[ 0.1, 0, 0], envelope=0.22) {
-        bone \"knee_l\" (pos=[0, -0.45, 0], envelope=0.2)
-      }
-      bone \"hip_r\" (pos=[-0.1, 0, 0], envelope=0.22) {
-        bone \"knee_r\" (pos=[0, -0.45, 0], envelope=0.2)
-      }
-    }
-  }
-
-  sphere   \"head\"  (pos=[0, 1.6, 0],  radius=0.12, mat=\"skin_m\", skin=\"rig\")
-  cylinder \"torso\" (pos=[0, 1.2, 0],  radius=0.18, height=0.55, mat=\"shirt\", skin=\"rig\")
-  cylinder \"arm_l\" (pos=[ 0.27, 1.1, 0], radius=0.06, height=0.5, mat=\"skin_m\", skin=\"rig\")
-  cylinder \"arm_r\" (pos=[-0.27, 1.1, 0], radius=0.06, height=0.5, mat=\"skin_m\", skin=\"rig\")
-  cylinder \"leg_l\" (pos=[ 0.1, 0.5, 0], radius=0.08, height=0.9, mat=\"pants\",  skin=\"rig\")
-  cylinder \"leg_r\" (pos=[-0.1, 0.5, 0], radius=0.08, height=0.9, mat=\"pants\",  skin=\"rig\")
+  // `humanoid_full` expands into torso + head + arms + hands + legs + feet +
+  // face + hair, all attached to a single \"rig\" skeleton. One line gives
+  // the complete figure; the named bones below are exposed for animation.
+  use \"humanoid_full\" (height=1.7)
 }
 
+// Walk cycle drives the rig the module already wired up. End each track on
+// the same value as it starts so the loop is seamless.
 clip \"walk\" (seconds=1.0) {
   track \"hip_l\"      (prop=rotation, axis=[1, 0, 0], keys=[[0, -25], [0.5,  25], [1.0, -25]])
   track \"hip_r\"      (prop=rotation, axis=[1, 0, 0], keys=[[0,  25], [0.5, -25], [1.0,  25]])
+  track \"knee_l\"     (prop=rotation, axis=[1, 0, 0], keys=[[0,   0], [0.25, 35], [0.5,  0], [1.0,  0]])
+  track \"knee_r\"     (prop=rotation, axis=[1, 0, 0], keys=[[0,   0], [0.5,   0], [0.75, 35], [1.0, 0]])
   track \"shoulder_l\" (prop=rotation, axis=[1, 0, 0], keys=[[0,  20], [0.5, -20], [1.0,  20]])
   track \"shoulder_r\" (prop=rotation, axis=[1, 0, 0], keys=[[0, -20], [0.5,  20], [1.0, -20]])
+  track \"elbow_l\"    (prop=rotation, axis=[1, 0, 0], keys=[[0, -10], [0.5, -30], [1.0, -10]])
+  track \"elbow_r\"    (prop=rotation, axis=[1, 0, 0], keys=[[0, -30], [0.5, -10], [1.0, -30]])
 }
 
 ### Prompt: \"a crouching tiger\"
@@ -659,31 +661,32 @@ scene {
   attach (parent=\"torso\", child=\"leg_br\", socket=\"leg_br\", plug=\"top\")
 }
 
-### Prompt: \"a person mid-stride\"
+### Prompt: \"a knight in armor\"
 ### Output:
-material \"skin\"  (color=[0.92, 0.78, 0.65], roughness=0.7)
-material \"shirt\" (color=[0.20, 0.45, 0.75], roughness=0.85)
-material \"pants\" (color=[0.18, 0.20, 0.25], roughness=0.85)
+material \"skin\"  (color=[0.85, 0.65, 0.55], roughness=0.7)
+material \"cloth\" (color=[0.18, 0.20, 0.25], roughness=0.85)
+material \"hair\"  (color=[0.45, 0.30, 0.18], roughness=0.9)
+material \"eye\"   (color=[0.10, 0.18, 0.25], roughness=0.4)
+material \"mouth\" (color=[0.55, 0.20, 0.20], roughness=0.7)
+material \"boot\"  (color=[0.20, 0.13, 0.08], roughness=0.85)
+material \"steel\" (color=[0.72, 0.74, 0.78], metallic=1.0, roughness=0.35)
+material \"hilt\"  (color=[0.55, 0.40, 0.20], roughness=0.6)
 
 scene {
-  // Humanoid torso exposes neck/shoulder_l/shoulder_r/hip_l/hip_r connectors.
-  // attach pins each limb at its socket; `rot=` on the attached child poses
-  // the limb around that anchor, so a stride is one rot per leg, not pos math.
-  group \"body\" (y=1.05, mat=\"shirt\") {
-    use \"humanoid_torso\" (height=0.55, width=0.36, depth=0.22)
-  }
-  use \"humanoid_head\" (size=0.11, jaw=0.55)
+  // Start from the full preset, then attach armor + sword to the existing
+  // body parts via their connectors. `helmet` mounts on the head's `crown`;
+  // `chestplate` parents to `torso` (front face); `sword` to `hand_r`'s wrist.
+  use \"humanoid_full\" (height=1.7)
 
-  capsule \"leg_l\" (radius=0.07, height=0.9, rot=[-20, 0, 0], mat=\"pants\")
-  capsule \"leg_r\" (radius=0.07, height=0.9, rot=[ 20, 0, 0], mat=\"pants\")
-  capsule \"arm_l\" (radius=0.05, height=0.55, mat=\"skin\")
-  capsule \"arm_r\" (radius=0.05, height=0.55, mat=\"skin\")
+  hemisphere   \"helmet\"     (radius=0.13, mat=\"steel\")
+  rounded_box  \"chestplate\" (size=[0.42, 0.5, 0.06], radius=0.03, segments=2, mat=\"steel\")
+  cylinder     \"sword_blade\" (radius=0.025, height=0.7, mat=\"steel\")
+  cylinder     \"sword_hilt\"  (radius=0.025, height=0.12, mat=\"hilt\")
 
-  attach (parent=\"torso\", child=\"head\",  socket=\"neck\",       plug=\"neck\")
-  attach (parent=\"torso\", child=\"leg_l\", socket=\"hip_l\",      plug=\"top\")
-  attach (parent=\"torso\", child=\"leg_r\", socket=\"hip_r\",      plug=\"top\")
-  attach (parent=\"torso\", child=\"arm_l\", socket=\"shoulder_l\", plug=\"top\")
-  attach (parent=\"torso\", child=\"arm_r\", socket=\"shoulder_r\", plug=\"top\")
+  attach (parent=\"head\",   child=\"helmet\",     socket=\"crown\", plug=\"bottom\", offset=-0.04)
+  attach (parent=\"torso\",  child=\"chestplate\", socket=\"front\", plug=\"back\")
+  attach (parent=\"hand_r\", child=\"sword_hilt\", socket=\"wrist\", plug=\"bottom\")
+  attach (parent=\"sword_hilt\", child=\"sword_blade\", socket=\"top\", plug=\"bottom\")
 }
 
 ### Prompt: \"a small wooden cart\"
@@ -953,11 +956,17 @@ mod tests {
         // tiger and mid-stride fewshots to use `attach` to module connectors
         // (instead of hand-computed `pos=` placement that contradicted Rule 2)
         // was net-flat, and adding a small mirrored-cart fewshot to demonstrate
-        // safe `mirror axis=x` use added ~1.5 KB. The cap now sits at ~38 KB —
-        // still small enough to catch a revived long-form section.
+        // safe `mirror axis=x` use added ~1.5 KB. Adding the detail-floor
+        // language to Rule 8 + pointing at `humanoid_full`/`humanoid_face`/
+        // `humanoid_foot`/`humanoid_hair_*`, plus rewriting the two humanoid
+        // fewshots to use the new preset (walking + armored knight), added
+        // ~1.5 KB net — the knight fewshot demonstrates how to attach
+        // armor and weapons to the parts `humanoid_full` exposes. The cap
+        // now sits at ~40 KB — still small enough to catch a revived
+        // long-form section.
         let s = system_instruction(&StdlibIndex::default());
         assert!(
-            s.len() < 38_000,
+            s.len() < 40_000,
             "system instruction grew to {} bytes — did a section come back?",
             s.len()
         );
@@ -1024,24 +1033,59 @@ mod tests {
 
     #[test]
     fn organic_fewshots_attach_limbs_via_module_connectors() {
-        // Tiger and mid-stride used to place limbs by hand-computed `pos=`,
-        // which directly contradicted Rule 2 of the preamble. They now attach
-        // to the connectors that `quadruped_torso` / `humanoid_torso` already
-        // expose, so the rule and the demonstration agree.
+        // The tiger fewshot still attaches legs to torso connectors via
+        // quadruped_torso. Humanoid figures now go through `humanoid_full`,
+        // so we check the knight fewshot demonstrates attaching armor to
+        // the parts the preset already provides.
         let s = system_instruction(&StdlibIndex::default());
         assert!(
             s.contains("attach (parent=\"torso\", child=\"leg_fl\""),
             "tiger fewshot should attach legs to torso connectors"
         );
         assert!(
-            s.contains("attach (parent=\"torso\", child=\"hip_l\"")
-                || s.contains("attach (parent=\"torso\", child=\"leg_l\", socket=\"hip_l\""),
-            "mid-stride fewshot should attach legs to humanoid_torso hip sockets"
+            s.contains("attach (parent=\"head\",   child=\"helmet\""),
+            "knight fewshot should attach helmet to head's crown connector"
         );
         assert!(
-            s.contains("attach (parent=\"torso\", child=\"arm_l\", socket=\"shoulder_l\""),
-            "mid-stride fewshot should attach arms to humanoid_torso shoulder sockets"
+            s.contains("attach (parent=\"hand_r\", child=\"sword_hilt\""),
+            "knight fewshot should attach a sword to a hand from humanoid_full"
         );
+    }
+
+    #[test]
+    fn humanoid_fewshots_use_humanoid_full_preset() {
+        // Both walking and knight fewshots now lean on `humanoid_full` so the
+        // detail floor (hands/feet/face/hair) is met without the LLM having
+        // to author every part by hand.
+        let s = system_instruction(&StdlibIndex::default());
+        assert!(
+            s.contains("use \"humanoid_full\" (height=1.7)"),
+            "walking fewshot should use humanoid_full"
+        );
+        // Both fewshots use h=1.7 — known good height for humanoid_full's
+        // current proportions; some other heights hit a CSG manifold edge
+        // case in the smin-blended limbs. The preamble also references the
+        // same call form once, so we expect at least 3 occurrences.
+        assert!(
+            s.matches("use \"humanoid_full\" (height=1.7)").count() >= 3,
+            "expected humanoid_full(height=1.7) to appear in preamble + both humanoid fewshots"
+        );
+        // The standard material palette must appear so the LLM copies it.
+        assert!(s.contains("material \"skin\""));
+        assert!(s.contains("material \"cloth\""));
+        assert!(s.contains("material \"hair\""));
+        assert!(s.contains("material \"eye\""));
+        assert!(s.contains("material \"mouth\""));
+        assert!(s.contains("material \"boot\""));
+    }
+
+    #[test]
+    fn organic_preamble_has_detail_floor_rule() {
+        // The detail-floor language is what makes the LLM stop emitting
+        // hand/foot/face-less placeholder figures from short prompts.
+        let s = system_instruction(&StdlibIndex::default());
+        assert!(s.contains("Detail floor for any humanoid or creature"));
+        assert!(s.contains("humanoid_full"));
     }
 
     #[test]

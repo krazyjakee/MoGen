@@ -1,0 +1,20 @@
+// summary: Humanoid foot — sole + toe block smoothly blended into a boot-shaped form. Connectors: ankle (top), toe (front tip), heel (back). Caller sets `mat=` on the wrapping group, or declares `boot`.
+module "humanoid_foot" (length=0.26, width=0.1, height=0.1) {
+  union "foot" (smooth=0.025) {
+    rounded_box "sole" (
+      pos=[0, $height * -0.1, 0],
+      size=[$width, $height * 0.5, $length * 0.7],
+      radius=$height * 0.18, segments=2,
+      mat="boot"
+    )
+    rounded_box "toe" (
+      pos=[0, $height * 0.1, $length * -0.35],
+      size=[$width * 0.95, $height * 0.6, $length * 0.45],
+      radius=$height * 0.25, segments=2,
+      mat="boot"
+    )
+    connector "ankle" (at=[0, $height * 0.45,  $length * 0.1],  dir=[0,  1, 0], tag=ankle)
+    connector "toe"   (at=[0, 0,               $length * -0.5], dir=[0,  0, -1], tag=toe)
+    connector "heel"  (at=[0, $height * -0.1,  $length * 0.45], dir=[0,  0,  1], tag=heel)
+  }
+}

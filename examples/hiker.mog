@@ -1,0 +1,61 @@
+// mogen-generate seed=1777396758778793987
+// mogen-generate thinking=high
+// prompt: a hiker
+
+material "skin"        (color=[0.85, 0.65, 0.55], roughness=0.7)
+material "cloth"       (color=[0.55, 0.60, 0.45], roughness=0.85)
+material "hair"        (color=[0.25, 0.15, 0.10], roughness=0.9)
+material "eye"         (color=[0.10, 0.10, 0.12], roughness=0.4)
+material "mouth"       (color=[0.55, 0.20, 0.20], roughness=0.7)
+material "boot"        (color=[0.30, 0.20, 0.15], roughness=0.85)
+material "pack_mat"    (color=[0.85, 0.35, 0.15], roughness=0.8)
+material "bedroll_mat" (color=[0.20, 0.35, 0.55], roughness=0.9)
+material "pole_mat"    (color=[0.15, 0.15, 0.15], metallic=0.6, roughness=0.5)
+
+scene {
+  use "humanoid_full" (height=1.7)
+
+  // Backpack — rigidly bound to the spine bone so it tracks torso animation
+  // instead of staying frozen in world space when the rig moves.
+  rounded_box "backpack" (size=[0.32, 0.45, 0.18], radius=0.04,
+                          mat="pack_mat", skin="rig", bind="spine")
+  cylinder "bedroll" (radius=0.08, height=0.35, rot=[0, 0, 90],
+                      mat="bedroll_mat", skin="rig", bind="spine")
+
+  // Wide-brimmed hiking hat — bound to the neck bone (top of the rig).
+  cylinder "hat_brim" (radius=0.16, height=0.015,
+                       mat="cloth", skin="rig", bind="neck")
+  hemisphere "hat_dome" (radius=0.09,
+                         mat="cloth", skin="rig", bind="neck")
+
+  // Trekking pole — grip held in the right hand, both bound to wrist_r so
+  // the pole swings with the right arm during the walk cycle.
+  cylinder "grip" (radius=0.015, height=0.15,
+                   mat="boot", skin="rig", bind="wrist_r")
+  cylinder "pole" (radius=0.01, height=1.1,
+                   mat="pole_mat", skin="rig", bind="wrist_r")
+
+  // Attach gear to the humanoid
+  attach (parent="torso", child="backpack", socket="back", plug="front")
+  attach (parent="backpack", child="bedroll", socket="bottom", plug="top")
+
+  attach (parent="head", child="hat_brim", socket="crown", plug="bottom", offset=-0.03)
+  attach (parent="hat_brim", child="hat_dome", socket="top", plug="bottom")
+
+  // The hand's `grip` connector sits at palm-centre, dir=-Y, so a vertical
+  // cylinder hangs straight through the curl of the fingers when its `top`
+  // connector aligns to it. No twist needed with the redesigned hand.
+  attach (parent="hand_r", child="grip", socket="grip", plug="top")
+  attach (parent="grip",   child="pole", socket="bottom", plug="top")
+}
+
+clip "walk" (seconds=1.0) {
+  track "hip_l"      (prop=rotation, axis=[1, 0, 0], keys=[[0, -25], [0.5,  25], [1.0, -25]])
+  track "hip_r"      (prop=rotation, axis=[1, 0, 0], keys=[[0,  25], [0.5, -25], [1.0,  25]])
+  track "knee_l"     (prop=rotation, axis=[1, 0, 0], keys=[[0,   0], [0.25, 35], [0.5,  0], [1.0,  0]])
+  track "knee_r"     (prop=rotation, axis=[1, 0, 0], keys=[[0,   0], [0.5,   0], [0.75, 35], [1.0, 0]])
+  track "shoulder_l" (prop=rotation, axis=[1, 0, 0], keys=[[0,  20], [0.5, -20], [1.0,  20]])
+  track "shoulder_r" (prop=rotation, axis=[1, 0, 0], keys=[[0, -20], [0.5,  20], [1.0, -20]])
+  track "elbow_l"    (prop=rotation, axis=[1, 0, 0], keys=[[0, -10], [0.5, -30], [1.0, -10]])
+  track "elbow_r"    (prop=rotation, axis=[1, 0, 0], keys=[[0, -30], [0.5, -10], [1.0, -30]])
+}
