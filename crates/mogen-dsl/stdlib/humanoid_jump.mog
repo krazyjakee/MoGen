@@ -1,0 +1,53 @@
+// summary: One-shot 1.2s jump for humanoid_full's "rig": crouch → extend →
+// airborne tuck → land. Single play (not a loop). Drives bones by name;
+// requires `use "humanoid_full"` (or any rig using the same names).
+module "humanoid_jump" () {
+  clip "humanoid_jump" (seconds=1.2) {
+    // Hips: crouch flex, extend at launch, hold for tuck, land slightly bent.
+    track "hip_l"      (prop=rotation, axis=[1, 0, 0],
+                        keys=[[0, 0], [0.25, -30], [0.45, 10], [0.7, 25],
+                              [0.9, 5], [1.2, -10]])
+    track "hip_r"      (prop=rotation, axis=[1, 0, 0],
+                        keys=[[0, 0], [0.25, -30], [0.45, 10], [0.7, 25],
+                              [0.9, 5], [1.2, -10]])
+    // Knees: deep crouch, extend through launch, tuck airborne, absorb on land.
+    // Negative values bend the shin back toward the buttocks (natural human
+    // flex); positive would reverse-bend the joint like an insect.
+    track "knee_l"     (prop=rotation, axis=[1, 0, 0],
+                        keys=[[0, 0], [0.25, -80], [0.45, 0], [0.7, -60],
+                              [0.9, -20], [1.2, -40]])
+    track "knee_r"     (prop=rotation, axis=[1, 0, 0],
+                        keys=[[0, 0], [0.25, -80], [0.45, 0], [0.7, -60],
+                              [0.9, -20], [1.2, -40]])
+    // Ankles: dorsiflex on crouch, plantar-flex at launch (toe-off), neutral
+    // in air, dorsiflex on land.
+    track "ankle_l"    (prop=rotation, axis=[1, 0, 0],
+                        keys=[[0, 0], [0.25, 25], [0.45, -30], [0.7, 0],
+                              [1.2, 20]])
+    track "ankle_r"    (prop=rotation, axis=[1, 0, 0],
+                        keys=[[0, 0], [0.25, 25], [0.45, -30], [0.7, 0],
+                              [1.2, 20]])
+    // Arms: swing back during crouch, swing forward at launch, balance airborne.
+    track "shoulder_l" (prop=rotation, axis=[1, 0, 0],
+                        keys=[[0, 0], [0.25, -45], [0.45, 60], [0.7, 30],
+                              [0.9, 0], [1.2, -10]])
+    track "shoulder_r" (prop=rotation, axis=[1, 0, 0],
+                        keys=[[0, 0], [0.25, -45], [0.45, 60], [0.7, 30],
+                              [0.9, 0], [1.2, -10]])
+    track "elbow_l"    (prop=rotation, axis=[1, 0, 0],
+                        keys=[[0, 0], [0.25, 60], [0.45, 20], [0.7, 30],
+                              [1.2, 25]])
+    track "elbow_r"    (prop=rotation, axis=[1, 0, 0],
+                        keys=[[0, 0], [0.25, 60], [0.45, 20], [0.7, 30],
+                              [1.2, 25]])
+    // Spine bends forward in crouch, straightens at launch, slight forward
+    // for landing absorption.
+    track "spine_lower"(prop=rotation, axis=[1, 0, 0],
+                        keys=[[0, 0], [0.25, 20], [0.45, -5], [0.7, 0],
+                              [1.2, 15]])
+    // Vertical: lift at launch, peak airborne, descend to land.
+    track "hip"        (prop=translation, axis=[0, 1, 0],
+                        keys=[[0, 0], [0.25, -0.15], [0.45, 0.05], [0.7, 0.4],
+                              [0.9, 0.1], [1.2, -0.05]])
+  }
+}

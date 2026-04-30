@@ -621,16 +621,20 @@ scene {
 }
 
 // Walk cycle drives the rig the module already wired up. End each track on
-// the same value as it starts so the loop is seamless.
+// the same value as it starts so the loop is seamless. Sign convention for
+// hip/shoulder around +X: positive swings the limb forward (-Z), negative
+// swings it back (+Z). Knees and elbows must use NEGATIVE rotation around
+// +X so the shin/forearm bend backward (heel toward butt, forearm toward
+// face) — positive values produce a reverse insect-style joint.
 clip \"walk\" (seconds=1.0) {
   track \"hip_l\"      (prop=rotation, axis=[1, 0, 0], keys=[[0, -25], [0.5,  25], [1.0, -25]])
   track \"hip_r\"      (prop=rotation, axis=[1, 0, 0], keys=[[0,  25], [0.5, -25], [1.0,  25]])
-  track \"knee_l\"     (prop=rotation, axis=[1, 0, 0], keys=[[0,   0], [0.25, 35], [0.5,  0], [1.0,  0]])
-  track \"knee_r\"     (prop=rotation, axis=[1, 0, 0], keys=[[0,   0], [0.5,   0], [0.75, 35], [1.0, 0]])
+  track \"knee_l\"     (prop=rotation, axis=[1, 0, 0], keys=[[0,   0], [0.25, -35], [0.5,  0], [1.0,  0]])
+  track \"knee_r\"     (prop=rotation, axis=[1, 0, 0], keys=[[0,   0], [0.5,   0], [0.75, -35], [1.0, 0]])
   track \"shoulder_l\" (prop=rotation, axis=[1, 0, 0], keys=[[0,  20], [0.5, -20], [1.0,  20]])
   track \"shoulder_r\" (prop=rotation, axis=[1, 0, 0], keys=[[0, -20], [0.5,  20], [1.0, -20]])
-  track \"elbow_l\"    (prop=rotation, axis=[1, 0, 0], keys=[[0, -10], [0.5, -30], [1.0, -10]])
-  track \"elbow_r\"    (prop=rotation, axis=[1, 0, 0], keys=[[0, -30], [0.5, -10], [1.0, -30]])
+  track \"elbow_l\"    (prop=rotation, axis=[1, 0, 0], keys=[[0,  10], [0.5,  30], [1.0,  10]])
+  track \"elbow_r\"    (prop=rotation, axis=[1, 0, 0], keys=[[0,  30], [0.5,  10], [1.0,  30]])
 }
 
 ### Prompt: \"a crouching tiger\"

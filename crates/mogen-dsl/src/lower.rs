@@ -31,7 +31,7 @@ thread_local! {
     pub(super) static LOD_SCALE: Cell<f32> = const { Cell::new(1.0) };
     // Directory of the `.mog` file being lowered. Used by the `mesh`
     // primitive to resolve relative `src` paths. None = no source path
-    // available; only `stdlib:` paths will load.
+    // available; the lowering will fail if the path isn't absolute.
     pub(super) static SOURCE_DIR: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
 }
 

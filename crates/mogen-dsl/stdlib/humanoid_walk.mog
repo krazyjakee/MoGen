@@ -1,0 +1,48 @@
+// summary: One-second walk cycle for humanoid_full's "rig" skeleton. Hip
+// fore-aft swing, opposite-arm shoulder swing, mid-swing knee lift for
+// clearance, subtle spine counter-rotation. Drives bones by name —
+// requires `use "humanoid_full"` (or any rig that uses the same names).
+module "humanoid_walk" () {
+  clip "humanoid_walk" (seconds=1.0) {
+    // Hips swing fore-aft, legs out of phase. +X = leg forward.
+    track "hip_l"      (prop=rotation, axis=[1, 0, 0],
+                        keys=[[0, 20], [0.5, -20], [1.0, 20]])
+    track "hip_r"      (prop=rotation, axis=[1, 0, 0],
+                        keys=[[0, -20], [0.5, 20], [1.0, -20]])
+    // Knees straight on contact, bent at peak swing for foot clearance.
+    // Left foot strikes at t=0; left knee bends at mid-swing around t=0.75.
+    // Negative rotation around +X swings the shin back toward the buttocks
+    // (the natural human bend); positive would kick the shin forward like
+    // an insect's reverse joint.
+    track "knee_l"     (prop=rotation, axis=[1, 0, 0],
+                        keys=[[0, 0], [0.5, -5], [0.75, -50], [1.0, 0]])
+    track "knee_r"     (prop=rotation, axis=[1, 0, 0],
+                        keys=[[0, -5], [0.25, -50], [0.5, 0], [1.0, -5]])
+    // Ankles dorsiflex at heel-strike, plantar-flex at toe-off.
+    track "ankle_l"    (prop=rotation, axis=[1, 0, 0],
+                        keys=[[0, 10], [0.25, -10], [0.5, 0], [1.0, 10]])
+    track "ankle_r"    (prop=rotation, axis=[1, 0, 0],
+                        keys=[[0, 0], [0.5, 10], [0.75, -10], [1.0, 0]])
+    // Toes — small flex at toe-off.
+    track "toe_l"      (prop=rotation, axis=[1, 0, 0],
+                        keys=[[0, 0], [0.25, -15], [0.5, 0], [1.0, 0]])
+    track "toe_r"      (prop=rotation, axis=[1, 0, 0],
+                        keys=[[0, 0], [0.5, 0], [0.75, -15], [1.0, 0]])
+    // Arms swing opposite to legs — left arm forward when right leg forward.
+    track "shoulder_l" (prop=rotation, axis=[1, 0, 0],
+                        keys=[[0, -20], [0.5, 20], [1.0, -20]])
+    track "shoulder_r" (prop=rotation, axis=[1, 0, 0],
+                        keys=[[0, 20], [0.5, -20], [1.0, 20]])
+    // Elbows held at a relaxed 25° flex throughout the cycle.
+    track "elbow_l"    (prop=rotation, axis=[1, 0, 0],
+                        keys=[[0, 25], [0.5, 25], [1.0, 25]])
+    track "elbow_r"    (prop=rotation, axis=[1, 0, 0],
+                        keys=[[0, 25], [0.5, 25], [1.0, 25]])
+    // Spine counter-rotates against the hips (twist around Y).
+    track "spine_mid"  (prop=rotation, axis=[0, 1, 0],
+                        keys=[[0, -4], [0.5, 4], [1.0, -4]])
+    // Vertical bob: hip rises at mid-stance, drops at heel-strike.
+    track "hip"        (prop=translation, axis=[0, 1, 0],
+                        keys=[[0, 0], [0.25, 0.02], [0.5, 0], [0.75, 0.02], [1.0, 0]])
+  }
+}

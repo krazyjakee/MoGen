@@ -1,0 +1,18 @@
+// summary: Subtle breathing + weight-shift idle for humanoid_full's "rig"
+// skeleton. 4-second loop, very small amplitudes — the figure stays still
+// in silhouette but stops looking frozen. Pair with `use "humanoid_full"`.
+module "humanoid_idle" () {
+  clip "humanoid_idle" (seconds=4.0) {
+    // Breathing — lift spine_chest a hair forward and back.
+    track "spine_chest" (prop=rotation, axis=[1, 0, 0],
+                         keys=[[0, 0], [2.0, 1.5], [4.0, 0]])
+    // Weight shift — gentle hip yaw.
+    track "hip"         (prop=rotation, axis=[0, 1, 0],
+                         keys=[[0, 0.8], [2.0, -0.8], [4.0, 0.8]])
+    // Hands — tiny vertical bob via shoulder rotation around Z (medial).
+    track "shoulder_l"  (prop=rotation, axis=[0, 0, 1],
+                         keys=[[0, 0.5], [2.0, -0.5], [4.0, 0.5]])
+    track "shoulder_r"  (prop=rotation, axis=[0, 0, 1],
+                         keys=[[0, -0.5], [2.0, 0.5], [4.0, -0.5]])
+  }
+}

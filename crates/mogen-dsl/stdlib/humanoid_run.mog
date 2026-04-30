@@ -1,0 +1,41 @@
+// summary: Run cycle for humanoid_full's "rig" — 0.55s cycle, bigger
+// amplitudes than walk, elbows held at 90° flex for the runner's pumping
+// arms. Drives bones by name; requires `use "humanoid_full"` (or any rig
+// using the same names).
+module "humanoid_run" () {
+  clip "humanoid_run" (seconds=0.55) {
+    track "hip_l"      (prop=rotation, axis=[1, 0, 0],
+                        keys=[[0, 35], [0.275, -35], [0.55, 35]])
+    track "hip_r"      (prop=rotation, axis=[1, 0, 0],
+                        keys=[[0, -35], [0.275, 35], [0.55, -35]])
+    // Knees deeply flexed during swing for ground clearance at speed.
+    // Negative values bend the shin back toward the buttocks (natural human
+    // flex); positive would reverse-bend the joint like an insect.
+    track "knee_l"     (prop=rotation, axis=[1, 0, 0],
+                        keys=[[0, -10], [0.275, -30], [0.4, -90], [0.55, -10]])
+    track "knee_r"     (prop=rotation, axis=[1, 0, 0],
+                        keys=[[0, -30], [0.13, -90], [0.275, -10], [0.55, -30]])
+    track "ankle_l"    (prop=rotation, axis=[1, 0, 0],
+                        keys=[[0, 15], [0.13, -15], [0.275, 0], [0.55, 15]])
+    track "ankle_r"    (prop=rotation, axis=[1, 0, 0],
+                        keys=[[0, 0], [0.275, 15], [0.4, -15], [0.55, 0]])
+    // Arms pump — bigger swing than walk, elbows locked at 90°.
+    track "shoulder_l" (prop=rotation, axis=[1, 0, 0],
+                        keys=[[0, -50], [0.275, 50], [0.55, -50]])
+    track "shoulder_r" (prop=rotation, axis=[1, 0, 0],
+                        keys=[[0, 50], [0.275, -50], [0.55, 50]])
+    track "elbow_l"    (prop=rotation, axis=[1, 0, 0],
+                        keys=[[0, 90], [0.275, 90], [0.55, 90]])
+    track "elbow_r"    (prop=rotation, axis=[1, 0, 0],
+                        keys=[[0, 90], [0.275, 90], [0.55, 90]])
+    // Forward lean — runners hinge at the hip a bit.
+    track "spine_lower"(prop=rotation, axis=[1, 0, 0],
+                        keys=[[0, 8], [0.55, 8]])
+    track "spine_mid"  (prop=rotation, axis=[0, 1, 0],
+                        keys=[[0, -8], [0.275, 8], [0.55, -8]])
+    // Vertical bob — bigger amplitude, includes airborne window.
+    track "hip"        (prop=translation, axis=[0, 1, 0],
+                        keys=[[0, 0], [0.13, 0.06], [0.275, 0.02],
+                              [0.4, 0.06], [0.55, 0]])
+  }
+}

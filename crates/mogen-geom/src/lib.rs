@@ -18,7 +18,7 @@ pub use primitives::{
     frustum_mesh, half_cylinder_mesh, hemisphere_mesh, icosphere_mesh, lathe_mesh, leaf_card_mesh,
     mesh_from_glb_bytes, plane_mesh, prism_mesh, pyramid_mesh, quad_mesh, read_glb_bytes,
     rounded_box_mesh, sphere_mesh, spline_tube_mesh, superellipsoid_mesh, torus_arc_mesh,
-    torus_mesh, tube_mesh, wedge_mesh, STDLIB_PREFIX,
+    torus_mesh, tube_mesh, wedge_mesh,
 };
 pub use xform::transform_mesh;
 

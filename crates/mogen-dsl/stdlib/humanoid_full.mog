@@ -1,4 +1,4 @@
-// summary: Complete rigged humanoid in one declaration — torso/head/arms/hands/legs/feet/face/hair, attached and skinned to a "rig" skeleton. Caller declares materials `skin`, `cloth`, `hair`, `eye`, `mouth`, `boot`. Use only ONCE per scene (single "rig" skeleton). Pair with a single `clip "walk" { ... }` for animation. Default height=1.7 is tuned to avoid CSG seams; if a non-default height triggers a manifold panic in smin-blended limbs, fall back to 1.7 and scale the parent group instead.
+// summary: Complete rigged humanoid in one declaration — torso/head/arms/hands/legs/feet/face, attached and skinned to a "rig" skeleton. Caller declares materials `skin`, `cloth`, `eye`, `mouth`, `boot`. Hair is not bundled — `use "humanoid_hair_short"` (or `humanoid_hair_long`) and attach to the head's `crown` socket if the figure needs hair. Use only ONCE per scene (single "rig" skeleton). Pair with a single `clip "walk" { ... }` for animation. Default height=1.7 is tuned to avoid CSG seams; if a non-default height triggers a manifold panic in smin-blended limbs, fall back to 1.7 and scale the parent group instead.
 module "humanoid_full" (height=1.7) {
   // ---------- Skeleton ----------
   // Bone offsets are parent-relative. World hip pivot ≈ height*0.55.
@@ -49,20 +49,20 @@ module "humanoid_full" (height=1.7) {
   }
 
   // ---------- Head ----------
-  group "head_skin" (mat="skin", skin="rig") {
+  // Rigidly bound to `neck` so the head tracks the neck bone as a single
+  // unit. Without `bind`, the side-of-head vertices fall inside the shoulder
+  // bones' envelopes and get pulled along when the arms swing during the
+  // walk cycle, deforming the head silhouette.
+  group "head_skin" (mat="skin", skin="rig", bind="neck") {
     use "humanoid_head" (size=$height * 0.065, jaw=0.6)
   }
 
   // ---------- Face features ----------
   // Each face piece is its own top-level node so attach can pin it to the head's
-  // eye_l / eye_r / nose / mouth connectors.
-  group "face_pieces" (skin="rig") {
+  // eye_l / eye_r / nose / mouth connectors. Bound to `neck` (same as the head)
+  // so eyes / nose / mouth move rigidly with the cranium instead of drifting.
+  group "face_pieces" (skin="rig", bind="neck") {
     use "humanoid_face" (size=$height * 0.065)
-  }
-
-  // ---------- Hair (short cap; replace with `humanoid_hair_long` for longer styles) ----------
-  group "hair_root" (skin="rig") {
-    use "humanoid_hair_short" (size=$height * 0.07)
   }
 
   // ---------- Arms (paired - inlined to avoid `arm` name collision) ----------
@@ -179,7 +179,6 @@ module "humanoid_full" (height=1.7) {
   attach (parent="leg_l", child="foot_l", socket="ankle", plug="ankle")
   attach (parent="leg_r", child="foot_r", socket="ankle", plug="ankle")
 
-  attach (parent="head",  child="hair",  socket="crown", plug="crown")
   attach (parent="head",  child="eye_l", socket="eye_l", plug="back")
   attach (parent="head",  child="eye_r", socket="eye_r", plug="back")
   attach (parent="head",  child="nose",  socket="nose",  plug="back")

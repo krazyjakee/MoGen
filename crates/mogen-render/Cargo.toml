@@ -1,0 +1,22 @@
+[package]
+name = "mogen-render"
+version.workspace = true
+edition.workspace = true
+description = "MoGen offline + studio renderer — flattens a SceneGraph into a glow-based PBR draw stream and exposes a headless-GL thumbnail entry point."
+license = "MIT"
+
+[dependencies]
+mogen-core = { workspace = true }
+anyhow = { workspace = true }
+glam = { workspace = true }
+glow = "0.14"
+image = { workspace = true }
+
+# Headless GL stack. glutin is the toolkit-agnostic context API; glutin-winit
+# bridges it to a winit window so the same call works on every platform.
+# We keep the window hidden — it's only there because macOS / Windows don't
+# expose a true surfaceless GL path.
+glutin = "0.32"
+glutin-winit = "0.5"
+winit = "0.30"
+raw-window-handle = "0.6"

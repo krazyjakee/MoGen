@@ -227,7 +227,7 @@ fn transform_from_attrs(node: &Node) -> Transform {
 fn collect_skin_bindings(ast: &[Node]) -> Vec<(String, String, Option<String>)> {
     let mut out = Vec::new();
     for n in ast {
-        walk_bindings(n, None, &mut out);
+        walk_bindings(n, None, None, &mut out);
     }
     out
 }
@@ -266,6 +266,7 @@ fn is_mesh_kind(kind: &str) -> bool {
 fn walk_bindings(
     node: &Node,
     inherited_skin: Option<&str>,
+    inherited_bind: Option<&str>,
     out: &mut Vec<(String, String, Option<String>)>,
 ) {
     // Bones and skeletons can't be skin targets; don't descend into them.
@@ -273,17 +274,26 @@ fn walk_bindings(
         return;
     }
     let own_skin = string_attr(node, "skin");
+    let own_bind = string_attr(node, "bind");
     let effective_skin: Option<String> = own_skin
         .as_deref()
         .or(inherited_skin)
+        .map(|s| s.to_string());
+    // `bind` propagates from a group to its mesh descendants the same way
+    // `skin` does, so wrapping a sub-tree in `group (skin="rig", bind="neck")`
+    // pins every mesh inside it rigidly to that bone — used by the head /
+    // face cluster, which should track the neck without envelope blending
+    // pulling cheek vertices into the shoulder bones.
+    let effective_bind: Option<String> = own_bind
+        .as_deref()
+        .or(inherited_bind)
         .map(|s| s.to_string());
 
     // A node is a binding target only if it actually has a mesh. Groups that
     // carry `skin=` propagate the binding to their mesh descendants instead.
     if let (Some(skin_ref), Some(name)) = (&effective_skin, &node.name) {
         if is_mesh_kind(&node.kind) {
-            let bind_to = string_attr(node, "bind");
-            out.push((name.clone(), skin_ref.clone(), bind_to));
+            out.push((name.clone(), skin_ref.clone(), effective_bind.clone()));
         }
     }
     // CSG operands (`union`/`difference`/`intersect` children) are fused into
@@ -293,7 +303,12 @@ fn walk_bindings(
         return;
     }
     for c in &node.children {
-        walk_bindings(c, effective_skin.as_deref(), out);
+        walk_bindings(
+            c,
+            effective_skin.as_deref(),
+            effective_bind.as_deref(),
+            out,
+        );
     }
 }
 
