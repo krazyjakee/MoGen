@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 
 use mogen_core::Diagnostic;
 use mogen_dsl::ast::{Node, Value};
@@ -12,7 +13,7 @@ pub const KNOWN_KINDS: &[&str] = &[
     "superellipsoid", "curved_plane", "lathe", "spline_tube", "leaf_card", "mesh",
     "slab", "post", "panel", "wall",
     "branch",
-    "module", "use",
+    "module", "use", "import",
     "union", "difference", "intersect",
     "joint", "clip", "track",
     "spin", "open_close", "wave", "flap", "idle",
@@ -58,13 +59,84 @@ pub fn common_attrs_for_kind(kind: &str) -> &'static [&'static str] {
 }
 
 pub fn validate_ast(ast: &[Node]) -> Vec<Diagnostic> {
+    validate_ast_with_source(ast, None)
+}
+
+/// Like `validate_ast`, but also resolves top-level `import` declarations
+/// relative to `base_dir` so `use "<imported_module>"` references validate
+/// without false-positive "unknown module" diagnostics. Pass the directory
+/// of the `.mog` file being validated (typically `path.parent()` for the
+/// file passed to `mogen check`/`mogen build`). If `base_dir` is `None`
+/// and the file contains imports, the unknown-module check is skipped to
+/// avoid spurious diagnostics.
+pub fn validate_ast_with_source(ast: &[Node], base_dir: Option<&Path>) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
-    let materials = collect_material_names(ast, &mut diags);
-    let modules = collect_module_names(ast, &mut diags);
+    let mut materials = collect_material_names(ast, &mut diags);
+    let mut modules = collect_module_names(ast, &mut diags);
+    let has_imports = ast.iter().any(|n| n.kind == "import");
+    let suppress_unknown_module = match merge_imported_names(
+        ast,
+        base_dir,
+        &mut modules,
+        &mut materials,
+        &mut diags,
+    ) {
+        ImportResolution::Resolved => false,
+        ImportResolution::Skipped => has_imports,
+    };
     for n in ast {
-        walk(n, &materials, &modules, &mut diags);
+        walk(n, &materials, &modules, suppress_unknown_module, &mut diags);
     }
     diags
+}
+
+enum ImportResolution {
+    Resolved,
+    Skipped,
+}
+
+fn merge_imported_names(
+    ast: &[Node],
+    base_dir: Option<&Path>,
+    modules: &mut HashSet<String>,
+    materials: &mut HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) -> ImportResolution {
+    if base_dir.is_none() {
+        return ImportResolution::Skipped;
+    }
+    match mogen_dsl::resolve_imports(ast, base_dir) {
+        Ok(decls) => {
+            for n in &decls {
+                let Some(name) = &n.name else { continue };
+                match n.kind.as_str() {
+                    "module" => {
+                        modules.insert(name.clone());
+                    }
+                    "material" => {
+                        materials.insert(name.clone());
+                    }
+                    _ => {}
+                }
+            }
+            ImportResolution::Resolved
+        }
+        Err(e) => {
+            // Surface the failure on whichever `import` node is in the AST.
+            // Fall back to a no-span diagnostic if no top-level import is found.
+            let span = ast
+                .iter()
+                .find(|n| n.kind == "import")
+                .map(|n| n.span);
+            let mut diag =
+                Diagnostic::error("E0306", format!("import resolution failed: {e}"));
+            if let Some(s) = span {
+                diag = diag.with_span(s);
+            }
+            diags.push(diag);
+            ImportResolution::Resolved
+        }
+    }
 }
 
 fn collect_material_names(ast: &[Node], diags: &mut Vec<Diagnostic>) -> HashSet<String> {
@@ -151,6 +223,7 @@ fn walk(
     n: &Node,
     materials: &HashSet<String>,
     modules: &HashSet<String>,
+    suppress_unknown_module: bool,
     diags: &mut Vec<Diagnostic>,
 ) {
     check_kind(n, diags);
@@ -179,7 +252,7 @@ fn walk(
         }
         "use" => {
             if let Some(name) = &n.name {
-                if !modules.contains(name) {
+                if !modules.contains(name) && !suppress_unknown_module {
                     diags.push(
                         Diagnostic::error(
                             "E0304",
@@ -198,6 +271,47 @@ fn walk(
                 );
             }
         }
+        "import" => {
+            if n.name.is_none() {
+                diags.push(
+                    Diagnostic::error(
+                        "E0307",
+                        "`import` requires a quoted file path, e.g. `import \"shared.mog\"`",
+                    )
+                    .with_span(n.span),
+                );
+            }
+            for (k, v) in &n.attrs {
+                if k != "as" {
+                    diags.push(
+                        Diagnostic::error(
+                            "E0308",
+                            format!("`import` accepts only `(as=<ident>)`; unknown attribute `{k}`"),
+                        )
+                        .with_span(n.span),
+                    );
+                    continue;
+                }
+                if !matches!(v, Value::Ident(_) | Value::String(_)) {
+                    diags.push(
+                        Diagnostic::error(
+                            "E0308",
+                            "`import (as=…)` expects an identifier, e.g. `(as=chair)`",
+                        )
+                        .with_span(n.span),
+                    );
+                }
+            }
+            if !n.children.is_empty() {
+                diags.push(
+                    Diagnostic::error(
+                        "E0309",
+                        "`import` does not accept a body block",
+                    )
+                    .with_span(n.span),
+                );
+            }
+        }
         _ if KNOWN_KINDS.contains(&n.kind.as_str()) => {
             check_attrs(n, materials, diags);
             check_anim_required(n, diags);
@@ -206,7 +320,7 @@ fn walk(
     }
 
     for c in &n.children {
-        walk(c, materials, modules, diags);
+        walk(c, materials, modules, suppress_unknown_module, diags);
     }
 }
 
@@ -780,6 +894,114 @@ fn check_anim_required(n: &Node, diags: &mut Vec<Diagnostic>) {
             }
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod import_validator_tests {
+    use super::*;
+
+    fn diags_for_with_source(src: &str, base: Option<&Path>) -> Vec<Diagnostic> {
+        let ast = mogen_dsl::parse(src).expect("parse");
+        validate_ast_with_source(&ast, base)
+    }
+
+    fn write_tmp(label: &str, files: &[(&str, &str)]) -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "mogen-validate-imports-{}-{}-{}",
+            std::process::id(),
+            id,
+            label
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        for (name, contents) in files {
+            std::fs::write(dir.join(name), contents).unwrap();
+        }
+        dir
+    }
+
+    #[test]
+    fn import_node_does_not_trigger_unknown_kind() {
+        // Without a source dir we still parse `import`; the validator must
+        // not flag it as an unknown kind.
+        let diags = diags_for_with_source(
+            r#"import "shared.mog" scene { box "b" (size=[1,1,1]) }"#,
+            None,
+        );
+        assert!(
+            !diags.iter().any(|d| d.code == "E0101"),
+            "import should not be unknown-kind, got {diags:?}"
+        );
+    }
+
+    #[test]
+    fn import_with_attrs_or_block_is_rejected() {
+        let diags = diags_for_with_source(
+            r#"import "shared.mog" (foo=1) { box "x" (size=1) } scene {}"#,
+            None,
+        );
+        assert!(diags.iter().any(|d| d.code == "E0308"), "got {diags:?}");
+        assert!(diags.iter().any(|d| d.code == "E0309"), "got {diags:?}");
+    }
+
+    #[test]
+    fn import_with_alias_is_accepted() {
+        // `(as=ident)` is the one attribute `import` recognises — it renames
+        // the synthesised module so two files with the same stem can coexist.
+        let diags = diags_for_with_source(
+            r#"import "shared.mog" (as=lib) scene {}"#,
+            None,
+        );
+        assert!(
+            !diags.iter().any(|d| d.code == "E0308"),
+            "E0308 should not fire on `(as=…)`, got {diags:?}"
+        );
+    }
+
+    #[test]
+    fn imported_modules_validate_use_references() {
+        let dir = write_tmp(
+            "use_ok",
+            &[(
+                "lib.mog",
+                r#"module "leg" (h=0.5) { cylinder "leg" (height=$h) }"#,
+            )],
+        );
+        let src = r#"import "lib.mog" scene { use "leg" (h=1.0) }"#;
+        let diags = diags_for_with_source(src, Some(dir.as_path()));
+        // E0304 = unknown module. The imported `leg` should resolve.
+        assert!(
+            !diags.iter().any(|d| d.code == "E0304"),
+            "imported modules should be visible to `use`, got {diags:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn unknown_module_check_suppressed_when_imports_present_without_source() {
+        // Without a base dir we can't resolve imports, but we should not
+        // false-flag `use` references that might come from imported files.
+        let src = r#"import "lib.mog" scene { use "leg" () }"#;
+        let diags = diags_for_with_source(src, None);
+        assert!(
+            !diags.iter().any(|d| d.code == "E0304"),
+            "unknown-module must be suppressed when imports unresolved, got {diags:?}"
+        );
+    }
+
+    #[test]
+    fn missing_imported_file_surfaces_as_diagnostic() {
+        let dir = write_tmp("missing", &[]);
+        let src = r#"import "ghost.mog" scene { box "b" (size=[1,1,1]) }"#;
+        let diags = diags_for_with_source(src, Some(dir.as_path()));
+        assert!(
+            diags.iter().any(|d| d.code == "E0306"),
+            "missing import should surface E0306, got {diags:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 

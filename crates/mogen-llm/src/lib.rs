@@ -24,6 +24,7 @@ pub mod cache;
 pub mod claude_code;
 pub mod gemini;
 pub mod image;
+pub mod imports;
 pub mod ollama;
 pub mod openai;
 pub mod pbr_maps;
@@ -36,6 +37,7 @@ pub mod types;
 pub use cache::{default_cache_path, resolve_or_create as resolve_or_create_cache, DEFAULT_TTL_SECONDS};
 pub use gemini::{CachedContent, GeminiClient, GeminiError};
 pub use image::{GeneratedImage, DEFAULT_IMAGE_MODEL};
+pub use imports::{format_import_aabb_preamble, summarize_imports, ImportSummary};
 pub use prompt::{system_instruction, StdlibIndex};
 pub use provider::{LlmClient, Provider, ProviderError};
 pub use repair::{

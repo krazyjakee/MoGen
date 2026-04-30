@@ -29,6 +29,7 @@ pub(super) fn lower_csg(
         Some(p) => graph.add_child(p, &name, &node.kind, transform),
     };
     graph.set_source_span(id, node.span);
+    graph.nodes[id.0 as usize].use_id = node.use_id;
 
     // Metadata + material exactly as for other kinds.
     apply_metadata(node, id, graph)?;

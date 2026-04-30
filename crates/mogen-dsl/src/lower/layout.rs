@@ -46,6 +46,7 @@ pub(super) fn expand_stack(
         Some(p) => graph.add_child(p, &wrapper_name, &node.kind, wrapper_transform),
     };
     graph.set_source_span(wrapper_id, node.span);
+    graph.nodes[wrapper_id.0 as usize].use_id = node.use_id;
     apply_metadata(node, wrapper_id, graph)?;
 
     let mut child_ids: Vec<NodeId> = Vec::new();
@@ -165,6 +166,7 @@ pub(super) fn expand_grid(
         Some(p) => graph.add_child(p, &wrapper_name, &node.kind, wrapper_transform),
     };
     graph.set_source_span(wrapper_id, node.span);
+    graph.nodes[wrapper_id.0 as usize].use_id = node.use_id;
     apply_metadata(node, wrapper_id, graph)?;
     let pre_expand_count = graph.nodes.len();
 
@@ -254,6 +256,14 @@ pub(super) fn apply_relative_placement(
         return Ok(());
     };
 
+    // Explicit `pos`/`x`/`y`/`z`/`from`+`to` along the placement axis wins
+    // over the snap. Without this, `slab "x" (behind="y", pos=[0,0,0.75])`
+    // silently has its `pos.z` overwritten with the flush-behind shift,
+    // which surprised users who expected `pos` to be authoritative.
+    if pos_axis_explicit(node, axis_idx) {
+        return Ok(());
+    }
+
     // Only search prior siblings under `parent_id`, skipping self. Using
     // `iter().find()` on the parent's children list preserves declaration
     // order implicitly.
@@ -306,6 +316,34 @@ pub(super) fn apply_relative_placement(
     Ok(())
 }
 
+/// Did the author explicitly place this node along `axis_idx`?
+/// Mirrors the components consumed by `resolve_pos`: the `pos` vec3, the
+/// scalar `x`/`y`/`z` shortcuts, and the corner-form `from`+`to` midpoint.
+/// Only a non-zero contribution counts as "set" — `pos=[0,0,0]` is the
+/// same as no `pos` at all and lets the snap fire.
+fn pos_axis_explicit(node: &Node, axis_idx: usize) -> bool {
+    if let (Some(a), Some(b)) = (node.attr_vec3("from"), node.attr_vec3("to")) {
+        let mid = (a + b) * 0.5;
+        let v = match axis_idx { 0 => mid.x, 1 => mid.y, _ => mid.z };
+        if v != 0.0 {
+            return true;
+        }
+    }
+    let shortcut = match axis_idx { 0 => "x", 1 => "y", _ => "z" };
+    if let Some(n) = node.attr_number(shortcut) {
+        if n != 0.0 {
+            return true;
+        }
+    }
+    if let Some(p) = node.attr_vec3("pos") {
+        let v = match axis_idx { 0 => p.x, 1 => p.y, _ => p.z };
+        if v != 0.0 {
+            return true;
+        }
+    }
+    false
+}
+
 pub(super) fn expand_replicator(
     node: &Node,
     parent: Option<NodeId>,
@@ -318,6 +356,7 @@ pub(super) fn expand_replicator(
         Some(p) => graph.add_child(p, &wrapper_name, &node.kind, wrapper_transform),
     };
     graph.set_source_span(wrapper_id, node.span);
+    graph.nodes[wrapper_id.0 as usize].use_id = node.use_id;
     let pre_expand_count = graph.nodes.len();
 
     let instance_transforms: Vec<Transform> = match node.kind.as_str() {

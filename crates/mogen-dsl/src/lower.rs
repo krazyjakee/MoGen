@@ -17,7 +17,7 @@ use mogen_core::SceneGraph;
 use crate::anim_lower::{lower_clip, lower_joint, lower_template};
 use crate::ast::Node;
 use crate::attach::resolve_attaches;
-use crate::module::{collect_modules, expand_modules};
+use crate::module::{collect_modules, expand_modules, resolve_imports};
 use crate::skin_lower::{bind_meshes, lower_skeleton};
 
 use lod::extract_lod_scale;
@@ -101,11 +101,14 @@ pub fn lower_with_source(ast: &[Node], source_dir: Option<&Path>) -> Result<Scen
     let _lod = LodScaleGuard::set(extract_lod_scale(ast));
 
     // Expand modules first: collect every `module` declaration, then substitute
-    // `use` calls into concrete node trees. The result has no `module`/`use`
-    // nodes and no `$param` references. Stdlib modules (humanoid_torso, leaf,
-    // …) are merged into the registry first so any scene can `use` them; a
-    // user module of the same name shadows the stdlib version.
+    // `use` calls into concrete node trees. The result has no `module`/`use`/
+    // `import` nodes and no `$param` references. Order of overlay is stdlib
+    // < imports < user, so a user module shadows an imported one and an
+    // imported module shadows a stdlib one.
     let mut reg = crate::stdlib::stdlib_registry().clone();
+    let imported_decls = resolve_imports(ast, source_dir)?;
+    let imported_reg = collect_modules(&imported_decls)?;
+    reg.extend_overlay(imported_reg);
     let user = collect_modules(ast)?;
     reg.extend_overlay(user);
     let expanded = expand_modules(ast, &reg)?;
@@ -113,7 +116,11 @@ pub fn lower_with_source(ast: &[Node], source_dir: Option<&Path>) -> Result<Scen
     let mut graph = SceneGraph::new();
 
     // Pass 1: hoist every top-level and scene-level `material` declaration.
+    // User materials register first so their MaterialId is lower than any
+    // imported material with the same name; `find_material` returns the first
+    // match, which is how user-declared materials shadow imported ones.
     collect_materials(&expanded, &mut graph)?;
+    collect_materials(&imported_decls, &mut graph)?;
 
     // Pass 2: build scene graph (skip anim declarations — they need nodes first).
     for n in &expanded {
@@ -154,30 +161,24 @@ pub fn lower_with_source(ast: &[Node], source_dir: Option<&Path>) -> Result<Scen
 
     // Pass 3: joints first (clips may reference joint names), then clips,
     // then procedural templates (which can target either joints or nodes).
+    // Imported animations live inside their synthesised module body, so they
+    // arrive through `use` expansion and are already present in `expanded` —
+    // no separate walk needed.
     lower_animations(&expanded, &mut graph)?;
     Ok(graph)
 }
 
 fn lower_animations(ast: &[Node], graph: &mut SceneGraph) -> Result<()> {
-    let iter = ast.iter().flat_map(|n| {
-        if n.kind == "scene" {
-            Box::new(n.children.iter()) as Box<dyn Iterator<Item = &Node>>
-        } else {
-            Box::new(std::iter::once(n))
-        }
-    });
     // Collect anim nodes by kind so ordering is deterministic regardless of
-    // how the user wrote them in the file.
+    // how the user wrote them in the file. The walk is recursive so that an
+    // imported scene-as-module — whose body lives inside the synthesised
+    // module and lands wherever the composing scene's `use` placed it —
+    // still has its joints, clips, and templates discovered.
     let mut joints = Vec::new();
     let mut clips = Vec::new();
     let mut templates = Vec::new();
-    for n in iter {
-        match n.kind.as_str() {
-            "joint" => joints.push(n),
-            "clip" => clips.push(n),
-            "spin" | "open_close" | "wave" | "flap" | "idle" => templates.push(n),
-            _ => {}
-        }
+    for n in ast {
+        collect_anim_decls(n, &mut joints, &mut clips, &mut templates);
     }
     for n in joints {
         lower_joint(n, graph)?;
@@ -189,6 +190,23 @@ fn lower_animations(ast: &[Node], graph: &mut SceneGraph) -> Result<()> {
         lower_template(n, graph)?;
     }
     Ok(())
+}
+
+fn collect_anim_decls<'a>(
+    n: &'a Node,
+    joints: &mut Vec<&'a Node>,
+    clips: &mut Vec<&'a Node>,
+    templates: &mut Vec<&'a Node>,
+) {
+    match n.kind.as_str() {
+        "joint" => joints.push(n),
+        "clip" => clips.push(n),
+        "spin" | "open_close" | "wave" | "flap" | "idle" => templates.push(n),
+        _ => {}
+    }
+    for c in &n.children {
+        collect_anim_decls(c, joints, clips, templates);
+    }
 }
 
 #[cfg(test)]
@@ -940,6 +958,47 @@ mod tests {
         );
         let hat_y = find_mesh_node(&g, "hat").transform.translation.y;
         assert!((hat_y - 1.25).abs() < 1e-4, "hat should be at y=1.25, got {hat_y}");
+    }
+
+    #[test]
+    fn explicit_pos_axis_wins_over_relative_placement() {
+        // Explicit `pos` along the placement axis must survive — without this,
+        // `behind` silently overwrites `pos.z`, which gave the imported
+        // bed-with-headboard a different headboard position than the
+        // standalone bed (top-level siblings skipped relative placement
+        // entirely, so `pos` happened to win there).
+        let g = lower_src(
+            r#"
+            scene {
+              group "world" {
+                box "base" (size=[2, 1, 2])
+                box "back" (size=[2, 1, 0.1], behind="base", pos=[0, 0, 0.75])
+              }
+            }
+            "#,
+        );
+        let z = find_mesh_node(&g, "back").transform.translation.z;
+        assert!((z - 0.75).abs() < 1e-4, "explicit pos.z should win, got {z}");
+    }
+
+    #[test]
+    fn relative_placement_still_fires_when_pos_axis_is_zero() {
+        // Pos on a perpendicular axis must not block the snap.
+        let g = lower_src(
+            r#"
+            scene {
+              group "world" {
+                box "base" (size=[2, 1, 2])
+                box "hat"  (size=[1, 1, 1], above="base", pos=[0.25, 0, 0])
+              }
+            }
+            "#,
+        );
+        let t = find_mesh_node(&g, "hat").transform.translation;
+        // Snap on Y still fires: hat at y=1.0 (base top + hat half-height).
+        assert!((t.y - 1.0).abs() < 1e-4, "snap on Y should still fire, got {t:?}");
+        // Pos.x preserved.
+        assert!((t.x - 0.25).abs() < 1e-4, "pos.x should be preserved, got {t:?}");
     }
 
     #[test]

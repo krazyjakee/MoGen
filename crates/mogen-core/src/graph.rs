@@ -85,6 +85,13 @@ pub struct SceneNode {
     /// `pos=` / `rot=` portion (`transform - anchor`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attach_binding: Option<AttachBinding>,
+    /// Module-use expansion frame this node was lowered from, copied from
+    /// the AST. `None` for nodes the user wrote directly in their scene.
+    /// Drives scoped `attach` resolution: an attach inside a `use`d module
+    /// only matches graph nodes carrying the same `use_id`, so two imported
+    /// objects that share a node name don't cross-contaminate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub use_id: Option<u32>,
 }
 
 fn default_editable() -> bool {
@@ -117,6 +124,7 @@ impl Default for SceneNode {
             editable: true,
             relative_placed: false,
             attach_binding: None,
+            use_id: None,
         }
     }
 }

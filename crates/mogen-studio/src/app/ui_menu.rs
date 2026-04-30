@@ -69,6 +69,17 @@ impl MogenStudioApp {
                     action = MenuAction::OpenDialog;
                     ui.close_menu();
                 }
+                if ui
+                    .button("Import…")
+                    .on_hover_text(
+                        "Pick one or more .mog object files to add as `import \"…\"` \
+                         lines at the top of the active file",
+                    )
+                    .clicked()
+                {
+                    action = MenuAction::ImportDsl;
+                    ui.close_menu();
+                }
                 ui.menu_button("Open Recent", |ui| {
                     if self.settings.recent_files.is_empty() {
                         ui.label("(no recent MOG files)");
@@ -427,6 +438,7 @@ impl MogenStudioApp {
                 }
             }
             MenuAction::ClearRecent => self.clear_recent(),
+            MenuAction::ImportDsl => self.import_dialog(),
             MenuAction::Save => self.save(),
             MenuAction::SaveAs => self.save_as(),
             MenuAction::Build => self.open_build_dialog(),

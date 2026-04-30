@@ -289,6 +289,12 @@ A `.mog` file is a sequence of nodes. Each node is:
   (perpendicular walls meeting at a corner).
 - `module \"name\" (param=default, ...) { body }` + `use \"name\" (arg=value, ...)` \
   parameterises a sub-graph. `$param` inside the body substitutes the arg.
+- `import \"path/to/file.mog\" [(as=<ident>)]` is a top-level directive that \
+  pulls another `.mog` file's `module`s and `material`s into this file, and \
+  synthesises a module named after the file stem (or `as=`) from its \
+  top-level `scene { ... }` so you can `use \"<stem>\" ()`. Preserve `import` \
+  lines verbatim when editing — replacing them with empty `module \"X\" {}` \
+  stubs silently strips every imported asset.
 - CSG: `union { ... }`, `difference { base cutouts... }`, `intersect { ... }`. \
   The CSG node's own `mat=` wins; if absent it inherits the first operand's \
   material. Operand materials are otherwise discarded. Cut tools must **fully \

@@ -43,6 +43,7 @@ pub(super) fn lower_into(
         Some(p) => graph.add_child(p, &name, &node.kind, transform),
     };
     graph.set_source_span(id, node.span);
+    graph.nodes[id.0 as usize].use_id = node.use_id;
 
     // Metadata: role, tags (comma-separated string).
     if let Some(Value::String(role)) = node.attr("role") {
@@ -123,6 +124,14 @@ pub(super) fn lower_into(
     for c in &node.children {
         match c.kind.as_str() {
             "material" | "attach" => continue,
+            // Animation, skeleton, and clip-track decls are processed by their
+            // own passes (see lower_animations / lower_skeleton). They get
+            // here when an imported scene-as-module body — which can carry
+            // animations alongside geometry — is expanded inside a `group`
+            // or another wrapper. Skipping them keeps the geometry pass
+            // focused on geometry.
+            "joint" | "clip" | "track" | "skeleton"
+            | "spin" | "open_close" | "wave" | "flap" | "idle" => continue,
             "connector" => {
                 add_connector(c, id, graph)?;
             }

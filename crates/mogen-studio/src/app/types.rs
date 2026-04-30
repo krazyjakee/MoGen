@@ -275,6 +275,7 @@ pub(super) enum MenuAction {
     OpenDialog,
     OpenPath(PathBuf),
     ClearRecent,
+    ImportDsl,
     Save,
     SaveAs,
     Build,

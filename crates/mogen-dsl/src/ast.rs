@@ -9,6 +9,11 @@ pub struct Node {
     pub children: Vec<Node>,
     pub span: Span,
     pub kind_span: Span,
+    /// Module-use expansion frame this node was cloned into, or `None` for
+    /// nodes the user wrote directly. Set by `expand_modules` so attach
+    /// resolution can scope name lookups to a single module instance even
+    /// after expansion has flattened everything into siblings.
+    pub use_id: Option<u32>,
 }
 
 #[derive(Debug, Clone)]

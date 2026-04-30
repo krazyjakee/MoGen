@@ -45,7 +45,7 @@ pub fn compile(src: &str, source_dir: Option<&Path>) -> CompileResult {
         }
     };
 
-    let mut diags = mogen_validate::validate_ast(&ast);
+    let mut diags = mogen_validate::validate_ast_with_source(&ast, source_dir);
     if has_errors(&diags) {
         return CompileResult::new(None, diags, Stage::ValidateAst);
     }

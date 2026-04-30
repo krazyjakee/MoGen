@@ -1,7 +1,8 @@
     use super::flatten::{flatten, PaletteSource, FLOATS_PER_VERTEX};
     use super::state::{
-        apply_gizmo_drag, commit_gizmo_drag, snap_rotate_delta, snap_scale_factor,
-        snap_translate_delta, GizmoDrag, PendingEdit, ViewerState, SCALE_SNAP_STEP,
+        apply_gizmo_drag, commit_gizmo_drag, gizmo_handles_supported, redirect_pick,
+        select_by_id, snap_rotate_delta, snap_scale_factor, snap_translate_delta,
+        GizmoDrag, PendingEdit, ViewerState, SCALE_SNAP_STEP,
     };
     use glam::{Mat4, Quat, Vec3};
     use mogen_core::{AlphaMode, Material, Mesh, NodeId, SceneGraph, Transform};
@@ -545,4 +546,111 @@
             dot > 0.9999,
             "world-space rotation added by the drag should equal +30° about world X; got dot={dot}"
         );
+    }
+
+    /// Build a scene mirroring the office assetpack pattern:
+    ///   group "lptp" { use "laptop" }
+    /// — a user-authored wrapper group with one imported child carrying a
+    /// non-`None` `use_id`. The wrapper has `use_id = None`; the imported
+    /// child has `use_id = Some(7)`. Returns `(wrapper_id, imported_id)`.
+    fn scene_with_imported_child() -> (SceneGraph, NodeId, NodeId) {
+        let mut scene = SceneGraph::new();
+        let wrapper = scene.add_root("lptp", "group", Transform::IDENTITY);
+        let imported = scene.add_child(wrapper, "laptop_body", "box", Transform::IDENTITY);
+        scene.nodes[imported.0 as usize].use_id = Some(7);
+        (scene, wrapper, imported)
+    }
+
+    #[test]
+    fn redirect_pick_returns_user_authored_node_unchanged() {
+        let (scene, wrapper, _) = scene_with_imported_child();
+        assert_eq!(redirect_pick(&scene, wrapper), Some(wrapper));
+    }
+
+    #[test]
+    fn redirect_pick_walks_up_to_wrapper_for_imported_child() {
+        let (scene, wrapper, imported) = scene_with_imported_child();
+        assert_eq!(redirect_pick(&scene, imported), Some(wrapper));
+    }
+
+    #[test]
+    fn redirect_pick_walks_through_nested_imported_chain() {
+        // Outer wrapper → imported group → imported leaf. Both imported
+        // nodes share the same `use_id` (matches how nested module bodies
+        // are flattened by `expand_node_into`). The redirect must skip past
+        // the inner imported group, not stop at it.
+        let mut scene = SceneGraph::new();
+        let wrapper = scene.add_root("dsk", "group", Transform::IDENTITY);
+        let inner = scene.add_child(wrapper, "desk_top", "group", Transform::IDENTITY);
+        scene.nodes[inner.0 as usize].use_id = Some(3);
+        let leaf = scene.add_child(inner, "desk_top_box", "box", Transform::IDENTITY);
+        scene.nodes[leaf.0 as usize].use_id = Some(3);
+        assert_eq!(redirect_pick(&scene, leaf), Some(wrapper));
+    }
+
+    #[test]
+    fn redirect_pick_returns_none_when_no_user_authored_ancestor() {
+        // `scene { use "desk" }` with no wrapping group: the imported node
+        // is a root, every parent walk halts immediately with no
+        // user-authored wrapper. The redirect bails to `None` so picking
+        // doesn't latch onto a node we can't safely write back.
+        let mut scene = SceneGraph::new();
+        let imported = scene.add_root("desk_top", "box", Transform::IDENTITY);
+        scene.nodes[imported.0 as usize].use_id = Some(1);
+        assert_eq!(redirect_pick(&scene, imported), None);
+    }
+
+    #[test]
+    fn select_by_id_redirects_pick_to_wrapper() {
+        // Picking the imported child must land selection on the wrapper —
+        // the gizmo + inspector both read `st.selected`, so this is what
+        // makes the visual editor "edit the group, not the import".
+        let (scene, wrapper, imported) = scene_with_imported_child();
+        let mut st = ViewerState::default();
+        st.scene = Some(scene);
+        select_by_id(&mut st, Some(imported));
+        assert_eq!(st.selected, Some(wrapper));
+        assert_eq!(
+            st.selected_path.as_deref(),
+            Some(&["lptp".to_string()][..])
+        );
+    }
+
+    #[test]
+    fn select_by_id_clears_selection_when_redirect_finds_no_wrapper() {
+        // Bare imported root (no enclosing user-authored group): the
+        // redirect returns `None`, so the viewer should clear its selection
+        // rather than latch onto an un-editable node.
+        let mut scene = SceneGraph::new();
+        let imported = scene.add_root("desk_top", "box", Transform::IDENTITY);
+        scene.nodes[imported.0 as usize].use_id = Some(1);
+        let mut st = ViewerState::default();
+        st.scene = Some(scene);
+        select_by_id(&mut st, Some(imported));
+        assert_eq!(st.selected, None);
+        assert!(st.selected_path.is_none());
+    }
+
+    #[test]
+    fn gizmo_handles_refused_for_imported_subtree() {
+        // Defense-in-depth: if a stale `selected_path` resolves into an
+        // imported subtree post-recompile, the gizmo handles must still
+        // refuse. Otherwise the user could grab a handle on a node whose
+        // span points at a different file.
+        let (scene, _, imported) = scene_with_imported_child();
+        assert!(!gizmo_handles_supported(
+            &scene,
+            imported,
+            crate::gizmo::GizmoMode::Translate,
+        ));
+    }
+
+    #[test]
+    fn gizmo_handles_allowed_on_user_wrapper_around_use() {
+        let (scene, wrapper, _) = scene_with_imported_child();
+        assert!(gizmo_handles_supported(
+            &scene,
+            wrapper,
+            crate::gizmo::GizmoMode::Translate,
+        ));
     }

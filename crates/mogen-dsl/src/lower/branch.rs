@@ -54,6 +54,7 @@ pub(super) fn expand_branch(
         Some(p) => graph.add_child(p, &wrapper_name, &node.kind, wrapper_transform),
     };
     graph.set_source_span(wrapper_id, node.span);
+    graph.nodes[wrapper_id.0 as usize].use_id = node.use_id;
     apply_metadata(node, wrapper_id, graph)?;
 
     let pre_expand_count = graph.nodes.len();

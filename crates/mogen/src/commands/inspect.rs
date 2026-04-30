@@ -15,7 +15,7 @@ pub(crate) fn parse_cmd(input: PathBuf) -> Result<()> {
 pub(crate) fn check(input: PathBuf, json: bool) -> Result<()> {
     let src = fs::read_to_string(&input)?;
     let ast = mogen_dsl::parse(&src)?;
-    let mut diags = mogen_validate::validate_ast(&ast);
+    let mut diags = mogen_validate::validate_ast_with_source(&ast, input.parent());
     let filename = input.to_string_lossy().to_string();
     let scene = if mogen_core::has_errors(&diags) {
         None

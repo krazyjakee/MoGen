@@ -44,18 +44,44 @@ struct AttachSpec {
     plug: String,
     offset: f32,
     twist_deg: f32,
+    /// Module-use expansion frame this attach was authored in, or `None` for
+    /// attaches written directly in the user's scene. Drives scoped name
+    /// resolution: an attach with `use_id=Some(k)` only sees graph nodes
+    /// stamped with the same id.
+    use_id: Option<u32>,
     #[allow(dead_code)]
     span: Span,
 }
 
 /// Resolve every `attach` declared at AST scope (scene root, group bodies).
 ///
+/// Each `attach` is stamped during module expansion with the `use_id` of the
+/// expansion frame it lives in. We group specs by that id and resolve each
+/// group against the matching scene nodes — so two imported objects that
+/// both contain a node literally named `"base"` don't collide: each is
+/// stamped with a different `use_id`, and the attach only sees nodes that
+/// share its stamp.
+///
+/// Top-level attaches (authored directly in the user's scene, no `use_id`)
+/// fall back to the global namespace, preserving the historical behavior.
+///
 /// Attaches inside an `array`/`mirror` subtree are NOT visited here — the
 /// replicator handles them per-instance via [`resolve_attaches_in_scope`] so
 /// each replicated copy resolves parent/child against its own subtree.
 pub fn resolve_attaches(ast: &[Node], graph: &mut SceneGraph) -> Result<()> {
     let specs = collect_attaches(ast)?;
-    apply_specs(&specs, graph, None)
+
+    // Partition by use_id so cycle detection / child-attached-twice checks run
+    // per expansion frame. The same node name in two different frames refers
+    // to two different graph nodes and must not collide in the dedup map.
+    let mut by_use: HashMap<Option<u32>, Vec<AttachSpec>> = HashMap::new();
+    for s in specs {
+        by_use.entry(s.use_id).or_default().push(s);
+    }
+    for (_, group) in by_use {
+        apply_specs(&group, graph, None)?;
+    }
+    Ok(())
 }
 
 /// Resolve `attach` declarations inside a replicated subtree (one array or
@@ -156,7 +182,16 @@ fn build_spec(n: &Node) -> Result<AttachSpec> {
     let plug = str_attr(n, "plug").unwrap_or_else(|| "bottom".to_string());
     let offset = n.attr_number("offset").unwrap_or(0.0);
     let twist_deg = n.attr_number("twist").unwrap_or(0.0);
-    Ok(AttachSpec { parent, child, socket, plug, offset, twist_deg, span: n.span })
+    Ok(AttachSpec {
+        parent,
+        child,
+        socket,
+        plug,
+        offset,
+        twist_deg,
+        use_id: n.use_id,
+        span: n.span,
+    })
 }
 
 fn str_attr(n: &Node, key: &str) -> Option<String> {
@@ -171,9 +206,22 @@ fn apply_attach(
     graph: &mut SceneGraph,
     scope: Option<NodeId>,
 ) -> Result<()> {
-    let find = |name: &str| match scope {
-        Some(root) => graph.find_node_in_subtree(root, name),
-        None => graph.find_node(name),
+    // Lookup precedence:
+    //   1. Explicit `scope` (used by replicator per-instance pass) — strict.
+    //   2. `spec.use_id` — only nodes stamped from the same module-use frame.
+    //   3. Global — for top-level user-authored attaches with no use_id.
+    let find = |name: &str| -> Option<NodeId> {
+        if let Some(root) = scope {
+            return graph.find_node_in_subtree(root, name);
+        }
+        if let Some(uid) = spec.use_id {
+            return graph
+                .nodes
+                .iter()
+                .position(|n| n.name == name && n.use_id == Some(uid))
+                .map(|i| NodeId(i as u32));
+        }
+        graph.find_node(name)
     };
     let parent_id = find(&spec.parent)
         .ok_or_else(|| anyhow!("attach: unknown parent node \"{}\"", spec.parent))?;

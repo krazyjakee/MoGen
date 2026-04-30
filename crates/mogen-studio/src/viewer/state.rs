@@ -474,6 +474,17 @@ pub(super) fn gizmo_handles_supported(
     if !node.editable {
         return false;
     }
+    // Imported subtree (`use_id != None`): the node's source span points at
+    // the imported file, not the active source. `select_by_id` redirects
+    // picks to the nearest user-authored wrapper, but a stale selection
+    // (set before the redirect existed, or restored from a path that now
+    // resolves into an imported subtree) can still land here. Refusing the
+    // gizmo handles is the same affordance as for replicators: no draggable
+    // handle, so the user can't initiate an edit that would be silently
+    // dropped or corrupt the wrong file.
+    if node.use_id.is_some() {
+        return false;
+    }
     // Relative placement re-shifts the node's translation every compile, so
     // a `pos=` writeback would stack on the next layout pass.
     if node.relative_placed {
@@ -711,6 +722,14 @@ fn format_scalar(v: f32) -> String {
 }
 
 pub(super) fn select_by_id(st: &mut ViewerState, id: Option<NodeId>) {
+    // Picks that land on an imported subtree (`use_id != None`) get
+    // redirected to the nearest user-authored wrapper — the group whose
+    // span lives in the active source. Without this the gizmo / inspector
+    // would write back at byte offsets from a different file and either
+    // no-op or silently corrupt the active scene. See `redirect_pick`.
+    let id = id.and_then(|n| {
+        st.scene.as_ref().and_then(|s| redirect_pick(s, n))
+    });
     st.selected = id;
     st.selected_path = match id {
         Some(n) => st.scene.as_ref().and_then(|s| node_path(s, n)),
@@ -726,6 +745,32 @@ pub(super) fn select_by_id(st: &mut ViewerState, id: Option<NodeId>) {
                 .and_then(|node| node.source_span)
         })
         .map(|span| span.start);
+}
+
+/// Walk from `id` up through parents to the nearest ancestor authored
+/// directly in the active source (`use_id == None`). Returns the original
+/// `id` when it's already user-authored. Returns `None` when the walk
+/// runs out without finding one — e.g. `scene { use "desk" }` with no
+/// wrapping group, where no parent has a span in the active file.
+///
+/// Editing a node carrying `use_id != None` would splice into the active
+/// `.mog` source at byte offsets that come from the imported file, so the
+/// viewport's gizmo + inspector route every interaction through this
+/// redirect first. The output is what the user actually manipulates.
+pub(super) fn redirect_pick(scene: &SceneGraph, id: NodeId) -> Option<NodeId> {
+    let node = scene.nodes.get(id.0 as usize)?;
+    if node.use_id.is_none() {
+        return Some(id);
+    }
+    let mut cur = node.parent;
+    while let Some(pid) = cur {
+        let parent = scene.nodes.get(pid.0 as usize)?;
+        if parent.use_id.is_none() {
+            return Some(pid);
+        }
+        cur = parent.parent;
+    }
+    None
 }
 
 pub(super) fn apply_gizmo_drag(drag: &GizmoDrag) -> Transform {

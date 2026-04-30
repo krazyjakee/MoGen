@@ -58,7 +58,7 @@ pub(crate) fn render(args: RenderArgs) -> Result<()> {
     };
 
     spinner.set_message(format!("render {label}: validating DSL"));
-    let diags = mogen_validate::validate_ast(&ast);
+    let diags = mogen_validate::validate_ast_with_source(&ast, input.parent());
     if mogen_core::has_errors(&diags) {
         spinner.abandon_with_message(format!("render {label}: validation failed"));
         mogen_validate::render_human(&filename, &src, &diags);

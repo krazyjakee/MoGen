@@ -260,6 +260,7 @@ impl MogenStudioApp {
 
         let mut settings = Settings::load();
         let options_api_key_draft = settings.gemini_api_key.clone();
+        install_fonts(&cc.egui_ctx);
         apply_theme(&cc.egui_ctx, settings.theme());
         viewer.set_preview_shader(settings.preview_shader());
         viewer.set_show_grid(settings.show_grid());
@@ -723,4 +724,20 @@ impl eframe::App for MogenStudioApp {
             self.viewer.destroy(gl);
         }
     }
+}
+
+/// Extend the default proportional font family with `Hack` as a fallback.
+/// egui 0.29's bundled `Ubuntu-Light` covers Latin/Cyrillic/Greek but not
+/// Geometric Shapes (▲ ▼), Arrows (↑ ↓), or Dingbats (✕) — the icon-shaped
+/// glyphs UI buttons reach for. `Hack` is already loaded for the monospace
+/// family and covers all of those blocks, so adding it as a tail fallback
+/// rescues otherwise-missing glyphs without bundling another font.
+fn install_fonts(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+    if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
+        if !family.iter().any(|n| n == "Hack") {
+            family.push("Hack".to_owned());
+        }
+    }
+    ctx.set_fonts(fonts);
 }

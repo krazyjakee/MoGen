@@ -12,6 +12,7 @@ serde_json.workspace = true
 mogen-core.workspace = true
 mogen-dsl = { workspace = true, features = ["csg"] }
 mogen-validate = { workspace = true, features = ["csg"] }
+glam.workspace = true
 
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 base64 = "0.22"

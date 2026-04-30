@@ -244,7 +244,7 @@ impl MogenStudioApp {
                         egui::Layout::right_to_left(egui::Align::Center),
                         |ui| {
                             if ui
-                                .small_button("✕")
+                                .small_button("×")
                                 .on_hover_text("Close find (Esc)")
                                 .clicked()
                             {

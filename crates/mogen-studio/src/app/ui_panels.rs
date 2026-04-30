@@ -369,6 +369,21 @@ impl MogenStudioApp {
             );
             return;
         }
+        if node.use_id.is_some() {
+            // Selection landed on an imported-module node. `select_by_id`
+            // normally redirects picks to the nearest user-authored wrapper,
+            // so this only fires when there is no wrapper to redirect to
+            // (e.g. `scene { use "desk" }` with the `use` directly under
+            // `scene`). Surface the constraint instead of offering a
+            // transform grid that would write back into the imported file.
+            ui.add_space(6.0);
+            ui.colored_label(
+                egui::Color32::from_rgb(230, 200, 100),
+                "Imported via `use` — wrap the `use` in a group to edit its \
+                 transform here.",
+            );
+            return;
+        }
         if node.relative_placed {
             // The viewport gizmo refuses these for the same reason: a layout
             // pass (attach / pack) recomputes their translation every compile,

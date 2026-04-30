@@ -18,6 +18,7 @@ modules, see [`modules.md`](./modules.md).
 - [Replicators: `mirror`, `array`, `stack`, `grid`](#replicators-mirror-array-stack-grid)
 - [CSG: `union` / `difference` / `intersect`](#csg-union--difference--intersect)
 - [Modules: `module` and `use`](#modules-module-and-use)
+- [Imports: `import`](#imports-import)
 - [Animation: `joint`, `clip`, templates](#animation-joint-clip-templates)
 - [Full example](#full-example)
 
@@ -37,8 +38,9 @@ kind ["optional name"] [(attr=value, ...)] [{ child_nodes... }]
 - `block` is a brace-delimited list of child nodes.
 
 Comments run from `//` to the end of the line. Whitespace between tokens is
-insignificant. The top of the file may contain `material`, `module`, `joint`,
-and `clip` declarations; `scene { ... }` holds the geometry itself.
+insignificant. The top of the file may contain `import`, `material`,
+`module`, `joint`, and `clip` declarations; `scene { ... }` holds the
+geometry itself.
 
 ---
 
@@ -584,6 +586,87 @@ Rules:
 - Omitted arguments fall back to declared defaults. Unknown argument names are a hard error (catches typos).
 - Modules may call other modules. Recursion is detected and rejected.
 - Expansion is lexically scoped — `$param` references outside a module body are rejected.
+
+---
+
+## Imports: `import`
+
+Pull `module` declarations, `material` declarations, and the entire `scene { … }`
+of another `.mog` file into the current file. Two use cases:
+
+**Module libraries** — share parameterised modules across files:
+
+```
+import "shared/legs.mog"
+
+scene {
+  use "leg" (h=0.6)
+}
+```
+
+**Scene composition** — assemble a scene out of object `.mog` files. Each
+imported file's top-level `scene { … }` becomes an implicit module named
+after the file stem, so `import "chair.mog"` lets you `use "chair" ()`:
+
+```
+import "objects/chair.mog"
+import "objects/table.mog"
+
+scene {
+  group (pos=[ 1, 0, 0]) { use "chair" () }
+  group (pos=[ 0, 0, 0]) { use "table" () }
+  group (pos=[-1, 0, 0]) { use "chair" (), rot=[0, 180, 0] }
+}
+```
+
+`import` is a top-level directive — declare it alongside `material` and
+`module`, before or after them. It takes a quoted file path and an optional
+`(as=<ident>)` to override the synthesised module name (handy when two files
+share a stem, since stem collisions are a hard error).
+
+Path resolution:
+
+- **Relative paths** are joined onto the importing file's directory. So
+  `import "shared/legs.mog"` from `/proj/scenes/chair.mog` reads
+  `/proj/scenes/shared/legs.mog`.
+- **Absolute paths** are used verbatim.
+- Paths are canonicalised before deduplication, so `import "lib.mog"` and
+  `import "./lib.mog"` resolve to the same file and load only once.
+
+What gets lifted from an imported file:
+
+- **`module` declarations** — added to the importer's module registry.
+- **`material` declarations** (top-level or inside the imported `scene { … }`)
+  — added to the importer's material registry. **Texture paths are rooted at
+  the defining file's directory**: `material "wood" (base_color_texture =
+  "textures/wood.png")` inside `objects/chair.mog` resolves to
+  `objects/textures/wood.png` regardless of where the composing scene lives.
+- **Top-level `scene { … }`** — synthesised as `module "<stem>" () { … }`.
+  Use `(as=<ident>)` on the import to give it a different name.
+
+Rules:
+
+- Imports are transitive: an imported file can `import` another file, and
+  every transitively-imported module / material / synthesised scene is
+  visible to the original importer.
+- Cycles (`A imports B imports A`) are detected and rejected with the
+  full chain in the error message.
+- Importing the same file twice — directly or via a chain — is a no-op.
+- **Module name shadowing** follows precedence: **stdlib < imports < user
+  declarations**. A user `module "leg" { … }` in the importing file
+  overrides any `leg` pulled in by `import`; an imported `leg` overrides
+  the stdlib's `leg`.
+- **Synthesised scene-as-module collisions are a hard error.** If two
+  imports both default to `chair` (one in `a/chair.mog`, one in
+  `b/chair.mog`), rename one with `(as=chair_a)`.
+- **Material name collisions across imports are a hard error.** Re-declare
+  the material in the importing file to shadow it.
+- An imported file may contain only `import`, `module`, `material`, and a
+  single top-level `scene { … }`. Other top-level forms (joints, clips,
+  skeletons) aren't composable yet and are rejected.
+
+Failures surface as errors at `mogen check` / `mogen build` time, pointing
+at the offending `import`.
 
 ---
 
