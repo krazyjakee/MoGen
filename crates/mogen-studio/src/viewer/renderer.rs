@@ -6,10 +6,13 @@ use glam::{Mat4, Vec3, Vec4};
 use glow::HasContext;
 use mogen_core::AlphaMode;
 
+use super::environment::{Environment, EnvironmentParams};
 use super::flatten::{DrawBatch, FlatMesh, SkinPalette, FLOATS_PER_VERTEX, MAX_JOINTS};
 use super::gizmo_gl::GizmoGl;
 use super::gl_util::{bytes_of_f32, bytes_of_u32, compile_program, try_load_texture};
 use super::grid_gl::GridGl;
+use super::lights::{kind_to_int, ResolvedLight, MAX_LIGHTS};
+use super::lights_gl::LightsGl;
 use super::shaders::{FS_SRC, VS_SRC};
 
 pub struct Renderer {
@@ -47,6 +50,23 @@ pub struct Renderer {
     u_emissive_tex: Option<glow::UniformLocation>,
     u_joint_mats: Option<glow::UniformLocation>,
     u_shader_mode: Option<glow::UniformLocation>,
+    u_num_lights: Option<glow::UniformLocation>,
+    u_light_kind: Option<glow::UniformLocation>,
+    u_light_pos: Option<glow::UniformLocation>,
+    u_light_dir: Option<glow::UniformLocation>,
+    u_light_color: Option<glow::UniformLocation>,
+    u_light_range: Option<glow::UniformLocation>,
+    u_light_cone: Option<glow::UniformLocation>,
+    /// Latest resolved punctual lights uploaded to the shader. Refreshed by
+    /// [`Self::set_lights`] each paint; empty falls back to the analytic
+    /// key/fill rig hard-coded in the fragment shader.
+    lights: Vec<ResolvedLight>,
+    /// Active environment-lighting preset's resolved parameters. Pushed into
+    /// the sky-probe + key/fill uniforms each `draw`. Updated via
+    /// [`Self::set_environment`]; defaults to the historical Studio preset
+    /// so a fresh renderer with no UI wiring still produces the original
+    /// hardcoded look.
+    environment: EnvironmentParams,
     /// Preview style selector. The fragment shader switches on its integer
     /// value; a second CPU-side effect (polygon mode LINE) drives the
     /// wireframe mode which doesn't need a distinct shader branch.
@@ -82,6 +102,10 @@ pub struct Renderer {
     /// Ground-plane reference grid. Drawn before the main scene so the
     /// scene's depth-test naturally occludes lines behind solid geometry.
     grid: GridGl,
+    /// Wireframe overlay for `light` nodes (icon ring + direction arrow /
+    /// cone). Always drawn after the main scene; depth-tests against geometry
+    /// so a light tucked inside a wall reads as occluded.
+    pub(super) lights_overlay: LightsGl,
     /// Per-batch resolved texture handles, parallel to [`Self::batches`].
     /// Refreshed on the first draw of each frame and reused across the
     /// per-batch loop so the loop can iterate `&self.batches` without the
@@ -239,9 +263,17 @@ impl Renderer {
             let u_emissive_tex = u("u_emissive_tex");
             let u_joint_mats = u("u_joint_mats[0]");
             let u_shader_mode = u("u_shader_mode");
+            let u_num_lights = u("u_num_lights");
+            let u_light_kind = u("u_light_kind[0]");
+            let u_light_pos = u("u_light_pos[0]");
+            let u_light_dir = u("u_light_dir[0]");
+            let u_light_color = u("u_light_color[0]");
+            let u_light_range = u("u_light_range[0]");
+            let u_light_cone = u("u_light_cone[0]");
 
             let gizmo = GizmoGl::new(gl)?;
             let grid = GridGl::new(gl)?;
+            let lights_overlay = LightsGl::new(gl)?;
 
             Ok(Self {
                 program,
@@ -250,6 +282,7 @@ impl Renderer {
                 ebo,
                 gizmo,
                 grid,
+                lights_overlay,
                 u_viewproj,
                 u_camera_pos,
                 u_key_dir,
@@ -280,6 +313,15 @@ impl Renderer {
                 u_emissive_tex,
                 u_joint_mats,
                 u_shader_mode,
+                u_num_lights,
+                u_light_kind,
+                u_light_pos,
+                u_light_dir,
+                u_light_color,
+                u_light_range,
+                u_light_cone,
+                lights: Vec::new(),
+                environment: Environment::default().params(),
                 shader_mode: 0,
                 wireframe: false,
                 texture_cache: HashMap::new(),
@@ -302,6 +344,23 @@ impl Renderer {
     pub fn set_preview(&mut self, shader_mode: i32, wireframe: bool) {
         self.shader_mode = shader_mode;
         self.wireframe = wireframe;
+    }
+
+    /// Hand the renderer the latest resolved punctual lights for the active
+    /// scene. The slice is cached locally and uploaded as part of the next
+    /// `draw` call, so a per-frame call from the paint callback is cheap —
+    /// just a Vec clone of up to MAX_LIGHTS entries. Pass an empty slice to
+    /// fall back to the shader's hard-coded key/fill rig.
+    pub fn set_lights(&mut self, lights: &[ResolvedLight]) {
+        let n = lights.len().min(MAX_LIGHTS);
+        self.lights.clear();
+        self.lights.extend_from_slice(&lights[..n]);
+    }
+
+    /// Swap in a fresh environment-lighting preset. Cheap — just stores the
+    /// params; the next `draw` uploads them.
+    pub fn set_environment(&mut self, params: EnvironmentParams) {
+        self.environment = params;
     }
 
     pub fn upload(&mut self, gl: &glow::Context, mesh: &FlatMesh) {
@@ -328,6 +387,59 @@ impl Renderer {
             gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, None);
             self.batches = mesh.batches.clone();
             self.palettes = mesh.palettes.clone();
+        }
+    }
+
+    /// Push the cached light list to the active shader program. Pads the
+    /// trailing slots with zeroes so the shader's `i < u_num_lights` guard
+    /// is the only thing protecting us from reading garbage — uniforms left
+    /// from a previous draw with a longer light list would otherwise
+    /// re-enter the loop the next time the count grew. Caller must have
+    /// already bound `self.program`.
+    fn upload_lights(&self, gl: &glow::Context) {
+        let mut kinds = [0i32; MAX_LIGHTS];
+        let mut pos = [0.0f32; MAX_LIGHTS * 3];
+        let mut dir = [0.0f32; MAX_LIGHTS * 3];
+        let mut color = [0.0f32; MAX_LIGHTS * 3];
+        let mut range = [0.0f32; MAX_LIGHTS];
+        let mut cone = [0.0f32; MAX_LIGHTS * 2];
+        for (i, l) in self.lights.iter().enumerate() {
+            kinds[i] = kind_to_int(l.kind);
+            pos[i * 3] = l.position.x;
+            pos[i * 3 + 1] = l.position.y;
+            pos[i * 3 + 2] = l.position.z;
+            dir[i * 3] = l.direction.x;
+            dir[i * 3 + 1] = l.direction.y;
+            dir[i * 3 + 2] = l.direction.z;
+            color[i * 3] = l.color[0];
+            color[i * 3 + 1] = l.color[1];
+            color[i * 3 + 2] = l.color[2];
+            range[i] = l.range;
+            cone[i * 2] = l.inner_cos;
+            cone[i * 2 + 1] = l.outer_cos;
+        }
+        unsafe {
+            if let Some(loc) = &self.u_num_lights {
+                gl.uniform_1_i32(Some(loc), self.lights.len() as i32);
+            }
+            if let Some(loc) = &self.u_light_kind {
+                gl.uniform_1_i32_slice(Some(loc), &kinds);
+            }
+            if let Some(loc) = &self.u_light_pos {
+                gl.uniform_3_f32_slice(Some(loc), &pos);
+            }
+            if let Some(loc) = &self.u_light_dir {
+                gl.uniform_3_f32_slice(Some(loc), &dir);
+            }
+            if let Some(loc) = &self.u_light_color {
+                gl.uniform_3_f32_slice(Some(loc), &color);
+            }
+            if let Some(loc) = &self.u_light_range {
+                gl.uniform_1_f32_slice(Some(loc), &range);
+            }
+            if let Some(loc) = &self.u_light_cone {
+                gl.uniform_2_f32_slice(Some(loc), &cone);
+            }
         }
     }
 
@@ -482,39 +594,57 @@ impl Renderer {
             if let Some(loc) = &self.u_camera_pos {
                 gl.uniform_3_f32(Some(loc), camera_pos.x, camera_pos.y, camera_pos.z);
             }
+            // Sky probe + analytic key/fill rig come from the active
+            // [`Environment`] preset (see `viewer/environment.rs`). Direction
+            // vectors are normalised on upload so the table can store the
+            // pre-normalised values verbatim. The same values feed both
+            // diffuse ambient and specular reflection in the shader; raw sky
+            // radiance is scaled down because the shader samples the dome
+            // directly instead of integrating a proper diffuse irradiance
+            // probe — full radiance overstated ambient on flat-colour
+            // (untextured) surfaces.
+            let env = self.environment;
             if let Some(loc) = &self.u_key_dir {
-                // Key from upper-front-left: lights the top-right-back of the model.
-                let d = Vec3::new(-0.4, -1.0, -0.3).normalize();
+                let d = env.key_dir.normalize_or_zero();
                 gl.uniform_3_f32(Some(loc), d.x, d.y, d.z);
             }
             if let Some(loc) = &self.u_fill_dir {
-                // Weaker fill from the opposite side to soften the shadow side.
-                let d = Vec3::new(0.6, -0.2, 0.5).normalize();
+                let d = env.fill_dir.normalize_or_zero();
                 gl.uniform_3_f32(Some(loc), d.x, d.y, d.z);
             }
-            // Sky probe colours. Soft daylight: blue zenith, warm horizon,
-            // muted green-grey ground bounce. The same values feed both diffuse
-            // ambient and specular reflection in the shader. Scaled down from
-            // raw sky radiance because the shader samples the dome directly
-            // instead of integrating a proper diffuse irradiance probe — full
-            // radiance overstated ambient on flat-colour (untextured) surfaces.
             if let Some(loc) = &self.u_sky_top {
-                gl.uniform_3_f32(Some(loc), 0.33, 0.42, 0.57);
+                gl.uniform_3_f32(Some(loc), env.sky_top.x, env.sky_top.y, env.sky_top.z);
             }
             if let Some(loc) = &self.u_sky_horizon {
-                gl.uniform_3_f32(Some(loc), 0.51, 0.51, 0.49);
+                gl.uniform_3_f32(
+                    Some(loc),
+                    env.sky_horizon.x,
+                    env.sky_horizon.y,
+                    env.sky_horizon.z,
+                );
             }
             if let Some(loc) = &self.u_sky_ground {
-                gl.uniform_3_f32(Some(loc), 0.11, 0.10, 0.09);
+                gl.uniform_3_f32(
+                    Some(loc),
+                    env.sky_ground.x,
+                    env.sky_ground.y,
+                    env.sky_ground.z,
+                );
             }
             if let Some(loc) = &self.u_sun_dir {
-                // Sun direction (pointing FROM sun, like a directional light).
-                let d = Vec3::new(-0.4, -1.0, -0.3).normalize();
+                let d = env.sun_dir.normalize_or_zero();
                 gl.uniform_3_f32(Some(loc), d.x, d.y, d.z);
             }
             if let Some(loc) = &self.u_sun_color {
-                gl.uniform_3_f32(Some(loc), 0.66, 0.63, 0.57);
+                gl.uniform_3_f32(Some(loc), env.sun_color.x, env.sun_color.y, env.sun_color.z);
             }
+            // Punctual lights uploaded as parallel arrays. Sized to MAX_LIGHTS
+            // on both sides (shader + Rust); `u_num_lights` caps the inner
+            // loop so unused entries don't contribute. When the count is 0
+            // the FS falls back to the analytic key/fill rig defined inline
+            // there — important for blank scenes that haven't authored any
+            // `light` nodes yet.
+            self.upload_lights(gl);
             // Sampler bindings — texture units stay constant for the whole pass.
             if let Some(loc) = &self.u_base_tex {
                 gl.uniform_1_i32(Some(loc), 0);
@@ -1041,6 +1171,7 @@ impl Renderer {
         }
         self.gizmo.destroy(gl);
         self.grid.destroy(gl);
+        self.lights_overlay.destroy(gl);
     }
 
     /// Draw the ground reference grid. Meant to be called immediately after
@@ -1061,5 +1192,23 @@ impl Renderer {
         mode: crate::gizmo::GizmoMode,
     ) {
         self.gizmo.draw(gl, viewproj, origin, scale, mode);
+    }
+
+    /// Draw the light-overlay pass: a small wireframe indicator (point sphere
+    /// / spot cone / directional arrow) anchored at each light's world pose,
+    /// plus a highlight ring around `selected` if it carries a light.
+    pub fn draw_lights_overlay(
+        &self,
+        gl: &glow::Context,
+        viewproj: Mat4,
+        eye: Vec3,
+        viewport_height: f32,
+        selected: Option<mogen_core::NodeId>,
+    ) {
+        if self.lights.is_empty() {
+            return;
+        }
+        self.lights_overlay
+            .draw(gl, viewproj, eye, viewport_height, &self.lights, selected);
     }
 }

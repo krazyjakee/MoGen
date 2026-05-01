@@ -20,6 +20,7 @@ modules, see [`modules.md`](./modules.md).
 - [Modules: `module` and `use`](#modules-module-and-use)
 - [Imports: `import`](#imports-import)
 - [Animation: `joint`, `clip`, templates](#animation-joint-clip-templates)
+- [Lights: `light`](#lights-light)
 - [Full example](#full-example)
 
 ---
@@ -728,6 +729,41 @@ pass `axis` explicitly.
 spin "rotor_spin" (target="rotor", axis=[0, 0, 1], rpm=30)
 open_close "door_swing" (target="door_hinge", angle=90, seconds=1.2)
 ```
+
+---
+
+## Lights: `light`
+
+`mogen` exports lights via the standard glTF `KHR_lights_punctual` extension.
+A `light` is a transform-only scene node — it carries `pos` / `rot` like any
+other node, has no mesh, and never accepts children. Direction is implicit:
+the light points along its local `-Z` axis.
+
+```
+light "sun"  (kind=directional, dir=[-0.4, -1, -0.3], color=[1, 0.95, 0.85], intensity=3)
+light "lamp" (kind=point, pos=[0, 2, 0], color=[1, 0.9, 0.7], intensity=10, range=8)
+light "spot" (kind=spot,  pos=[0, 3, 0], dir=[0, -1, 0], intensity=20,
+              range=10, inner_cone=20, outer_cone=35)
+```
+
+| attribute | value | notes |
+|---|---|---|
+| `kind` | `directional`, `point`, `spot` | required |
+| `color` | vec3 | linear-space RGB; default `[1, 1, 1]` |
+| `intensity` | number | **candela** for point/spot, **lux** for directional; default `1.0` |
+| `range` | number | distance cutoff for point/spot; rejected on directional |
+| `dir` | vec3 | optional shortcut: rotates the node so `-Z` points along `dir` (overrides `rot=`) |
+| `inner_cone` | number | spot only; degrees, default `0` |
+| `outer_cone` | number | spot only; degrees, default `45` |
+
+Lights ignore `mat`, `anchor`, `from`/`to`, and the relative-placement
+shortcuts (`above`/`below`/…) — only transforms (`pos`, `rot`, `scale`,
+`x`/`y`/`z`, `rx`/`ry`/`rz`), `role`, and `tags` apply.
+
+`mogen` does not emit an ambient term: the glTF core spec has no ambient
+light, and Godot derives ambient from a `WorldEnvironment` node downstream.
+For low-intensity fill, use a dim directional light (e.g.
+`intensity=0.5, dir=[0, -1, 0]`) or set up an environment in your engine.
 
 ---
 

@@ -7,7 +7,9 @@ use glam::Mat4;
 
 use glam::{Quat, Vec3};
 
-use crate::{Clip, Connector, Joint, Material, MaterialId, Mesh, Skin, SkinId, Span, Transform};
+use crate::{
+    Clip, Connector, Joint, Light, Material, MaterialId, Mesh, Skin, SkinId, Span, Transform,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct NodeId(pub u32);
@@ -51,6 +53,11 @@ pub struct SceneNode {
     pub material: Option<MaterialId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skin: Option<SkinId>,
+    /// Punctual light attached to this node (`KHR_lights_punctual`). Mutually
+    /// exclusive with `mesh` in practice — light nodes are pure transform
+    /// carriers. Direction is implicit from the node's local `-Z`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub light: Option<Light>,
     pub parent: Option<NodeId>,
     pub children: Vec<NodeId>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -123,6 +130,7 @@ impl Default for SceneNode {
             mesh: None,
             material: None,
             skin: None,
+            light: None,
             parent: None,
             children: Vec::new(),
             connectors: Vec::new(),
@@ -220,6 +228,10 @@ impl SceneGraph {
 
     pub fn set_mesh(&mut self, id: NodeId, mesh: Mesh) {
         self.nodes[id.0 as usize].mesh = Some(mesh);
+    }
+
+    pub fn set_light(&mut self, id: NodeId, light: Light) {
+        self.nodes[id.0 as usize].light = Some(light);
     }
 
     pub fn set_material(&mut self, id: NodeId, mat: MaterialId) {

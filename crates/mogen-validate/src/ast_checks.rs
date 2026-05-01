@@ -19,6 +19,7 @@ pub const KNOWN_KINDS: &[&str] = &[
     "spin", "open_close", "wave", "flap", "idle",
     "skeleton", "bone",
     "lod_scale",
+    "light",
 ];
 
 /// Attribute names accepted on any geometry/group-like node (primitives,
@@ -42,6 +43,15 @@ pub const TRANSFORM_COMMON_ATTRS: &[&str] = &[
     "x", "y", "z", "rx", "ry", "rz",
 ];
 
+/// Subset for `light`: transforms (placement + rotation drive direction) plus
+/// `role` and `tags` for metadata. No material binding, no placement shortcuts
+/// — a light has no AABB to anchor against.
+pub const LIGHT_COMMON_ATTRS: &[&str] = &[
+    "pos", "rot", "scale",
+    "x", "y", "z", "rx", "ry", "rz",
+    "role", "tags",
+];
+
 /// Per-kind common-attribute bucket. Kinds that are neither geometry nor
 /// transform-bearing (materials, connectors, joins, animation tracks and
 /// templates) accept ONLY their kind-specific allowlist — no implicit
@@ -50,6 +60,7 @@ pub const TRANSFORM_COMMON_ATTRS: &[&str] = &[
 pub fn common_attrs_for_kind(kind: &str) -> &'static [&'static str] {
     match kind {
         "skeleton" | "bone" => TRANSFORM_COMMON_ATTRS,
+        "light" => LIGHT_COMMON_ATTRS,
         "material" | "connector" | "attach"
         | "joint" | "clip" | "track"
         | "spin" | "open_close" | "wave" | "flap" | "idle"
@@ -453,6 +464,7 @@ pub fn attrs_for_kind(kind: &str) -> &'static [&'static str] {
         "bone" => &["envelope"],
         "attach" => &["parent", "child", "socket", "plug", "offset", "twist"],
         "lod_scale" => &["value"],
+        "light" => &["kind", "color", "intensity", "range", "inner_cone", "outer_cone", "dir"],
         // `smooth` blends limb-to-torso seams for organic shapes.
         // `difference`/`intersect` reject it via attr_type below.
         "union" => &["smooth"],
@@ -625,6 +637,12 @@ fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         | ("attach", "socket") | ("attach", "plug") => "string",
         ("attach", "offset") | ("attach", "twist") => "number",
         ("lod_scale", "value") => "number",
+        ("light", "kind") => "string",
+        ("light", "color") | ("light", "dir") => "vec3",
+        ("light", "intensity")
+        | ("light", "range")
+        | ("light", "inner_cone")
+        | ("light", "outer_cone") => "number",
         (_, "mat") | (_, "role") | (_, "skin") | (_, "bind") => "string",
         (_, "tags") => "string",
         _ => return None,
@@ -879,6 +897,104 @@ fn check_anim_required(n: &Node, diags: &mut Vec<Diagnostic>) {
                 }
             }
         }
+        "light" => {
+            let kind = n.attr("kind").and_then(as_string_or_ident);
+            match kind {
+                None => diags.push(
+                    Diagnostic::error(
+                        "E0801",
+                        "`light` requires kind=directional|point|spot",
+                    )
+                    .with_span(n.span),
+                ),
+                Some(name) if !matches!(name, "directional" | "point" | "spot") => {
+                    diags.push(
+                        Diagnostic::error(
+                            "E0802",
+                            format!(
+                                "unknown light kind \"{name}\" (expected directional|point|spot)"
+                            ),
+                        )
+                        .with_span(n.span),
+                    );
+                }
+                _ => {}
+            }
+            if let Some(Value::Number(i)) = n.attr("intensity") {
+                if *i < 0.0 {
+                    diags.push(
+                        Diagnostic::warning(
+                            "W0803",
+                            format!("light intensity {i} is negative — clamped to 0 by most renderers"),
+                        )
+                        .with_span(n.span),
+                    );
+                }
+            }
+            if let Some(Value::Number(r)) = n.attr("range") {
+                if *r <= 0.0 {
+                    diags.push(
+                        Diagnostic::error(
+                            "E0804",
+                            format!("light `range` must be > 0, got {r}"),
+                        )
+                        .with_span(n.span),
+                    );
+                }
+                if matches!(kind, Some("directional")) {
+                    diags.push(
+                        Diagnostic::warning(
+                            "W0805",
+                            "`range` is ignored on directional lights",
+                        )
+                        .with_span(n.span),
+                    );
+                }
+            }
+            let inner = match n.attr("inner_cone") {
+                Some(Value::Number(v)) => Some(*v),
+                _ => None,
+            };
+            let outer = match n.attr("outer_cone") {
+                Some(Value::Number(v)) => Some(*v),
+                _ => None,
+            };
+            for (label, val) in [("inner_cone", inner), ("outer_cone", outer)] {
+                if let Some(v) = val {
+                    if !(0.0..=90.0).contains(&v) {
+                        diags.push(
+                            Diagnostic::error(
+                                "E0806",
+                                format!("light `{label}` {v}° must be in [0, 90]"),
+                            )
+                            .with_span(n.span),
+                        );
+                    }
+                    if !matches!(kind, Some("spot")) {
+                        diags.push(
+                            Diagnostic::warning(
+                                "W0807",
+                                format!("`{label}` is only used by spot lights"),
+                            )
+                            .with_span(n.span),
+                        );
+                    }
+                }
+            }
+            if let (Some(i), Some(o)) = (inner, outer) {
+                if i > o {
+                    diags.push(
+                        Diagnostic::error(
+                            "E0808",
+                            format!(
+                                "light `inner_cone` ({i}°) must be ≤ `outer_cone` ({o}°)"
+                            ),
+                        )
+                        .with_span(n.span),
+                    );
+                }
+            }
+        }
         "attach" => {
             if n.attr("parent").and_then(as_string_or_ident).is_none() {
                 diags.push(
@@ -1109,6 +1225,49 @@ mod common_attr_scope_tests {
         let diags = diags_for(bad_src);
         assert!(has_unknown_attr(&diags, "anchor", "bone"));
         assert!(has_unknown_attr(&diags, "tags", "bone"));
+    }
+
+    #[test]
+    fn light_requires_kind() {
+        let src = r#"scene { light "x" () }"#;
+        let diags = diags_for(src);
+        assert!(diags.iter().any(|d| d.code == "E0801"), "got {diags:?}");
+    }
+
+    #[test]
+    fn light_unknown_kind_rejected() {
+        let src = r#"scene { light "x" (kind=floodlamp) }"#;
+        let diags = diags_for(src);
+        assert!(diags.iter().any(|d| d.code == "E0802"), "got {diags:?}");
+    }
+
+    #[test]
+    fn light_inner_must_not_exceed_outer() {
+        let src = r#"scene { light "s" (kind=spot, inner_cone=40, outer_cone=20) }"#;
+        let diags = diags_for(src);
+        assert!(diags.iter().any(|d| d.code == "E0808"), "got {diags:?}");
+    }
+
+    #[test]
+    fn light_cone_on_non_spot_warns() {
+        let src = r#"scene { light "s" (kind=point, outer_cone=30) }"#;
+        let diags = diags_for(src);
+        assert!(diags.iter().any(|d| d.code == "W0807"), "got {diags:?}");
+    }
+
+    #[test]
+    fn light_accepts_pos_and_rot_but_not_anchor() {
+        let src = r#"scene { light "s" (kind=point, pos=[0,2,0], anchor=bottom) }"#;
+        let diags = diags_for(src);
+        assert!(
+            has_unknown_attr(&diags, "anchor", "light"),
+            "anchor should be rejected on light, got {diags:?}",
+        );
+        // pos= must NOT warn — lights are placed in the scene.
+        assert!(
+            !has_unknown_attr(&diags, "pos", "light"),
+            "pos= must be accepted on light, got {diags:?}",
+        );
     }
 
     #[test]

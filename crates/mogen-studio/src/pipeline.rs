@@ -1,10 +1,14 @@
 use std::path::Path;
+use std::sync::Arc;
 
 use mogen_core::{Diagnostic, SceneGraph, Severity, Span};
 use mogen_export::ExportOptions;
 
 pub struct CompileResult {
-    pub scene: Option<SceneGraph>,
+    /// Shared so the viewer and any other read-only consumers (autocomplete,
+    /// inspector panels) can hold the scene without deep-cloning on tab
+    /// switch — the scene is immutable post-compile.
+    pub scene: Option<Arc<SceneGraph>>,
     pub diagnostics: Vec<Diagnostic>,
     pub stage: Stage,
     /// Per-node AST source spans, indexed by `NodeId.0`. Populated from
@@ -20,7 +24,12 @@ impl CompileResult {
             .as_ref()
             .map(|s| s.nodes.iter().map(|n| n.source_span).collect())
             .unwrap_or_default();
-        Self { scene, diagnostics, stage, node_spans }
+        Self {
+            scene: scene.map(Arc::new),
+            diagnostics,
+            stage,
+            node_spans,
+        }
     }
 }
 

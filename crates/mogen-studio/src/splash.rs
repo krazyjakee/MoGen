@@ -44,7 +44,17 @@ pub fn draw(
     egui::CentralPanel::default()
         .frame(egui::Frame::none().fill(egui::Color32::from_rgb(8, 8, 12)))
         .show(ctx, |ui| {
-            let rect = ui.max_rect();
+            // On HiDPI displays the eframe window comes up much larger in
+            // physical pixels, which makes the splash feel oversized. Scale
+            // the working rect down to half size (centered) so the splash
+            // reads at a comfortable size on Retina/2x screens; the panel
+            // fill takes care of the surrounding margin.
+            let full = ui.max_rect();
+            let rect = if ctx.pixels_per_point() >= 1.5 {
+                egui::Rect::from_center_size(full.center(), full.size() * 0.5)
+            } else {
+                full
+            };
             let painter = ui.painter();
 
             // Image: cover-fit (fill the rect, crop the longer axis) so the

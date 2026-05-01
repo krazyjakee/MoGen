@@ -305,6 +305,7 @@ fn build_merged_node(
         mesh: Some(mesh),
         material,
         skin: None,
+        light: None,
         parent: new_parent,
         children: Vec::new(),
         connectors: Vec::new(),

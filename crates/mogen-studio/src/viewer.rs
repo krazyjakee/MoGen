@@ -1,10 +1,13 @@
 mod anim;
 mod camera;
 mod cinema;
+pub mod environment;
 pub(crate) mod flatten;
 mod gizmo_gl;
 mod gl_util;
 mod grid_gl;
+mod lights;
+mod lights_gl;
 mod renderer;
 mod shaders;
 mod state;
@@ -17,7 +20,9 @@ use glam::Mat4;
 use mogen_core::{NodeId, SceneGraph};
 
 pub use camera::{CameraSnapshot, OrbitCamera};
+pub use environment::Environment;
 pub use flatten::{ClipSummary, FlatMesh, FLOATS_PER_VERTEX};
+pub use lights::ResolvedLight;
 pub use state::{
     CaptureFrame, CaptureKind, CaptureOutcome, CaptureRequest, PendingEdit,
 };
@@ -43,28 +48,12 @@ impl Viewer {
         })
     }
 
-    pub fn set_scene(&self, scene: &SceneGraph, base_dir: Option<&Path>, fit_camera: bool) {
-        // Fit the camera using the static (unanimated) pose so the framing
-        // stays stable across animation frames — using an animated mesh would
-        // make the camera jump as the bounding box swings.
-        let base_mesh = flatten::flatten(scene, base_dir);
+    pub fn set_scene(&self, scene: Arc<SceneGraph>, base_dir: Option<&Path>, fit_camera: bool) {
         let mut st = self.state.lock().unwrap();
         let viewer_was_empty = st.scene.is_none();
-        st.static_center = base_mesh.center;
-        st.static_radius = base_mesh.radius;
-        // Camera fit is caller-driven: the App knows whether this is the first
-        // time a given file's scene is being shown. Subsequent compiles
-        // (gizmo release, keystroke debounce) pass `false` so `camera.target` /
-        // `camera.fit_distance` stay put — recentering on every compile would
-        // make it look like the user's edit was rejected. First-render uses
-        // the same helper as the Frame button so a freshly-loaded model
-        // composes identically to pressing Frame (yaw/pitch reset included).
-        if fit_camera {
-            Self::frame_camera_to_static(&mut st);
-        }
         st.base_dir = base_dir.map(|p| p.to_path_buf());
         st.selected = match &st.selected_path {
-            Some(path) => resolve_node_path(scene, path),
+            Some(path) => resolve_node_path(&scene, path),
             None => None,
         };
         st.gizmo_drag = None;
@@ -110,8 +99,25 @@ impl Viewer {
         }
         st.clip_active = clip_active;
         st.anim_times = vec![0.0; scene.clips.len()];
-        st.scene = Some(scene.clone());
+        st.scene = Some(scene);
+        // Single flatten via rebuild_mesh — vertex positions are rest-pose
+        // (animation is applied by the joint-palette uniform in the shader),
+        // so the resulting mesh AABB is the static framing bound. Pulling
+        // it from `st.mesh` here avoids a redundant flatten() purely for
+        // the camera-fit numbers.
         st.rebuild_mesh();
+        st.static_center = st.mesh.center;
+        st.static_radius = st.mesh.radius;
+        // Camera fit is caller-driven: the App knows whether this is the first
+        // time a given file's scene is being shown. Subsequent compiles
+        // (gizmo release, keystroke debounce) pass `false` so `camera.target` /
+        // `camera.fit_distance` stay put — recentering on every compile would
+        // make it look like the user's edit was rejected. First-render uses
+        // the same helper as the Frame button so a freshly-loaded model
+        // composes identically to pressing Frame (yaw/pitch reset included).
+        if fit_camera {
+            Self::frame_camera_to_static(&mut st);
+        }
     }
 
     pub fn clear(&self) {
@@ -168,6 +174,25 @@ impl Viewer {
 
     pub fn set_show_grid(&self, on: bool) {
         self.state.lock().unwrap().show_grid = on;
+    }
+
+    pub fn set_show_light_gizmos(&self, on: bool) {
+        self.state.lock().unwrap().show_light_gizmos = on;
+    }
+
+    pub fn set_show_transform_gizmo(&self, on: bool) {
+        self.state.lock().unwrap().show_transform_gizmo = on;
+    }
+
+    /// Swap in a fresh environment-lighting preset. The next viewport paint
+    /// pulls `state.environment` and forwards its resolved params to the
+    /// renderer's sky-probe + key/fill uniforms.
+    pub fn set_environment(&self, env: Environment) {
+        self.state.lock().unwrap().environment = env;
+    }
+
+    pub fn environment(&self) -> Environment {
+        self.state.lock().unwrap().environment
     }
 
     /// Cap continuous viewport repaints (animation, cinema, gizmo drag).
@@ -533,11 +558,16 @@ impl Viewer {
 
             if !cinema_active && response.clicked() && !gizmo_in_progress {
                 if let Some(cursor) = cursor_now {
-                    if let Some(id) = crate::pick::pick_node(
+                    // Resolve lights once per click, not per repaint, so the
+                    // billboard halo test sees exactly the same world poses
+                    // the renderer drew this frame. Cheap (≤ MAX_LIGHTS).
+                    let lights = st.resolve_lights();
+                    if let Some(id) = crate::pick::pick_node_or_light(
                         &st.camera,
                         rect,
                         cursor,
                         &st.mesh,
+                        &lights,
                     ) {
                         select_by_id(&mut st, Some(id));
                         needs_repaint = true;
@@ -638,6 +668,16 @@ impl Viewer {
                 st.preview_shader.shader_mode(),
                 st.preview_shader.wants_wireframe(),
             );
+            // Hand the renderer the active environment-lighting preset's
+            // resolved params each paint. Cheap (a struct copy) and lets the
+            // user swap presets from the overlay without forcing a recompile.
+            rr.set_environment(st.environment.params());
+            // Resolve DSL `light` nodes against the live (animation- and
+            // drag-modulated) world transforms so a light parented to a
+            // moving rig follows it. With no scene loaded, hand back an empty
+            // slice — the FS falls back to its built-in key/fill rig.
+            let light_list = st.resolve_lights();
+            rr.set_lights(&light_list);
             rr.draw(gl, viewproj, eye);
             // Cinema mode hides the grid + gizmo handles so the framing
             // reads as a clean presentation rather than an editor view.
@@ -645,7 +685,16 @@ impl Viewer {
                 if st.show_grid {
                     rr.draw_grid(gl, viewproj, eye);
                 }
-                if let (Some(sel), Some(scene)) = (st.selected, st.scene.as_ref()) {
+                // Light overlays sit between the grid and the transform
+                // gizmo: occluded by real geometry (depth-test on) but
+                // drawn underneath the always-on-top transform handles so
+                // selection markers don't fight for the same screen pixels.
+                if st.show_light_gizmos {
+                    rr.draw_lights_overlay(gl, viewproj, eye, viewport_height, st.selected);
+                }
+                if let (true, Some(sel), Some(scene)) =
+                    (st.show_transform_gizmo, st.selected, st.scene.as_ref())
+                {
                     // Single source of truth shared with `begin_gizmo_drag`:
                     // skip drawing for non-editable / relative-placed nodes,
                     // and for attach-bound nodes whose current mode has no

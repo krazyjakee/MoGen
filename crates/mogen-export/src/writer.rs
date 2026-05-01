@@ -12,6 +12,7 @@ use crate::accessor::{
     push_indices, push_joints, push_normals, push_positions, push_uvs, push_weights,
 };
 use crate::animation::emit_animation;
+use crate::lights::collect_lights;
 use crate::material::{collect_material_extensions, emit_material};
 #[cfg(feature = "merge")]
 use crate::merge;
@@ -192,8 +193,10 @@ pub fn build_glb_with_options<F: Fn(&str)>(
         .map(|s| emit_skin(s, &mut bin, &mut buffer_views, &mut accessors))
         .collect();
 
+    let light_table = collect_lights(scene);
+
     for (i, n) in scene.nodes.iter().enumerate() {
-        nodes.push(emit_node(n, mesh_index_for_node[i]));
+        nodes.push(emit_node(n, mesh_index_for_node[i], light_table.node_to_index[i]));
     }
 
     let materials: Vec<Value> = scene
@@ -201,7 +204,10 @@ pub fn build_glb_with_options<F: Fn(&str)>(
         .iter()
         .map(|m| emit_material(m, &texture_table))
         .collect();
-    let extensions_used = collect_material_extensions(&scene.materials);
+    let mut extensions_used = collect_material_extensions(&scene.materials);
+    if !light_table.is_empty() {
+        extensions_used.push("KHR_lights_punctual");
+    }
 
     let animations: Vec<Value> = if opts.include_animations {
         scene
@@ -243,6 +249,11 @@ pub fn build_glb_with_options<F: Fn(&str)>(
     if !extensions_used.is_empty() {
         gltf["extensionsUsed"] = json!(extensions_used);
     }
+    if !light_table.is_empty() {
+        gltf["extensions"] = json!({
+            "KHR_lights_punctual": { "lights": light_table.lights }
+        });
+    }
 
     progress("writing glb");
     let json_bytes = serde_json::to_vec(&gltf)?;
@@ -267,7 +278,7 @@ pub fn build_glb_with_options<F: Fn(&str)>(
     Ok(out)
 }
 
-fn emit_node(n: &SceneNode, mesh: Option<usize>) -> Value {
+fn emit_node(n: &SceneNode, mesh: Option<usize>, light: Option<usize>) -> Value {
     let mut obj = serde_json::Map::new();
     obj.insert("name".into(), Value::String(n.name.clone()));
 
@@ -291,6 +302,12 @@ fn emit_node(n: &SceneNode, mesh: Option<usize>) -> Value {
     if !n.children.is_empty() {
         let cs: Vec<u32> = n.children.iter().map(|NodeId(i)| *i).collect();
         obj.insert("children".into(), json!(cs));
+    }
+    if let Some(li) = light {
+        obj.insert(
+            "extensions".into(),
+            json!({ "KHR_lights_punctual": { "light": li } }),
+        );
     }
 
     let mut extras = serde_json::Map::new();

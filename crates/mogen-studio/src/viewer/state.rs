@@ -7,10 +7,12 @@ use eframe::egui;
 use glam::{Mat4, Quat, Vec3};
 use mogen_core::{NodeId, SceneGraph, Transform};
 
-use super::anim::apply_animation;
+use super::anim::{apply_animation, world_transforms_from_locals};
 use super::camera::OrbitCamera;
 use super::cinema::CinemaDirector;
+use super::environment::Environment;
 use super::flatten::{flatten, update_palettes, FlatMesh};
+use super::lights::{collect_lights, ResolvedLight};
 use crate::preview_shader::PreviewShader;
 
 /// Shared state between the egui main thread and the render-time paint callback.
@@ -26,7 +28,7 @@ pub struct ViewerState {
     /// just the palette uniforms when this is set, leaving the VBO/EBO alone
     /// — the whole point of the rest-pose-baked vertex stream.
     pub palettes_dirty: bool,
-    pub scene: Option<SceneGraph>,
+    pub scene: Option<Arc<SceneGraph>>,
     /// Directory of the source `.mog` file — used to resolve relative texture
     /// paths declared on materials. `None` for unsaved buffers.
     pub base_dir: Option<PathBuf>,
@@ -80,6 +82,18 @@ pub struct ViewerState {
     /// User toggle for the ground-plane reference grid. Cinema mode hides the
     /// grid regardless of this flag.
     pub show_grid: bool,
+    /// User toggle for the light-indicator overlay (point sphere / spot cone /
+    /// directional arrow drawn at each `light` node's pose). Cinema mode hides
+    /// these regardless of this flag.
+    pub show_light_gizmos: bool,
+    /// User toggle for the translate/rotate/scale handles drawn on the selected
+    /// node. Cinema mode hides them regardless of this flag.
+    pub show_transform_gizmo: bool,
+    /// Active environment-lighting preset. Drives the analytic sky probe and
+    /// the fallback key/fill rig used when the scene declares no `light`
+    /// nodes. Persisted in the studio settings file via the matching string
+    /// key in [`super::environment::environment_key`].
+    pub environment: Environment,
     /// Cap on continuous viewport repaints (animation tick, cinema pan, gizmo
     /// drag). `None` = uncapped — the per-frame `request_repaint()` call goes
     /// through unchanged. `Some(fps)` routes through `request_repaint_after(
@@ -391,6 +405,9 @@ impl Default for ViewerState {
             preview_shader: Default::default(),
             cinema: Default::default(),
             show_grid: true,
+            show_light_gizmos: true,
+            show_transform_gizmo: true,
+            environment: Environment::default(),
             max_fps: None,
             capture_request: None,
             capture_outcome: None,
@@ -435,6 +452,22 @@ impl ViewerState {
         if self.mesh.palette_sources.is_empty() {
             return;
         }
+        let locals = self.live_locals();
+        update_palettes(scene, &locals, &mut self.mesh);
+        self.palettes_dirty = true;
+    }
+
+    /// Build the per-node local transforms for the *current* moment —
+    /// rest-pose for static scenes, sampled-clip pose with a live gizmo
+    /// drag overlaid when applicable. Pulled out of `update_palettes` so
+    /// the light resolver (and any future per-frame consumer) can share
+    /// the same composed pose without duplicating the animation/drag
+    /// blending rules.
+    fn live_locals(&self) -> Vec<Transform> {
+        let scene = self
+            .scene
+            .as_ref()
+            .expect("live_locals called without a scene");
         let mut locals: Vec<Transform> = scene.nodes.iter().map(|n| n.transform).collect();
         if self.any_active() {
             for (i, &active) in self.clip_active.iter().enumerate() {
@@ -455,8 +488,24 @@ impl ViewerState {
                 *t = apply_gizmo_drag(drag);
             }
         }
-        update_palettes(scene, &locals, &mut self.mesh);
-        self.palettes_dirty = true;
+        locals
+    }
+
+    /// Resolve every `light` carrier in the active scene against the live
+    /// pose. Returns an empty vec when no scene is loaded — the renderer
+    /// falls back to its hard-coded key/fill rig in that case.
+    pub(super) fn resolve_lights(&self) -> Vec<ResolvedLight> {
+        let Some(scene) = self.scene.as_ref() else {
+            return Vec::new();
+        };
+        // Skip the locals/world walk entirely when no node carries a light,
+        // which is the common case for the bulk of example scenes.
+        if scene.nodes.iter().all(|n| n.light.is_none()) {
+            return Vec::new();
+        }
+        let locals = self.live_locals();
+        let worlds = world_transforms_from_locals(scene, &locals);
+        collect_lights(scene, &worlds)
     }
 }
 
@@ -631,8 +680,15 @@ pub(super) fn commit_gizmo_drag(st: &mut ViewerState) -> Option<PendingEdit> {
     // Shortcut/corner-form attrs that the DSL lets override the canonical
     // transform field. The gizmo must strip these on commit or the author's
     // original shortcuts silently defeat the writeback on recompile.
+    // `dir` belongs in ROT_SHADOWS only for `light` nodes — its presence on
+    // a light forces the lower step to recompute rotation from the direction
+    // vector and silently discards the gizmo's `rot=` writeback. No other
+    // top-level scene node consumes `dir`, so stripping it unconditionally
+    // is safe (connectors carry their own `dir` but are children, not
+    // selectable scene nodes — the source-span writeback only touches the
+    // selected node's own attrs).
     const POS_SHADOWS: &[&str] = &["x", "y", "z", "from", "to"];
-    const ROT_SHADOWS: &[&str] = &["rx", "ry", "rz"];
+    const ROT_SHADOWS: &[&str] = &["rx", "ry", "rz", "dir"];
     let final_local = apply_gizmo_drag(drag);
     // For attach-bound nodes the post-compile transform is `attach + user`,
     // so the `pos=` we write back must be `final_local - attach_anchor`.

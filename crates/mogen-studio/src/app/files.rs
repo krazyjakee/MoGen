@@ -191,7 +191,7 @@ impl MogenStudioApp {
             Some(r) if matches!(r.stage, Stage::Ok) => {
                 if let Some(scene) = &r.scene {
                     let fit = self.files[i].first_render;
-                    self.viewer.set_scene(scene, base_dir, fit);
+                    self.viewer.set_scene(scene.clone(), base_dir, fit);
                     self.files[i].first_render = false;
                     return;
                 }

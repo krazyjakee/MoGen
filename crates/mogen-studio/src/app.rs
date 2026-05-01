@@ -111,6 +111,10 @@ pub struct MogenStudioApp {
     settings: Settings,
     show_options: bool,
     options_api_key_draft: String,
+    /// Active tab inside the Preferences window. Persists across opens within
+    /// a session so re-opening the dialog returns to whichever pane the user
+    /// was last on.
+    prefs_active_tab: ui_dialogs::PrefsTab,
 
     /// First-launch onboarding visibility. Raised once after the splash drains
     /// when `settings.onboarded` is false; the user dismisses it by pasting a
@@ -305,6 +309,9 @@ impl MogenStudioApp {
         apply_theme(&cc.egui_ctx, settings.theme());
         viewer.set_preview_shader(settings.preview_shader());
         viewer.set_show_grid(settings.show_grid());
+        viewer.set_show_light_gizmos(settings.show_light_gizmos());
+        viewer.set_show_transform_gizmo(settings.show_transform_gizmo());
+        viewer.set_environment(settings.environment());
         viewer.set_max_fps(settings.max_fps());
 
         // Hand the seed tab id 0 directly; the counter that hands out
@@ -375,6 +382,7 @@ impl MogenStudioApp {
             settings,
             show_options: false,
             options_api_key_draft,
+            prefs_active_tab: ui_dialogs::PrefsTab::default(),
             show_onboarding,
             show_crash_consent,
             onboarding_api_key_draft: String::new(),

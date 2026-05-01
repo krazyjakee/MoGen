@@ -12,6 +12,7 @@ use super::helpers::{
     anchor_for, apply_anchor_to_mesh, inherit_material_from_ancestor, transform_from_attrs,
 };
 use super::layout::{apply_relative_placement, expand_grid, expand_replicator, expand_stack};
+use super::light::lower_light;
 use super::primitive::primitive_mesh;
 
 pub(super) fn lower_into(
@@ -33,6 +34,9 @@ pub(super) fn lower_into(
     }
     if node.kind == "branch" {
         return expand_branch(node, parent, graph);
+    }
+    if node.kind == "light" {
+        return lower_light(node, parent, graph);
     }
 
     let transform = transform_from_attrs(node);

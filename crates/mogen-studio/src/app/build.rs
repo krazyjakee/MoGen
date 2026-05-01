@@ -44,11 +44,14 @@ impl MogenStudioApp {
             self.show_export = false;
             return;
         }
-        let scene = result
+        // Deep-clone for the worker thread: `last_result.scene` is now an
+        // `Arc<SceneGraph>` shared with the viewer, but `run_build` mutates
+        // (merge pass) and the worker needs an owned, independent copy.
+        let scene = (**result
             .scene
             .as_ref()
-            .expect("Ok implies Some(scene)")
-            .clone();
+            .expect("Ok implies Some(scene)"))
+        .clone();
         let out = self.files[i]
             .path
             .as_ref()
@@ -125,7 +128,7 @@ impl MogenStudioApp {
         if file_index == self.active {
             if let Some(scene) = exported_scene {
                 let base_dir = self.files[file_index].path.as_deref().and_then(|p| p.parent());
-                self.viewer.set_scene(&scene, base_dir, false);
+                self.viewer.set_scene(Arc::new(scene), base_dir, false);
             }
         }
 

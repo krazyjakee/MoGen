@@ -102,7 +102,10 @@ uniform sampler2D u_ao_tex;
 uniform sampler2D u_emissive_tex;
 
 // Two analytic key/fill lights for direct illumination plus a procedural sky
-// dome that doubles as the IBL probe for ambient + specular reflection.
+// dome that doubles as the IBL probe for ambient + specular reflection. The
+// key/fill pair is the *fallback* used only when the scene declares no DSL
+// lights — once `u_num_lights > 0`, direct illumination iterates the
+// `u_light_*` arrays below instead.
 uniform vec3 u_key_dir;
 uniform vec3 u_fill_dir;
 uniform vec3 u_sky_top;
@@ -110,6 +113,24 @@ uniform vec3 u_sky_horizon;
 uniform vec3 u_sky_ground;
 uniform vec3 u_sun_dir;
 uniform vec3 u_sun_color;
+
+// User-authored punctual lights (`KHR_lights_punctual`). Arrays are sized to
+// MAX_LIGHTS in `lights.rs`; entries beyond `u_num_lights` are unread. Layout:
+//   u_light_kind:  0=directional, 1=point, 2=spot
+//   u_light_pos:   world-space position (point/spot only — ignored for dir)
+//   u_light_dir:   world-space unit direction the light points along (the
+//                  node's local -Z, transformed by world rotation)
+//   u_light_color: linear RGB pre-multiplied by `intensity`
+//   u_light_range: distance cutoff for point/spot; 0 = unlimited
+//   u_light_cone:  (cos(inner), cos(outer)) for spot; (1,1) otherwise
+const int MAX_LIGHTS = 8;
+uniform int u_num_lights;
+uniform int u_light_kind[MAX_LIGHTS];
+uniform vec3 u_light_pos[MAX_LIGHTS];
+uniform vec3 u_light_dir[MAX_LIGHTS];
+uniform vec3 u_light_color[MAX_LIGHTS];
+uniform float u_light_range[MAX_LIGHTS];
+uniform vec2 u_light_cone[MAX_LIGHTS];
 
 const float PI = 3.14159265359;
 
@@ -156,10 +177,12 @@ vec3 agx_tonemap(vec3 color) {
     return color;
 }
 
-// Three-band sky: zenith → horizon for the upper hemisphere, horizon → ground
-// for the lower one, plus a tight sun disc. This is what reflections sample
-// in the absence of a real cubemap.
-vec3 sample_sky(vec3 dir) {
+// Three-band sky dome: zenith → horizon for the upper hemisphere, horizon →
+// ground for the lower one. Smooth and low-frequency by design — safe to
+// sample in the diffuse IBL path where high-frequency features (the sun
+// disc) would otherwise leak in as fake specular highlights on rough
+// surfaces.
+vec3 sample_sky_dome(vec3 dir) {
     float y = clamp(dir.y, -1.0, 1.0);
     vec3 sky;
     if (y >= 0.0) {
@@ -167,6 +190,17 @@ vec3 sample_sky(vec3 dir) {
     } else {
         sky = mix(u_sky_horizon, u_sky_ground, smoothstep(0.0, 1.0, -y));
     }
+    return sky;
+}
+
+// Dome plus a tight sun disc. Used for the specular reflection probe so a
+// polished surface still mirrors the sun. Never call this from the diffuse
+// path — at high roughness the prefilter mix collapses to the diffuse
+// sample, and a sun-bearing sample there would produce a sharp bright spot
+// where the surface normal happens to align with the sun, masquerading as
+// specular on a fully matte material.
+vec3 sample_sky(vec3 dir) {
+    vec3 sky = sample_sky_dome(dir);
     float sun = max(dot(dir, -u_sun_dir), 0.0);
     sky += u_sun_color * pow(sun, 256.0) * 8.0;
     return sky;
@@ -315,16 +349,70 @@ void main() {
     vec3 F0 = mix(vec3(0.04), albedo, metallic);
     float diffuse_scale = 1.0 - u_transmission;
 
-    // Direct lighting: a warm key + cool fill. We keep diffuse and specular
-    // separate so transmissive materials can composite them differently
-    // (see the premultiplied-alpha output at the end).
-    vec3 key_color  = vec3(1.00, 0.96, 0.90) * 1.10;
-    vec3 fill_color = vec3(0.70, 0.78, 0.95) * 0.40;
-    vec3 diff_key, spec_key, diff_fill, spec_fill;
-    brdf_direct(N, V, normalize(-u_key_dir),  albedo, metallic, roughness, F0, diffuse_scale, diff_key,  spec_key);
-    brdf_direct(N, V, normalize(-u_fill_dir), albedo, metallic, roughness, F0, diffuse_scale, diff_fill, spec_fill);
-    vec3 diff_direct = diff_key * key_color + diff_fill * fill_color;
-    vec3 spec_direct = spec_key * key_color + spec_fill * fill_color;
+    // Direct lighting. When the scene declares its own punctual lights we
+    // walk those; otherwise we fall back to a fixed warm-key + cool-fill rig
+    // so untouched scenes still read well. Diffuse/specular are kept separate
+    // so transmissive materials can composite them differently (see the
+    // premultiplied-alpha output at the end).
+    vec3 diff_direct = vec3(0.0);
+    vec3 spec_direct = vec3(0.0);
+    if (u_num_lights > 0) {
+        // glTF KHR_lights_punctual attenuation:
+        //   distance: window(d, range) / d^2
+        //   spot:     clamp((cos(theta) - cos(outer)) / (cos(inner) - cos(outer)), 0, 1)
+        // The window function smoothly fades to zero at `range` for point/spot
+        // (unlimited / directional skip the falloff entirely).
+        for (int i = 0; i < MAX_LIGHTS; ++i) {
+            if (i >= u_num_lights) break;
+            int kind = u_light_kind[i];
+            vec3 L;
+            float atten;
+            if (kind == 0) {
+                // Directional: light direction is fixed, no falloff.
+                L = -normalize(u_light_dir[i]);
+                atten = 1.0;
+            } else {
+                vec3 to_light = u_light_pos[i] - v_world_pos;
+                float d = length(to_light);
+                L = to_light / max(d, 1e-4);
+                float r = u_light_range[i];
+                float window;
+                if (r > 0.0) {
+                    float t = clamp(d / r, 0.0, 1.0);
+                    float t4 = t * t * t * t;
+                    window = clamp(1.0 - t4, 0.0, 1.0);
+                } else {
+                    window = 1.0;
+                }
+                atten = window / max(d * d, 1e-4);
+                if (kind == 2) {
+                    // Spot cone: cos_inner is bigger than cos_outer (smaller
+                    // angle = bigger cosine). The cosine of the angle between
+                    // the light's forward direction and the vector toward the
+                    // shaded fragment must lie inside [cos_outer, cos_inner].
+                    float ct = dot(L, -normalize(u_light_dir[i]));
+                    vec2 cone = u_light_cone[i];
+                    float denom = max(cone.x - cone.y, 1e-4);
+                    float spot = clamp((ct - cone.y) / denom, 0.0, 1.0);
+                    atten *= spot;
+                }
+            }
+            if (atten <= 0.0) continue;
+            vec3 dpart, spart;
+            brdf_direct(N, V, L, albedo, metallic, roughness, F0, diffuse_scale, dpart, spart);
+            vec3 lc = u_light_color[i] * atten;
+            diff_direct += dpart * lc;
+            spec_direct += spart * lc;
+        }
+    } else {
+        vec3 key_color  = vec3(1.00, 0.96, 0.90) * 1.10;
+        vec3 fill_color = vec3(0.70, 0.78, 0.95) * 0.40;
+        vec3 diff_key, spec_key, diff_fill, spec_fill;
+        brdf_direct(N, V, normalize(-u_key_dir),  albedo, metallic, roughness, F0, diffuse_scale, diff_key,  spec_key);
+        brdf_direct(N, V, normalize(-u_fill_dir), albedo, metallic, roughness, F0, diffuse_scale, diff_fill, spec_fill);
+        diff_direct = diff_key * key_color + diff_fill * fill_color;
+        spec_direct = spec_key * key_color + spec_fill * fill_color;
+    }
 
     // Image-based lighting from the analytic sky. The diffuse irradiance is a
     // crude average of the sky in the normal direction and straight up so the
@@ -335,7 +423,13 @@ void main() {
     float NdV = max(dot(N, V), 0.0);
     vec3 R = reflect(-V, N);
     vec3 spec_env = sample_sky(R);
-    vec3 diff_env = 0.5 * sample_sky(N) + 0.5 * sample_sky(vec3(0.0, 1.0, 0.0));
+    // Diffuse IBL pulls from the sun-free dome only. The sun is already
+    // accounted for as a directional contribution in the direct lighting
+    // pass, and the 256-power disc is far too high-frequency for a diffuse
+    // probe — leaving it in produces a focused bright spot on rough
+    // surfaces wherever N happens to align with the sun, which reads as
+    // specular even at roughness=1.
+    vec3 diff_env = 0.5 * sample_sky_dome(N) + 0.5 * sample_sky_dome(vec3(0.0, 1.0, 0.0));
     vec3 prefiltered = mix(spec_env, diff_env, roughness * roughness);
     vec3 F_ibl = F_Schlick_rough(NdV, F0, roughness);
     vec2 envBRDF = env_brdf_approx(NdV, roughness);

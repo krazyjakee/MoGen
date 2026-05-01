@@ -633,6 +633,240 @@ impl MogenStudioApp {
                 ui.end_row();
             });
 
+        // Light editor — punctual lights expose kind/colour/intensity (and the
+        // kind-conditional range / cone angles) through the same span-aware
+        // edit pipeline as the transform grid. A kind switch carries a
+        // `delete` list so attrs that no longer apply (`range` for
+        // directional, `inner_cone` / `outer_cone` for non-spot) don't sit
+        // around poisoning the next compile with a validation error.
+        if let Some(light) = node.light.as_ref() {
+            use mogen_core::LightKind;
+
+            // Copy light fields into locals so the grid closure doesn't keep
+            // a borrow on `self.files` — the "remove range" branch needs to
+            // call `&mut self` methods (push_undo / break_undo_chain) and
+            // would otherwise collide with the outer `node` borrow.
+            let kind = light.kind;
+            let light_color = light.color;
+            let light_intensity = light.intensity;
+            let light_range = light.range;
+            let light_inner_deg = light.inner_cone_rad.to_degrees();
+            let light_outer_deg = light.outer_cone_rad.to_degrees();
+            let mut wants_remove_range = false;
+
+            ui.add_space(8.0);
+            ui.separator();
+            ui.label(egui::RichText::new("Light").strong());
+
+            egui::Grid::new("inspector_light")
+                .num_columns(2)
+                .spacing([6.0, 4.0])
+                .show(ui, |ui| {
+                    ui.label("Kind");
+                    let mut new_kind = kind;
+                    egui::ComboBox::from_id_salt("light_kind")
+                        .selected_text(match new_kind {
+                            LightKind::Directional => "directional",
+                            LightKind::Point => "point",
+                            LightKind::Spot => "spot",
+                        })
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(
+                                &mut new_kind,
+                                LightKind::Directional,
+                                "directional",
+                            );
+                            ui.selectable_value(&mut new_kind, LightKind::Point, "point");
+                            ui.selectable_value(&mut new_kind, LightKind::Spot, "spot");
+                        });
+                    if new_kind != kind {
+                        let mut to_delete: Vec<String> = Vec::new();
+                        if matches!(new_kind, LightKind::Directional) {
+                            to_delete.push("range".into());
+                        }
+                        if !matches!(new_kind, LightKind::Spot) {
+                            to_delete.push("inner_cone".into());
+                            to_delete.push("outer_cone".into());
+                        }
+                        let dsl = match new_kind {
+                            LightKind::Directional => "directional",
+                            LightKind::Point => "point",
+                            LightKind::Spot => "spot",
+                        };
+                        edits.push(PendingEdit::SetAttrCanonical {
+                            node: node_id,
+                            attr: "kind".into(),
+                            value: dsl.into(),
+                            delete: to_delete,
+                        });
+                    }
+                    ui.end_row();
+
+                    ui.label("Color");
+                    let mut color = light_color;
+                    if ui.color_edit_button_rgb(&mut color).changed() {
+                        edits.push(PendingEdit::SetAttrCanonical {
+                            node: node_id,
+                            attr: "color".into(),
+                            value: format!(
+                                "[{}, {}, {}]",
+                                format_inspector_scalar(color[0]),
+                                format_inspector_scalar(color[1]),
+                                format_inspector_scalar(color[2]),
+                            ),
+                            delete: Vec::new(),
+                        });
+                    }
+                    ui.end_row();
+
+                    ui.label("Intensity");
+                    let mut intensity = light_intensity;
+                    let suffix = if matches!(kind, LightKind::Directional) {
+                        " lx"
+                    } else {
+                        " cd"
+                    };
+                    if ui
+                        .add(
+                            egui::DragValue::new(&mut intensity)
+                                .speed(0.1)
+                                .suffix(suffix)
+                                .range(0.0..=f32::INFINITY),
+                        )
+                        .changed()
+                    {
+                        edits.push(PendingEdit::SetAttrCanonical {
+                            node: node_id,
+                            attr: "intensity".into(),
+                            value: format_inspector_scalar(intensity),
+                            delete: Vec::new(),
+                        });
+                    }
+                    ui.end_row();
+
+                    if matches!(kind, LightKind::Point | LightKind::Spot) {
+                        ui.label("Range");
+                        match light_range {
+                            Some(r) => {
+                                let mut range = r;
+                                ui.horizontal(|ui| {
+                                    if ui
+                                        .add(
+                                            egui::DragValue::new(&mut range)
+                                                .speed(0.1)
+                                                .range(0.001..=f32::INFINITY),
+                                        )
+                                        .changed()
+                                    {
+                                        edits.push(PendingEdit::SetAttrCanonical {
+                                            node: node_id,
+                                            attr: "range".into(),
+                                            value: format_inspector_scalar(range),
+                                            delete: Vec::new(),
+                                        });
+                                    }
+                                    if ui
+                                        .small_button("✕")
+                                        .on_hover_text("Remove range (unlimited)")
+                                        .clicked()
+                                    {
+                                        // PendingEdit can only set+delete-
+                                        // shadows; do the primary-attr delete
+                                        // outside the closure to avoid a
+                                        // double borrow on `self.files`.
+                                        wants_remove_range = true;
+                                    }
+                                });
+                            }
+                            None => {
+                                ui.horizontal(|ui| {
+                                    ui.label(
+                                        egui::RichText::new("(unlimited)").italics().weak(),
+                                    );
+                                    if ui.small_button("+ set").clicked() {
+                                        edits.push(PendingEdit::SetAttrCanonical {
+                                            node: node_id,
+                                            attr: "range".into(),
+                                            value: "8".into(),
+                                            delete: Vec::new(),
+                                        });
+                                    }
+                                });
+                            }
+                        }
+                        ui.end_row();
+                    }
+
+                    if matches!(kind, LightKind::Spot) {
+                        ui.label("Inner cone");
+                        let mut inner = light_inner_deg;
+                        // Spec: 0 ≤ inner ≤ outer ≤ 90°. Outer cone clamps
+                        // separately below; inner shares the same cap.
+                        if ui
+                            .add(
+                                egui::DragValue::new(&mut inner)
+                                    .speed(0.5)
+                                    .suffix("°")
+                                    .range(0.0..=90.0),
+                            )
+                            .changed()
+                        {
+                            edits.push(PendingEdit::SetAttrCanonical {
+                                node: node_id,
+                                attr: "inner_cone".into(),
+                                value: format_inspector_scalar(inner),
+                                delete: Vec::new(),
+                            });
+                        }
+                        ui.end_row();
+
+                        ui.label("Outer cone");
+                        let mut outer = light_outer_deg;
+                        if ui
+                            .add(
+                                egui::DragValue::new(&mut outer)
+                                    .speed(0.5)
+                                    .suffix("°")
+                                    .range(0.0..=90.0),
+                            )
+                            .changed()
+                        {
+                            edits.push(PendingEdit::SetAttrCanonical {
+                                node: node_id,
+                                attr: "outer_cone".into(),
+                                value: format_inspector_scalar(outer),
+                                delete: Vec::new(),
+                            });
+                        }
+                        ui.end_row();
+                    }
+                });
+
+            if wants_remove_range {
+                if let Some(span) = node_span {
+                    let before = self.files[i].source.clone();
+                    let new_src = crate::edit::delete_attr(&before, span, "range");
+                    {
+                        let f = &mut self.files[i];
+                        f.source = new_src;
+                        f.dirty = f.source != f.last_saved_source;
+                        f.needs_compile = true;
+                        f.last_edit_at = Some(Instant::now());
+                    }
+                    self.break_undo_chain(i);
+                    self.push_undo(
+                        i,
+                        before,
+                        UndoKey {
+                            surface: "inspector-action",
+                            attr: None,
+                            node_path: None,
+                        },
+                    );
+                }
+            }
+        }
+
         for edit in edits {
             self.viewer.push_pending_edit(edit);
         }
@@ -952,8 +1186,16 @@ impl MogenStudioApp {
         // single attr rewrite on the named material.
         let mut pending: Vec<(String, &'static str, String)> = Vec::new();
 
-        for (_, mat) in &materials {
-            let header_id = egui::Id::new(("mat_editor", mat.name.as_str()));
+        // Salt every per-material widget ID with the scene-graph index in
+        // addition to the material name. Imports can introduce a second
+        // material with the same name (e.g. a local `wood` plus a `wood`
+        // hoisted from `import "drawer.mog"`); without the index, both
+        // CollapsingHeaders / ComboBoxes share an egui ID and the runtime
+        // paints "First/Second use of widget ID …" warnings inline in the
+        // panel. Indices are unique by definition so this disambiguates
+        // without leaking the origin path into the salt.
+        for (idx, mat) in &materials {
+            let header_id = egui::Id::new(("mat_editor", *idx, mat.name.as_str()));
             let header_label = match &mat.origin {
                 Some(p) => {
                     let stem = p
@@ -1155,7 +1397,7 @@ impl MogenStudioApp {
                     ui.horizontal(|ui| {
                         ui.label("Alpha mode");
                         let mut mode = mat.alpha_mode;
-                        let mode_id = egui::Id::new(("alpha_mode", mat.name.as_str()));
+                        let mode_id = egui::Id::new(("alpha_mode", *idx, mat.name.as_str()));
                         egui::ComboBox::from_id_salt(mode_id)
                             .selected_text(match mode {
                                 AlphaMode::Opaque => "opaque",
@@ -1229,7 +1471,7 @@ impl MogenStudioApp {
                     ui.horizontal(|ui| {
                         ui.label("UV");
                         let mut uv = mat.uv_mode;
-                        let uv_id = egui::Id::new(("uv_mode", mat.name.as_str()));
+                        let uv_id = egui::Id::new(("uv_mode", *idx, mat.name.as_str()));
                         egui::ComboBox::from_id_salt(uv_id)
                             .selected_text(match uv {
                                 UvMode::Tile => "tile",
@@ -1625,6 +1867,9 @@ impl MogenStudioApp {
     /// to the toolbar.
     pub(super) fn ui_viewport_overlay(&mut self, ctx: &egui::Context, viewport_rect: egui::Rect) {
         use crate::gizmo::GizmoMode;
+        use crate::viewer::environment::{
+            environment_label, environment_short_label, Environment, ENVIRONMENTS,
+        };
         egui::Area::new(egui::Id::new("viewport_overlay"))
             .fixed_pos(viewport_rect.left_top() + egui::vec2(8.0, 8.0))
             .order(egui::Order::Foreground)
@@ -1667,6 +1912,109 @@ impl MogenStudioApp {
                                 }
                             });
                             ui.separator();
+                            // Visibility toggles for viewport overlays. Kept
+                            // inside a popup so the bar stays compact; each
+                            // checkbox mirrors the matching `View` menu entry
+                            // and persists through Settings so the choice
+                            // survives a restart.
+                            ui.add_enabled_ui(!cinema_on, |ui| {
+                                ui.menu_button("Show", |ui| {
+                                    let mut show_grid = self.settings.show_grid();
+                                    if ui
+                                        .checkbox(&mut show_grid, "Grid")
+                                        .on_hover_text(
+                                            "Ground-plane reference grid",
+                                        )
+                                        .changed()
+                                    {
+                                        self.settings.set_show_grid(show_grid);
+                                        self.viewer.set_show_grid(show_grid);
+                                        let _ = self.settings.save();
+                                    }
+                                    let mut show_lights =
+                                        self.settings.show_light_gizmos();
+                                    if ui
+                                        .checkbox(&mut show_lights, "Light gizmos")
+                                        .on_hover_text(
+                                            "Per-light indicator overlays \
+                                             (point sphere, spot cone, \
+                                             directional arrow)",
+                                        )
+                                        .changed()
+                                    {
+                                        self.settings
+                                            .set_show_light_gizmos(show_lights);
+                                        self.viewer
+                                            .set_show_light_gizmos(show_lights);
+                                        let _ = self.settings.save();
+                                    }
+                                    let mut show_xform =
+                                        self.settings.show_transform_gizmo();
+                                    if ui
+                                        .checkbox(
+                                            &mut show_xform,
+                                            "Transform gizmo",
+                                        )
+                                        .on_hover_text(
+                                            "Translate / rotate / scale handles \
+                                             on the selected node",
+                                        )
+                                        .changed()
+                                    {
+                                        self.settings
+                                            .set_show_transform_gizmo(show_xform);
+                                        self.viewer
+                                            .set_show_transform_gizmo(show_xform);
+                                        let _ = self.settings.save();
+                                    }
+                                })
+                                .response
+                                .on_hover_text("Toggle viewport overlays");
+                            });
+                            ui.separator();
+                            // Environment-lighting preset picker. Drives the
+                            // analytic sky probe and the fallback key/fill
+                            // rig the shader uses when the scene declares no
+                            // `light` nodes. Persisted in settings so the
+                            // chosen preset survives restart. Disabled in
+                            // cinema mode for the same reason as the gizmo
+                            // group above — cinema is meant for clean
+                            // presentation, not editor controls.
+                            ui.add_enabled_ui(!cinema_on, |ui| {
+                                let cur_env = self.viewer.environment();
+                                let mut chosen_env: Option<Environment> = None;
+                                let label = format!("☀ {}", environment_short_label(cur_env));
+                                ui.menu_button(label, |ui| {
+                                    ui.label(
+                                        egui::RichText::new("Environment").strong(),
+                                    );
+                                    ui.separator();
+                                    for env in ENVIRONMENTS {
+                                        let selected = env == cur_env;
+                                        if ui
+                                            .selectable_label(
+                                                selected,
+                                                environment_label(env),
+                                            )
+                                            .clicked()
+                                            && !selected
+                                        {
+                                            chosen_env = Some(env);
+                                            ui.close_menu();
+                                        }
+                                    }
+                                })
+                                .response
+                                .on_hover_text(
+                                    "World-lighting preset (sky probe + key/fill rig)",
+                                );
+                                if let Some(env) = chosen_env {
+                                    self.settings.set_environment(env);
+                                    self.viewer.set_environment(env);
+                                    let _ = self.settings.save();
+                                }
+                            });
+                            ui.separator();
                             // Cinema mode: orbit/pan/zoom + gizmo + grid all
                             // suppressed while on, so its toggle stays
                             // outside the disabled group.
@@ -1681,23 +2029,38 @@ impl MogenStudioApp {
                             {
                                 self.viewer.set_cinema_active(!cinema_on);
                             }
-                            ui.separator();
-                            if cinema_on {
-                                if let Some(name) = self.viewer.cinema_shot_label() {
-                                    ui.label(
-                                        egui::RichText::new(format!("now: {name}")).weak(),
-                                    );
-                                }
-                            } else {
-                                ui.label(
-                                    egui::RichText::new(
-                                        "click: select · drag: orbit · shift+drag/middle/right: pan · scroll: zoom · ctrl: snap",
-                                    )
-                                    .weak(),
-                                );
-                            }
                         });
                     });
             });
+
+        // Bottom-left status strip: camera-controls hint, or the active cinema
+        // shot label. Lives in its own `Area` so the top toolbar stays compact
+        // and never competes with the right-hand inspector for horizontal room
+        // (DCC convention — Blender/Maya put help text at the bottom).
+        let cinema_on = self.viewer.is_cinema_active();
+        let status_text: Option<String> = if cinema_on {
+            self.viewer
+                .cinema_shot_label()
+                .map(|name| format!("now: {name}"))
+        } else {
+            Some(
+                "click: select · drag: orbit · shift+drag/middle/right: pan · \
+                 scroll: zoom · ctrl: snap"
+                    .to_string(),
+            )
+        };
+        if let Some(text) = status_text {
+            egui::Area::new(egui::Id::new("viewport_status"))
+                .fixed_pos(viewport_rect.left_bottom() + egui::vec2(8.0, -8.0))
+                .pivot(egui::Align2::LEFT_BOTTOM)
+                .order(egui::Order::Foreground)
+                .show(ctx, |ui| {
+                    egui::Frame::popup(ui.style())
+                        .fill(ui.visuals().window_fill().linear_multiply(0.85))
+                        .show(ui, |ui| {
+                            ui.label(egui::RichText::new(text).weak());
+                        });
+                });
+        }
     }
 }

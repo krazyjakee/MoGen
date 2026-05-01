@@ -121,6 +121,29 @@ fn model_presets(provider: Provider) -> &'static [&'static str] {
     }
 }
 
+/// Tab pages inside the Preferences window. Grouped by what the user is
+/// trying to change: anything LLM-shaped (provider, key, models, sampling)
+/// lives in one pane, look-and-feel in another, telemetry in a third.
+#[derive(Copy, Clone, PartialEq, Eq, Default)]
+pub enum PrefsTab {
+    #[default]
+    Llm,
+    Appearance,
+    Privacy,
+}
+
+impl PrefsTab {
+    fn label(self) -> &'static str {
+        match self {
+            PrefsTab::Llm => "LLM",
+            PrefsTab::Appearance => "Appearance",
+            PrefsTab::Privacy => "Privacy",
+        }
+    }
+}
+
+const PREFS_TABS: [PrefsTab; 3] = [PrefsTab::Llm, PrefsTab::Appearance, PrefsTab::Privacy];
+
 impl MogenStudioApp {
     pub(super) fn ui_options(&mut self, ctx: &egui::Context) {
         if !self.show_options {
@@ -135,7 +158,76 @@ impl MogenStudioApp {
             .default_width(420.0)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
-                ui.heading("LLM provider");
+                ui.horizontal(|ui| {
+                    for tab in PREFS_TABS {
+                        let selected = self.prefs_active_tab == tab;
+                        if ui.selectable_label(selected, tab.label()).clicked() {
+                            self.prefs_active_tab = tab;
+                        }
+                    }
+                });
+                ui.separator();
+                ui.add_space(4.0);
+
+                match self.prefs_active_tab {
+                    PrefsTab::Llm => self.prefs_tab_llm(ui),
+                    PrefsTab::Appearance => self.prefs_tab_appearance(ui, ctx),
+                    PrefsTab::Privacy => self.prefs_tab_privacy(ui),
+                }
+
+                ui.add_space(12.0);
+                ui.separator();
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Save").clicked() {
+                        // The Gemini key uses an editor-buffered draft so the
+                        // user can clear/re-paste without instantly mutating
+                        // settings; commit it on Save. Other providers' keys
+                        // are written directly into settings as the user
+                        // types because they don't share that legacy draft.
+                        self.settings.gemini_api_key =
+                            self.options_api_key_draft.trim().to_string();
+                        // Trim whitespace from per-provider keys / URL on
+                        // save so users can paste with surrounding spaces.
+                        self.settings.openai_api_key =
+                            self.settings.openai_api_key.trim().to_string();
+                        self.settings.anthropic_api_key =
+                            self.settings.anthropic_api_key.trim().to_string();
+                        self.settings.ollama_api_key =
+                            self.settings.ollama_api_key.trim().to_string();
+                        self.settings.ollama_base_url =
+                            self.settings.ollama_base_url.trim().to_string();
+                        self.settings.claude_code_path =
+                            self.settings.claude_code_path.trim().to_string();
+                        match self.settings.save() {
+                            Ok(()) => {
+                                let active = self.settings.provider();
+                                let msg = match active {
+                                    Provider::Gemini if self.settings.gemini_api_key.is_empty() => {
+                                        "options: cleared saved Gemini API key".to_string()
+                                    }
+                                    _ => "options: settings saved".to_string(),
+                                };
+                                self.active_mut().status = msg;
+                                close_after = true;
+                            }
+                            Err(e) => {
+                                self.active_mut().status = format!("options: save failed: {e}");
+                            }
+                        }
+                    }
+                    if ui.button("Cancel").clicked() {
+                        close_after = true;
+                    }
+                });
+            });
+        if !open || close_after {
+            self.show_options = false;
+        }
+    }
+
+    fn prefs_tab_llm(&mut self, ui: &mut egui::Ui) {
+        ui.heading("LLM provider");
                 ui.label(
                     "Backend used for Generate / Modify / Animate / Ask / Prompt \
                      Enhance. Texture image generation is always Gemini regardless \
@@ -362,72 +454,6 @@ impl MogenStudioApp {
                 }
 
                 ui.add_space(12.0);
-                ui.heading("Theme");
-                ui.label("Colour scheme for the editor and panels. Applies immediately.");
-                ui.add_space(6.0);
-                let current_theme = self.settings.theme();
-                let mut new_theme: Option<Theme> = None;
-                egui::ComboBox::from_id_salt("opts_theme")
-                    .selected_text(theme_label(current_theme))
-                    .show_ui(ui, |ui| {
-                        for t in THEMES {
-                            let selected = t == current_theme;
-                            if ui
-                                .selectable_label(selected, theme_label(t))
-                                .clicked()
-                                && !selected
-                            {
-                                new_theme = Some(t);
-                            }
-                        }
-                    });
-                if let Some(t) = new_theme {
-                    self.settings.set_theme(t);
-                    apply_theme(ctx, t);
-                }
-
-                ui.add_space(12.0);
-                ui.heading("Viewport");
-                ui.label(
-                    "Maximum FPS for continuous redraws (animation playback, cinema \
-                     pan, gizmo drag). Lower values save battery and reduce thermals; \
-                     \"Unlimited\" defers to the display's vsync. Input-driven paints \
-                     are unaffected.",
-                );
-                ui.add_space(6.0);
-                let current_fps = self.settings.max_fps();
-                let current_label = match current_fps {
-                    None => "Unlimited".to_string(),
-                    Some(n) => format!("{n} FPS"),
-                };
-                let presets: [(Option<u32>, &str); 5] = [
-                    (None, "Unlimited"),
-                    (Some(30), "30 FPS"),
-                    (Some(60), "60 FPS"),
-                    (Some(120), "120 FPS"),
-                    (Some(144), "144 FPS"),
-                ];
-                let mut new_fps: Option<Option<u32>> = None;
-                egui::ComboBox::from_id_salt("opts_max_fps")
-                    .selected_text(current_label)
-                    .show_ui(ui, |ui| {
-                        for (val, label) in presets {
-                            let selected = val == current_fps;
-                            if ui
-                                .selectable_label(selected, label)
-                                .clicked()
-                                && !selected
-                            {
-                                new_fps = Some(val);
-                            }
-                        }
-                    });
-                if let Some(val) = new_fps {
-                    self.settings.set_max_fps(val);
-                    self.viewer.set_max_fps(val);
-                }
-
-                ui.add_space(12.0);
                 ui.heading("Thinking budget");
                 ui.label(
                     "Cap on the model's hidden reasoning tokens per call (Gemini, OpenAI \
@@ -553,84 +579,99 @@ impl MogenStudioApp {
                             }
                         });
                     });
+    }
 
-                ui.add_space(12.0);
-                ui.heading("Privacy");
-                {
-                    // Tri-state in storage (`None` = undecided) collapses to a
-                    // simple bool here: opening Preferences past first launch
-                    // implies the user has been asked, so any change away from
-                    // the default is an explicit decision worth persisting.
-                    let env_blocked = crate::crash::telemetry_blocked_by_env();
-                    let mut on = self.settings.crash_reports_enabled.unwrap_or(false);
-                    let resp = ui.add_enabled(
-                        !env_blocked,
-                        egui::Checkbox::new(
-                            &mut on,
-                            "Send anonymous crash reports",
-                        ),
-                    );
-                    if resp.changed() {
-                        self.settings.crash_reports_enabled = Some(on);
+    fn prefs_tab_appearance(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        ui.heading("Theme");
+        ui.label("Colour scheme for the editor and panels. Applies immediately.");
+        ui.add_space(6.0);
+        let current_theme = self.settings.theme();
+        let mut new_theme: Option<Theme> = None;
+        egui::ComboBox::from_id_salt("opts_theme")
+            .selected_text(theme_label(current_theme))
+            .show_ui(ui, |ui| {
+                for t in THEMES {
+                    let selected = t == current_theme;
+                    if ui
+                        .selectable_label(selected, theme_label(t))
+                        .clicked()
+                        && !selected
+                    {
+                        new_theme = Some(t);
                     }
-                    let hover = if env_blocked {
-                        "Forced off by MOGEN_DISABLE_TELEMETRY / DO_NOT_TRACK in your \
-                         environment. Unset the variable to control this from here."
-                    } else {
-                        "Reports a stack trace, app version, and OS family when \
-                         MoGen Studio crashes. No source, .mog files, prompts, or \
-                         API keys. Takes effect on next launch."
-                    };
-                    resp.on_hover_text(hover);
                 }
-
-                ui.add_space(12.0);
-                ui.horizontal(|ui| {
-                    if ui.button("Save").clicked() {
-                        // The Gemini key uses an editor-buffered draft so the
-                        // user can clear/re-paste without instantly mutating
-                        // settings; commit it on Save. Other providers' keys
-                        // are written directly into settings as the user
-                        // types because they don't share that legacy draft.
-                        self.settings.gemini_api_key =
-                            self.options_api_key_draft.trim().to_string();
-                        // Trim whitespace from per-provider keys / URL on
-                        // save so users can paste with surrounding spaces.
-                        self.settings.openai_api_key =
-                            self.settings.openai_api_key.trim().to_string();
-                        self.settings.anthropic_api_key =
-                            self.settings.anthropic_api_key.trim().to_string();
-                        self.settings.ollama_api_key =
-                            self.settings.ollama_api_key.trim().to_string();
-                        self.settings.ollama_base_url =
-                            self.settings.ollama_base_url.trim().to_string();
-                        self.settings.claude_code_path =
-                            self.settings.claude_code_path.trim().to_string();
-                        match self.settings.save() {
-                            Ok(()) => {
-                                let active = self.settings.provider();
-                                let msg = match active {
-                                    Provider::Gemini if self.settings.gemini_api_key.is_empty() => {
-                                        "options: cleared saved Gemini API key".to_string()
-                                    }
-                                    _ => "options: settings saved".to_string(),
-                                };
-                                self.active_mut().status = msg;
-                                close_after = true;
-                            }
-                            Err(e) => {
-                                self.active_mut().status = format!("options: save failed: {e}");
-                            }
-                        }
-                    }
-                    if ui.button("Cancel").clicked() {
-                        close_after = true;
-                    }
-                });
             });
-        if !open || close_after {
-            self.show_options = false;
+        if let Some(t) = new_theme {
+            self.settings.set_theme(t);
+            apply_theme(ctx, t);
         }
+
+        ui.add_space(12.0);
+        ui.heading("Viewport");
+        ui.label(
+            "Maximum FPS for continuous redraws (animation playback, cinema \
+             pan, gizmo drag). Lower values save battery and reduce thermals; \
+             \"Unlimited\" defers to the display's vsync. Input-driven paints \
+             are unaffected.",
+        );
+        ui.add_space(6.0);
+        let current_fps = self.settings.max_fps();
+        let current_label = match current_fps {
+            None => "Unlimited".to_string(),
+            Some(n) => format!("{n} FPS"),
+        };
+        let presets: [(Option<u32>, &str); 5] = [
+            (None, "Unlimited"),
+            (Some(30), "30 FPS"),
+            (Some(60), "60 FPS"),
+            (Some(120), "120 FPS"),
+            (Some(144), "144 FPS"),
+        ];
+        let mut new_fps: Option<Option<u32>> = None;
+        egui::ComboBox::from_id_salt("opts_max_fps")
+            .selected_text(current_label)
+            .show_ui(ui, |ui| {
+                for (val, label) in presets {
+                    let selected = val == current_fps;
+                    if ui
+                        .selectable_label(selected, label)
+                        .clicked()
+                        && !selected
+                    {
+                        new_fps = Some(val);
+                    }
+                }
+            });
+        if let Some(val) = new_fps {
+            self.settings.set_max_fps(val);
+            self.viewer.set_max_fps(val);
+        }
+    }
+
+    fn prefs_tab_privacy(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Privacy");
+        // Tri-state in storage (`None` = undecided) collapses to a
+        // simple bool here: opening Preferences past first launch
+        // implies the user has been asked, so any change away from
+        // the default is an explicit decision worth persisting.
+        let env_blocked = crate::crash::telemetry_blocked_by_env();
+        let mut on = self.settings.crash_reports_enabled.unwrap_or(false);
+        let resp = ui.add_enabled(
+            !env_blocked,
+            egui::Checkbox::new(&mut on, "Send anonymous crash reports"),
+        );
+        if resp.changed() {
+            self.settings.crash_reports_enabled = Some(on);
+        }
+        let hover = if env_blocked {
+            "Forced off by MOGEN_DISABLE_TELEMETRY / DO_NOT_TRACK in your \
+             environment. Unset the variable to control this from here."
+        } else {
+            "Reports a stack trace, app version, and OS family when \
+             MoGen Studio crashes. No source, .mog files, prompts, or \
+             API keys. Takes effect on next launch."
+        };
+        resp.on_hover_text(hover);
     }
 
     /// Confirmation shown when a window-close is requested while any buffer

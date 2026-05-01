@@ -9,6 +9,9 @@ use crate::preview_shader::{
     parse_preview_shader, preview_shader_key, PreviewShader, DEFAULT_PREVIEW_SHADER,
 };
 use crate::theme::{parse_theme, theme_key, Theme, DEFAULT_THEME};
+use crate::viewer::environment::{
+    environment_key, parse_environment, Environment, DEFAULT_ENVIRONMENT,
+};
 
 /// Library default for the text-LLM repair budget. Matches
 /// [`mogen_llm::RepairConfig::default`].
@@ -159,6 +162,25 @@ pub struct Settings {
     /// visible after upgrade.
     #[serde(default)]
     pub show_grid: Option<bool>,
+
+    /// Whether the per-`light`-node indicator overlays (point sphere / spot
+    /// cone / directional arrow) are drawn in the 3D viewport. `None` falls
+    /// back to `true` so existing settings files keep the indicators visible
+    /// after upgrade.
+    #[serde(default)]
+    pub show_light_gizmos: Option<bool>,
+
+    /// Whether the translate/rotate/scale gizmo handles are drawn on the
+    /// selected node. `None` falls back to `true`.
+    #[serde(default)]
+    pub show_transform_gizmo: Option<bool>,
+
+    /// Active environment-lighting preset, persisted as a lowercase label
+    /// (see `environment_key`). Empty / unknown falls back to
+    /// [`DEFAULT_ENVIRONMENT`] at read time so adding new presets later
+    /// doesn't invalidate old settings files.
+    #[serde(default)]
+    pub environment: String,
 
     /// Cap on continuous viewport repaints (animation tick, cinema pan, gizmo
     /// drag). The cap is applied by routing the per-frame repaint request
@@ -429,6 +451,36 @@ impl Settings {
 
     pub fn set_show_grid(&mut self, on: bool) {
         self.show_grid = Some(on);
+    }
+
+    /// Whether the per-`light` indicator overlays are visible. Defaults to
+    /// `true` when unset.
+    pub fn show_light_gizmos(&self) -> bool {
+        self.show_light_gizmos.unwrap_or(true)
+    }
+
+    pub fn set_show_light_gizmos(&mut self, on: bool) {
+        self.show_light_gizmos = Some(on);
+    }
+
+    /// Whether the translate/rotate/scale handles are drawn on the selected
+    /// node. Defaults to `true` when unset.
+    pub fn show_transform_gizmo(&self) -> bool {
+        self.show_transform_gizmo.unwrap_or(true)
+    }
+
+    pub fn set_show_transform_gizmo(&mut self, on: bool) {
+        self.show_transform_gizmo = Some(on);
+    }
+
+    /// Resolve the persisted label to an [`Environment`], falling back to
+    /// [`DEFAULT_ENVIRONMENT`] when the field is empty or unknown.
+    pub fn environment(&self) -> Environment {
+        parse_environment(&self.environment).unwrap_or(DEFAULT_ENVIRONMENT)
+    }
+
+    pub fn set_environment(&mut self, env: Environment) {
+        self.environment = environment_key(env).to_string();
     }
 
     /// Viewport repaint cap. `None` = uncapped (display vsync), `Some(n)` =

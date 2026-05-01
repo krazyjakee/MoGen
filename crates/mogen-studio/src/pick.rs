@@ -4,12 +4,26 @@
 //! v1 is a flat Möller–Trumbore scan. Typical preview scenes are well under
 //! 200k tris so the linear sweep is fine; if a prompt regression shows big
 //! scenes pay for this per click, drop in a BVH without changing the API.
+//!
+//! Light nodes carry no geometry, so [`pick_node_or_light`] augments the
+//! triangle scan with a separate billboard pass: each light's halo is a
+//! screen-aligned disc of fixed pixel radius, and a click landing inside any
+//! halo selects that light directly. Geometry behind the halo still wins
+//! when the cursor is outside every halo, so the user can pick lit objects
+//! through the cracks between light icons.
 
 use eframe::egui::{Pos2, Rect};
 use glam::{Mat4, Vec3, Vec4};
 use mogen_core::NodeId;
 
-use crate::viewer::{FlatMesh, OrbitCamera, FLOATS_PER_VERTEX};
+use crate::gizmo::GIZMO_PIXEL_RADIUS;
+use crate::viewer::{FlatMesh, OrbitCamera, ResolvedLight, FLOATS_PER_VERTEX};
+
+/// Click radius around a light's projected halo, in viewport pixels. Matches
+/// the halo glyph in `lights_gl.rs` (`handle_scale * 0.35` world units, where
+/// `handle_scale` is calibrated against [`GIZMO_PIXEL_RADIUS`]) so the user
+/// is clicking exactly the visible ring.
+pub const LIGHT_HALO_PIXEL_RADIUS: f32 = GIZMO_PIXEL_RADIUS * 0.35;
 
 /// Return the `NodeId` of the nearest triangle hit by a ray cast from the
 /// camera through `cursor` (in egui screen coords). `None` when the cursor
@@ -40,7 +54,73 @@ pub fn pick_node(
         return None;
     }
 
-    ray_pick(mesh, ray_origin, ray_dir)
+    ray_pick(mesh, ray_origin, ray_dir).map(|(_, n)| n)
+}
+
+/// Combined picker. First tests `lights` as billboard halos at
+/// [`LIGHT_HALO_PIXEL_RADIUS`] pixels — a hit inside any halo wins
+/// immediately, so a user clicking the visible icon always selects the
+/// light even when geometry sits behind it. With no halo hit, falls back
+/// to the triangle scan in [`pick_node`]. Returns the NodeId of the
+/// selected light or scene node, or `None` when the cursor misses both.
+pub fn pick_node_or_light(
+    camera: &OrbitCamera,
+    viewport_rect: Rect,
+    cursor: Pos2,
+    mesh: &FlatMesh,
+    lights: &[ResolvedLight],
+) -> Option<NodeId> {
+    if let Some(id) = pick_light(camera, viewport_rect, cursor, lights) {
+        return Some(id);
+    }
+    pick_node(camera, viewport_rect, cursor, mesh)
+}
+
+/// Project each light to screen space and return the NodeId of the one
+/// whose projected halo is nearest the cursor — but only when the cursor
+/// lies *inside* the halo (within [`LIGHT_HALO_PIXEL_RADIUS`] pixels).
+/// Lights behind the camera (negative clip-space w) are skipped.
+pub fn pick_light(
+    camera: &OrbitCamera,
+    viewport_rect: Rect,
+    cursor: Pos2,
+    lights: &[ResolvedLight],
+) -> Option<NodeId> {
+    if lights.is_empty() {
+        return None;
+    }
+    let aspect = (viewport_rect.width() / viewport_rect.height()).max(0.01);
+    let vp = camera.view_proj(aspect);
+    let mut best: Option<(f32, NodeId)> = None;
+    for l in lights {
+        let Some(screen) = project_to_screen(vp, l.position, viewport_rect) else {
+            continue;
+        };
+        let dx = screen.x - cursor.x;
+        let dy = screen.y - cursor.y;
+        let d2 = dx * dx + dy * dy;
+        if d2 > LIGHT_HALO_PIXEL_RADIUS * LIGHT_HALO_PIXEL_RADIUS {
+            continue;
+        }
+        match best {
+            Some((bd, _)) if bd <= d2 => {}
+            _ => best = Some((d2, l.node)),
+        }
+    }
+    best.map(|(_, n)| n)
+}
+
+fn project_to_screen(viewproj: Mat4, world: Vec3, viewport: Rect) -> Option<Pos2> {
+    let clip = viewproj * Vec4::new(world.x, world.y, world.z, 1.0);
+    if clip.w <= 1e-4 {
+        return None; // behind the camera
+    }
+    let ndc_x = clip.x / clip.w;
+    let ndc_y = clip.y / clip.w;
+    let sx = viewport.min.x + (ndc_x * 0.5 + 0.5) * viewport.width();
+    // egui's y origin is at the top; NDC y points up, so flip.
+    let sy = viewport.min.y + (1.0 - (ndc_y * 0.5 + 0.5)) * viewport.height();
+    Some(Pos2::new(sx, sy))
 }
 
 fn unproject(inv_vp: &Mat4, ndc: Vec3) -> Vec3 {
@@ -53,7 +133,7 @@ fn unproject(inv_vp: &Mat4, ndc: Vec3) -> Vec3 {
 
 /// Walk every triangle, Möller–Trumbore, keep the nearest positive-t hit.
 /// TODO: BVH if a scene with > 200k tris starts showing up in prompts.
-fn ray_pick(mesh: &FlatMesh, ro: Vec3, rd: Vec3) -> Option<NodeId> {
+fn ray_pick(mesh: &FlatMesh, ro: Vec3, rd: Vec3) -> Option<(f32, NodeId)> {
     let stride = FLOATS_PER_VERTEX;
     let mut best: Option<(f32, NodeId)> = None;
     for tri_i in 0..mesh.indices.len() / 3 {
@@ -71,7 +151,7 @@ fn ray_pick(mesh: &FlatMesh, ro: Vec3, rd: Vec3) -> Option<NodeId> {
             }
         }
     }
-    best.map(|(_, n)| n)
+    best
 }
 
 fn read_pos(vertices: &[f32], vi: usize, stride: usize) -> Vec3 {
@@ -133,7 +213,7 @@ mod tests {
 
         // Fire a ray from -Z toward origin, right at the quad.
         let hit = ray_pick(&mesh, Vec3::new(0.0, 0.0, -2.0), Vec3::new(0.0, 0.0, 1.0));
-        assert_eq!(hit, Some(id));
+        assert_eq!(hit.map(|(_, n)| n), Some(id));
     }
 
     #[test]
@@ -149,7 +229,7 @@ mod tests {
             Vec3::new(10.0, 0.0, -2.0),
             Vec3::new(0.0, 0.0, 1.0),
         );
-        assert_eq!(hit, None);
+        assert!(hit.is_none());
     }
 
     #[test]
@@ -162,6 +242,6 @@ mod tests {
         let mesh = flatten(&scene, None);
 
         let hit = ray_pick(&mesh, Vec3::new(0.0, 0.0, -2.0), Vec3::new(0.0, 0.0, 1.0));
-        assert_eq!(hit, Some(near));
+        assert_eq!(hit.map(|(_, n)| n), Some(near));
     }
 }

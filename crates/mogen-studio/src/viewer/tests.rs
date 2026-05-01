@@ -7,6 +7,7 @@
     use glam::{Mat4, Quat, Vec3};
     use mogen_core::{AlphaMode, Material, Mesh, NodeId, SceneGraph, Transform};
     use std::path::{Path, PathBuf};
+    use std::sync::Arc;
 
     fn quad_mesh() -> Mesh {
         let mut m = Mesh::new(
@@ -440,7 +441,7 @@
         assert_eq!(node, NodeId(7));
         assert_eq!(attr, "rot");
         assert_eq!(value, "[0, 45, 0]");
-        assert_eq!(delete, vec!["rx", "ry", "rz"]);
+        assert_eq!(delete, vec!["rx", "ry", "rz", "dir"]);
     }
 
     #[test]
@@ -609,7 +610,7 @@
         // makes the visual editor "edit the group, not the import".
         let (scene, wrapper, imported) = scene_with_imported_child();
         let mut st = ViewerState::default();
-        st.scene = Some(scene);
+        st.scene = Some(Arc::new(scene));
         select_by_id(&mut st, Some(imported));
         assert_eq!(st.selected, Some(wrapper));
         assert_eq!(
@@ -627,7 +628,7 @@
         let imported = scene.add_root("desk_top", "box", Transform::IDENTITY);
         scene.nodes[imported.0 as usize].use_id = Some(1);
         let mut st = ViewerState::default();
-        st.scene = Some(scene);
+        st.scene = Some(Arc::new(scene));
         select_by_id(&mut st, Some(imported));
         assert_eq!(st.selected, None);
         assert!(st.selected_path.is_none());

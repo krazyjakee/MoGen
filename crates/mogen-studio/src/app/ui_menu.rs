@@ -410,6 +410,30 @@ impl MogenStudioApp {
                     self.viewer.set_show_grid(show_grid);
                     let _ = self.settings.save();
                 }
+                let mut show_lights = self.settings.show_light_gizmos();
+                if ui
+                    .checkbox(&mut show_lights, "Show Light Gizmos")
+                    .on_hover_text(
+                        "Toggle per-light indicator overlays (point sphere, spot cone, directional arrow)",
+                    )
+                    .changed()
+                {
+                    self.settings.set_show_light_gizmos(show_lights);
+                    self.viewer.set_show_light_gizmos(show_lights);
+                    let _ = self.settings.save();
+                }
+                let mut show_xform = self.settings.show_transform_gizmo();
+                if ui
+                    .checkbox(&mut show_xform, "Show Transform Gizmo")
+                    .on_hover_text(
+                        "Toggle translate/rotate/scale handles on the selected node",
+                    )
+                    .changed()
+                {
+                    self.settings.set_show_transform_gizmo(show_xform);
+                    self.viewer.set_show_transform_gizmo(show_xform);
+                    let _ = self.settings.save();
+                }
                 ui.separator();
                 ui.menu_button("Shader", |ui| {
                     let current = self.settings.preview_shader();

@@ -1,5 +1,6 @@
 mod accessor;
 mod animation;
+mod lights;
 mod material;
 #[cfg(feature = "merge")]
 pub mod merge;
