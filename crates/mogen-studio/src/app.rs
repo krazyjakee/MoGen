@@ -22,6 +22,7 @@ mod files;
 mod find;
 mod generate;
 mod indent;
+mod line_ops;
 mod llm;
 mod onboarding;
 mod pricing;
@@ -271,6 +272,21 @@ pub struct MogenStudioApp {
     /// In-flight ffmpeg encode after the GL frames landed on disk. Carries
     /// the receiver and the cleanup paths we need on completion.
     video_encode: Option<self::generate::VideoEncode>,
+
+    /// "Render MP4" options modal visibility. Opened from the File menu /
+    /// spotlight before kicking the actual render off so the user can pick
+    /// resolution and camera mode.
+    show_video_options: bool,
+    /// Draft options edited in the modal. Persisted across opens so the user's
+    /// last choice is the next default; resets to `Default` only on app start.
+    video_opts_draft: self::generate::VideoOptions,
+
+    /// Inspector "link scale axes" toggle. When on, dragging one axis of the
+    /// Scale row scales the other two by the same ratio so the node keeps its
+    /// proportions. Defaults to on — uniform scale is the common case and the
+    /// only safe default for nodes whose mesh was authored at 1× across the
+    /// board.
+    inspector_scale_linked: bool,
 }
 
 impl MogenStudioApp {
@@ -397,6 +413,9 @@ impl MogenStudioApp {
             init: Some(init),
             pending_video: None,
             video_encode: None,
+            show_video_options: false,
+            video_opts_draft: self::generate::VideoOptions::default(),
+            inspector_scale_linked: true,
         }
     }
 
@@ -614,7 +633,7 @@ impl eframe::App for MogenStudioApp {
                             .default_open(true)
                             .show(ui, |ui| self.ui_selected(ui));
                         egui::CollapsingHeader::new("Scene")
-                            .default_open(false)
+                            .default_open(true)
                             .show(ui, |ui| self.ui_summary(ui));
                         egui::CollapsingHeader::new("Materials")
                             .default_open(false)
@@ -717,6 +736,7 @@ impl eframe::App for MogenStudioApp {
         self.ui_about(ctx);
         self.ui_ask(ctx);
         self.ui_spotlight(ctx);
+        self.ui_video_options(ctx);
         self.ui_capture_progress(ctx);
 
         // Paint the autocomplete popup last so it floats above every panel.

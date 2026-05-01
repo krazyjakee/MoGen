@@ -25,14 +25,18 @@ fn register_material(node: &Node, graph: &mut SceneGraph) -> Result<()> {
         .name
         .clone()
         .ok_or_else(|| anyhow!("material requires a name, e.g. `material \"wood\" (...)`"))?;
-    // First-wins: `collect_materials` is called twice — once on the user AST,
-    // then on imported decls. A name that's already registered came from a
-    // higher-priority source (the user's own declaration, or an earlier
-    // import), so the duplicate from this call is dead weight: `find_material`
-    // would never return it, the exporter would still emit it as an unused
-    // glTF material, and the studio inspector would render two collapsing
-    // headers with the same widget ID.
-    if graph.find_material(&name).is_some() {
+    // Dedupe by `(name, origin)`: two declarations of `wood` inside the same
+    // file collapse to the first (the validator already warns on this), but
+    // a `wood` declared in `photo_frame.mog` and another `wood` declared in
+    // `bookshelf.mog` are distinct — they're separately addressable via
+    // `SceneGraph::find_material_scoped(name, origin)` so each file's
+    // geometry binds to its own material rather than racing for the global
+    // name.
+    if graph
+        .materials
+        .iter()
+        .any(|m| m.name == name && m.origin == node.origin)
+    {
         return Ok(());
     }
     let mut mat = Material::new(&name);

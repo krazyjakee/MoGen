@@ -53,6 +53,13 @@ impl MogenStudioApp {
             changed = true;
         }
 
+        // VS Code–style line ops (toggle comment, select/delete/move line,
+        // select next occurrence). Pure-text edits + cursor restore, so they
+        // run alongside indent before the TextEdit paints.
+        if self.handle_line_op_keys(ui, editor_id) {
+            changed = true;
+        }
+
         let font_id = egui::TextStyle::Monospace.resolve(ui.style());
         let palette = crate::highlight::Palette::for_visuals(&ui.style().visuals);
 
@@ -561,17 +568,42 @@ impl MogenStudioApp {
                 ui.end_row();
 
                 ui.label("Scale");
-                let mut emit_scale = false;
+                let pre_sx = sx;
+                let pre_sy = sy;
+                let pre_sz = sz;
+                let linked = self.inspector_scale_linked;
+                let mut changed_axis: Option<u8> = None;
                 if ui.add(egui::DragValue::new(&mut sx).speed(0.02)).changed() {
-                    emit_scale = true;
+                    changed_axis = Some(0);
                 }
                 if ui.add(egui::DragValue::new(&mut sy).speed(0.02)).changed() {
-                    emit_scale = true;
+                    changed_axis = Some(1);
                 }
                 if ui.add(egui::DragValue::new(&mut sz).speed(0.02)).changed() {
-                    emit_scale = true;
+                    changed_axis = Some(2);
                 }
-                if emit_scale {
+                if let Some(axis) = changed_axis {
+                    if linked {
+                        // Multiply the other two axes by the same ratio the
+                        // dragged axis just took, falling back to uniform
+                        // when the old value is ~0 — otherwise the others
+                        // would stay at 0 and silently swallow the drag.
+                        let (new_v, old_v) = match axis {
+                            0 => (sx, pre_sx),
+                            1 => (sy, pre_sy),
+                            _ => (sz, pre_sz),
+                        };
+                        if old_v.abs() > 1.0e-6 {
+                            let ratio = new_v / old_v;
+                            sx = pre_sx * ratio;
+                            sy = pre_sy * ratio;
+                            sz = pre_sz * ratio;
+                        } else {
+                            sx = new_v;
+                            sy = new_v;
+                            sz = new_v;
+                        }
+                    }
                     edits.push(PendingEdit::SetAttrCanonical {
                         node: node_id,
                         attr: "scale".into(),
@@ -584,6 +616,19 @@ impl MogenStudioApp {
                             format_inspector_scalar(sz),
                         ),
                     });
+                }
+                let link_label = if linked { "🔗" } else { "🔓" };
+                let link_tip = if linked {
+                    "Scale axes linked — drag any axis to scale all three (click to unlink)"
+                } else {
+                    "Scale axes independent (click to link)"
+                };
+                if ui
+                    .selectable_label(linked, link_label)
+                    .on_hover_text(link_tip)
+                    .clicked()
+                {
+                    self.inspector_scale_linked = !linked;
                 }
                 ui.end_row();
             });
@@ -658,10 +703,14 @@ impl MogenStudioApp {
 
     pub(super) fn ui_summary(&mut self, ui: &mut egui::Ui) {
         use crate::edit;
+        use mogen_core::NodeId;
 
         let i = self.active;
         let selection = self.viewer.selection();
-        let counts = {
+        // (counts, scope_header) — `scope_header` is `Some(name)` when stats
+        // are scoped to a selected node's subtree, `None` for the global /
+        // file-scoped totals.
+        let (counts, scope_header) = {
             let Some(result) = &self.files[i].last_result else {
                 ui.label("(no build yet)");
                 return;
@@ -670,65 +719,111 @@ impl MogenStudioApp {
                 ui.label("(no scene — fix errors first)");
                 return;
             };
-            // Scope the totals to the active scene by default; reveal an
-            // imported file's contribution only when its node is selected.
-            // Same rule the Materials / Animation panels apply, so the three
-            // sections agree on what "the scene" means.
-            let visible = visible_origins(scene, selection);
-            let mat_refs = materials_referenced_by_visible_nodes(scene, &visible);
-            let mut tris = 0usize;
-            let mut verts = 0usize;
-            let mut meshes = 0usize;
-            let mut nodes = 0usize;
-            for n in &scene.nodes {
-                if !origin_in_visible_set(&n.origin, &visible) {
-                    continue;
+            // When a node is selected, scope the panel to that node's subtree
+            // (self + descendants). The "Selected" panel above shows the
+            // single-node properties; this is the rolled-up cost. Falling back
+            // to global stats whenever nothing useful is selected (no
+            // selection, or a stale id) keeps the panel populated.
+            let subtree: Option<(std::collections::HashSet<NodeId>, String)> = selection
+                .and_then(|sel| {
+                    let root = scene.nodes.get(sel.0 as usize)?;
+                    let mut ids: std::collections::HashSet<NodeId> = Default::default();
+                    let mut stack = vec![sel];
+                    while let Some(id) = stack.pop() {
+                        if !ids.insert(id) {
+                            continue;
+                        }
+                        if let Some(n) = scene.nodes.get(id.0 as usize) {
+                            stack.extend(n.children.iter().copied());
+                        }
+                    }
+                    Some((ids, root.name.clone()))
+                });
+
+            if let Some((ids, root_name)) = subtree {
+                let mut tris = 0usize;
+                let mut verts = 0usize;
+                let mut meshes = 0usize;
+                let mut mat_ids: std::collections::HashSet<u32> = Default::default();
+                let mut skin_ids: std::collections::HashSet<u32> = Default::default();
+                for id in &ids {
+                    let Some(n) = scene.nodes.get(id.0 as usize) else {
+                        continue;
+                    };
+                    if let Some(m) = &n.mesh {
+                        tris += m.indices.len() / 3;
+                        verts += m.positions.len();
+                        meshes += 1;
+                    }
+                    if let Some(mid) = n.material {
+                        mat_ids.insert(mid.0);
+                    }
+                    if let Some(sid) = n.skin {
+                        skin_ids.insert(sid.0);
+                    }
                 }
-                nodes += 1;
-                if let Some(m) = &n.mesh {
-                    tris += m.indices.len() / 3;
-                    verts += m.positions.len();
-                    meshes += 1;
+                let joints = scene
+                    .joints
+                    .iter()
+                    .filter(|j| ids.contains(&j.pivot))
+                    .count();
+                // A clip belongs to the subtree if any of its tracks drives a
+                // node within it. Joint-driven clips inherit this through the
+                // joint's pivot node, since lowering rewrites the track to
+                // target the pivot directly.
+                let clips = scene
+                    .clips
+                    .iter()
+                    .filter(|c| c.tracks.iter().any(|t| ids.contains(&t.node)))
+                    .count();
+                (
+                    (ids.len(), meshes, tris, verts, mat_ids.len(), skin_ids.len(), clips, joints),
+                    Some(root_name),
+                )
+            } else {
+                // Nothing selected (or stale id) — show whole-scene totals,
+                // including geometry pulled in via `import`. Materials /
+                // Animation panels still scope by origin; this section is the
+                // one place the user can see the full cost of what's actually
+                // being rendered.
+                let mut tris = 0usize;
+                let mut verts = 0usize;
+                let mut meshes = 0usize;
+                for n in &scene.nodes {
+                    if let Some(m) = &n.mesh {
+                        tris += m.indices.len() / 3;
+                        verts += m.positions.len();
+                        meshes += 1;
+                    }
                 }
+                (
+                    (
+                        scene.nodes.len(),
+                        meshes,
+                        tris,
+                        verts,
+                        scene.materials.len(),
+                        scene.skins.len(),
+                        scene.clips.len(),
+                        scene.joints.len(),
+                    ),
+                    None,
+                )
             }
-            let mats = scene
-                .materials
-                .iter()
-                .enumerate()
-                .filter(|(idx, m)| {
-                    origin_in_visible_set(&m.origin, &visible)
-                        || mat_refs.contains(&(*idx as u32))
-                })
-                .count();
-            let skins = scene
-                .skins
-                .iter()
-                .filter(|s| origin_in_visible_set(&s.origin, &visible))
-                .count();
-            let clips = scene
-                .clips
-                .iter()
-                .filter(|c| origin_in_visible_set(&c.origin, &visible))
-                .count();
-            // Joints don't carry their own origin yet (their AST node is
-            // hoisted into the synthesised module body, which expand_modules
-            // turns into bone scene nodes — counted above). Surface them via
-            // the joint count from the SceneGraph's joint list, scoped by
-            // the pivot node's origin.
-            let joints = scene
-                .joints
-                .iter()
-                .filter(|j| {
-                    scene
-                        .nodes
-                        .get(j.pivot.0 as usize)
-                        .is_some_and(|n| origin_in_visible_set(&n.origin, &visible))
-                })
-                .count();
-            (nodes, meshes, tris, verts, mats, skins, clips, joints)
         };
         let (nodes, meshes, tris, verts, mats, skins, clips, joints) = counts;
 
+        if let Some(name) = &scope_header {
+            ui.colored_label(
+                egui::Color32::from_rgb(170, 200, 240),
+                format!("subtree of \"{name}\""),
+            )
+            .on_hover_text(
+                "Stats are scoped to the selected node and its descendants. \
+                 Deselect to see the whole-scene totals.",
+            );
+            ui.add_space(2.0);
+        }
         ui.label(format!("nodes: {nodes}"));
         ui.label(format!("meshes: {meshes}"));
         ui.label(format!("triangles: {tris}"));

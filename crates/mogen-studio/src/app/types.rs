@@ -296,6 +296,9 @@ pub(super) enum MenuAction {
     OpenAbout,
     GenerateThumbnail,
     GenerateVideo,
+    /// VS Code–style line / selection ops dispatched against the active
+    /// editor. The same handlers fire from the keyboard in `line_ops.rs`.
+    EditorLineOp(super::line_ops::LineOp),
 }
 
 /// The subset of `MenuAction` variants that are bound to a global keyboard

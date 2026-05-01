@@ -547,6 +547,20 @@ impl Viewer {
                 }
             }
 
+            // Esc deselects when the viewport is hovered. Gated on hover so
+            // pressing Esc inside the editor / inspector / spotlight doesn't
+            // wipe the selection out from under the user. `consume_key` so
+            // the keypress doesn't also trigger any downstream listeners.
+            if !cinema_active
+                && !gizmo_in_progress
+                && st.selected.is_some()
+                && response.hovered()
+                && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+            {
+                select_by_id(&mut st, None);
+                needs_repaint = true;
+            }
+
             if st.anim_playing && st.any_active() {
                 let speed = st.playback_speed;
                 let scaled_dt = dt * speed;

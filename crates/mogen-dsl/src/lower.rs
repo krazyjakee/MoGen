@@ -111,9 +111,10 @@ pub fn lower_with_source(ast: &[Node], source_dir: Option<&Path>) -> Result<Scen
     reg.extend_overlay(imported_reg);
     let user = collect_modules(ast)?;
     reg.extend_overlay(user);
-    let expanded = expand_modules(ast, &reg)?;
+    let (expanded, use_parents) = expand_modules(ast, &reg)?;
 
     let mut graph = SceneGraph::new();
+    graph.use_parents = use_parents;
 
     // Pass 1: hoist every top-level and scene-level `material` declaration.
     // User materials register first so their MaterialId is lower than any

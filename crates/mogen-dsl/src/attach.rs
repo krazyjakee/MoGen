@@ -208,20 +208,20 @@ fn apply_attach(
 ) -> Result<()> {
     // Lookup precedence:
     //   1. Explicit `scope` (used by replicator per-instance pass) — strict.
-    //   2. `spec.use_id` — only nodes stamped from the same module-use frame.
-    //   3. Global — for top-level user-authored attaches with no use_id.
+    //   2. Frame-visible — `spec.use_id` itself plus any descendant frame in
+    //      `graph.use_parents`. Lets an outer module's attach reach into a
+    //      nested `use`'s nodes (e.g. `humanoid_full` attaching to a `torso`
+    //      brought in by `use "humanoid_torso"`) while still keeping
+    //      sibling-instance frames isolated from each other.
     let find = |name: &str| -> Option<NodeId> {
         if let Some(root) = scope {
             return graph.find_node_in_subtree(root, name);
         }
-        if let Some(uid) = spec.use_id {
-            return graph
-                .nodes
-                .iter()
-                .position(|n| n.name == name && n.use_id == Some(uid))
-                .map(|i| NodeId(i as u32));
-        }
-        graph.find_node(name)
+        graph
+            .nodes
+            .iter()
+            .position(|n| n.name == name && graph.use_id_visible(spec.use_id, n.use_id))
+            .map(|i| NodeId(i as u32))
     };
     let parent_id = find(&spec.parent)
         .ok_or_else(|| anyhow!("attach: unknown parent node \"{}\"", spec.parent))?;
@@ -489,6 +489,73 @@ mod tests {
                 "arms_{i} candle should be parented under its own branch"
             );
         }
+    }
+
+    #[test]
+    fn outer_module_can_use_same_inner_module_multiple_times() {
+        // Regression: an outer module that calls the same inner module N
+        // times must keep each instance's internal attach specs in their
+        // own frame. Before the fix, every nested `use` inherited the
+        // outermost frame, so all five "tip" attaches collapsed into one
+        // bucket and the second one tripped E0701 ("attached twice").
+        let src = r#"
+            module "pen" () {
+              group "root" {
+                cylinder "body" (radius=0.04, height=1.0)
+                cone "tip" (radius=0.04, height=0.15)
+                attach (parent="body", child="tip", socket="bottom", plug="bottom")
+              }
+            }
+
+            module "pot" () {
+              group "p1" { use "pen" () }
+              group "p2" { use "pen" () }
+              group "p3" { use "pen" () }
+            }
+
+            scene { use "pot" () }
+        "#;
+        let g = build(src);
+        // Each pen instance must have its own body parenting its own tip.
+        // The pen module uses `group "root"` to wrap things; that root sits
+        // under p1/p2/p3 inside the synthesised pot module body.
+        let mut tips_with_correct_parent = 0;
+        for n in &g.nodes {
+            if n.name == "tip" {
+                let parent = n.parent.expect("tip should be reparented under body");
+                let parent_name = &g.nodes[parent.0 as usize].name;
+                assert_eq!(parent_name, "body", "tip parent should be 'body'");
+                tips_with_correct_parent += 1;
+            }
+        }
+        assert_eq!(tips_with_correct_parent, 3, "expected 3 tips, one per pen");
+    }
+
+    #[test]
+    fn outer_module_attach_can_target_inner_module_node() {
+        // The inverse case: an attach declared in an outer module references
+        // a node brought in by a nested `use`. Before the fix this worked
+        // (because nested uses inherited the outer frame); we keep that
+        // behaviour with the descendant-frame lookup.
+        let src = r#"
+            module "head" () {
+              sphere "head" (radius=0.3)
+            }
+            module "humanoid" () {
+              box "torso" (size=[1, 2, 1])
+              use "head" ()
+              attach (parent="torso", child="head", socket="top", plug="bottom")
+            }
+            scene { use "humanoid" () }
+        "#;
+        let g = build(src);
+        let head = g.find_node("head").unwrap();
+        let torso = g.find_node("torso").unwrap();
+        assert_eq!(
+            g.nodes[head.0 as usize].parent,
+            Some(torso),
+            "head should be reparented under torso via the outer module's attach"
+        );
     }
 
     #[test]

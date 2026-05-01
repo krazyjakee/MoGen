@@ -57,15 +57,17 @@ pub(super) fn lower_into(
             tags.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect();
     }
 
-    // Material lookup.
+    // Material lookup. Scoped by `node.origin` so geometry imported from
+    // another `.mog` file binds to that file's materials before falling back
+    // to bare-name lookup.
     if let Some(Value::String(mat_name)) = node.attr("mat") {
         let mid = graph
-            .find_material(mat_name)
+            .find_material_scoped(mat_name, node.origin.as_deref())
             .ok_or_else(|| anyhow!("unknown material: {mat_name}"))?;
         graph.set_material(id, mid);
     } else if let Some(Value::Ident(mat_name)) = node.attr("mat") {
         let mid = graph
-            .find_material(mat_name)
+            .find_material_scoped(mat_name, node.origin.as_deref())
             .ok_or_else(|| anyhow!("unknown material: {mat_name}"))?;
         graph.set_material(id, mid);
     }
@@ -172,12 +174,12 @@ pub(super) fn apply_metadata(node: &Node, id: NodeId, graph: &mut SceneGraph) ->
     }
     if let Some(Value::String(mat_name)) = node.attr("mat") {
         let mid = graph
-            .find_material(mat_name)
+            .find_material_scoped(mat_name, node.origin.as_deref())
             .ok_or_else(|| anyhow!("unknown material: {mat_name}"))?;
         graph.set_material(id, mid);
     } else if let Some(Value::Ident(mat_name)) = node.attr("mat") {
         let mid = graph
-            .find_material(mat_name)
+            .find_material_scoped(mat_name, node.origin.as_deref())
             .ok_or_else(|| anyhow!("unknown material: {mat_name}"))?;
         graph.set_material(id, mid);
     }

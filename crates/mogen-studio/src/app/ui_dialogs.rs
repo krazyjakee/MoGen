@@ -5,6 +5,8 @@ use mogen_llm::Provider;
 
 use crate::viewer::CaptureKind;
 
+use super::generate::{VideoCameraMode, VideoQuality};
+
 use crate::settings::{
     thinking_level_key, thinking_level_label, DEFAULT_MAX_REPAIR_ITERS, PROVIDERS,
     THINKING_LEVELS,
@@ -1624,5 +1626,86 @@ impl MogenStudioApp {
                     ui.add_space(6.0);
                 });
             });
+    }
+
+    /// "Render MP4" options modal. Lets the user pick resolution (720p / 1080p)
+    /// and camera mode (rotating / static) before the actual render kicks off.
+    /// Stays modal-style — anchored centre, non-collapsible — and persists the
+    /// draft so the next open defaults to whatever the user chose last.
+    pub(super) fn ui_video_options(&mut self, ctx: &egui::Context) {
+        if !self.show_video_options {
+            return;
+        }
+        let mut open = true;
+        let mut do_render = false;
+        let mut do_close = false;
+
+        egui::Window::new("Render MP4")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_width(360.0)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.label("Render a 6-second MP4 of the active scene.");
+                ui.add_space(10.0);
+
+                ui.heading("Resolution");
+                ui.horizontal(|ui| {
+                    ui.selectable_value(
+                        &mut self.video_opts_draft.quality,
+                        VideoQuality::P720,
+                        VideoQuality::P720.label(),
+                    );
+                    ui.selectable_value(
+                        &mut self.video_opts_draft.quality,
+                        VideoQuality::P1080,
+                        VideoQuality::P1080.label(),
+                    );
+                });
+
+                ui.add_space(8.0);
+                ui.heading("Camera");
+                ui.horizontal(|ui| {
+                    ui.selectable_value(
+                        &mut self.video_opts_draft.camera,
+                        VideoCameraMode::Rotating,
+                        VideoCameraMode::Rotating.label(),
+                    )
+                    .on_hover_text("Sweep yaw a full 360° across the clip.");
+                    ui.selectable_value(
+                        &mut self.video_opts_draft.camera,
+                        VideoCameraMode::Static,
+                        VideoCameraMode::Static.label(),
+                    )
+                    .on_hover_text(
+                        "Hold the thumbnail framing — animations still play across the clip.",
+                    );
+                });
+
+                ui.add_space(14.0);
+                ui.horizontal(|ui| {
+                    if ui
+                        .button("Render")
+                        .on_hover_text("Capture frames and encode the MP4 with ffmpeg")
+                        .clicked()
+                    {
+                        do_render = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        do_close = true;
+                    }
+                });
+            });
+
+        if !open || do_close {
+            self.show_video_options = false;
+            return;
+        }
+        if do_render {
+            let opts = self.video_opts_draft;
+            self.show_video_options = false;
+            self.generate_video(ctx, opts);
+        }
     }
 }

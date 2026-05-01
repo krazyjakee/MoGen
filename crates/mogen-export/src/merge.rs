@@ -80,6 +80,7 @@ where
         joints: scene.joints.clone(),
         clips: scene.clips.clone(),
         skins: scene.skins.clone(),
+        use_parents: scene.use_parents.clone(),
     };
     let mut remap: HashMap<NodeId, NodeId> = HashMap::new();
 

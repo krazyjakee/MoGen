@@ -114,18 +114,40 @@ pub fn collect_modules(ast: &[Node]) -> Result<ModuleRegistry> {
     Ok(reg)
 }
 
+/// Map from each minted `use_id` to the `use_id` of the surrounding `use`
+/// expansion (or `None` for the outermost). Lets attach/anim resolvers walk
+/// "is this node reachable from this spec's frame?" — a spec at frame U sees
+/// any node whose frame chain passes through U.
+pub type UseParents = HashMap<u32, Option<u32>>;
+
 /// Remove every top-level `module` and `import` node and expand every `use`
 /// node against `reg`. Expansion is recursive: modules may invoke other modules.
-pub fn expand_modules(ast: &[Node], reg: &ModuleRegistry) -> Result<Vec<Node>> {
+///
+/// Returns the expanded AST plus a map of every minted `use_id` to its parent
+/// frame (or `None` if it was the outermost). Callers store this on the
+/// `SceneGraph` so attach/anim resolution can walk frame ancestry — an attach
+/// declared in module M with frame U must be able to see nodes brought in by
+/// nested `use`s inside M (descendant frames of U).
+pub fn expand_modules(ast: &[Node], reg: &ModuleRegistry) -> Result<(Vec<Node>, UseParents)> {
     let mut out = Vec::with_capacity(ast.len());
     let mut next_use_id: u32 = 1;
+    let mut use_parents: UseParents = HashMap::new();
     for n in ast {
         if n.kind == "module" || n.kind == "import" {
             continue;
         }
-        expand_node_into(n, reg, &Scope::default(), &mut Vec::new(), &mut out, None, &mut next_use_id)?;
+        expand_node_into(
+            n,
+            reg,
+            &Scope::default(),
+            &mut Vec::new(),
+            &mut out,
+            None,
+            &mut next_use_id,
+            &mut use_parents,
+        )?;
     }
-    Ok(out)
+    Ok((out, use_parents))
 }
 
 /// Walk top-level `import "path.mog"` declarations, recursively load the
@@ -507,9 +529,10 @@ fn expand_node_into(
     out: &mut Vec<Node>,
     current_use: Option<u32>,
     next_use: &mut u32,
+    use_parents: &mut UseParents,
 ) -> Result<()> {
     if node.kind == "use" {
-        expand_use(node, reg, scope, stack, out, current_use, next_use)?;
+        expand_use(node, reg, scope, stack, out, current_use, next_use, use_parents)?;
         return Ok(());
     }
 
@@ -529,7 +552,16 @@ fn expand_node_into(
         origin: node.origin.clone(),
     };
     for c in &node.children {
-        expand_node_into(c, reg, scope, stack, &mut cloned.children, current_use, next_use)?;
+        expand_node_into(
+            c,
+            reg,
+            scope,
+            stack,
+            &mut cloned.children,
+            current_use,
+            next_use,
+            use_parents,
+        )?;
     }
     out.push(cloned);
     Ok(())
@@ -543,6 +575,7 @@ fn expand_use(
     out: &mut Vec<Node>,
     current_use: Option<u32>,
     next_use: &mut u32,
+    use_parents: &mut UseParents,
 ) -> Result<()> {
     let module_name = node
         .name
@@ -608,22 +641,29 @@ fn expand_use(
         call_scope.bindings.push((p.name.clone(), value));
     }
 
-    // Outermost `use` mints a fresh id; nested `use`s inherit so an attach
-    // authored in the outer module still sees nodes brought in by an inner
-    // sub-`use`. (Inner module attaches reference outer-module names like
-    // `humanoid_full` referencing the `torso` from `humanoid_torso`.)
-    let body_use = match current_use {
-        Some(id) => Some(id),
-        None => {
-            let id = *next_use;
-            *next_use += 1;
-            Some(id)
-        }
-    };
+    // Every `use` mints its own frame so two instances of the same inner
+    // module (e.g. five `use "pen"` calls inside `pen_pot`) keep their
+    // internal attaches in separate buckets. The parent frame is recorded
+    // in `use_parents` so attach/anim lookup can still see nodes brought in
+    // by nested `use`s — an attach in frame U matches any node whose frame
+    // chain passes through U.
+    let id = *next_use;
+    *next_use += 1;
+    use_parents.insert(id, current_use);
+    let body_use = Some(id);
 
     stack.push(module_name);
     for body_node in &def.body {
-        expand_node_into(body_node, reg, &call_scope, stack, out, body_use, next_use)?;
+        expand_node_into(
+            body_node,
+            reg,
+            &call_scope,
+            stack,
+            out,
+            body_use,
+            next_use,
+            use_parents,
+        )?;
     }
     stack.pop();
     Ok(())
@@ -736,7 +776,7 @@ mod tests {
     fn expand(src: &str) -> Vec<Node> {
         let ast = parse(src).unwrap();
         let reg = collect_modules(&ast).unwrap();
-        expand_modules(&ast, &reg).unwrap()
+        expand_modules(&ast, &reg).unwrap().0
     }
 
     fn first_attr<'a>(n: &'a Node, key: &str) -> &'a Value {
@@ -1149,12 +1189,10 @@ mod tests {
     }
 
     #[test]
-    fn imported_material_collision_is_first_wins() {
-        // Cross-file material name duplicates aren't fatal — `find_material`
-        // returns the first match by index, which is the first import (or the
-        // user's own declaration if they added one). Composing two third-party
-        // objects that happen to share a material name shouldn't block the
-        // build.
+    fn imported_material_collision_binds_per_origin() {
+        // Two imports declare a `wood` material with different colours. With
+        // origin-scoped lookup, each import's geometry binds to its own
+        // `wood` — the first-wins race that used to apply globally is gone.
         let tmp = TempDir::new("mat_collision");
         tmp.write(
             "a.mog",
@@ -1173,14 +1211,53 @@ mod tests {
         "#;
         let ast = parse(main_src).unwrap();
         let scene = crate::lower::lower_with_source(&ast, Some(tmp.path.as_path())).unwrap();
-        // a.mog's material registers first, so its dark-grey colour is what
-        // `find_material("wood")` resolves to.
-        let wood = scene
-            .materials
-            .iter()
-            .find(|m| m.name == "wood")
-            .expect("imported material should be registered");
-        assert!((wood.base_color[0] - 0.1).abs() < 1e-6, "got {wood:?}");
+        // Both `wood`s should be registered (one per origin), and each box
+        // should bind to its own file's version.
+        let woods: Vec<_> = scene.materials.iter().filter(|m| m.name == "wood").collect();
+        assert_eq!(woods.len(), 2, "expected one wood per origin: {woods:?}");
+        let box_a = scene.nodes.iter().find(|n| n.name == "a").expect("box a");
+        let box_b = scene.nodes.iter().find(|n| n.name == "b").expect("box b");
+        let mat_a = &scene.materials[box_a.material.unwrap().0 as usize];
+        let mat_b = &scene.materials[box_b.material.unwrap().0 as usize];
+        assert!((mat_a.base_color[0] - 0.1).abs() < 1e-6, "a should bind a.mog wood, got {mat_a:?}");
+        assert!((mat_b.base_color[0] - 0.9).abs() < 1e-6, "b should bind b.mog wood, got {mat_b:?}");
+    }
+
+    #[test]
+    fn imported_material_textures_survive_user_redeclaration() {
+        // Regression for the photo_frame scenario: scene.mog declared a
+        // plain `wall_mat` that shadowed photo_frame.mog's textured one,
+        // silently stripping the photo frame's textures. Origin-scoped
+        // lookup makes each file see its own materials first.
+        let tmp = TempDir::new("user_redecl_textures");
+        tmp.write(
+            "frame.mog",
+            r#"material "wall_mat" (color=[0.9, 0.9, 0.9],
+                                    base_color_texture="textures/wall_albedo.png")
+               scene { box "frame_wall" (size=[1,1,1], mat="wall_mat") }"#,
+        );
+        let main_src = r#"
+            import "frame.mog"
+            material "wall_mat" (color=[0.5, 0.5, 0.5])
+            scene {
+              box "user_wall" (size=[1,1,1], mat="wall_mat")
+              use "frame" ()
+            }
+        "#;
+        let ast = parse(main_src).unwrap();
+        let scene = crate::lower::lower_with_source(&ast, Some(tmp.path.as_path())).unwrap();
+        let user_wall = scene.nodes.iter().find(|n| n.name == "user_wall").expect("user_wall");
+        let frame_wall = scene.nodes.iter().find(|n| n.name == "frame_wall").expect("frame_wall");
+        let user_mat = &scene.materials[user_wall.material.unwrap().0 as usize];
+        let frame_mat = &scene.materials[frame_wall.material.unwrap().0 as usize];
+        assert!(
+            user_mat.base_color_texture.is_none(),
+            "user-side wall_mat should be the plain user-declared one, got {user_mat:?}"
+        );
+        assert!(
+            frame_mat.base_color_texture.is_some(),
+            "frame-side wall_mat must keep its textures, got {frame_mat:?}"
+        );
     }
 
     #[test]

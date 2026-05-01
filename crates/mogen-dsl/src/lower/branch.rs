@@ -103,7 +103,9 @@ fn read_cfg(node: &Node, graph: &SceneGraph) -> BranchCfg {
     let leaf_size = node.attr_number("leaf_size").unwrap_or(0.35).max(0.0);
     let leaf_cards = node.attr_number("leaf_cards").unwrap_or(2.0).max(1.0) as u32;
     let leaf_material = match node.attr("leaf_mat") {
-        Some(Value::String(s)) | Some(Value::Ident(s)) => graph.find_material(s),
+        Some(Value::String(s)) | Some(Value::Ident(s)) => {
+            graph.find_material_scoped(s, node.origin.as_deref())
+        }
         _ => None,
     };
 

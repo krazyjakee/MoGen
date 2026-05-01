@@ -61,8 +61,7 @@ pub fn lower_joint(node: &Node, graph: &mut SceneGraph) -> Result<()> {
     let limits = node.attr_pair("limits");
     let pivot_ref = string_or_ident(node.attr("pivot"))
         .ok_or_else(|| anyhow!("joint \"{name}\" requires pivot=\"<node_name>\""))?;
-    let pivot = graph
-        .find_node(&pivot_ref)
+    let pivot = find_node_scoped(graph, &pivot_ref, node.use_id)
         .ok_or_else(|| anyhow!("joint \"{name}\" pivot \"{pivot_ref}\" is not a scene node"))?;
     graph.joints.push(Joint {
         name,
@@ -90,7 +89,7 @@ pub fn lower_clip(node: &Node, graph: &mut SceneGraph) -> Result<()> {
                 c.kind
             );
         }
-        tracks.push(lower_track(c, graph, seconds)?);
+        tracks.push(lower_track(c, graph, seconds, node.use_id)?);
     }
 
     graph.clips.push(Clip {
@@ -102,7 +101,12 @@ pub fn lower_clip(node: &Node, graph: &mut SceneGraph) -> Result<()> {
     Ok(())
 }
 
-fn lower_track(node: &Node, graph: &SceneGraph, duration: f32) -> Result<Track> {
+fn lower_track(
+    node: &Node,
+    graph: &SceneGraph,
+    duration: f32,
+    use_id: Option<u32>,
+) -> Result<Track> {
     let target_name = node
         .name
         .clone()
@@ -113,7 +117,7 @@ fn lower_track(node: &Node, graph: &SceneGraph, duration: f32) -> Result<Track> 
         return lower_joint_track(node, &joint, duration);
     }
 
-    let Some(node_id) = graph.find_node(&target_name) else {
+    let Some(node_id) = find_node_scoped(graph, &target_name, use_id) else {
         bail!(
             "track target \"{}\" is neither a joint nor a scene node",
             target_name
@@ -248,7 +252,7 @@ pub fn lower_template(node: &Node, graph: &mut SceneGraph) -> Result<()> {
         .unwrap_or_else(|| format!("{}_clip", node.kind));
     let target_ref = string_or_ident(node.attr("target"))
         .ok_or_else(|| anyhow!("`{}` requires target=\"<name>\"", node.kind))?;
-    let targets = resolve_anim_targets(&target_ref, graph);
+    let targets = resolve_anim_targets(&target_ref, graph, node.use_id);
     if targets.is_empty() {
         bail!(
             "`{}` target \"{}\" is neither a joint nor a scene node",
@@ -309,15 +313,67 @@ pub fn lower_template(node: &Node, graph: &mut SceneGraph) -> Result<()> {
 /// Precedence: joint name → every node sharing `name` → every node sharing
 /// `role`. The multi-match name pass lets `array`/`mirror` replicants (which
 /// keep their source names) all receive the same procedural clip.
-fn resolve_anim_targets(target_ref: &str, graph: &SceneGraph) -> Vec<NodeId> {
+///
+/// `use_id` scopes the name/role passes to the template's frame plus any
+/// descendant frame, mirroring `attach`'s scoped lookup. Two imported objects
+/// sharing a node name (e.g. both ceiling_fan and office_chair declare `hub`)
+/// stay isolated — each instantiation mints a different frame and the spin
+/// authored inside one only sees its own subtree. A template authored in an
+/// outer module can still reach nodes brought in by a nested `use`. Top-level
+/// user-authored templates carry `use_id=None` and see the whole graph.
+fn resolve_anim_targets(
+    target_ref: &str,
+    graph: &SceneGraph,
+    use_id: Option<u32>,
+) -> Vec<NodeId> {
     if let Some(j) = graph.find_joint(target_ref) {
         return vec![j.pivot];
     }
-    let by_name = graph.find_nodes_by_name(target_ref);
+    let by_name = find_nodes_by_name_scoped(graph, target_ref, use_id);
     if !by_name.is_empty() {
         return by_name;
     }
-    graph.find_nodes_by_role(target_ref)
+    find_nodes_by_role_scoped(graph, target_ref, use_id)
+}
+
+fn find_node_scoped(graph: &SceneGraph, name: &str, use_id: Option<u32>) -> Option<NodeId> {
+    graph
+        .nodes
+        .iter()
+        .position(|n| n.name == name && graph.use_id_visible(use_id, n.use_id))
+        .map(|i| NodeId(i as u32))
+}
+
+fn find_nodes_by_name_scoped(
+    graph: &SceneGraph,
+    name: &str,
+    use_id: Option<u32>,
+) -> Vec<NodeId> {
+    graph
+        .nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(i, n)| {
+            (n.name == name && graph.use_id_visible(use_id, n.use_id))
+                .then_some(NodeId(i as u32))
+        })
+        .collect()
+}
+
+fn find_nodes_by_role_scoped(
+    graph: &SceneGraph,
+    role: &str,
+    use_id: Option<u32>,
+) -> Vec<NodeId> {
+    graph
+        .nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(i, n)| {
+            (n.role.as_deref() == Some(role) && graph.use_id_visible(use_id, n.use_id))
+                .then_some(NodeId(i as u32))
+        })
+        .collect()
 }
 
 fn joint_kind_attr(node: &Node) -> Result<JointKind> {
@@ -481,6 +537,62 @@ mod tests {
             "expected baked t=0 to equal rest rotation: q0={:?} rest={:?}",
             q0,
             rest,
+        );
+    }
+
+    #[test]
+    fn template_target_is_scoped_to_its_use_frame() {
+        // Two imported objects share a node name (`hub`). One ships a
+        // `spin (target="hub")`. Without use_id-scoped lookup, the spin would
+        // also produce a track for the other import's hub. With scoping it
+        // must hit only its own.
+        let tmp = std::env::temp_dir().join(format!(
+            "mogen-anim-scope-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(
+            tmp.join("fan.mog"),
+            r#"
+            scene { cylinder "hub" (radius=0.1, height=0.05) }
+            spin "fan_spin" (target="hub", axis=[0, 1, 0], rpm=30)
+            "#,
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.join("chair.mog"),
+            r#"scene { cylinder "hub" (radius=0.04, height=0.08) }"#,
+        )
+        .unwrap();
+        let main_src = r#"
+            import "fan.mog"
+            import "chair.mog"
+            scene {
+              group "f" () { use "fan" () }
+              group "c" () { use "chair" () }
+            }
+        "#;
+        let ast = crate::parser::parse(main_src).unwrap();
+        let scene = crate::lower::lower_with_source(&ast, Some(tmp.as_path())).unwrap();
+        let _ = std::fs::remove_dir_all(&tmp);
+
+        // Exactly one clip from the fan, with exactly one track on the fan's hub.
+        assert_eq!(scene.clips.len(), 1, "expected only fan_spin to fire");
+        let clip = &scene.clips[0];
+        assert_eq!(clip.name, "fan_spin");
+        assert_eq!(clip.tracks.len(), 1, "spin should target only fan's hub");
+
+        // The track's node must sit under the `f` group, not the `c` group.
+        let target = clip.tracks[0].node;
+        let f_id = scene.find_node("f").expect("f group");
+        assert_eq!(
+            scene.find_node_in_subtree(f_id, "hub"),
+            Some(target),
+            "spin track must target the fan's hub, not the chair's"
         );
     }
 

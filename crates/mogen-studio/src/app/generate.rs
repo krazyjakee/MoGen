@@ -11,10 +11,6 @@ use super::MogenStudioApp;
 /// Output resolution of generated thumbnails. Square so the file shows up
 /// cleanly in OS thumbnail grids regardless of the model's aspect ratio.
 const THUMBNAIL_SIZE: u32 = 512;
-/// Output resolution of generated rotation videos. Even in both axes (libx264
-/// + yuv420p requires it) and high enough to look reasonable on a monitor
-/// without making each frame a megabyte to encode.
-const VIDEO_SIZE: u32 = 720;
 /// Number of frames captured for the rotating video. At [`VIDEO_FPS`] this
 /// gives a 6-second loop, which is long enough to read the model from every
 /// angle without dragging.
@@ -37,6 +33,66 @@ pub(super) struct VideoEncode {
     pub(super) output: PathBuf,
     pub(super) file_index: usize,
     pub(super) started_at: Instant,
+}
+
+/// Resolution the user picked in the video options modal. Square output, even
+/// in both axes (libx264 + yuv420p requires it). 1080 keeps thin geometry
+/// readable on a desktop monitor; 720 is the lighter option for previews.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum VideoQuality {
+    P720,
+    P1080,
+}
+
+impl VideoQuality {
+    pub(crate) fn size(self) -> u32 {
+        match self {
+            Self::P720 => 720,
+            Self::P1080 => 1080,
+        }
+    }
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::P720 => "720p",
+            Self::P1080 => "1080p",
+        }
+    }
+}
+
+/// Camera behaviour for the captured video. Rotating sweeps yaw a full 2π
+/// across the clip; Static holds yaw at the thumbnail framing while still
+/// stepping through animation time so authored clips play.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum VideoCameraMode {
+    Rotating,
+    Static,
+}
+
+impl VideoCameraMode {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Rotating => "Rotating",
+            Self::Static => "Static",
+        }
+    }
+}
+
+/// Options chosen in the "Rotating video (MP4)" modal before render starts.
+/// Defaults match the previous hard-coded behaviour (1080p, full rotation).
+#[derive(Clone, Copy)]
+pub(crate) struct VideoOptions {
+    pub(crate) quality: VideoQuality,
+    pub(crate) camera: VideoCameraMode,
+}
+
+impl Default for VideoOptions {
+    fn default() -> Self {
+        Self {
+            quality: VideoQuality::P1080,
+            camera: VideoCameraMode::Rotating,
+        }
+    }
 }
 
 impl MogenStudioApp {
@@ -79,11 +135,11 @@ impl MogenStudioApp {
         ctx.request_repaint();
     }
 
-    /// Kick off a rotating video render for the active file. Frames are
-    /// written into a temp directory; once the GL worker reports back, we
-    /// hand them to ffmpeg on a worker thread and write the final mp4 next
-    /// to the .mog.
-    pub(super) fn generate_video(&mut self, ctx: &egui::Context) {
+    /// Kick off a video render for the active file with the user-picked
+    /// options. Frames are written into a temp directory; once the GL worker
+    /// reports back, we hand them to ffmpeg on a worker thread and write the
+    /// final mp4 next to the .mog.
+    pub(super) fn generate_video(&mut self, ctx: &egui::Context, opts: VideoOptions) {
         if !self.ensure_ready_for_capture() {
             return;
         }
@@ -111,15 +167,22 @@ impl MogenStudioApp {
             }
         };
         let bg = self.settings.viewer_bg_rgb();
+        let size = opts.quality.size();
         let mut frames = Vec::with_capacity(VIDEO_FRAMES as usize);
-        // Yaw sweeps a full 2π — last frame is one step shy of the first so
-        // the encoded loop seams cleanly when the user views it on repeat.
+        // Yaw sweeps a full 2π for the rotating mode — last frame is one step
+        // shy of the first so the encoded loop seams cleanly on repeat. Static
+        // mode pins yaw at the thumbnail framing.
         let two_pi = std::f32::consts::TAU;
         for f in 0..VIDEO_FRAMES {
-            let yaw = THUMBNAIL_YAW + (f as f32 / VIDEO_FRAMES as f32) * two_pi;
+            let yaw = match opts.camera {
+                VideoCameraMode::Rotating => {
+                    THUMBNAIL_YAW + (f as f32 / VIDEO_FRAMES as f32) * two_pi
+                }
+                VideoCameraMode::Static => THUMBNAIL_YAW,
+            };
             let path = frames_dir.join(format!("frame_{:05}.png", f));
             // Sample the animation at the frame's wall-clock time so clips
-            // play across the rotation rather than being frozen at t=0.
+            // play across the clip rather than being frozen at t=0.
             let time = f as f32 / VIDEO_FPS as f32;
             frames.push(CaptureFrame {
                 yaw,
@@ -137,15 +200,16 @@ impl MogenStudioApp {
         });
         self.viewer.submit_capture(CaptureRequest {
             kind: CaptureKind::Video,
-            size: VIDEO_SIZE,
+            size,
             bg,
             frames,
             total: 0,
             written: Vec::new(),
             error: None,
         });
+        let mode = opts.camera.label().to_ascii_lowercase();
         self.files[i].status = format!(
-            "video: rendering {VIDEO_FRAMES} frames at {VIDEO_SIZE}px…"
+            "video: rendering {VIDEO_FRAMES} {mode} frames at {size}px…"
         );
         ctx.request_repaint();
     }
@@ -354,6 +418,14 @@ fn run_ffmpeg(frames_dir: &Path, output: &Path) -> Result<PathBuf, String> {
         .arg(&pattern)
         .arg("-c:v")
         .arg("libx264")
+        // `slow` + CRF 18 is the libx264 sweet spot for synthetic 3D output:
+        // near-visually-lossless on flat-shaded geometry without ballooning
+        // file size. Defaults (preset=medium, crf=23) leave visible mosquito
+        // noise around CSG edges and texture seams on rotation playback.
+        .arg("-preset")
+        .arg("slow")
+        .arg("-crf")
+        .arg("18")
         .arg("-pix_fmt")
         .arg("yuv420p")
         .arg("-movflags")

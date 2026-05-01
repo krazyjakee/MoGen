@@ -339,6 +339,7 @@ impl MogenStudioApp {
         egui::Window::new("Open File")
             .id(egui::Id::new("spotlight_modal"))
             .open(&mut open_window)
+            .order(egui::Order::Tooltip)
             .collapsible(false)
             .resizable(false)
             .title_bar(false)

@@ -328,6 +328,51 @@ impl MogenStudioApp {
                     ui.close_menu();
                 }
                 ui.separator();
+                let alt = Modifiers::ALT;
+                for (label, sc, op, tooltip) in [
+                    (
+                        "Toggle Comment",
+                        KeyboardShortcut::new(cmd, Key::Slash),
+                        super::line_ops::LineOp::ToggleComment,
+                        "Comment or uncomment the selected line(s)",
+                    ),
+                    (
+                        "Select Line",
+                        KeyboardShortcut::new(cmd, Key::L),
+                        super::line_ops::LineOp::SelectLine,
+                        "Extend the selection to the full line",
+                    ),
+                    (
+                        "Delete Line",
+                        KeyboardShortcut::new(cmd_shift, Key::K),
+                        super::line_ops::LineOp::DeleteLine,
+                        "Delete the line(s) covered by the selection",
+                    ),
+                    (
+                        "Move Line Up",
+                        KeyboardShortcut::new(alt, Key::ArrowUp),
+                        super::line_ops::LineOp::MoveUp,
+                        "Swap the current line(s) with the line above",
+                    ),
+                    (
+                        "Move Line Down",
+                        KeyboardShortcut::new(alt, Key::ArrowDown),
+                        super::line_ops::LineOp::MoveDown,
+                        "Swap the current line(s) with the line below",
+                    ),
+                    (
+                        "Select Next Occurrence",
+                        KeyboardShortcut::new(cmd, Key::D),
+                        super::line_ops::LineOp::SelectNext,
+                        "Select the word under the caret, or jump to the next match",
+                    ),
+                ] {
+                    if native_shortcut_menu_item(ui, label, sc, tooltip, true).clicked() {
+                        action = MenuAction::EditorLineOp(op);
+                        ui.close_menu();
+                    }
+                }
+                ui.separator();
                 if shortcut_menu_item(
                     ui,
                     "Preferences…",
@@ -532,7 +577,28 @@ impl MogenStudioApp {
                 self.show_about = true;
             }
             MenuAction::GenerateThumbnail => self.generate_thumbnail(ctx),
-            MenuAction::GenerateVideo => self.generate_video(ctx),
+            MenuAction::GenerateVideo => {
+                if self.generate_in_flight() {
+                    let i = self.active;
+                    self.files[i].status =
+                        "generate: another render is already in flight, finish it first".into();
+                } else {
+                    self.show_video_options = true;
+                }
+            }
+            MenuAction::EditorLineOp(op) => {
+                let editor_id = self.active_editor_id();
+                let mutated = self.apply_line_op(ctx, editor_id, op);
+                ctx.memory_mut(|m| m.request_focus(editor_id));
+                if mutated {
+                    let i = self.active;
+                    self.files[i].dirty =
+                        self.files[i].source != self.files[i].last_saved_source;
+                    self.files[i].needs_compile = true;
+                    self.files[i].last_edit_at = Some(std::time::Instant::now());
+                    self.break_undo_chain(i);
+                }
+            }
         }
     }
 

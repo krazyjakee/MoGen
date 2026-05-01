@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -87,9 +88,11 @@ pub struct SceneNode {
     pub attach_binding: Option<AttachBinding>,
     /// Module-use expansion frame this node was lowered from, copied from
     /// the AST. `None` for nodes the user wrote directly in their scene.
-    /// Drives scoped `attach` resolution: an attach inside a `use`d module
-    /// only matches graph nodes carrying the same `use_id`, so two imported
-    /// objects that share a node name don't cross-contaminate.
+    /// Drives scoped `attach` / anim resolution via [`SceneGraph::use_parents`]:
+    /// a spec at frame `U` matches any node whose frame chain passes through
+    /// `U` (the node itself or any descendant frame), so two sibling
+    /// instantiations of the same module — or two imported objects sharing
+    /// a node name — never cross-contaminate.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub use_id: Option<u32>,
     /// Canonical path of the imported `.mog` file this node was lowered
@@ -147,6 +150,14 @@ pub struct SceneGraph {
     pub clips: Vec<Clip>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skins: Vec<Skin>,
+    /// Module-use frame ancestry. Maps each minted `use_id` to its parent's
+    /// `use_id` (or `None` when the `use` was authored at top level). Drives
+    /// scoped attach/anim lookup: a spec authored in frame `U` matches any
+    /// node whose `use_id` chain passes through `U` — i.e. the node's frame
+    /// is `U` itself or a descendant of `U`. Empty for graphs lowered from
+    /// sources that contain no `use` calls.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub use_parents: HashMap<u32, Option<u32>>,
 }
 
 impl SceneGraph {
@@ -226,6 +237,29 @@ impl SceneGraph {
             .iter()
             .position(|m| m.name == name)
             .map(|i| MaterialId(i as u32))
+    }
+
+    /// Look up a material by name, preferring one declared in the same file as
+    /// the caller (`origin`). Falls back to a bare-name search when the
+    /// caller's file declares no such material — that's how cross-file refs
+    /// keep working: a user-side node referring to `mat="floor_mat"` finds
+    /// the user's `floor_mat`; an imported node referring to a name only the
+    /// composing file declares finds it via the fallback.
+    ///
+    /// Origin keying treats `None` as a distinct scope ("the file currently
+    /// being lowered"), so the user's own materials cluster under one key
+    /// and each imported file's materials cluster under their canonical path.
+    pub fn find_material_scoped(
+        &self,
+        name: &str,
+        origin: Option<&Path>,
+    ) -> Option<MaterialId> {
+        if let Some(idx) = self.materials.iter().position(|m| {
+            m.name == name && m.origin.as_deref() == origin
+        }) {
+            return Some(MaterialId(idx as u32));
+        }
+        self.find_material(name)
     }
 
     /// Rewrite every relative texture path on every material so it's anchored
@@ -341,5 +375,30 @@ impl SceneGraph {
             cur = self.nodes[id.0 as usize].parent;
         }
         false
+    }
+
+    /// Whether a spec at `spec_uid` (an attach/anim's `use_id`) can see a
+    /// graph node at `node_uid`.
+    ///
+    /// `spec_uid = None` is a top-level/user-authored spec — sees everything.
+    /// `spec_uid = Some(U)` matches any node whose frame chain in
+    /// `use_parents` passes through `U` (i.e. `node_uid == U`, or `U` is an
+    /// ancestor of `node_uid`). Nodes with `node_uid = None` came from the
+    /// user's top-level scope and are invisible to module-internal specs.
+    pub fn use_id_visible(&self, spec_uid: Option<u32>, node_uid: Option<u32>) -> bool {
+        match (spec_uid, node_uid) {
+            (None, _) => true,
+            (Some(_), None) => false,
+            (Some(u), Some(v)) => {
+                let mut cur = Some(v);
+                while let Some(c) = cur {
+                    if c == u {
+                        return true;
+                    }
+                    cur = self.use_parents.get(&c).copied().flatten();
+                }
+                false
+            }
+        }
     }
 }

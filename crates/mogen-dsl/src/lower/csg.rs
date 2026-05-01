@@ -49,7 +49,9 @@ pub(super) fn lower_csg(
                 _ => None,
             };
             if let Some(name) = mat_name {
-                if let Some(mid) = graph.find_material(&name) {
+                if let Some(mid) =
+                    graph.find_material_scoped(&name, first_operand.origin.as_deref())
+                {
                     graph.set_material(id, mid);
                 }
             }
