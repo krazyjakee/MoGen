@@ -79,6 +79,7 @@
             inverse_bind_matrices: vec![Mat4::IDENTITY.to_cols_array_2d()],
             envelopes: Vec::new(),
             skeleton_root: Some(bone),
+            origin: None,
         });
 
         let mesh_node = scene.add_root("mesh", "primitive", Transform::IDENTITY);
@@ -183,6 +184,7 @@
             inverse_bind_matrices: vec![Mat4::IDENTITY.to_cols_array_2d()],
             envelopes: Vec::new(),
             skeleton_root: Some(bone),
+            origin: None,
         });
         let mesh_node = scene.add_root(
             "mesh",

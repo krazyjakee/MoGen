@@ -63,7 +63,7 @@ fn build_node(pair: Pair<Rule>) -> Result<Node> {
         }
     }
 
-    Ok(Node { kind, name, attrs, children, span, kind_span, use_id: None })
+    Ok(Node { kind, name, attrs, children, span, kind_span, use_id: None, origin: None })
 }
 
 fn build_attr(pair: Pair<Rule>) -> Result<(String, Value)> {

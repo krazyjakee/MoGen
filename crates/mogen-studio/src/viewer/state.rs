@@ -80,6 +80,12 @@ pub struct ViewerState {
     /// User toggle for the ground-plane reference grid. Cinema mode hides the
     /// grid regardless of this flag.
     pub show_grid: bool,
+    /// Cap on continuous viewport repaints (animation tick, cinema pan, gizmo
+    /// drag). `None` = uncapped — the per-frame `request_repaint()` call goes
+    /// through unchanged. `Some(fps)` routes through `request_repaint_after(
+    /// 1 / fps)` instead so the next animated frame can't fire sooner than
+    /// the cap permits. Input-driven repaints are unaffected.
+    pub max_fps: Option<u32>,
     /// Pending offscreen capture the next paint callback should service.
     /// Cleared after processing — `capture_outcome` gets the result.
     pub capture_request: Option<CaptureRequest>,
@@ -385,6 +391,7 @@ impl Default for ViewerState {
             preview_shader: Default::default(),
             cinema: Default::default(),
             show_grid: true,
+            max_fps: None,
             capture_request: None,
             capture_outcome: None,
             encode_pool: None,

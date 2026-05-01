@@ -25,6 +25,16 @@ fn register_material(node: &Node, graph: &mut SceneGraph) -> Result<()> {
         .name
         .clone()
         .ok_or_else(|| anyhow!("material requires a name, e.g. `material \"wood\" (...)`"))?;
+    // First-wins: `collect_materials` is called twice — once on the user AST,
+    // then on imported decls. A name that's already registered came from a
+    // higher-priority source (the user's own declaration, or an earlier
+    // import), so the duplicate from this call is dead weight: `find_material`
+    // would never return it, the exporter would still emit it as an unused
+    // glTF material, and the studio inspector would render two collapsing
+    // headers with the same widget ID.
+    if graph.find_material(&name).is_some() {
+        return Ok(());
+    }
     let mut mat = Material::new(&name);
     if let Some(c) = node.attr_vec3("color") {
         mat.base_color = [c.x, c.y, c.z, 1.0];
@@ -104,6 +114,8 @@ fn register_material(node: &Node, graph: &mut SceneGraph) -> Result<()> {
     } else if let Some(pair) = node.attr_pair("uv_scale") {
         mat.uv_scale = pair;
     }
+
+    mat.origin = node.origin.clone();
 
     graph.add_material(mat);
     Ok(())

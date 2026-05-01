@@ -39,6 +39,7 @@ pub fn lower_skeleton(
         Some(p) => graph.add_child(p, &name, "skeleton", transform),
     };
     graph.set_source_span(skel_id, node.span);
+    graph.nodes[skel_id.0 as usize].origin = node.origin.clone();
 
     let mut joints: Vec<NodeId> = Vec::new();
     let mut envelopes: Vec<f32> = Vec::new();
@@ -72,6 +73,7 @@ pub fn lower_skeleton(
         inverse_bind_matrices: ibms,
         envelopes,
         skeleton_root,
+        origin: node.origin.clone(),
     });
 
     Ok(skel_id)
@@ -91,6 +93,7 @@ fn lower_bone(
     let transform = transform_from_attrs(node);
     let id = graph.add_child(parent, &name, "bone", transform);
     graph.set_source_span(id, node.span);
+    graph.nodes[id.0 as usize].origin = node.origin.clone();
     joints.push(id);
     envelopes.push(node.attr_number("envelope").unwrap_or(DEFAULT_ENVELOPE));
     for c in &node.children {

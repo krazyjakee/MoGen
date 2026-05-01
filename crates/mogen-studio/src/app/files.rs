@@ -215,6 +215,35 @@ impl MogenStudioApp {
         }
     }
 
+    /// Close every tab except `anchor`. Dirty tabs are skipped with a status
+    /// message — same single-shot constraint as `close_tabs_to_right`. Walks
+    /// right-to-left so removals don't shift the anchor underneath us.
+    pub(super) fn close_other_tabs(&mut self, anchor: usize) {
+        if self.files.len() <= 1 || anchor >= self.files.len() {
+            return;
+        }
+        // Resolve the anchor by tab id, not index — closing any clean tab to
+        // its left would otherwise shift the target index, and the loop would
+        // close the wrong tab next.
+        let anchor_id = self.files[anchor].tab_id;
+        let mut closed = 0usize;
+        let mut skipped = 0usize;
+        let mut i = self.files.len();
+        while i > 0 {
+            i -= 1;
+            if self.files[i].tab_id == anchor_id {
+                continue;
+            }
+            if self.files[i].dirty {
+                skipped += 1;
+            } else {
+                self.close_file(i);
+                closed += 1;
+            }
+        }
+        self.set_batch_close_status(closed, skipped);
+    }
+
     /// Close every tab strictly to the right of `anchor`. Dirty tabs are
     /// skipped (the per-tab confirmation modal is single-shot, so a batch
     /// close would clobber it); the remaining clean tabs are removed
@@ -276,8 +305,13 @@ impl MogenStudioApp {
     /// Close the tab at `i`. If it's the only open tab, replace it with a
     /// fresh untitled buffer rather than leaving the app with zero files.
     /// Dropping `llm_rx` silently abandons any in-flight Gemini call for
-    /// that file.
+    /// that file. Titled tabs are pushed onto `recently_closed` so
+    /// Ctrl+Shift+T can re-open them; untitled tabs are skipped (no path
+    /// to re-open).
     pub(super) fn close_file(&mut self, i: usize) {
+        if let Some(p) = self.files.get(i).and_then(|f| f.path.clone()) {
+            self.push_recently_closed(p);
+        }
         if self.files.len() <= 1 {
             let tab_id = self.next_tab_id();
             self.files[0] = FileState::untitled(tab_id);
@@ -537,6 +571,37 @@ impl MogenStudioApp {
         self.files.push(f);
         let idx = self.files.len() - 1;
         self.activate(idx);
+    }
+
+    /// Push a path onto the recently-closed stack. Dedupes — if the path is
+    /// already on the stack we move it to the top rather than letting the same
+    /// file occupy multiple slots. Bounded by `RECENTLY_CLOSED_CAP` (oldest
+    /// drops off the front).
+    fn push_recently_closed(&mut self, path: PathBuf) {
+        self.recently_closed.retain(|p| p != &path);
+        self.recently_closed.push_back(path);
+        while self.recently_closed.len() > super::RECENTLY_CLOSED_CAP {
+            self.recently_closed.pop_front();
+        }
+    }
+
+    /// Has at least one path on the reopen stack — used to enable/disable the
+    /// File → Reopen Closed Tab menu item.
+    pub(super) fn has_recently_closed(&self) -> bool {
+        !self.recently_closed.is_empty()
+    }
+
+    /// Pop the most recently closed tab and re-open it, falling through to
+    /// the next entry if the file is gone from disk. No-op when the stack
+    /// drains without finding a survivor.
+    pub(super) fn reopen_last_closed(&mut self) {
+        while let Some(path) = self.recently_closed.pop_back() {
+            if path.is_file() {
+                self.open_path(&path);
+                return;
+            }
+        }
+        self.active_mut().status = "no recently closed tabs to reopen".into();
     }
 
     pub(super) fn new_untitled(&mut self) {

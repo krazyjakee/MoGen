@@ -236,6 +236,7 @@ fn resolve_imports_into(
                 "module" => {
                     let mut m = inner_node;
                     rewrite_texture_paths(&mut m, base_for_textures);
+                    set_origin_recursive(&mut m, &canonical);
                     let name = m.name.clone().ok_or_else(|| {
                         anyhow!("module declaration requires a name")
                     })?;
@@ -252,6 +253,7 @@ fn resolve_imports_into(
                 "material" => {
                     let mut mat = inner_node;
                     rewrite_texture_paths(&mut mat, base_for_textures);
+                    set_origin_recursive(&mut mat, &canonical);
                     // Cross-file material name duplicates aren't fatal:
                     // `find_material` returns the first match by index, and
                     // user-declared materials register before imported ones,
@@ -279,6 +281,7 @@ fn resolve_imports_into(
                             // would be invisible after `use`.
                             let mut mat = c;
                             rewrite_texture_paths(&mut mat, base_for_textures);
+                            set_origin_recursive(&mut mat, &canonical);
                             if let Some(name) = mat.name.clone() {
                                 material_names
                                     .entry(name)
@@ -288,6 +291,7 @@ fn resolve_imports_into(
                         } else {
                             let mut child = c;
                             rewrite_texture_paths(&mut child, base_for_textures);
+                            set_origin_recursive(&mut child, &canonical);
                             scene_body.push(child);
                         }
                     }
@@ -306,6 +310,7 @@ fn resolve_imports_into(
                 | "wave" | "flap" | "idle" => {
                     let mut anim = inner_node;
                     rewrite_texture_paths(&mut anim, base_for_textures);
+                    set_origin_recursive(&mut anim, &canonical);
                     anim_decls.push(anim);
                 }
                 _ => {
@@ -366,6 +371,7 @@ fn resolve_imports_into(
                 span,
                 kind_span: span,
                 use_id: None,
+                origin: Some(canonical.clone()),
             });
         } else if let Some(alias) = alias {
             // The user explicitly asked for an alias but the file has no
@@ -410,6 +416,23 @@ fn module_name_from_path(p: &Path) -> Option<String> {
         None
     } else {
         Some(stem)
+    }
+}
+
+/// Stamp `origin` onto `node` and every descendant. Called on every node
+/// hoisted out of an imported file so that, after `expand_modules` clones
+/// these nodes into the active scene, lowering can copy `origin` onto each
+/// `SceneNode` / `Material` / `Clip` / `Skin`. Drives MoGen Studio's
+/// per-import sidebar scoping. A node that already carries an `origin` —
+/// e.g. one re-imported through a transitive chain — keeps its first
+/// (deepest) source so collisions surface against the file that introduced
+/// the conflict, not the intermediate one.
+fn set_origin_recursive(node: &mut Node, origin: &Path) {
+    if node.origin.is_none() {
+        node.origin = Some(origin.to_path_buf());
+    }
+    for c in &mut node.children {
+        set_origin_recursive(c, origin);
     }
 }
 
@@ -503,6 +526,7 @@ fn expand_node_into(
         span: node.span,
         kind_span: node.kind_span,
         use_id: current_use,
+        origin: node.origin.clone(),
     };
     for c in &node.children {
         expand_node_into(c, reg, scope, stack, &mut cloned.children, current_use, next_use)?;

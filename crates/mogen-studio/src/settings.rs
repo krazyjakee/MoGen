@@ -160,6 +160,19 @@ pub struct Settings {
     #[serde(default)]
     pub show_grid: Option<bool>,
 
+    /// Cap on continuous viewport repaints (animation tick, cinema pan, gizmo
+    /// drag). The cap is applied by routing the per-frame repaint request
+    /// through `request_repaint_after(1 / fps)` instead of the immediate
+    /// variant — input-driven repaints still fire as soon as input arrives.
+    ///
+    /// Encoding: `None` = unset → falls back to [`DEFAULT_MAX_FPS`] at read
+    /// time. `Some(0)` = explicit "Unlimited" (defer to the display's vsync).
+    /// `Some(n)` for `n > 0` = capped at `n` FPS. The sentinel lets a fresh
+    /// install land on the 60 FPS default while still letting users opt back
+    /// out via the Options dialog.
+    #[serde(default)]
+    pub max_fps: Option<u32>,
+
     /// User decision on sending crash reports to MoGen's self-hosted
     /// GlitchTip endpoint. `None` means undecided — the first-launch privacy
     /// prompt asks the user, then latches `Some(true)` (allow) or
@@ -174,6 +187,12 @@ pub struct Settings {
 /// colours read consistently regardless of the panel scheme. Tuned to match
 /// Blender / Maya / Modo defaults.
 pub const DEFAULT_VIEWER_BG_RGB: [u8; 3] = [54, 58, 64];
+
+/// Factory default for the viewport repaint cap. Picked to match the most
+/// common display refresh rate while keeping battery / thermals reasonable
+/// during long animation playback. Users can raise the cap or pick
+/// "Unlimited" from the Options dialog.
+pub const DEFAULT_MAX_FPS: u32 = 60;
 
 impl Settings {
     /// Maximum number of entries kept in [`Self::recent_files`].
@@ -410,6 +429,23 @@ impl Settings {
 
     pub fn set_show_grid(&mut self, on: bool) {
         self.show_grid = Some(on);
+    }
+
+    /// Viewport repaint cap. `None` = uncapped (display vsync), `Some(n)` =
+    /// cap at `n` FPS. Clamped at read time so a corrupted file can't drive
+    /// a 1 fps or 10 000 fps cap. An unset stored value falls back to
+    /// [`DEFAULT_MAX_FPS`]; a stored `Some(0)` is the explicit "Unlimited"
+    /// opt-out (see field doc).
+    pub fn max_fps(&self) -> Option<u32> {
+        match self.max_fps {
+            None => Some(DEFAULT_MAX_FPS),
+            Some(0) => None,
+            Some(n) => Some(n.clamp(15, 240)),
+        }
+    }
+
+    pub fn set_max_fps(&mut self, fps: Option<u32>) {
+        self.max_fps = Some(fps.unwrap_or(0));
     }
 
     /// Promote `path` to the front of [`Self::recent_files`], dedup'ing any

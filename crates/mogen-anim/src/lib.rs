@@ -35,6 +35,7 @@ pub fn spin(name: &str, target: NodeId, axis: Vec3, rpm: f32) -> Clip {
             times,
             values,
         }],
+        origin: None,
     }
 }
 
@@ -59,6 +60,7 @@ pub fn open_close(name: &str, target: NodeId, axis: Vec3, angle_deg: f32, second
                 [q0.x, q0.y, q0.z, q0.w],
             ],
         }],
+        origin: None,
     }
 }
 
@@ -89,6 +91,7 @@ pub fn wave(name: &str, target: NodeId, axis: Vec3, amplitude_deg: f32, hz: f32)
             times,
             values,
         }],
+        origin: None,
     }
 }
 
@@ -123,6 +126,7 @@ pub fn flap(name: &str, target: NodeId, axis: Vec3, amplitude_deg: f32, hz: f32)
             times,
             values,
         }],
+        origin: None,
     }
 }
 
@@ -150,5 +154,6 @@ pub fn idle(name: &str, target: NodeId, amplitude: f32, hz: f32) -> Clip {
             times,
             values,
         }],
+        origin: None,
     }
 }

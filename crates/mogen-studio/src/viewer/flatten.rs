@@ -57,11 +57,26 @@ pub struct DrawBatch {
     /// batches back-to-front each frame; cheap-but-correct for typical
     /// preview scenes (full per-triangle sort would be overkill).
     pub centroid: Vec3,
+    /// World-space bounding-sphere radius around `centroid`. Computed at
+    /// flatten time from the rest-pose vertex AABB; the renderer uses this
+    /// for sphere-vs-frustum culling so off-screen batches skip
+    /// `glDrawElements` and the fragment-shader work it would trigger.
+    /// Skinned batches inflate this by an empirical factor because the
+    /// runtime pose can swing vertices well past the bind-pose hull.
+    pub radius: f32,
     /// Index into [`FlatMesh::palettes`]. Every batch has one palette: rigid
     /// batches deform a single bone (vertex `joints[0]`, `weights = [1,0,0,0]`)
     /// against per-node world transforms; skinned batches use the standard
     /// glTF skin path. Both feed the same `u_joint_mats` uniform.
     pub palette_id: u32,
+    /// Source material's id from the [`SceneGraph`], or `None` when the
+    /// group had no material (default flat-grey fallback). Used by the
+    /// renderer to short-circuit per-batch PBR uniform + texture uploads
+    /// when adjacent batches share the same material — common because
+    /// `flatten_with_worlds` groups by `(skin_id, material_id)` first, so
+    /// chunk-splits of the same rigid group are emitted as adjacent
+    /// material-equal batches.
+    pub material_id: Option<u32>,
 }
 
 /// One entry per clip, for UI menus.
@@ -69,6 +84,11 @@ pub struct DrawBatch {
 pub struct ClipSummary {
     pub name: String,
     pub duration: f32,
+    /// Canonical path of the imported `.mog` file the clip was lowered from.
+    /// `None` when the clip was authored in the active file. The right-sidebar
+    /// filter uses this to hide clips that belong to imported objects unless
+    /// one of those objects is selected in the viewer.
+    pub origin: Option<std::path::PathBuf>,
 }
 
 /// Number of f32s per vertex in the interleaved VBO:
@@ -414,10 +434,17 @@ pub fn flatten_with_worlds(
                     false,
                 ),
             };
-            let centroid = if bmin.is_finite() && bmax.is_finite() {
-                (bmin + bmax) * 0.5
+            let (centroid, radius) = if bmin.is_finite() && bmax.is_finite() {
+                let c = (bmin + bmax) * 0.5;
+                let r = (bmax - bmin).length() * 0.5;
+                // Skinned batches deform around `Mat4::IDENTITY` at flatten
+                // time (the bind-pose vertex stream is model-space); the
+                // runtime palette can sling joints well past the rest hull,
+                // so pad the cull radius generously to avoid popping.
+                let scale = if is_skinned { 2.0 } else { 1.0 };
+                (c, (r * scale).max(0.001))
             } else {
-                Vec3::ZERO
+                (Vec3::ZERO, 0.0)
             };
             batches.push(DrawBatch {
                 index_start: batch_start,
@@ -438,7 +465,9 @@ pub fn flatten_with_worlds(
                 alpha_cutoff,
                 double_sided,
                 centroid,
+                radius,
                 palette_id,
+                material_id: mat_id,
             });
         }
     }

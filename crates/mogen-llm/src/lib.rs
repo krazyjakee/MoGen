@@ -37,7 +37,9 @@ pub mod types;
 pub use cache::{default_cache_path, resolve_or_create as resolve_or_create_cache, DEFAULT_TTL_SECONDS};
 pub use gemini::{CachedContent, GeminiClient, GeminiError};
 pub use image::{GeneratedImage, DEFAULT_IMAGE_MODEL};
-pub use imports::{format_import_aabb_preamble, summarize_imports, ImportSummary};
+pub use imports::{
+    format_import_aabb_preamble, format_imports_preserve_block, summarize_imports, ImportSummary,
+};
 pub use prompt::{system_instruction, StdlibIndex};
 pub use provider::{LlmClient, Provider, ProviderError};
 pub use repair::{

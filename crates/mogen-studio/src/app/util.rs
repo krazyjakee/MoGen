@@ -11,10 +11,10 @@ use mogen_llm::textures::{
     TextureProgress, TexturesArgs,
 };
 use mogen_llm::{
-    default_cache_path, embed_seed_header, generate_with_repair, parse_prompt_header,
-    parse_seed_header, repair_message, resolve_or_create_cache, validate_text, GenerateConfig,
-    ImageInput, LlmClient, Provider, RepairConfig, ThinkingLevel, Usage, DEFAULT_IMAGE_MODEL,
-    DEFAULT_TTL_SECONDS,
+    default_cache_path, embed_seed_header, format_imports_preserve_block, generate_with_repair,
+    parse_prompt_header, parse_seed_header, repair_message, resolve_or_create_cache,
+    summarize_imports, validate_text, GenerateConfig, ImageInput, LlmClient, Provider,
+    RepairConfig, ThinkingLevel, Usage, DEFAULT_IMAGE_MODEL, DEFAULT_TTL_SECONDS,
 };
 
 use crate::pipeline::write_glb_with_source_and_options;
@@ -69,6 +69,63 @@ pub(super) fn gather_texture_refs(scene: &mogen_core::SceneGraph) -> Vec<(String
         }
     }
     out
+}
+
+/// Decide which `origin` paths the right sidebar should show right now.
+///
+/// `None` (locally-authored items) is always visible. When the viewport
+/// selection is on a node that came from an imported `.mog` file, that
+/// file's path is added to the visible set so its materials, clips, and
+/// skins are revealed alongside the local ones. Without an imported
+/// selection, only locally-authored items appear — keeping the sidebar
+/// scoped to the file being edited rather than every dependency it pulls
+/// in via `import`. Used by `ui_summary` / `ui_materials` / `ui_animation`.
+pub(super) fn visible_origins(
+    scene: &mogen_core::SceneGraph,
+    selection: Option<mogen_core::NodeId>,
+) -> std::collections::HashSet<PathBuf> {
+    let mut out = std::collections::HashSet::new();
+    if let Some(id) = selection {
+        if let Some(node) = scene.nodes.get(id.0 as usize) {
+            if let Some(p) = &node.origin {
+                out.insert(p.clone());
+            }
+        }
+    }
+    out
+}
+
+/// True when the item's `origin` is currently visible. `None` always passes
+/// (locally-authored items are part of the active scene).
+pub(super) fn origin_in_visible_set(
+    origin: &Option<PathBuf>,
+    visible: &std::collections::HashSet<PathBuf>,
+) -> bool {
+    match origin {
+        None => true,
+        Some(p) => visible.contains(p),
+    }
+}
+
+/// MaterialIds referenced by any scene node whose `origin` passes
+/// `origin_in_visible_set`. Lets the materials panel always show a material
+/// that locally-authored geometry binds to, even when the material itself
+/// was hoisted from an import — per the q1 rule "if local code touches it,
+/// always show it".
+pub(super) fn materials_referenced_by_visible_nodes(
+    scene: &mogen_core::SceneGraph,
+    visible: &std::collections::HashSet<PathBuf>,
+) -> std::collections::HashSet<u32> {
+    let mut ids = std::collections::HashSet::new();
+    for n in &scene.nodes {
+        if !origin_in_visible_set(&n.origin, visible) {
+            continue;
+        }
+        if let Some(mid) = n.material {
+            ids.insert(mid.0);
+        }
+    }
+    ids
 }
 
 pub(super) fn resolve_for_check(path: &Path, base: Option<&Path>) -> PathBuf {
@@ -462,6 +519,11 @@ pub(super) struct LlmRunConfig {
     /// [`Provider::ClaudeCode`] (other providers ignore it). Empty/blank is a
     /// valid value — the underlying client falls back to `claude` on `PATH`.
     pub claude_code_path: String,
+    /// Directory of the file being edited (for `Modify`/`Animate`/`Repair`),
+    /// used to resolve relative `import "X.mog"` paths so the prompt can
+    /// quote bounds for each `use`. `None` for unsaved buffers — the prompt
+    /// still lists imports verbatim, just without AABBs.
+    pub base_dir: Option<PathBuf>,
 }
 
 /// Pin the system instruction onto `cfg`. For Gemini, try to upload it once
@@ -593,21 +655,46 @@ pub(super) fn run_llm(
                 prompt.clone()
             }
         }
-        LlmKind::Modify => format!(
-            "You are editing an existing mogen DSL file. Apply this modification:\n\n\
-            {mod_prompt}\n\n\
-            Make the smallest edit that satisfies the request. Do not rename, reorder, \
-            reformat, or restyle parts the modification does not touch.\n\n\
-            Reply with ONLY the full modified DSL — no commentary, no markdown fences. \
-            Do not include the `// mogen-generate` header comments; the caller re-adds them.\n\n\
-            Existing file:\n\n{existing}",
-            mod_prompt = prompt.trim(),
-            existing = existing.as_deref().unwrap_or("").trim_end(),
-        ),
-        LlmKind::Animate => format!(
+        LlmKind::Modify => {
+            let imports_block = existing
+                .as_deref()
+                .and_then(|src| {
+                    format_imports_preserve_block(&summarize_imports(
+                        src,
+                        run_cfg.base_dir.as_deref(),
+                    ))
+                })
+                .map(|s| format!("{s}\n"))
+                .unwrap_or_default();
+            format!(
+                "You are editing an existing mogen DSL file. Apply this modification:\n\n\
+                {mod_prompt}\n\n\
+                {imports_block}\
+                Make the smallest edit that satisfies the request. Do not rename, reorder, \
+                reformat, or restyle parts the modification does not touch.\n\n\
+                Reply with ONLY the full modified DSL — no commentary, no markdown fences. \
+                Do not include the `// mogen-generate` header comments; the caller re-adds them.\n\n\
+                Existing file:\n\n{existing}",
+                mod_prompt = prompt.trim(),
+                existing = existing.as_deref().unwrap_or("").trim_end(),
+            )
+        }
+        LlmKind::Animate => {
+            let imports_block = existing
+                .as_deref()
+                .and_then(|src| {
+                    format_imports_preserve_block(&summarize_imports(
+                        src,
+                        run_cfg.base_dir.as_deref(),
+                    ))
+                })
+                .map(|s| format!("{s}\n"))
+                .unwrap_or_default();
+            format!(
             "You are editing an existing mogen DSL file. APPEND new animation and rigging \
             declarations to satisfy this request:\n\n\
             {anim_prompt}\n\n\
+            {imports_block}\
             mogen supports two rigging strategies. Pick the SIMPLER one that fits the request:\n\n\
             A) Node-transform animation (for articulations that can be expressed as rigid \
             transforms of existing scene nodes — door hinges, wheels, rotors, pistons, \
@@ -647,10 +734,10 @@ pub(super) fn run_llm(
             - Prefer (A) for any rig the user describes in terms of hinges/sliders/spins. \
               Only reach for (B) when the request implies smooth continuous deformation of a \
               single mesh.\n\
-            - Do not touch geometry. Preserve every `scene`, `material`, `mesh`, `primitive`, \
-              `group`, `array`, `mirror`, `attach`, `connector`, `socket`, `plug`, `use`, and \
-              `module` exactly as written — except you MAY add a single `skin=\"…\"` attribute \
-              to the one primitive that a new (B)-style rig deforms.\n\
+            - Do not touch geometry. Preserve every `import`, `scene`, `material`, `mesh`, \
+              `primitive`, `group`, `array`, `mirror`, `attach`, `connector`, `socket`, `plug`, \
+              `use`, and `module` exactly as written — except you MAY add a single `skin=\"…\"` \
+              attribute to the one primitive that a new (B)-style rig deforms.\n\
             - Preserve every existing `joint`, `clip`, `skeleton`, `spin`, `open_close`, \
               `wave`, `flap`, and `idle` declaration exactly as written. ADD new ones \
               alongside them; do not rewrite, rename, merge, or delete existing animation \
@@ -666,7 +753,8 @@ pub(super) fn run_llm(
             Existing file:\n\n{existing}",
             anim_prompt = prompt.trim(),
             existing = existing.as_deref().unwrap_or("").trim_end(),
-        ),
+            )
+        }
         LlmKind::Repair => {
             // The validator already ran in `start_llm_repair` before we got
             // here, but we re-run it on the worker thread to get the exact

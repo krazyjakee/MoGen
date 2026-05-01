@@ -69,6 +69,9 @@ pub struct DrawBatch {
 pub struct ClipSummary {
     pub name: String,
     pub duration: f32,
+    /// Canonical path of the imported `.mog` file the clip was lowered from.
+    /// `None` when the clip was authored in the active file.
+    pub origin: Option<std::path::PathBuf>,
 }
 
 /// Number of f32s per vertex in the interleaved VBO:

@@ -281,6 +281,9 @@ pub(super) enum MenuAction {
     Build,
     Recheck,
     CloseActive,
+    /// Pop the most recently closed tab off the reopen stack and re-open it.
+    /// No-op when the stack is empty (the menu item is disabled in that case).
+    ReopenClosed,
     Quit,
     Undo,
     Redo,
@@ -308,6 +311,7 @@ pub(super) enum ShortcutAction {
     Build,
     Recheck,
     CloseActive,
+    ReopenClosed,
     Quit,
     OpenOptions,
     Frame,
@@ -329,6 +333,7 @@ impl ShortcutAction {
             ShortcutAction::Build => KeyboardShortcut::new(cmd, Key::B),
             ShortcutAction::Recheck => KeyboardShortcut::new(Modifiers::NONE, Key::F5),
             ShortcutAction::CloseActive => KeyboardShortcut::new(cmd, Key::W),
+            ShortcutAction::ReopenClosed => KeyboardShortcut::new(cmd_shift, Key::T),
             ShortcutAction::Quit => KeyboardShortcut::new(cmd, Key::Q),
             ShortcutAction::OpenOptions => KeyboardShortcut::new(cmd, Key::Comma),
             ShortcutAction::Frame => KeyboardShortcut::new(cmd, Key::Num0),
@@ -345,6 +350,7 @@ impl ShortcutAction {
             ShortcutAction::Build => MenuAction::Build,
             ShortcutAction::Recheck => MenuAction::Recheck,
             ShortcutAction::CloseActive => MenuAction::CloseActive,
+            ShortcutAction::ReopenClosed => MenuAction::ReopenClosed,
             ShortcutAction::Quit => MenuAction::Quit,
             ShortcutAction::OpenOptions => MenuAction::OpenOptions,
             ShortcutAction::Frame => MenuAction::Frame,
@@ -364,6 +370,10 @@ impl ShortcutAction {
         ShortcutAction::Save,
         ShortcutAction::Build,
         ShortcutAction::Recheck,
+        // Cmd+Shift+T tested before plain Cmd+T (none today, but keep the
+        // descending-modifier ordering convention so a future Cmd+T binding
+        // doesn't silently swallow this one).
+        ShortcutAction::ReopenClosed,
         ShortcutAction::CloseActive,
         ShortcutAction::Quit,
         ShortcutAction::OpenOptions,
@@ -578,6 +588,21 @@ pub(super) struct FindState {
 /// only one find bar is ever live.
 pub(super) fn find_input_id() -> egui::Id {
     egui::Id::new("mog_find_input")
+}
+
+/// Spotlight (Ctrl/Cmd+P) command-palette state. The query, the selected
+/// row, and a one-shot focus latch — there's no persistent ranking cache
+/// since the recent-files list is small enough to re-rank every frame.
+#[derive(Default)]
+pub(super) struct SpotlightState {
+    pub(super) open: bool,
+    pub(super) query: String,
+    /// Index into the *filtered* result list. Reset to 0 whenever the query
+    /// changes so the best match is always preselected.
+    pub(super) selected: usize,
+    /// Latched on open; cleared after focus is requested on the input. Same
+    /// pattern as the find bar / Ask modal.
+    pub(super) focus_pending: bool,
 }
 
 /// Per-file state. Every open `.mog` owns its own buffer, compile result,

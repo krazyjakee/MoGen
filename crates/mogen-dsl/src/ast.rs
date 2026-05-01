@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use glam::{Quat, Vec3};
 use mogen_core::Span;
 
@@ -14,6 +16,12 @@ pub struct Node {
     /// resolution can scope name lookups to a single module instance even
     /// after expansion has flattened everything into siblings.
     pub use_id: Option<u32>,
+    /// Canonical path of the imported `.mog` file this node was hoisted
+    /// from. `None` for nodes the user wrote in the file currently being
+    /// lowered. Set by `resolve_imports` and propagated through `expand_modules`
+    /// so lowering can stamp each `SceneNode`/`Material`/`Clip`/`Skin` with
+    /// its origin file. Drives MoGen Studio's per-import sidebar scoping.
+    pub origin: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]

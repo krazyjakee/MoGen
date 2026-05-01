@@ -385,6 +385,47 @@ impl MogenStudioApp {
                 }
 
                 ui.add_space(12.0);
+                ui.heading("Viewport");
+                ui.label(
+                    "Maximum FPS for continuous redraws (animation playback, cinema \
+                     pan, gizmo drag). Lower values save battery and reduce thermals; \
+                     \"Unlimited\" defers to the display's vsync. Input-driven paints \
+                     are unaffected.",
+                );
+                ui.add_space(6.0);
+                let current_fps = self.settings.max_fps();
+                let current_label = match current_fps {
+                    None => "Unlimited".to_string(),
+                    Some(n) => format!("{n} FPS"),
+                };
+                let presets: [(Option<u32>, &str); 5] = [
+                    (None, "Unlimited"),
+                    (Some(30), "30 FPS"),
+                    (Some(60), "60 FPS"),
+                    (Some(120), "120 FPS"),
+                    (Some(144), "144 FPS"),
+                ];
+                let mut new_fps: Option<Option<u32>> = None;
+                egui::ComboBox::from_id_salt("opts_max_fps")
+                    .selected_text(current_label)
+                    .show_ui(ui, |ui| {
+                        for (val, label) in presets {
+                            let selected = val == current_fps;
+                            if ui
+                                .selectable_label(selected, label)
+                                .clicked()
+                                && !selected
+                            {
+                                new_fps = Some(val);
+                            }
+                        }
+                    });
+                if let Some(val) = new_fps {
+                    self.settings.set_max_fps(val);
+                    self.viewer.set_max_fps(val);
+                }
+
+                ui.add_space(12.0);
                 ui.heading("Thinking budget");
                 ui.label(
                     "Cap on the model's hidden reasoning tokens per call (Gemini, OpenAI \

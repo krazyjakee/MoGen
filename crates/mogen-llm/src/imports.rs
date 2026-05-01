@@ -22,6 +22,11 @@ pub struct ImportSummary {
     pub name: String,
     /// The path string as written in the `import "..."` declaration.
     pub raw_path: String,
+    /// The exact source text of the `import` declaration, lifted from the
+    /// composing file by AST span. Used to reproduce each line verbatim in
+    /// modify/animate prompts so the LLM has zero ambiguity about what to
+    /// preserve.
+    pub verbatim: String,
     /// Local-frame AABB of the imported file's scene body. `None` when the
     /// file has no `scene` block, parsing/lowering failed, or the body
     /// contains no geometry.
@@ -53,13 +58,78 @@ pub fn summarize_imports(source: &str, base_dir: Option<&Path>) -> Vec<ImportSum
             .unwrap_or_else(|| raw.to_string());
         let name = alias.unwrap_or(stem);
         let aabb = compute_import_aabb(&resolved);
+        let verbatim = source
+            .get(node.span.start..node.span.end)
+            .unwrap_or("")
+            .trim_end()
+            .to_string();
         out.push(ImportSummary {
             name,
             raw_path: raw.to_string(),
+            verbatim,
             aabb,
         });
     }
     out
+}
+
+/// Render a "preserve verbatim" block for the modify/animate prompt that
+/// enumerates every top-level `import` line in the composing file, plus the
+/// local-frame AABB each `use "<name>"` expands into when computable. This
+/// is the strongest cue we can give the LLM that these lines are real and
+/// load-bearing — without it, models routinely "clean up" `import "X.mog"`
+/// into empty `module "X" {}` stubs, silently stripping every imported
+/// asset. Returns `None` when the file has no imports at all.
+pub fn format_imports_preserve_block(summaries: &[ImportSummary]) -> Option<String> {
+    if summaries.is_empty() {
+        return None;
+    }
+    let mut out = String::new();
+    out.push_str(
+        "This file uses `import` directives to pull `module`s and `material`s \
+         from sibling .mog files. PRESERVE EVERY `import` LINE BELOW \
+         BYTE-FOR-BYTE — do NOT rewrite them as `module \"X\" {}` stubs, do \
+         NOT drop the `.mog` extension, do NOT remove an `(as=…)` alias, do \
+         NOT delete the line. Replacing or stripping any of these lines \
+         silently removes the imported asset and the surrounding scene loses \
+         every part referenced by `use \"<name>\"`.\n\n\
+         Import lines to keep verbatim:\n",
+    );
+    for s in summaries {
+        out.push_str(&format!("    {}\n", s.verbatim));
+    }
+    let usable: Vec<&ImportSummary> = summaries.iter().filter(|s| s.aabb.is_some()).collect();
+    if !usable.is_empty() {
+        out.push('\n');
+        out.push_str(
+            "Local-frame bounds of each `use \"<name>\"` (axis-aligned, \
+             meters; the composing scene's per-`use` `pos`/`rot`/`scale` is \
+             applied on top):\n",
+        );
+        let max_name = usable.iter().map(|s| s.name.len()).max().unwrap_or(0);
+        for s in usable {
+            let aabb = s.aabb.unwrap();
+            let dx = aabb.max.x - aabb.min.x;
+            let dy = aabb.max.y - aabb.min.y;
+            let dz = aabb.max.z - aabb.min.z;
+            out.push_str(&format!(
+                "- {name:<width$}  size=[{dx:.2},{dy:.2},{dz:.2}]  \
+                 min=[{nx:.2},{ny:.2},{nz:.2}]  max=[{xx:.2},{xy:.2},{xz:.2}]\n",
+                name = s.name,
+                width = max_name,
+                dx = dx,
+                dy = dy,
+                dz = dz,
+                nx = aabb.min.x,
+                ny = aabb.min.y,
+                nz = aabb.min.z,
+                xx = aabb.max.x,
+                xy = aabb.max.y,
+                xz = aabb.max.z,
+            ));
+        }
+    }
+    Some(out)
 }
 
 /// Format a "Imports with bounds" preamble suitable for prepending to an LLM
@@ -225,6 +295,7 @@ mod tests {
         let no_aabb = ImportSummary {
             name: "x".into(),
             raw_path: "x.mog".into(),
+            verbatim: "import \"x.mog\"".into(),
             aabb: None,
         };
         assert!(format_import_aabb_preamble(&[no_aabb]).is_none());
@@ -232,6 +303,7 @@ mod tests {
         let with_aabb = ImportSummary {
             name: "desk".into(),
             raw_path: "desk.mog".into(),
+            verbatim: "import \"desk.mog\"".into(),
             aabb: Some(Aabb {
                 min: glam::Vec3::new(-0.8, 0.0, -0.4),
                 max: glam::Vec3::new(0.8, 0.78, 0.4),
@@ -242,5 +314,57 @@ mod tests {
         assert!(s.contains("size=[1.60,0.78,0.80]"));
         assert!(s.contains("min=[-0.80,0.00,-0.40]"));
         assert!(s.contains("max=[0.80,0.78,0.40]"));
+    }
+
+    #[test]
+    fn verbatim_captures_full_import_line_including_alias() {
+        let dir = tmp_dir("verbatim");
+        let inner = "scene { box \"b\" (size=[1,1,1]) }\n";
+        fs::write(dir.join("thing.mog"), inner).unwrap();
+        let scene = "import \"thing.mog\" (as=widget)\nscene { use \"widget\" }\n";
+        let s = summarize_imports(scene, Some(&dir));
+        assert_eq!(s[0].verbatim, "import \"thing.mog\" (as=widget)");
+    }
+
+    #[test]
+    fn preserve_block_renders_without_aabbs() {
+        // Even when no AABB is computable (unresolved sibling files), the
+        // preserve block still emits the verbatim list so the LLM is told
+        // to keep these lines untouched. This is the property the modify
+        // prompt depends on to stop the model rewriting `import "X.mog"`
+        // into `module "X" {}` stubs.
+        let s = vec![ImportSummary {
+            name: "desk".into(),
+            raw_path: "desk.mog".into(),
+            verbatim: "import \"desk.mog\"".into(),
+            aabb: None,
+        }];
+        let block = format_imports_preserve_block(&s).expect("rendered");
+        assert!(block.contains("PRESERVE EVERY `import` LINE"));
+        assert!(block.contains("import \"desk.mog\""));
+        // No bounds section when nothing is computable.
+        assert!(!block.contains("Local-frame bounds"));
+    }
+
+    #[test]
+    fn preserve_block_includes_bounds_when_known() {
+        let s = vec![ImportSummary {
+            name: "desk".into(),
+            raw_path: "desk.mog".into(),
+            verbatim: "import \"desk.mog\"".into(),
+            aabb: Some(Aabb {
+                min: glam::Vec3::new(-0.8, 0.0, -0.4),
+                max: glam::Vec3::new(0.8, 0.78, 0.4),
+            }),
+        }];
+        let block = format_imports_preserve_block(&s).expect("rendered");
+        assert!(block.contains("import \"desk.mog\""));
+        assert!(block.contains("Local-frame bounds"));
+        assert!(block.contains("size=[1.60,0.78,0.80]"));
+    }
+
+    #[test]
+    fn preserve_block_returns_none_when_no_imports() {
+        assert!(format_imports_preserve_block(&[]).is_none());
     }
 }

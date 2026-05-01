@@ -44,6 +44,7 @@ pub(super) fn lower_into(
     };
     graph.set_source_span(id, node.span);
     graph.nodes[id.0 as usize].use_id = node.use_id;
+    graph.nodes[id.0 as usize].origin = node.origin.clone();
 
     // Metadata: role, tags (comma-separated string).
     if let Some(Value::String(role)) = node.attr("role") {

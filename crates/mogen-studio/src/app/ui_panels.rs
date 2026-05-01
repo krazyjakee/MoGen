@@ -10,8 +10,9 @@ use crate::pipeline::Stage;
 use super::types::{ShortcutAction, UndoKey, TEX_EXISTS_TTL};
 use super::util::{
     delete_texture_group, ellipsize_path, find_clip_source_span, find_material_source_span,
-    format_inspector_scalar, gather_texture_refs, offset_to_line_col, resolve_for_check,
-    scan_unused_textures,
+    format_inspector_scalar, gather_texture_refs, materials_referenced_by_visible_nodes,
+    offset_to_line_col, origin_in_visible_set, resolve_for_check, scan_unused_textures,
+    visible_origins,
 };
 use super::MogenStudioApp;
 
@@ -241,6 +242,29 @@ impl MogenStudioApp {
         }
     }
 
+    /// True when at least one clip is currently in scope for the right
+    /// sidebar — i.e. authored in the active file, or owned by the import
+    /// the user just selected a node from. Drives the Animation panel's
+    /// visibility so an all-import scene with nothing selected doesn't
+    /// surface an empty header with playback controls.
+    pub(super) fn has_visible_clips(&self) -> bool {
+        let i = self.active;
+        let Some(result) = &self.files[i].last_result else {
+            return false;
+        };
+        let Some(scene) = &result.scene else {
+            return false;
+        };
+        if scene.clips.is_empty() {
+            return false;
+        }
+        let visible = visible_origins(scene, self.viewer.selection());
+        scene
+            .clips
+            .iter()
+            .any(|c| origin_in_visible_set(&c.origin, &visible))
+    }
+
     /// True when the active file has at least one error- or warning-level
     /// diagnostic. Drives the editor's footer panel visibility — info-only
     /// or clean states keep the panel hidden so the editor reclaims the
@@ -360,6 +384,24 @@ impl MogenStudioApp {
             ui.label("Kind:");
             ui.monospace(&node.kind);
         });
+        if let Some(p) = &node.origin {
+            // Make the cross-file provenance discoverable: scoping the
+            // sidebar to a specific import is otherwise invisible — without
+            // this badge a user wouldn't know why Materials/Animation just
+            // grew when they clicked an imported node.
+            let stem = p
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("import");
+            ui.horizontal(|ui| {
+                ui.label("Source:");
+                ui.colored_label(
+                    egui::Color32::from_rgb(170, 200, 240),
+                    format!("⤴ {stem}"),
+                )
+                .on_hover_text(format!("Imported from {}", p.display()));
+            });
+        }
 
         if !node.editable {
             ui.add_space(6.0);
@@ -618,6 +660,7 @@ impl MogenStudioApp {
         use crate::edit;
 
         let i = self.active;
+        let selection = self.viewer.selection();
         let counts = {
             let Some(result) = &self.files[i].last_result else {
                 ui.label("(no build yet)");
@@ -627,26 +670,62 @@ impl MogenStudioApp {
                 ui.label("(no scene — fix errors first)");
                 return;
             };
+            // Scope the totals to the active scene by default; reveal an
+            // imported file's contribution only when its node is selected.
+            // Same rule the Materials / Animation panels apply, so the three
+            // sections agree on what "the scene" means.
+            let visible = visible_origins(scene, selection);
+            let mat_refs = materials_referenced_by_visible_nodes(scene, &visible);
             let mut tris = 0usize;
             let mut verts = 0usize;
             let mut meshes = 0usize;
+            let mut nodes = 0usize;
             for n in &scene.nodes {
+                if !origin_in_visible_set(&n.origin, &visible) {
+                    continue;
+                }
+                nodes += 1;
                 if let Some(m) = &n.mesh {
                     tris += m.indices.len() / 3;
                     verts += m.positions.len();
                     meshes += 1;
                 }
             }
-            (
-                scene.nodes.len(),
-                meshes,
-                tris,
-                verts,
-                scene.materials.len(),
-                scene.skins.len(),
-                scene.clips.len(),
-                scene.joints.len(),
-            )
+            let mats = scene
+                .materials
+                .iter()
+                .enumerate()
+                .filter(|(idx, m)| {
+                    origin_in_visible_set(&m.origin, &visible)
+                        || mat_refs.contains(&(*idx as u32))
+                })
+                .count();
+            let skins = scene
+                .skins
+                .iter()
+                .filter(|s| origin_in_visible_set(&s.origin, &visible))
+                .count();
+            let clips = scene
+                .clips
+                .iter()
+                .filter(|c| origin_in_visible_set(&c.origin, &visible))
+                .count();
+            // Joints don't carry their own origin yet (their AST node is
+            // hoisted into the synthesised module body, which expand_modules
+            // turns into bone scene nodes — counted above). Surface them via
+            // the joint count from the SceneGraph's joint list, scoped by
+            // the pivot node's origin.
+            let joints = scene
+                .joints
+                .iter()
+                .filter(|j| {
+                    scene
+                        .nodes
+                        .get(j.pivot.0 as usize)
+                        .is_some_and(|n| origin_in_visible_set(&n.origin, &visible))
+                })
+                .count();
+            (nodes, meshes, tris, verts, mats, skins, clips, joints)
         };
         let (nodes, meshes, tris, verts, mats, skins, clips, joints) = counts;
 
@@ -725,6 +804,7 @@ impl MogenStudioApp {
         use mogen_core::{AlphaMode, UvMode};
 
         let i = self.active;
+        let selection = self.viewer.selection();
         let Some(result) = &self.files[i].last_result else {
             ui.label("(no build yet)");
             return;
@@ -738,8 +818,28 @@ impl MogenStudioApp {
             return;
         }
 
+        // Scope to the active scene by default; pull in an imported file's
+        // materials only when one of its nodes is selected. A material that
+        // local geometry references is always visible — the user explicitly
+        // asked for that exception so a colour tweak in their scene isn't
+        // hidden behind "select an import first".
+        let visible = visible_origins(scene, selection);
+        let mat_refs = materials_referenced_by_visible_nodes(scene, &visible);
         // Clone so the `&scene` borrow can end before we mutate source.
-        let materials: Vec<mogen_core::Material> = scene.materials.clone();
+        let materials: Vec<(usize, mogen_core::Material)> = scene
+            .materials
+            .iter()
+            .enumerate()
+            .filter(|(idx, m)| {
+                origin_in_visible_set(&m.origin, &visible)
+                    || mat_refs.contains(&(*idx as u32))
+            })
+            .map(|(idx, m)| (idx, m.clone()))
+            .collect();
+        if materials.is_empty() {
+            ui.label("(no materials in this scope)");
+            return;
+        }
         let texture_slots = gather_texture_refs(scene);
 
         let source_dir: Option<PathBuf> = self.files[i]
@@ -757,9 +857,19 @@ impl MogenStudioApp {
         // single attr rewrite on the named material.
         let mut pending: Vec<(String, &'static str, String)> = Vec::new();
 
-        for mat in &materials {
+        for (_, mat) in &materials {
             let header_id = egui::Id::new(("mat_editor", mat.name.as_str()));
-            egui::CollapsingHeader::new(&mat.name)
+            let header_label = match &mat.origin {
+                Some(p) => {
+                    let stem = p
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("import");
+                    egui::RichText::new(format!("{}  ⤴ {stem}", mat.name))
+                }
+                None => egui::RichText::new(mat.name.clone()),
+            };
+            egui::CollapsingHeader::new(header_label)
                 .id_salt(header_id)
                 .default_open(false)
                 .show(ui, |ui| {
@@ -1243,6 +1353,30 @@ impl MogenStudioApp {
             times.resize(clips.len(), 0.0);
         }
 
+        // Scope the listing to the active scene by default. The selection's
+        // origin (when an imported node is picked) lets that import's clips
+        // through too, so the user can scrub them in context. We hold onto
+        // the original index so `set_clip_active` / `seek_clip` keep
+        // addressing the viewer's full clip list.
+        let visible_set: std::collections::HashSet<std::path::PathBuf> = {
+            let i = self.active;
+            self.files[i]
+                .last_result
+                .as_ref()
+                .and_then(|r| r.scene.as_ref())
+                .map(|s| visible_origins(s, self.viewer.selection()))
+                .unwrap_or_default()
+        };
+        let visible_clip_indices: Vec<usize> = clips
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| origin_in_visible_set(&c.origin, &visible_set))
+            .map(|(idx, _)| idx)
+            .collect();
+        if visible_clip_indices.is_empty() {
+            return;
+        }
+
         let playing = self.viewer.is_playing();
         ui.horizontal(|ui| {
             let label = if playing { "⏸ Pause" } else { "▶ Play" };
@@ -1301,7 +1435,8 @@ impl MogenStudioApp {
         ui.add_space(4.0);
         let file_i = self.active;
         let mut pending_delete: Option<String> = None;
-        for (i, c) in clips.iter().enumerate() {
+        for i in visible_clip_indices {
+            let c = &clips[i];
             ui.group(|ui| {
                 ui.horizontal(|ui| {
                     let mut on = active[i];
@@ -1318,6 +1453,18 @@ impl MogenStudioApp {
                             .small()
                             .weak(),
                     );
+                    if let Some(p) = &c.origin {
+                        let stem = p
+                            .file_stem()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("import");
+                        ui.label(
+                            egui::RichText::new(format!("⤴ {stem}"))
+                                .small()
+                                .weak(),
+                        )
+                        .on_hover_text(p.to_string_lossy());
+                    }
                     // Delete: splice the authored clip (or procedural-template
                     // node that produced it) out of the source. Disabled when
                     // no matching AST node is found — multi-target templates
@@ -1406,10 +1553,13 @@ impl MogenStudioApp {
                                 }
                                 ui.separator();
                                 let cur = self.viewer.gizmo_mode();
+                                // Hotkeys are bare W/E/R (Godot / Unity
+                                // convention) — surfaced in the tooltip so
+                                // users can discover them without docs.
                                 for (label, mode, tip) in [
-                                    ("T", GizmoMode::Translate, "Translate gizmo"),
-                                    ("R", GizmoMode::Rotate, "Rotate gizmo"),
-                                    ("S", GizmoMode::Scale, "Scale gizmo"),
+                                    ("T", GizmoMode::Translate, "Translate gizmo  (W)"),
+                                    ("R", GizmoMode::Rotate, "Rotate gizmo  (E)"),
+                                    ("S", GizmoMode::Scale, "Scale gizmo  (R)"),
                                 ] {
                                     let selected = cur == mode;
                                     if ui

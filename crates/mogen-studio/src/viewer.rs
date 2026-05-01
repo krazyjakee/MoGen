@@ -170,6 +170,14 @@ impl Viewer {
         self.state.lock().unwrap().show_grid = on;
     }
 
+    /// Cap continuous viewport repaints (animation, cinema, gizmo drag).
+    /// `None` = uncapped. The cap is applied by routing the per-frame
+    /// repaint request through `request_repaint_after(1 / fps)` instead of
+    /// the immediate variant — input-driven paints still fire on demand.
+    pub fn set_max_fps(&self, max_fps: Option<u32>) {
+        self.state.lock().unwrap().max_fps = max_fps;
+    }
+
     pub fn set_gizmo_mode(&self, mode: crate::gizmo::GizmoMode) {
         let mut st = self.state.lock().unwrap();
         st.gizmo_mode = mode;
@@ -198,6 +206,7 @@ impl Viewer {
                     .map(|c| ClipSummary {
                         name: c.name.clone(),
                         duration: c.duration,
+                        origin: c.origin.clone(),
                     })
                     .collect()
             })
@@ -413,6 +422,7 @@ impl Viewer {
             && press_pos_raw.map(|p| rect.contains(p)).unwrap_or(false);
         let primary_dragging = response.dragged_by(egui::PointerButton::Primary);
         let mut needs_repaint = false;
+        let max_fps;
         {
             let mut st = self.state.lock().unwrap();
 
@@ -562,9 +572,20 @@ impl Viewer {
                     needs_repaint = true;
                 }
             }
+            max_fps = st.max_fps;
         }
         if needs_repaint {
-            ui.ctx().request_repaint();
+            // Continuous-repaint cases (cinema pan, animation, gizmo drag) go
+            // through `request_repaint_after` when the user has set a cap so
+            // the loop can't fire sooner than `1 / fps`. Without a cap egui's
+            // immediate variant defers to vsync as before.
+            match max_fps {
+                Some(fps) if fps > 0 => {
+                    let dt = std::time::Duration::from_secs_f32(1.0 / fps as f32);
+                    ui.ctx().request_repaint_after(dt);
+                }
+                _ => ui.ctx().request_repaint(),
+            }
         }
 
         let aspect = (rect.width() / rect.height()).max(0.01);

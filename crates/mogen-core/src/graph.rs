@@ -92,6 +92,12 @@ pub struct SceneNode {
     /// objects that share a node name don't cross-contaminate.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub use_id: Option<u32>,
+    /// Canonical path of the imported `.mog` file this node was lowered
+    /// from. `None` when the node came from the file currently being
+    /// lowered. Used by tooling (e.g. MoGen Studio's inspector) to scope
+    /// what the right sidebar shows; runtime export ignores it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<std::path::PathBuf>,
 }
 
 fn default_editable() -> bool {
@@ -125,6 +131,7 @@ impl Default for SceneNode {
             relative_placed: false,
             attach_binding: None,
             use_id: None,
+            origin: None,
         }
     }
 }

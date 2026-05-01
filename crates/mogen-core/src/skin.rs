@@ -20,4 +20,10 @@ pub struct Skin {
     pub envelopes: Vec<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub skeleton_root: Option<NodeId>,
+    /// Canonical path of the imported `.mog` file this skin was lowered
+    /// from. `None` when the skin was authored in the file currently being
+    /// lowered. Used by tooling (e.g. MoGen Studio's inspector) to scope
+    /// what's shown to the user — runtime export ignores it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<std::path::PathBuf>,
 }

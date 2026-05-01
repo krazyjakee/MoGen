@@ -25,6 +25,7 @@ mod indent;
 mod llm;
 mod onboarding;
 mod pricing;
+mod spotlight;
 mod text_menu;
 mod types;
 mod ui_dialogs;
@@ -38,7 +39,7 @@ mod watcher;
 use self::types::{
     viewer_bg_color, AskInFlight, AutocompleteState, BuildOutcome, EnhanceInFlight,
     EnhanceTarget, ExternalConflict, FileState, FindState, GenImageInput, SessionUsage,
-    ThumbCache,
+    SpotlightState, ThumbCache,
 };
 use self::util::locate_project_root;
 
@@ -88,6 +89,11 @@ struct InitProgress {
 /// and it feels like the app is dragging. Tuned to feel deliberate without
 /// holding up users on cold launch with no tabs to restore.
 const SPLASH_MIN_DWELL_MS: u128 = 4000;
+
+/// Maximum recently-closed paths held for Ctrl+Shift+T reopen. Matches the
+/// settings `recent_files` cap so the two lists feel comparable; older
+/// entries fall off the back of the deque when this is exceeded.
+const RECENTLY_CLOSED_CAP: usize = 12;
 
 pub struct MogenStudioApp {
     files: Vec<FileState>,
@@ -143,6 +149,20 @@ pub struct MogenStudioApp {
     /// tab (menu, Ctrl+W, or the X in the tab strip); the index is held here
     /// until the user picks Save / Discard / Cancel.
     pending_close_index: Option<usize>,
+
+    /// Stack of paths for tabs the user has just closed, newest at the back.
+    /// Drives Ctrl+Shift+T (reopen the last closed tab). Bounded by
+    /// `RECENTLY_CLOSED_CAP` so an editing session that closes hundreds of
+    /// tabs doesn't grow this unbounded; oldest entries fall off when the cap
+    /// is hit. Untitled tabs are not pushed — there's nothing on disk to
+    /// re-open.
+    recently_closed: VecDeque<PathBuf>,
+
+    /// Last frame's 3D viewport rect. Used by the gizmo hotkey gate so W/E/R
+    /// only fire when the mouse is hovering the viewport — matches the
+    /// "shortcuts follow cursor" convention every 3D DCC uses (Blender,
+    /// Maya, Unity, Unreal). `None` until the first paint completes.
+    last_viewport_rect: Option<egui::Rect>,
 
     /// Help → About modal visibility.
     show_about: bool,
@@ -225,6 +245,11 @@ pub struct MogenStudioApp {
     /// recomputes matches against whichever file is active.
     find: FindState,
 
+    /// Ctrl+P spotlight palette state — query, selected index, focus latch.
+    /// Always-app-level because it's a global modal; closes itself on Esc /
+    /// Enter / outside-click.
+    spotlight: SpotlightState,
+
     /// Pending on-disk conflict awaiting user resolution. Set by the file
     /// watcher when an open file changed on disk and the buffer is dirty
     /// (clean buffers reload silently — see `watcher.rs`). Cleared when the
@@ -264,6 +289,7 @@ impl MogenStudioApp {
         apply_theme(&cc.egui_ctx, settings.theme());
         viewer.set_preview_shader(settings.preview_shader());
         viewer.set_show_grid(settings.show_grid());
+        viewer.set_max_fps(settings.max_fps());
 
         // Hand the seed tab id 0 directly; the counter that hands out
         // subsequent ids starts at 1 so it never collides.
@@ -343,6 +369,8 @@ impl MogenStudioApp {
             show_quit_confirm: false,
             confirmed_quit: false,
             pending_close_index: None,
+            recently_closed: VecDeque::new(),
+            last_viewport_rect: None,
             show_about: false,
             show_export: false,
             export_opts_draft: ExportOptions::default(),
@@ -364,6 +392,7 @@ impl MogenStudioApp {
             ask_answer: None,
             autocomplete: AutocompleteState::default(),
             find: FindState::default(),
+            spotlight: SpotlightState::default(),
             pending_external: None,
             init: Some(init),
             pending_video: None,
@@ -547,7 +576,10 @@ impl eframe::App for MogenStudioApp {
         self.check_external_changes(ctx);
 
         // Consume global shortcuts before the menu / editor see the key event,
-        // so e.g. Ctrl+S doesn't reach the TextEdit.
+        // so e.g. Ctrl+S doesn't reach the TextEdit. Spotlight is dispatched
+        // first because Cmd+P should reach the palette even when the editor
+        // owns focus.
+        self.dispatch_spotlight_shortcuts(ctx);
         self.dispatch_shortcuts(ctx);
         self.handle_dropped_files(ctx);
 
@@ -587,7 +619,7 @@ impl eframe::App for MogenStudioApp {
                         egui::CollapsingHeader::new("Materials")
                             .default_open(false)
                             .show(ui, |ui| self.ui_materials(ui));
-                        if !self.viewer.clips_snapshot().is_empty() {
+                        if self.has_visible_clips() {
                             egui::CollapsingHeader::new("Animation")
                                 .default_open(true)
                                 .show(ui, |ui| self.ui_animation(ui));
@@ -656,6 +688,11 @@ impl eframe::App for MogenStudioApp {
         if let Some(r) = viewport_rect {
             self.ui_viewport_overlay(ctx, r);
         }
+        // Cache for the next frame's gizmo hotkey gate — `dispatch_shortcuts`
+        // runs at the start of `update`, so it reads last frame's rect rather
+        // than this frame's. The rect is stable across frames at steady state
+        // so a one-frame lag is invisible.
+        self.last_viewport_rect = viewport_rect;
 
         // Pick up any gizmo drags / caret jumps produced by the viewport.
         // Must run after `viewer.show` because that's where new drag
@@ -679,6 +716,7 @@ impl eframe::App for MogenStudioApp {
         self.ui_external_conflict(ctx);
         self.ui_about(ctx);
         self.ui_ask(ctx);
+        self.ui_spotlight(ctx);
         self.ui_capture_progress(ctx);
 
         // Paint the autocomplete popup last so it floats above every panel.

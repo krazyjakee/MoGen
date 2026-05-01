@@ -112,6 +112,13 @@ pub struct Material {
     /// Emissive colour texture (multiplied with `emissive`). sRGB.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub emissive_texture: Option<TextureRef>,
+
+    /// Canonical path of the imported `.mog` file this material was hoisted
+    /// from. `None` when the material was authored in the file currently
+    /// being lowered. Used by tooling (e.g. MoGen Studio's inspector) to
+    /// scope what's shown to the user — runtime export ignores it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<PathBuf>,
 }
 
 impl Material {
@@ -149,6 +156,7 @@ impl Material {
             normal_texture: None,
             occlusion_texture: None,
             emissive_texture: None,
+            origin: None,
         }
     }
 

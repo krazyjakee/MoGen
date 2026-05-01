@@ -12,6 +12,28 @@ use super::types::{
 };
 use super::MogenStudioApp;
 
+/// Consume a bare-letter shortcut *and* the matching text-input event egui
+/// generates alongside it. `consume_shortcut` only removes the `Event::Key`
+/// event from the input stream, but egui pushes a separate `Event::Text` for
+/// every printable character — TextEdit listens to that event for insertion,
+/// so without stripping it the letter is consumed by us *and* still typed
+/// into the focused editor. Returns whether the binding fired this frame.
+/// Both upper- and lower-case text events are matched so Shift+W still
+/// triggers the binding without leaving a stray "W" in the buffer.
+fn consume_bare_letter(ctx: &egui::Context, key: egui::Key, letter: &str) -> bool {
+    let sc = egui::KeyboardShortcut::new(egui::Modifiers::NONE, key);
+    ctx.input_mut(|i| {
+        if i.consume_shortcut(&sc) {
+            i.events.retain(|e| {
+                !matches!(e, egui::Event::Text(t) if t.eq_ignore_ascii_case(letter))
+            });
+            true
+        } else {
+            false
+        }
+    })
+}
+
 /// Push a synthetic key-press event into egui's input queue. Used by the Edit
 /// menu to drive undo/redo/select-all — egui's `TextEdit` consumes the event
 /// on the focused widget exactly as if the user had typed the shortcut.
@@ -199,6 +221,20 @@ impl MogenStudioApp {
                     action = MenuAction::CloseActive;
                     ui.close_menu();
                 }
+                let has_reopen = self.has_recently_closed();
+                ui.add_enabled_ui(has_reopen, |ui| {
+                    if shortcut_menu_item(
+                        ui,
+                        "Reopen Closed Tab",
+                        ShortcutAction::ReopenClosed,
+                        "Re-open the most recently closed MOG file",
+                    )
+                    .clicked()
+                    {
+                        action = MenuAction::ReopenClosed;
+                        ui.close_menu();
+                    }
+                });
                 if shortcut_menu_item(ui, "Quit", ShortcutAction::Quit, "Quit MoGen Studio")
                     .clicked()
                 {
@@ -444,6 +480,7 @@ impl MogenStudioApp {
             MenuAction::Build => self.open_build_dialog(),
             MenuAction::Recheck => self.compile_active(),
             MenuAction::CloseActive => self.request_close_file(self.active),
+            MenuAction::ReopenClosed => self.reopen_last_closed(),
             MenuAction::Quit => {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
@@ -555,6 +592,39 @@ impl MogenStudioApp {
             }
         }
 
+        // Bare-letter gizmo mode shortcuts (Godot / Unity convention:
+        // W=move, E=rotate, R=scale). Gated on cursor-over-viewport, NOT
+        // on focus — clicking a node in the viewport auto-focuses the
+        // editor (so the user can type after a pick), and we still want
+        // W/E/R to switch gizmo modes after that. A modal text input
+        // takes focus *and* sits over the viewport, so we additionally
+        // refuse when the focused widget is anything other than the
+        // editor — that's the "is the user actively typing in a modal"
+        // check.
+        let pointer_in_viewport = self
+            .last_viewport_rect
+            .zip(ctx.input(|i| i.pointer.hover_pos()))
+            .map(|(r, p)| r.contains(p))
+            .unwrap_or(false);
+        let editor_id = self.active_editor_id();
+        let modal_typing = ctx.memory(|m| {
+            m.focused()
+                .map(|id| id != editor_id)
+                .unwrap_or(false)
+        });
+        if pointer_in_viewport && !modal_typing {
+            use crate::gizmo::GizmoMode;
+            for (key, letter, mode) in [
+                (egui::Key::W, "w", GizmoMode::Translate),
+                (egui::Key::E, "e", GizmoMode::Rotate),
+                (egui::Key::R, "r", GizmoMode::Scale),
+            ] {
+                if consume_bare_letter(ctx, key, letter) {
+                    self.viewer.set_gizmo_mode(mode);
+                }
+            }
+        }
+
         let mut hit: Option<ShortcutAction> = None;
         ctx.input_mut(|i| {
             for action in ShortcutAction::ALL {
@@ -574,6 +644,7 @@ impl MogenStudioApp {
     pub(super) fn ui_tabs(&mut self, ui: &mut egui::Ui) {
         let mut activate: Option<usize> = None;
         let mut close: Option<usize> = None;
+        let mut close_others_of: Option<usize> = None;
         let mut close_to_right_of: Option<usize> = None;
         let mut close_all = false;
         let mut duplicate: Option<usize> = None;
@@ -604,6 +675,7 @@ impl MogenStudioApp {
                         }
                         let has_path = f.path.is_some();
                         let has_right = i + 1 < total_tabs;
+                        let has_others = total_tabs > 1;
                         resp.context_menu(|ui| {
                             if ui.button("Duplicate").clicked() {
                                 duplicate = Some(i);
@@ -626,6 +698,17 @@ impl MogenStudioApp {
                             ui.separator();
                             if ui.button("Close tab").clicked() {
                                 close = Some(i);
+                                ui.close_menu();
+                            }
+                            if ui
+                                .add_enabled(has_others, egui::Button::new("Close others"))
+                                .on_hover_text(
+                                    "Close every other tab. Tabs with \
+                                     unsaved changes are skipped.",
+                                )
+                                .clicked()
+                            {
+                                close_others_of = Some(i);
                                 ui.close_menu();
                             }
                             if ui
@@ -698,6 +781,9 @@ impl MogenStudioApp {
         }
         if let Some(i) = close {
             self.request_close_file(i);
+        }
+        if let Some(i) = close_others_of {
+            self.close_other_tabs(i);
         }
         if let Some(i) = close_to_right_of {
             self.close_tabs_to_right(i);

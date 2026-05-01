@@ -459,6 +459,7 @@ const KINDS_REFERENCE: &str = "\
 | `array` | `count`, `around=x|y|z` | `start_angle`, children |
 | `module` | name, optional params | body |
 | `use` | module name | args |
+| `import` | quoted `\"path/to/file.mog\"` | optional `(as=<ident>)`; top-level only — pulls another `.mog` file's `module`s + `material`s and synthesises a module from its `scene { ... }`. **Preserve verbatim when editing — never rewrite as `module \"X\" {}`.** |
 | `union`, `difference`, `intersect` | — | children are operands |
 | `joint` | name, `type`, `pivot` | `axis`, `limits=[lo,hi]` |
 | `clip` | name, `seconds` | `track` children |

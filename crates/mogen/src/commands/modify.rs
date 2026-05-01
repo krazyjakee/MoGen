@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use anyhow::{anyhow, bail, Context, Result};
 use mogen_llm::{
-    embed_seed_header, format_import_aabb_preamble, generate_with_repair, parse_prompt_header,
+    embed_seed_header, format_imports_preserve_block, generate_with_repair, parse_prompt_header,
     parse_seed_header, parse_thinking_header, summarize_imports, GenerateConfig, Provider,
     RepairConfig, ThinkingLevel,
 };
@@ -72,16 +72,18 @@ pub(crate) fn modify(args: ModifyArgs) -> Result<()> {
     let model = resolve_model(args.provider, args.model);
     let provider_label = args.provider.label();
 
-    // Summarise top-level `import "X.mog"` declarations so the LLM knows how
-    // big each `use "X"` will be in its local frame. Required for sane
-    // composition prompts ("position the items on the scene") — without it
-    // the model has to guess sizes and ends up with overlapping or floating
+    // Summarise top-level `import "X.mog"` declarations so the LLM (a) sees
+    // each verbatim import line called out as load-bearing — without this
+    // models routinely rewrite them into empty `module "X" {}` stubs and
+    // silently strip every imported asset — and (b) knows how big each
+    // `use "X"` will be in its local frame so composition prompts ("position
+    // the items on the scene") don't end up with overlapping or floating
     // placements.
-    let imports_preamble = format_import_aabb_preamble(&summarize_imports(
+    let imports_block = format_imports_preserve_block(&summarize_imports(
         &existing,
         args.input.parent(),
     ));
-    let imports_block = match imports_preamble {
+    let imports_block = match imports_block {
         Some(s) => format!("{s}\n"),
         None => String::new(),
     };
@@ -92,10 +94,8 @@ pub(crate) fn modify(args: ModifyArgs) -> Result<()> {
 {imports_block}\
 Make the smallest edit that satisfies the request. Do not rename, reorder, \
 reformat, or restyle parts the modification does not touch — preserve their \
-imports, names, materials, transforms, connectors, attaches, joints, clips, \
-and tracks verbatim. Do not replace `import \"X.mog\"` lines with `module \
-\"X\" {}` stubs — keep imports exactly as-is. Do not \"improve\" unrelated \
-geometry.\n\n\
+names, materials, transforms, connectors, attaches, joints, clips, and \
+tracks verbatim. Do not \"improve\" unrelated geometry.\n\n\
 When the edit adds a new primitive, it still needs a `material` (declare one \
 or reuse an existing name) AND either an `attach` joining it to the rest of \
 the scene or `tags=\"floating\"` on itself or an ancestor — otherwise the \

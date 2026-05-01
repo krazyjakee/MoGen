@@ -97,6 +97,7 @@ pub fn lower_clip(node: &Node, graph: &mut SceneGraph) -> Result<()> {
         name,
         duration: seconds,
         tracks,
+        origin: node.origin.clone(),
     });
     Ok(())
 }
@@ -297,6 +298,7 @@ pub fn lower_template(node: &Node, graph: &mut SceneGraph) -> Result<()> {
             other => bail!("unknown animation template `{other}`"),
         };
         compose_with_rest_pose(&mut clip, graph);
+        clip.origin = node.origin.clone();
         graph.clips.push(clip);
     }
     Ok(())

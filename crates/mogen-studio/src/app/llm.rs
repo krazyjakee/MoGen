@@ -448,6 +448,9 @@ impl MogenStudioApp {
             max_repair_iters: self.settings.max_repair_iters(),
             seed_override: self.settings.seed_override(),
             claude_code_path: self.settings.claude_code_path(),
+            // Populated per-call by `spawn_llm` from the active file's path
+            // so relative `import "X.mog"` lookups resolve correctly.
+            base_dir: None,
         }
     }
 
@@ -478,6 +481,15 @@ impl MogenStudioApp {
         if let Some(level) = self.active().thinking_override {
             run_cfg.thinking = level;
         }
+        // Resolve relative `import "X.mog"` paths against the active file's
+        // directory so the modify/animate prompts can quote each `use`'s
+        // local-frame AABB. Unsaved buffers leave `base_dir` as `None` —
+        // imports still get listed verbatim, just without bounds.
+        run_cfg.base_dir = self
+            .active()
+            .path
+            .as_ref()
+            .and_then(|p| p.parent().map(|p| p.to_path_buf()));
         let sys_instr = self.cached_system_instruction();
 
         let provider_label = provider.label();

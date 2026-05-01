@@ -314,6 +314,7 @@ fn build_merged_node(
         relative_placed: false,
         attach_binding: None,
         use_id: None,
+        origin: None,
     }
 }
 

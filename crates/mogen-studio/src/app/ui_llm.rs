@@ -646,9 +646,18 @@ impl MogenStudioApp {
 
         let ctx = ui.ctx().clone();
         let available = ui.available_width();
-        // Four per row at inspector widths; shrink but don't fall below 48 px
-        // or the previews lose all detail.
-        let thumb_size = ((available - 24.0) / 4.0).clamp(48.0, 96.0);
+        let item_spacing = ui.spacing().item_spacing.x;
+        // Pick the largest column count whose cells still hit the 48 px floor
+        // at this width, capped at 4 wide so thumbs never balloon at huge
+        // panel widths. Keeps the grid responsive without ever asking the
+        // SidePanel for more room than it currently has — long material names
+        // get truncated inside the cell instead of pushing the panel wider.
+        let min_thumb = 48.0_f32;
+        let max_thumb = 96.0_f32;
+        let cols = (((available + item_spacing) / (min_thumb + item_spacing)).floor() as usize)
+            .clamp(1, 4);
+        let thumb_size = ((available - item_spacing * (cols as f32 - 1.0)) / cols as f32)
+            .clamp(min_thumb, max_thumb);
 
         // Right-click action chosen during the loop. Applied after the UI
         // closures return so we can take a fresh `&mut self` borrow without
@@ -659,54 +668,73 @@ impl MogenStudioApp {
         }
         let mut pending: Option<(String, ThumbAction)> = None;
 
+        // Label height under each thumb: small text ≈ 14 px line + a couple
+        // of px padding. Used as the cell's allocated height so the row
+        // baseline stays consistent across wraps.
+        let label_h = ui.text_style_height(&egui::TextStyle::Small) + 2.0;
+        let cell_size = egui::vec2(thumb_size, thumb_size + label_h);
+
         ui.horizontal_wrapped(|ui| {
             for (mat, abs) in &refs {
                 let handle = match self.thumb_handle(&ctx, abs) {
                     Some(h) => h,
                     None => continue,
                 };
-                ui.vertical(|ui| {
-                    let resp = ui
-                        .add(
-                            egui::Image::new((handle.id(), egui::vec2(thumb_size, thumb_size)))
+                // Allocate exactly `cell_size` per entry and cap inner width
+                // so the truncating label can't expand its parent — that's
+                // what was forcing the SidePanel wider on long material
+                // names.
+                ui.allocate_ui_with_layout(
+                    cell_size,
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        ui.set_max_width(thumb_size);
+                        let resp = ui
+                            .add(
+                                egui::Image::new((
+                                    handle.id(),
+                                    egui::vec2(thumb_size, thumb_size),
+                                ))
                                 .rounding(4.0)
                                 .sense(egui::Sense::click()),
+                            )
+                            .on_hover_text(format!(
+                                "{}\nright-click for actions",
+                                ellipsize_path(abs, 60),
+                            ));
+                        resp.context_menu(|ui| {
+                            ui.label(egui::RichText::new(mat).strong());
+                            ui.separator();
+                            if ui
+                                .button("Regenerate")
+                                .on_hover_text(
+                                    "Re-run the textures pipeline for just this material \
+                                     (forces overwrite of existing PNGs)",
+                                )
+                                .clicked()
+                            {
+                                pending = Some((mat.clone(), ThumbAction::Regenerate));
+                                ui.close_menu();
+                            }
+                            if ui
+                                .button("Delete")
+                                .on_hover_text(
+                                    "Remove the albedo + PBR companion PNGs and clear the \
+                                     *_texture attrs on this material",
+                                )
+                                .clicked()
+                            {
+                                pending = Some((mat.clone(), ThumbAction::Delete));
+                                ui.close_menu();
+                            }
+                        });
+                        ui.add(
+                            egui::Label::new(egui::RichText::new(mat).small().weak())
+                                .truncate(),
                         )
-                        .on_hover_text(format!(
-                            "{}\nright-click for actions",
-                            ellipsize_path(abs, 60),
-                        ));
-                    resp.context_menu(|ui| {
-                        ui.label(egui::RichText::new(mat).strong());
-                        ui.separator();
-                        if ui
-                            .button("Regenerate")
-                            .on_hover_text(
-                                "Re-run the textures pipeline for just this material \
-                                 (forces overwrite of existing PNGs)",
-                            )
-                            .clicked()
-                        {
-                            pending = Some((mat.clone(), ThumbAction::Regenerate));
-                            ui.close_menu();
-                        }
-                        if ui
-                            .button("Delete")
-                            .on_hover_text(
-                                "Remove the albedo + PBR companion PNGs and clear the \
-                                 *_texture attrs on this material",
-                            )
-                            .clicked()
-                        {
-                            pending = Some((mat.clone(), ThumbAction::Delete));
-                            ui.close_menu();
-                        }
-                    });
-                    ui.add(
-                        egui::Label::new(egui::RichText::new(mat).small().weak())
-                            .truncate(),
-                    );
-                });
+                        .on_hover_text(mat);
+                    },
+                );
             }
         });
 
