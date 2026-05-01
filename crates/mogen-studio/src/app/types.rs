@@ -673,6 +673,12 @@ pub(super) struct FileState {
     /// Last prompt the user submitted to the LLM. Preserved on failure so the
     /// Retry button doesn't force them to re-type anything.
     pub(super) llm_last_prompt: Option<(LlmKind, String)>,
+    /// Material filter from the most recent textures run, if any. `Some(list)`
+    /// means the user kicked off a per-material regenerate (right-click →
+    /// Regenerate) and Retry should re-target the same material(s); `None`
+    /// means the run was a full-scene textures pass. Cleared on every fresh
+    /// non-textures LLM run so a stale filter can't leak across kinds.
+    pub(super) texture_retry_filter: Option<Vec<String>>,
 
     /// Captured camera so switching tabs doesn't snap the user's framing.
     /// Restored on `activate` when present, refreshed every frame for the
@@ -731,6 +737,7 @@ impl FileState {
             llm_events: Vec::new(),
             llm_error: None,
             llm_last_prompt: None,
+            texture_retry_filter: None,
             camera: None,
             first_render: true,
             last_edit_at: None,
@@ -772,6 +779,7 @@ impl FileState {
             llm_events: Vec::new(),
             llm_error: None,
             llm_last_prompt: None,
+            texture_retry_filter: None,
             camera: None,
             first_render: true,
             last_edit_at: None,

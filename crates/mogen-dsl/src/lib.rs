@@ -1,6 +1,7 @@
 pub mod anim_lower;
 pub mod ast;
 pub mod attach;
+pub mod conform;
 pub mod lower;
 pub mod module;
 pub mod parser;

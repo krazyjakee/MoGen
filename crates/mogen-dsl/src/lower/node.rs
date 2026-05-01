@@ -1,7 +1,7 @@
 use anyhow::{anyhow, bail, Result};
 use glam::Vec3;
 
-use mogen_core::{Connector, NodeId, SceneGraph};
+use mogen_core::{AlphaMode, Connector, Material, NodeId, SceneGraph, TextureRef, UvMode};
 
 use crate::ast::{Node, Value};
 
@@ -73,6 +73,14 @@ pub(super) fn lower_into(
         let mid = graph
             .find_material_scoped(mat_name, node.origin.as_deref())
             .ok_or_else(|| anyhow!("unknown material: {mat_name}"))?;
+        graph.set_material(id, mid);
+    }
+    // Decals own a synthesized transparent material instead of binding to a
+    // user-declared one. Done before ancestor inheritance so a parent's
+    // material can't leak in and override the alpha/double-sided/Fit-UV
+    // settings the decal pipeline depends on.
+    if node.kind == "decal" {
+        let mid = graph.add_material(synthesize_decal_material(node, &name));
         graph.set_material(id, mid);
     }
     // Inherit from nearest ancestor when this node has no own `mat=`. Runs
@@ -164,6 +172,29 @@ pub(super) fn lower_into(
     }
 
     Ok(id)
+}
+
+/// Build the per-decal `Material` that the lowered scene binds to a `decal`
+/// node. Auto-named `__decal_<decal_name>` so a user's `mat=` can't reach it
+/// (decals own their material outright); transparency, image mapping, and
+/// double-sided rendering are forced regardless of any inherited settings on
+/// a parent material.
+fn synthesize_decal_material(node: &Node, decal_name: &str) -> Material {
+    let mut mat = Material::new(format!("__decal_{decal_name}"));
+    mat.alpha_mode = AlphaMode::Blend;
+    mat.uv_mode = UvMode::Fit;
+    mat.double_sided = true;
+    mat.roughness = node.attr_number("roughness").unwrap_or(0.6);
+    if let Some(t) = node.attr_vec3("tint") {
+        mat.base_color = [t.x, t.y, t.z, 1.0];
+    } else {
+        mat.base_color = [1.0, 1.0, 1.0, 1.0];
+    }
+    if let Some(path) = node.attr_string("image") {
+        mat.base_color_texture = Some(TextureRef::new(path.to_string()));
+    }
+    mat.origin = node.origin.clone();
+    mat
 }
 
 pub(super) fn apply_metadata(node: &Node, id: NodeId, graph: &mut SceneGraph) -> Result<()> {

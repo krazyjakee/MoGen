@@ -212,6 +212,29 @@ impl GeminiClient {
 
 fn build_request(cfg: &GenerateConfig) -> serde_json::Value {
     let mut contents: Vec<serde_json::Value> = Vec::new();
+
+    // Gemini rejects requests that set `systemInstruction` alongside
+    // `cachedContent` ("CachedContent can not be used with GenerateContent
+    // request setting system_instruction, tools or tool_config"). The cache
+    // resource carries the stable reference block (grammar, kinds, attribute
+    // allowlist); the inline dynamic prefix (preamble, conventions, fewshots,
+    // stdlib summary, output contract) still has to reach the model fresh
+    // per call. When both are present, inject the inline portion as a
+    // synthetic user/model preamble at the head of `contents` so the model
+    // sees the same total instruction without tripping the API constraint.
+    let inline_in_contents = cfg.cached_content.is_some() && cfg.system_instruction.is_some();
+    if inline_in_contents {
+        let sys = cfg.system_instruction.as_deref().unwrap_or("");
+        contents.push(serde_json::json!({
+            "role": "user",
+            "parts": [{ "text": sys }],
+        }));
+        contents.push(serde_json::json!({
+            "role": "model",
+            "parts": [{ "text": "Understood." }],
+        }));
+    }
+
     for turn in &cfg.history {
         contents.push(serde_json::json!({
             "role": turn.role.gemini_str(),
@@ -242,10 +265,15 @@ fn build_request(cfg: &GenerateConfig) -> serde_json::Value {
 
     if let Some(cached) = &cfg.cached_content {
         req["cachedContent"] = serde_json::Value::String(cached.clone());
-    } else if let Some(sys) = &cfg.system_instruction {
-        req["systemInstruction"] = serde_json::json!({
-            "parts": [{ "text": sys }],
-        });
+    }
+    // Only emit `systemInstruction` when there is no cached resource; with a
+    // cache, the inline portion was already moved into `contents` above.
+    if !inline_in_contents {
+        if let Some(sys) = &cfg.system_instruction {
+            req["systemInstruction"] = serde_json::json!({
+                "parts": [{ "text": sys }],
+            });
+        }
     }
 
     let mut gen_cfg = serde_json::Map::new();
@@ -365,9 +393,57 @@ mod tests {
     }
 
     #[test]
-    fn cached_content_overrides_system_instruction() {
+    fn cached_content_moves_inline_block_into_contents() {
+        // Gemini rejects `systemInstruction` + `cachedContent` on the same
+        // request. The wire format must therefore drop `systemInstruction`
+        // and instead seed `contents` with a synthetic user/model preamble
+        // carrying the inline portion. The cache holds the stable block;
+        // contents carry the dynamic prefix followed by the actual user turn.
+        let mut cfg = GenerateConfig::new("real prompt");
+        cfg.system_instruction = Some("inline portion".into());
+        cfg.cached_content = Some("cachedContents/abc123".into());
+        let body = build_request(&cfg);
+        assert_eq!(body["cachedContent"], "cachedContents/abc123");
+        assert!(
+            body.get("systemInstruction").is_none(),
+            "systemInstruction must not be sent alongside cachedContent",
+        );
+        let contents = body["contents"].as_array().unwrap();
+        assert_eq!(contents.len(), 3);
+        assert_eq!(contents[0]["role"], "user");
+        assert_eq!(contents[0]["parts"][0]["text"], "inline portion");
+        assert_eq!(contents[1]["role"], "model");
+        assert_eq!(contents[2]["role"], "user");
+        assert_eq!(contents[2]["parts"][0]["text"], "real prompt");
+    }
+
+    #[test]
+    fn cached_content_with_inline_preserves_history_alternation() {
+        // History turns must still appear between the synthetic preamble and
+        // the final user prompt, in order, so the model sees:
+        //   user(inline) -> model(ack) -> user(history0) -> model(history1) -> user(prompt)
+        let mut cfg = GenerateConfig::new("fix it");
+        cfg.system_instruction = Some("inline portion".into());
+        cfg.cached_content = Some("cachedContents/abc123".into());
+        cfg.history.push(Turn { role: Role::User, text: "make a chair".into() });
+        cfg.history.push(Turn { role: Role::Model, text: "scene { box }".into() });
+        let body = build_request(&cfg);
+        let contents = body["contents"].as_array().unwrap();
+        assert_eq!(contents.len(), 5);
+        assert_eq!(contents[0]["role"], "user");
+        assert_eq!(contents[1]["role"], "model");
+        assert_eq!(contents[2]["role"], "user");
+        assert_eq!(contents[2]["parts"][0]["text"], "make a chair");
+        assert_eq!(contents[3]["role"], "model");
+        assert_eq!(contents[4]["parts"][0]["text"], "fix it");
+    }
+
+    #[test]
+    fn cached_content_alone_omits_system_instruction() {
+        // Belt-and-braces: when only `cached_content` is set (e.g. a caller
+        // pinned a pre-split cache resource that already carries the full
+        // instruction), don't synthesize an empty `systemInstruction` field.
         let mut cfg = GenerateConfig::new("x");
-        cfg.system_instruction = Some("should be ignored".into());
         cfg.cached_content = Some("cachedContents/abc123".into());
         let body = build_request(&cfg);
         assert_eq!(body["cachedContent"], "cachedContents/abc123");

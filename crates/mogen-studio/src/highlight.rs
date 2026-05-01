@@ -10,25 +10,27 @@ use eframe::egui::{self, text::LayoutJob, Color32, FontId, TextFormat};
 
 /// Node kinds + parameter enum values from the `.mog` grammar. Anything in this
 /// set is painted as a keyword regardless of position; everything else is left
-/// with the default text colour. Keep this list roughly aligned with the match
-/// arms in `mogen-dsl/src/{lower,module,anim_lower,skin_lower,attach}.rs`.
+/// with the default text colour. Keep this list aligned with `KNOWN_KINDS` in
+/// `mogen-validate/src/ast_checks/schema.rs` plus the dispatched enum values
+/// in `mogen-dsl/src/{lower,module,anim_lower,skin_lower,attach,conform}.rs`.
 const KEYWORDS: &[&str] = &[
     // Top-level + structural
-    "scene", "module", "use", "group",
+    "scene", "module", "use", "import", "group", "solid", "stack", "grid", "lod_scale",
     // Primitives
     "box", "sphere", "cylinder", "cone", "capsule", "torus", "prism", "pyramid", "disc",
     "icosphere", "rounded_box", "plane", "quad", "ellipsoid", "superellipsoid", "hemisphere",
-    "frustum", "tube", "spline_tube", "torus_arc", "half_cylinder", "curved_plane", "lathe",
-    "wedge", "slab", "panel", "wall", "roof",
+    "frustum", "tube", "spline_tube", "spline_ribbon", "torus_arc", "half_cylinder",
+    "curved_plane", "lathe", "leaf_card", "mesh", "wedge", "slab", "post", "panel", "wall",
+    "branch", "decal",
     // CSG + repetition
     "union", "difference", "intersect", "array", "mirror",
-    // Materials + attachment
-    "material", "attach", "connector", "mask",
+    // Materials, attachment, lights
+    "material", "attach", "conform", "connector", "light",
     // Animation + skinning
-    "joint", "skeleton", "clip", "track", "skin", "spin", "open_close", "wave", "flap", "idle",
+    "joint", "skeleton", "bone", "clip", "track", "spin", "open_close", "wave", "flap", "idle",
     "translation", "rotation", "scale", "hinge", "slider", "ball", "rotor",
     // Parameter enum values that commonly appear at the top level of an attr
-    "opaque", "blend",
+    "opaque", "mask", "blend", "tile", "fit", "directional", "point", "spot",
 ];
 
 #[derive(Clone, Copy)]

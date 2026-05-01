@@ -1,0 +1,9 @@
+// Spheres have no canonical "along" axis — conform should reject.
+scene {
+  ellipsoid "bag" (size=[1.0, 0.5, 0.5]) {
+    connector "a" (at=[-0.4, 0.2, 0.2], dir=[0, 0, 1])
+    connector "b" (at=[ 0.4, 0.2, 0.2], dir=[0, 0, 1])
+  }
+  sphere "decal" (radius=0.05)
+  conform (target="bag", child="decal", from="a", to="b")
+}

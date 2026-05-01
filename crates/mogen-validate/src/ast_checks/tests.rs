@@ -1,0 +1,384 @@
+//! Validator tests live alongside the schema/walking code so they exercise
+//! the same private helpers (`has_unknown_attr`, `diags_for_*`) without
+//! widening visibility just for the test surface.
+
+mod import_validator_tests {
+    use super::super::*;
+    use mogen_core::Diagnostic;
+    use std::path::Path;
+
+    fn diags_for_with_source(src: &str, base: Option<&Path>) -> Vec<Diagnostic> {
+        let ast = mogen_dsl::parse(src).expect("parse");
+        validate_ast_with_source(&ast, base)
+    }
+
+    fn write_tmp(label: &str, files: &[(&str, &str)]) -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "mogen-validate-imports-{}-{}-{}",
+            std::process::id(),
+            id,
+            label
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        for (name, contents) in files {
+            std::fs::write(dir.join(name), contents).unwrap();
+        }
+        dir
+    }
+
+    #[test]
+    fn import_node_does_not_trigger_unknown_kind() {
+        // Without a source dir we still parse `import`; the validator must
+        // not flag it as an unknown kind.
+        let diags = diags_for_with_source(
+            r#"import "shared.mog" scene { box "b" (size=[1,1,1]) }"#,
+            None,
+        );
+        assert!(
+            !diags.iter().any(|d| d.code == "E0101"),
+            "import should not be unknown-kind, got {diags:?}"
+        );
+    }
+
+    #[test]
+    fn import_with_attrs_or_block_is_rejected() {
+        let diags = diags_for_with_source(
+            r#"import "shared.mog" (foo=1) { box "x" (size=1) } scene {}"#,
+            None,
+        );
+        assert!(diags.iter().any(|d| d.code == "E0308"), "got {diags:?}");
+        assert!(diags.iter().any(|d| d.code == "E0309"), "got {diags:?}");
+    }
+
+    #[test]
+    fn import_with_alias_is_accepted() {
+        // `(as=ident)` is the one attribute `import` recognises — it renames
+        // the synthesised module so two files with the same stem can coexist.
+        let diags = diags_for_with_source(
+            r#"import "shared.mog" (as=lib) scene {}"#,
+            None,
+        );
+        assert!(
+            !diags.iter().any(|d| d.code == "E0308"),
+            "E0308 should not fire on `(as=…)`, got {diags:?}"
+        );
+    }
+
+    #[test]
+    fn imported_modules_validate_use_references() {
+        let dir = write_tmp(
+            "use_ok",
+            &[(
+                "lib.mog",
+                r#"module "leg" (h=0.5) { cylinder "leg" (height=$h) }"#,
+            )],
+        );
+        let src = r#"import "lib.mog" scene { use "leg" (h=1.0) }"#;
+        let diags = diags_for_with_source(src, Some(dir.as_path()));
+        // E0304 = unknown module. The imported `leg` should resolve.
+        assert!(
+            !diags.iter().any(|d| d.code == "E0304"),
+            "imported modules should be visible to `use`, got {diags:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn unknown_module_check_suppressed_when_imports_present_without_source() {
+        // Without a base dir we can't resolve imports, but we should not
+        // false-flag `use` references that might come from imported files.
+        let src = r#"import "lib.mog" scene { use "leg" () }"#;
+        let diags = diags_for_with_source(src, None);
+        assert!(
+            !diags.iter().any(|d| d.code == "E0304"),
+            "unknown-module must be suppressed when imports unresolved, got {diags:?}"
+        );
+    }
+
+    #[test]
+    fn missing_imported_file_surfaces_as_diagnostic() {
+        let dir = write_tmp("missing", &[]);
+        let src = r#"import "ghost.mog" scene { box "b" (size=[1,1,1]) }"#;
+        let diags = diags_for_with_source(src, Some(dir.as_path()));
+        assert!(
+            diags.iter().any(|d| d.code == "E0306"),
+            "missing import should surface E0306, got {diags:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+mod common_attr_scope_tests {
+    use super::super::*;
+    use mogen_core::{Diagnostic, Severity};
+
+    fn diags_for(src: &str) -> Vec<Diagnostic> {
+        let ast = mogen_dsl::parse(src).expect("parse");
+        validate_ast(&ast)
+    }
+
+    fn has_unknown_attr(diags: &[Diagnostic], attr: &str, kind: &str) -> bool {
+        let needle = format!("attribute \"{attr}\" is not used by `{kind}`");
+        diags.iter().any(|d| d.code == "W0102" && d.message == needle)
+    }
+
+    #[test]
+    fn placement_shortcuts_are_rejected_on_animation_templates() {
+        // This is the original bug: `from=[1,0,1]` was silently accepted on
+        // `open_close` because it lived in the old blanket COMMON_ATTRS.
+        let src = r#"
+            material "wood" (color=[0.5, 0.3, 0.1])
+            scene { box "lid" (size=[1,0.1,1], mat="wood") }
+            open_close "swing" (target="lid", from=[1,0,1], axis=[1,0,0], angle=90, seconds=1.0)
+        "#;
+        let diags = diags_for(src);
+        assert!(
+            has_unknown_attr(&diags, "from", "open_close"),
+            "expected W0102 for from= on open_close, got {diags:?}"
+        );
+    }
+
+    #[test]
+    fn placement_shortcuts_are_rejected_on_attach_joint_material() {
+        // Attach, joint, clip, track, material: no implicit transforms or
+        // placement shortcuts — only their kind-specific allowlist.
+        let src = r#"
+            material "wood" (color=[0.5, 0.3, 0.1], pos=[0,0,0])
+            scene {
+              box "a" (size=[1,1,1], mat="wood")
+              box "b" (size=[1,1,1], mat="wood")
+            }
+            attach (parent="a", child="b", pos=[0,0,0])
+            joint "j" (type=hinge, pivot="a", anchor="top")
+        "#;
+        let diags = diags_for(src);
+        assert!(has_unknown_attr(&diags, "pos", "material"));
+        assert!(has_unknown_attr(&diags, "pos", "attach"));
+        assert!(has_unknown_attr(&diags, "anchor", "joint"));
+    }
+
+    #[test]
+    fn geometry_still_accepts_common_attrs() {
+        // Regression guard: the split must NOT reject legitimate uses of
+        // placement shortcuts on primitives.
+        let src = r#"
+            material "wood" (color=[0.5, 0.3, 0.1])
+            scene {
+              box "a" (size=[1,1,1], mat="wood", pos=[0,0,0], anchor="bottom", tags="floating")
+              slab "b" (size=[1,0.1,1], mat="wood", above="a", gap=0.05)
+            }
+        "#;
+        let diags = diags_for(src);
+        let warnings: Vec<_> = diags
+            .iter()
+            .filter(|d| matches!(d.severity, Severity::Warning))
+            .collect();
+        assert!(
+            warnings.is_empty(),
+            "expected no attr warnings on valid geometry, got {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn bones_still_accept_transform_attrs_but_not_placement() {
+        // Bones legitimately use pos= (parent-relative offset). They must NOT
+        // accept anchor/from/above etc — those are meaningless on joints.
+        let ok_src = r#"
+            scene {
+              skeleton "rig" {
+                bone "root" (pos=[0, 1, 0]) {
+                  bone "child" (pos=[0, 0.5, 0], envelope=0.2)
+                }
+              }
+            }
+        "#;
+        let diags = diags_for(ok_src);
+        let warns: Vec<_> = diags
+            .iter()
+            .filter(|d| matches!(d.severity, Severity::Warning))
+            .collect();
+        assert!(warns.is_empty(), "valid bone attrs should not warn: {warns:?}");
+
+        let bad_src = r#"
+            scene {
+              skeleton "rig" {
+                bone "root" (pos=[0, 1, 0], anchor="bottom") {
+                  bone "child" (pos=[0, 0.5, 0], tags="foo")
+                }
+              }
+            }
+        "#;
+        let diags = diags_for(bad_src);
+        assert!(has_unknown_attr(&diags, "anchor", "bone"));
+        assert!(has_unknown_attr(&diags, "tags", "bone"));
+    }
+
+    #[test]
+    fn light_requires_kind() {
+        let src = r#"scene { light "x" () }"#;
+        let diags = diags_for(src);
+        assert!(diags.iter().any(|d| d.code == "E0801"), "got {diags:?}");
+    }
+
+    #[test]
+    fn light_unknown_kind_rejected() {
+        let src = r#"scene { light "x" (kind=floodlamp) }"#;
+        let diags = diags_for(src);
+        assert!(diags.iter().any(|d| d.code == "E0802"), "got {diags:?}");
+    }
+
+    #[test]
+    fn light_inner_must_not_exceed_outer() {
+        let src = r#"scene { light "s" (kind=spot, inner_cone=40, outer_cone=20) }"#;
+        let diags = diags_for(src);
+        assert!(diags.iter().any(|d| d.code == "E0808"), "got {diags:?}");
+    }
+
+    #[test]
+    fn light_cone_on_non_spot_warns() {
+        let src = r#"scene { light "s" (kind=point, outer_cone=30) }"#;
+        let diags = diags_for(src);
+        assert!(diags.iter().any(|d| d.code == "W0807"), "got {diags:?}");
+    }
+
+    #[test]
+    fn light_accepts_pos_and_rot_but_not_anchor() {
+        let src = r#"scene { light "s" (kind=point, pos=[0,2,0], anchor=bottom) }"#;
+        let diags = diags_for(src);
+        assert!(
+            has_unknown_attr(&diags, "anchor", "light"),
+            "anchor should be rejected on light, got {diags:?}",
+        );
+        // pos= must NOT warn — lights are placed in the scene.
+        assert!(
+            !has_unknown_attr(&diags, "pos", "light"),
+            "pos= must be accepted on light, got {diags:?}",
+        );
+    }
+
+    #[test]
+    fn track_from_to_still_accepted() {
+        // `track` has its own `from`/`to` (scalar keyframe values) in its
+        // kind-specific allowlist — the split must not break these.
+        let src = r#"
+            scene {
+              group "door" { box "panel" (size=[1, 2, 0.1]) }
+            }
+            joint "h" (type=hinge, pivot="door", axis=[0,1,0])
+            clip "swing" (seconds=1.0) {
+              track "h" (from=0, to=90)
+            }
+        "#;
+        let diags = diags_for(src);
+        let warns: Vec<_> = diags
+            .iter()
+            .filter(|d| matches!(d.severity, Severity::Warning))
+            .collect();
+        assert!(warns.is_empty(), "track from/to must pass: {warns:?}");
+    }
+
+    #[test]
+    fn decal_kind_is_known() {
+        let src = r#"scene { decal "logo" (prompt="x", size=[0.2,0.1]) }"#;
+        let diags = diags_for(src);
+        assert!(
+            !diags.iter().any(|d| d.code == "E0101"),
+            "decal must not be unknown-kind: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn decal_rejects_mat() {
+        let src = r#"
+            material "fabric" (color=[0.1,0.2,0.6])
+            scene { decal "logo" (prompt="x", size=[0.2,0.1], mat="fabric") }
+        "#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "E0901"),
+            "expected E0901 on decal with mat=, got {diags:?}"
+        );
+    }
+
+    #[test]
+    fn decal_warns_on_image_and_prompt_together() {
+        let src = r#"
+            scene {
+              decal "logo" (
+                prompt="ignored", image="textures/x/logo_decal.png",
+                size=[0.2,0.1]
+              )
+            }
+        "#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "W0902"),
+            "expected W0902 when both image= and prompt= present: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn decal_size_must_be_two_element_list() {
+        // Four-element list takes the parser's `list` rule (vec3 is 3 only),
+        // so the arity check fires as E0903.
+        let src = r#"scene { decal "logo" (prompt="x", size=[0.2, 0.1, 0.05, 0.0]) }"#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "E0903"),
+            "expected E0903 on bad decal size arity: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn decal_size_rejects_vec3_via_type_check() {
+        // `[0.2, 0.1, 0.05]` parses as Vec3 (grammar prefers it over List for
+        // 3-element forms). The expected-type check fires E0103 telling the
+        // author size must be a list — which is the right hint.
+        let src = r#"scene { decal "logo" (prompt="x", size=[0.2, 0.1, 0.05]) }"#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "E0103"),
+            "expected E0103 on Vec3 size: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn decal_rejects_non_positive_size_components() {
+        let src = r#"scene { decal "logo" (prompt="x", size=[0.2, 0]) }"#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "E0903"),
+            "expected E0903 on zero size component: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn decal_accepts_transform_attrs_but_not_skin_or_bind() {
+        // Decal accepts pos/rot/scale and placement helpers; skin/bind don't
+        // make sense on a non-skinned overlay.
+        let src = r#"scene {
+            decal "logo" (
+                prompt="x", size=[0.2,0.1],
+                pos=[0,0.1,0.1], rot=[0,0,0],
+                anchor="center", above="other",
+                skin="rig", bind="root"
+            )
+        }"#;
+        let diags = diags_for(src);
+        assert!(
+            !diags.iter().any(|d| d.code == "W0102" && d.message.contains("\"pos\"")),
+            "pos= must be accepted on decal: {diags:?}"
+        );
+        assert!(
+            diags.iter().any(|d| d.code == "W0102" && d.message.contains("\"skin\"")),
+            "skin= must be rejected on decal: {diags:?}"
+        );
+        assert!(
+            diags.iter().any(|d| d.code == "W0102" && d.message.contains("\"bind\"")),
+            "bind= must be rejected on decal: {diags:?}"
+        );
+    }
+}

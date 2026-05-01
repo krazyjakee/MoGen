@@ -101,7 +101,7 @@ pub(crate) fn textures_cmd(args: mogen_llm::textures::TexturesArgs) -> Result<()
         ],
     );
 
-    let edits = match mogen_llm::textures::run_plan(
+    let report = mogen_llm::textures::run_plan(
         client.as_ref(),
         &args.model,
         &args,
@@ -109,15 +109,21 @@ pub(crate) fn textures_cmd(args: mogen_llm::textures::TexturesArgs) -> Result<()
         &plans,
         &base_dir,
         None,
-    ) {
-        Ok(e) => e,
-        Err(e) => {
-            spinner.abandon_with_message(format!("textures: failed — {e}"));
-            return Err(e);
-        }
-    };
+    );
+    let edits = report.edits;
+    let failures = report.failures;
 
-    spinner.set_message(format!("textures: splicing {} attribute{}", edits.len(), if edits.len() == 1 { "" } else { "s" }));
+    // Print every per-material failure but keep going — `edits` already
+    // captures whatever did succeed and is worth committing to disk.
+    for f in &failures {
+        eprintln!("textures: material '{}' failed — {}", f.material, f.error);
+    }
+
+    spinner.set_message(format!(
+        "textures: splicing {} attribute{}",
+        edits.len(),
+        if edits.len() == 1 { "" } else { "s" }
+    ));
     let new_src = mogen_llm::textures::splice_textures(&src, &edits)?;
 
     let dsl_out = args.out.clone().unwrap_or_else(|| args.input.clone());
@@ -125,18 +131,52 @@ pub(crate) fn textures_cmd(args: mogen_llm::textures::TexturesArgs) -> Result<()
     fs::write(&dsl_out, &new_src)
         .with_context(|| format!("writing {}", dsl_out.display()))?;
 
-    spinner.finish_with_message(format!(
-        "textures: wrote {} PNG{}, updated {} in {}",
-        edits.len(),
-        if edits.len() == 1 { "" } else { "s" },
-        dsl_out.display(),
-        format_duration(start.elapsed()),
-    ));
+    let summary = if failures.is_empty() {
+        format!(
+            "textures: wrote {} PNG{}, updated {} in {}",
+            edits.len(),
+            if edits.len() == 1 { "" } else { "s" },
+            dsl_out.display(),
+            format_duration(start.elapsed()),
+        )
+    } else {
+        format!(
+            "textures: wrote {} PNG{}, {} material{} failed, updated {} in {}",
+            edits.len(),
+            if edits.len() == 1 { "" } else { "s" },
+            failures.len(),
+            if failures.len() == 1 { "" } else { "s" },
+            dsl_out.display(),
+            format_duration(start.elapsed()),
+        )
+    };
+    if failures.is_empty() {
+        spinner.finish_with_message(summary);
+    } else {
+        spinner.abandon_with_message(summary);
+    }
 
     if args.no_build {
+        // Surface the partial-failure exit code so scripts can detect it,
+        // but only after the DSL is on disk so the successful slots stick.
+        if !failures.is_empty() {
+            anyhow::bail!(
+                "{} material(s) failed to generate — see messages above",
+                failures.len()
+            );
+        }
         return Ok(());
     }
 
     let glb_out = args.glb.clone().unwrap_or_else(|| args.input.with_extension("glb"));
-    build(dsl_out, glb_out)
+    let build_result = build(dsl_out, glb_out);
+    if !failures.is_empty() {
+        // Even if the build succeeded with the partial textures, the run as
+        // a whole had failures and the caller should know.
+        anyhow::bail!(
+            "{} material(s) failed to generate — see messages above",
+            failures.len()
+        );
+    }
+    build_result
 }

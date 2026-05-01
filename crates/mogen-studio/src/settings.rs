@@ -12,6 +12,9 @@ use crate::theme::{parse_theme, theme_key, Theme, DEFAULT_THEME};
 use crate::viewer::environment::{
     environment_key, parse_environment, Environment, DEFAULT_ENVIRONMENT,
 };
+use crate::viewer::shadows::{
+    parse_shadow_quality, shadow_quality_key, ShadowQuality, DEFAULT_SHADOW_QUALITY,
+};
 
 /// Library default for the text-LLM repair budget. Matches
 /// [`mogen_llm::RepairConfig::default`].
@@ -181,6 +184,13 @@ pub struct Settings {
     /// doesn't invalidate old settings files.
     #[serde(default)]
     pub environment: String,
+
+    /// Viewport shadow-mapping quality. Persisted as a lowercase label
+    /// (see `shadow_quality_key`); empty / unknown falls back to
+    /// [`DEFAULT_SHADOW_QUALITY`] (Off) so existing settings files keep the
+    /// historical no-shadow look after upgrade.
+    #[serde(default)]
+    pub shadow_quality: String,
 
     /// Cap on continuous viewport repaints (animation tick, cinema pan, gizmo
     /// drag). The cap is applied by routing the per-frame repaint request
@@ -481,6 +491,16 @@ impl Settings {
 
     pub fn set_environment(&mut self, env: Environment) {
         self.environment = environment_key(env).to_string();
+    }
+
+    /// Resolve the persisted label to a [`ShadowQuality`], falling back to
+    /// [`DEFAULT_SHADOW_QUALITY`] when the field is empty or unknown.
+    pub fn shadow_quality(&self) -> ShadowQuality {
+        parse_shadow_quality(&self.shadow_quality).unwrap_or(DEFAULT_SHADOW_QUALITY)
+    }
+
+    pub fn set_shadow_quality(&mut self, q: ShadowQuality) {
+        self.shadow_quality = shadow_quality_key(q).to_string();
     }
 
     /// Viewport repaint cap. `None` = uncapped (display vsync), `Some(n)` =

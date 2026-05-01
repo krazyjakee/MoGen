@@ -1,6 +1,53 @@
 use std::path::Path;
 
+use glam::{Mat4, Vec3, Vec4};
 use glow::HasContext;
+
+/// Six view-frustum planes extracted from a `view_proj` matrix using the
+/// Gribb–Hartmann method. Stored as `Vec4` `(a, b, c, d)` with each plane
+/// normalised so the signed distance from a point `p` to the plane is
+/// `dot(plane.xyz, p) + plane.w`. Inside the frustum is the positive half-
+/// space; a sphere whose centre lies more than `-radius` away from any plane
+/// is fully outside and can be culled.
+pub(super) struct FrustumPlanes(pub(super) [Vec4; 6]);
+
+impl FrustumPlanes {
+    pub(super) fn from_view_proj(vp: Mat4) -> Self {
+        let r0 = vp.row(0);
+        let r1 = vp.row(1);
+        let r2 = vp.row(2);
+        let r3 = vp.row(3);
+        let raw = [
+            r3 + r0,
+            r3 - r0,
+            r3 + r1,
+            r3 - r1,
+            r3 + r2,
+            r3 - r2,
+        ];
+        let mut out = [Vec4::ZERO; 6];
+        for (i, p) in raw.iter().enumerate() {
+            let n = p.truncate();
+            let len = n.length();
+            out[i] = if len > 0.0 { *p / len } else { *p };
+        }
+        FrustumPlanes(out)
+    }
+
+    /// Conservative sphere-vs-frustum test. Returns false only when the
+    /// sphere is fully outside at least one plane — partial overlap and
+    /// fully-inside both return true so the renderer never drops a batch
+    /// that should still rasterise.
+    pub(super) fn sphere_visible(&self, centre: Vec3, radius: f32) -> bool {
+        for plane in &self.0 {
+            let d = plane.x * centre.x + plane.y * centre.y + plane.z * centre.z + plane.w;
+            if d < -radius {
+                return false;
+            }
+        }
+        true
+    }
+}
 
 pub(super) fn bytes_of_f32(s: &[f32]) -> &[u8] {
     unsafe { std::slice::from_raw_parts(s.as_ptr() as *const u8, std::mem::size_of_val(s)) }

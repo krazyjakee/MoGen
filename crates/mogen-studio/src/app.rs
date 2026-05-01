@@ -312,6 +312,7 @@ impl MogenStudioApp {
         viewer.set_show_light_gizmos(settings.show_light_gizmos());
         viewer.set_show_transform_gizmo(settings.show_transform_gizmo());
         viewer.set_environment(settings.environment());
+        viewer.set_shadows(settings.shadow_quality());
         viewer.set_max_fps(settings.max_fps());
 
         // Hand the seed tab id 0 directly; the counter that hands out

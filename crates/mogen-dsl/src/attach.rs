@@ -320,6 +320,12 @@ fn normalize_or(v: Vec3, fallback: Vec3) -> Vec3 {
     }
 }
 
+/// Re-export of `reparent` for the conform pass, which mirrors attach's
+/// "child becomes a graph child of the target" behaviour.
+pub(crate) fn reparent_pub(graph: &mut SceneGraph, child: NodeId, new_parent: NodeId) {
+    reparent(graph, child, new_parent)
+}
+
 fn reparent(graph: &mut SceneGraph, child: NodeId, new_parent: NodeId) {
     let old_parent = graph.nodes[child.0 as usize].parent;
     match old_parent {

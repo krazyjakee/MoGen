@@ -5,8 +5,8 @@ use std::path::Path;
 use anyhow::{bail, Context, Result};
 use mogen_core::{Diagnostic, Severity};
 use mogen_llm::{
-    default_cache_path, resolve_or_create_cache, system_instruction, GenerateConfig, LlmClient,
-    Provider, StdlibIndex, DEFAULT_TTL_SECONDS,
+    cacheable_block, default_cache_path, inline_block, resolve_or_create_cache,
+    system_instruction, GenerateConfig, LlmClient, Provider, StdlibIndex, DEFAULT_TTL_SECONDS,
 };
 
 /// Group error diagnostics by category (derived from the code prefix) so the
@@ -104,17 +104,26 @@ pub(crate) fn ensure_parent_dir(path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Set `cfg.cached_content` or `cfg.system_instruction` based on flags.
+/// Set `cfg.cached_content` and/or `cfg.system_instruction` based on flags.
+///
+/// The system instruction is split (see `mogen_llm::prompt`):
+///   - `cacheable_block()` — grammar + kinds + attribute allowlist (~17 KB,
+///     stable across all builds at a fixed grammar/validator version).
+///   - `inline_block(idx)` — preamble + conventions + fewshots + stdlib
+///     summary + output contract (~22 KB, sent fresh per request).
 ///
 /// Precedence:
-///   1. `--cached-content <name>` — use that resource name verbatim (Gemini
-///      only; ignored on other providers).
-///   2. `--no-cache`, or non-Gemini provider — send the system instruction
-///      inline.
-///   3. Default (Gemini only) — try to resolve or create a persistent cache
-///      entry under `$MOGEN_CACHE_DIR` / `$HOME/.cache/mogen/`, falling back
-///      to inline on any failure (printed to stderr so the user notices
-///      repeat failures).
+///   1. `--cached-content <name>` — pin that resource (Gemini only). We pair
+///      it with `inline_block` per request, on the assumption the pinned
+///      resource was created from `cacheable_block` (post-split). Old caches
+///      created from the full instruction will produce duplicated content
+///      until they expire — run `--no-cache` once or wait for TTL.
+///   2. `--no-cache`, or non-Gemini provider — send the full
+///      `system_instruction` inline (no caching benefit available).
+///   3. Default (Gemini only) — resolve or create a persistent cache entry
+///      keyed by `cacheable_block` content under `$MOGEN_CACHE_DIR` /
+///      `$HOME/.cache/mogen/`, send `inline_block` fresh per request. Fall
+///      back to full inline on any failure (warned to stderr).
 pub(crate) fn attach_system_instruction(
     cfg: &mut GenerateConfig,
     client: &LlmClient,
@@ -122,9 +131,7 @@ pub(crate) fn attach_system_instruction(
     no_cache: bool,
     label: &str,
 ) {
-    let system_text = system_instruction(&StdlibIndex::from_registry(
-        mogen_dsl::stdlib_registry(),
-    ));
+    let idx = StdlibIndex::from_registry(mogen_dsl::stdlib_registry());
 
     // Non-Gemini providers don't honour `cachedContents`. Force inline.
     let gemini = match client {
@@ -135,42 +142,45 @@ pub(crate) fn attach_system_instruction(
     if let Some(name) = pinned {
         if gemini.is_some() {
             cfg.cached_content = Some(name);
+            cfg.system_instruction = Some(inline_block(&idx));
         } else {
             // Politely warn and fall through — the flag is silently ignored
             // on backends that have no equivalent feature.
             eprintln!(
                 "mogen {label}: --cached-content is Gemini-only; sending system instruction inline"
             );
-            cfg.system_instruction = Some(system_text);
+            cfg.system_instruction = Some(system_instruction(&idx));
         }
         return;
     }
     if no_cache || gemini.is_none() {
-        cfg.system_instruction = Some(system_text);
+        cfg.system_instruction = Some(system_instruction(&idx));
         return;
     }
 
     let gemini = gemini.expect("matched above");
     let Some(cache_path) = default_cache_path() else {
-        cfg.system_instruction = Some(system_text);
+        cfg.system_instruction = Some(system_instruction(&idx));
         return;
     };
 
+    let cacheable = cacheable_block();
     match resolve_or_create_cache(
         gemini,
         &cfg.model,
-        &system_text,
+        &cacheable,
         &cache_path,
         DEFAULT_TTL_SECONDS,
     ) {
         Ok(name) => {
             cfg.cached_content = Some(name);
+            cfg.system_instruction = Some(inline_block(&idx));
         }
         Err(e) => {
             eprintln!(
                 "mogen {label}: cache unavailable ({e}); sending system instruction inline"
             );
-            cfg.system_instruction = Some(system_text);
+            cfg.system_instruction = Some(system_instruction(&idx));
         }
     }
 }

@@ -1,0 +1,19 @@
+// Wine-bottle label wrapped around a cylindrical bottle.
+//
+// The label is a curved_plane authored flat (bend_u=0). Conform walks the
+// plane between two connectors on the bottle and deforms each vertex to
+// lie on the cylindrical surface. `lift` is small (0.5mm) so the label
+// reads as a sticker and not a separate sleeve.
+
+material "glass" (color=[0.2, 0.35, 0.18], roughness=0.15, transmission=0.6)
+material "paper" (color=[0.92, 0.88, 0.78], roughness=0.95)
+
+scene {
+  cylinder "bottle" (radius=0.04, height=0.3, mat="glass") {
+    connector "label_l" (at=[-0.04, 0.12, 0],  dir=[-1, 0, 0])
+    connector "label_r" (at=[ 0.04, 0.12, 0],  dir=[ 1, 0, 0])
+  }
+  curved_plane "label" (size=[0.25, 0.06], segments_u=48, mat="paper")
+  conform (target="bottle", child="label", from="label_l", to="label_r",
+           along=x, lift=0.0005)
+}

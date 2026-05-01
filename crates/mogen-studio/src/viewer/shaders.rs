@@ -11,7 +11,7 @@ uniform mat4 u_viewproj;
 // so the same skinning path covers static and skinned geometry uniformly.
 // Keep in sync with MAX_JOINTS in viewer.rs.
 uniform mat4 u_joint_mats[128];
-// Preview shader selector. 0=Standard, 1=Toon, 2=PS1, 3=CRT, 4=Matcap.
+// Preview shader selector. 0=Standard, 1=Toon, 2=CRT, 3=Matcap.
 // Wireframe runs the Standard path with polygon-mode set to LINE on the CPU
 // side, so it doesn't need its own branch here.
 uniform int u_shader_mode;
@@ -19,11 +19,6 @@ uniform int u_shader_mode;
 out vec3 v_world_pos;
 out vec3 v_normal;
 out vec2 v_uv;
-// Affine-interpolated copy of the UV for the PS1 preview mode. `noperspective`
-// disables the perspective-correct divide, which reproduces the wobbling /
-// sliding texture seams characteristic of PS1-era hardware. The standard
-// fragment shader still samples the perspective-correct `v_uv`.
-noperspective out vec2 v_uv_aff;
 
 void main() {
     // Clamp defensively: huge skins get their palette truncated on the CPU
@@ -39,22 +34,10 @@ void main() {
     // mat3(palette) is a reasonable approximation of the normal transform so
     // long as the palette stays close to rigid; the FS re-normalizes anyway.
     vec3 n = mat3(palette) * a_normal;
-    vec4 clip = u_viewproj * pos4;
-    if (u_shader_mode == 2) {
-        // PS1 vertex snap: quantize NDC.xy to a coarse grid so the geometry
-        // jitters in screen space as the camera moves, matching how the
-        // console's fixed-point vertex pipeline rounded positions before
-        // rasterization.
-        float grid = 160.0;
-        vec2 ndc = clip.xy / clip.w;
-        ndc = floor(ndc * grid) / grid;
-        clip.xy = ndc * clip.w;
-    }
-    gl_Position = clip;
+    gl_Position = u_viewproj * pos4;
     v_world_pos = pos4.xyz;
     v_normal = n;
     v_uv = a_uv;
-    v_uv_aff = a_uv;
 }
 "#;
 
@@ -62,7 +45,6 @@ pub(super) const FS_SRC: &str = r#"#version 330 core
 in vec3 v_world_pos;
 in vec3 v_normal;
 in vec2 v_uv;
-noperspective in vec2 v_uv_aff;
 out vec4 frag;
 
 uniform vec3 u_camera_pos;
@@ -131,6 +113,43 @@ uniform vec3 u_light_dir[MAX_LIGHTS];
 uniform vec3 u_light_color[MAX_LIGHTS];
 uniform float u_light_range[MAX_LIGHTS];
 uniform vec2 u_light_cone[MAX_LIGHTS];
+
+// Shadow mapping. Two parallel pools of depth maps:
+//   - 2D array texture for directional + spot casters. Up to MAX_SHADOW_2D
+//     slices (matches `MAX_SHADOW_2D` in `shadows.rs`).
+//   - Per-caster cubemaps for point lights, capped at MAX_SHADOW_CUBE.
+// `u_light_shadow_2d_idx[i]` selects which atlas slice (or -1 for "this
+// light doesn't cast"); `u_light_shadow_cube_idx[i]` selects which cubemap
+// slot, again -1 for "no shadow". A light can use at most one of the two —
+// the renderer guarantees the indices are mutually exclusive.
+//
+// `u_shadow_fallback_idx` mirrors the same encoding but for the analytic
+// key/fill fallback rig used when `u_num_lights == 0`. -1 disables.
+const int MAX_SHADOW_2D = 4;
+const int MAX_SHADOW_CUBE = 2;
+uniform sampler2DArrayShadow u_shadow_2d;
+uniform samplerCubeShadow u_shadow_cube0;
+uniform samplerCubeShadow u_shadow_cube1;
+uniform mat4 u_shadow_2d_viewproj[MAX_SHADOW_2D];
+uniform vec3 u_shadow_cube_pos[MAX_SHADOW_CUBE];
+uniform float u_shadow_cube_far[MAX_SHADOW_CUBE];
+uniform int u_light_shadow_2d_idx[MAX_LIGHTS];
+uniform int u_light_shadow_cube_idx[MAX_LIGHTS];
+uniform int u_shadow_fallback_idx;
+uniform float u_shadow_bias_const;
+uniform float u_shadow_bias_slope;
+uniform float u_shadow_strength;
+// Inverse texel size of the 2D atlas — used to step the PCF kernel by
+// whole texels regardless of map resolution. Single-tap hardware compare
+// already does a 2×2 PCF tap; the manual kernel below adds extra taps
+// only when [`ShadowQuality::pcf_taps`] asks for them.
+uniform float u_shadow_2d_texel;
+// Number of PCF taps per shadow lookup. 1 = hardware-only (cheapest, still
+// looks fine on the lower presets). 5 = 5-sample Poisson disk for a softer
+// penumbra. 9 = 9-sample disk. Driven by the active `ShadowQuality` preset
+// so users on slower GPUs can dial the per-fragment cost down without
+// touching map resolution.
+uniform int u_shadow_pcf_taps;
 
 const float PI = 3.14159265359;
 
@@ -257,6 +276,94 @@ vec2 env_brdf_approx(float NdV, float roughness) {
     return vec2(-1.04, 1.04) * a004 + r.zw;
 }
 
+// Pre-baked Poisson-disk offsets used by the multi-tap PCF path below. Eight
+// directions evenly spaced on the unit circle plus a centre tap; the FS
+// reads the prefix matching `u_shadow_pcf_taps` so we can dial taps without
+// re-binding a different sampler.
+const vec2 PCF_DISK[9] = vec2[9](
+    vec2( 0.0,  0.0),
+    vec2( 1.0,  0.0),
+    vec2(-1.0,  0.0),
+    vec2( 0.0,  1.0),
+    vec2( 0.0, -1.0),
+    vec2( 0.7071,  0.7071),
+    vec2(-0.7071,  0.7071),
+    vec2( 0.7071, -0.7071),
+    vec2(-0.7071, -0.7071)
+);
+
+// Sample the 2D-array shadow atlas at slice `idx` for fragment `world`.
+// Returns 1.0 = fully lit, 0.0 = fully shadowed. The hardware does the depth
+// compare via `sampler2DArrayShadow`; the multi-tap loop adds Poisson-disk
+// offsets when `u_shadow_pcf_taps > 1` for softer penumbras. Bias scales
+// with surface slope so glancing surfaces avoid acne without losing contact
+// between feet and ground.
+float sample_shadow_2d(int idx, vec3 world, vec3 N, vec3 L) {
+    if (idx < 0) return 1.0;
+    mat4 vp = u_shadow_2d_viewproj[idx];
+    vec4 clip = vp * vec4(world, 1.0);
+    if (clip.w <= 0.0) return 1.0;
+    vec3 ndc = clip.xyz / clip.w;
+    vec3 uvz = ndc * 0.5 + 0.5;
+    if (uvz.z > 1.0) return 1.0;
+    if (uvz.x < 0.0 || uvz.x > 1.0 || uvz.y < 0.0 || uvz.y > 1.0) return 1.0;
+    float NdL = max(dot(N, L), 0.0);
+    float bias = u_shadow_bias_const + u_shadow_bias_slope * (1.0 - NdL);
+    float ref = uvz.z - bias;
+    int taps = clamp(u_shadow_pcf_taps, 1, 9);
+    if (taps <= 1) {
+        // Single hardware-PCF tap. The driver still does a 2×2 bilinear
+        // depth compare under the hood, so this is already smoother than
+        // a hard-edge nearest sample.
+        return texture(u_shadow_2d, vec4(uvz.xy, float(idx), ref));
+    }
+    float texel = u_shadow_2d_texel;
+    float sum = 0.0;
+    for (int i = 0; i < taps; ++i) {
+        vec2 ofs = PCF_DISK[i] * texel;
+        sum += texture(u_shadow_2d, vec4(uvz.xy + ofs, float(idx), ref));
+    }
+    return sum / float(taps);
+}
+
+// Sample a point-light cubemap. World-space distance to the light is
+// linearised against `far_plane` to recover the same depth value the depth
+// pass wrote via `gl_FragDepth`. GLSL 330 forbids dynamic indexing into a
+// sampler array, so we fan out the two slot cases with explicit `if`s.
+float sample_shadow_cube(int idx, vec3 world, vec3 N, vec3 L) {
+    if (idx < 0) return 1.0;
+    if (idx > 1) return 1.0;
+    vec3 lp = (idx == 0) ? u_shadow_cube_pos[0] : u_shadow_cube_pos[1];
+    float far = (idx == 0) ? u_shadow_cube_far[0] : u_shadow_cube_far[1];
+    if (far <= 0.0) return 1.0;
+    vec3 to_frag = world - lp;
+    float dist = length(to_frag);
+    if (dist >= far) return 1.0;
+    float NdL = max(dot(N, L), 0.0);
+    float bias = u_shadow_bias_const + u_shadow_bias_slope * (1.0 - NdL);
+    float ref = clamp(dist / far - bias, 0.0, 1.0);
+    if (idx == 0) {
+        return texture(u_shadow_cube0, vec4(to_frag, ref));
+    }
+    return texture(u_shadow_cube1, vec4(to_frag, ref));
+}
+
+// Resolve the per-light shadow factor for light index `i`. Returns 1.0 when
+// no caster is wired up; otherwise blends towards `1.0 - u_shadow_strength`
+// at the occluded extreme so even fully-shadowed regions retain a hint of
+// light (matches DCC defaults; pure black shadows look broken under sky IBL).
+float light_shadow_factor(int i, vec3 world, vec3 N, vec3 L) {
+    int idx_2d = u_light_shadow_2d_idx[i];
+    int idx_cube = u_light_shadow_cube_idx[i];
+    float occ = 1.0;
+    if (idx_2d >= 0) {
+        occ = sample_shadow_2d(idx_2d, world, N, L);
+    } else if (idx_cube >= 0) {
+        occ = sample_shadow_cube(idx_cube, world, N, L);
+    }
+    return mix(1.0 - u_shadow_strength, 1.0, occ);
+}
+
 // Splits the result into diffuse/specular so the caller can composite them
 // separately. Transmissive materials need this because reflected light passes
 // through the alpha blend at full strength while diffuse/absorbed light fades
@@ -283,10 +390,7 @@ void brdf_direct(vec3 N, vec3 V, vec3 L, vec3 albedo, float metallic, float roug
 }
 
 void main() {
-    // PS1 mode swaps to the affine-interpolated UV so textured surfaces get
-    // the authentic "sliding UV" look. All other modes use the perspective-
-    // correct varying.
-    vec2 uv = (u_shader_mode == 2) ? v_uv_aff : v_uv;
+    vec2 uv = v_uv;
     // Gather material samples.
     vec4 base_sample = vec4(u_base_color, u_base_color_alpha);
     if (u_use_base_tex == 1) {
@@ -400,7 +504,8 @@ void main() {
             if (atten <= 0.0) continue;
             vec3 dpart, spart;
             brdf_direct(N, V, L, albedo, metallic, roughness, F0, diffuse_scale, dpart, spart);
-            vec3 lc = u_light_color[i] * atten;
+            float shadow = light_shadow_factor(i, v_world_pos, N, L);
+            vec3 lc = u_light_color[i] * atten * shadow;
             diff_direct += dpart * lc;
             spec_direct += spart * lc;
         }
@@ -408,10 +513,20 @@ void main() {
         vec3 key_color  = vec3(1.00, 0.96, 0.90) * 1.10;
         vec3 fill_color = vec3(0.70, 0.78, 0.95) * 0.40;
         vec3 diff_key, spec_key, diff_fill, spec_fill;
-        brdf_direct(N, V, normalize(-u_key_dir),  albedo, metallic, roughness, F0, diffuse_scale, diff_key,  spec_key);
-        brdf_direct(N, V, normalize(-u_fill_dir), albedo, metallic, roughness, F0, diffuse_scale, diff_fill, spec_fill);
-        diff_direct = diff_key * key_color + diff_fill * fill_color;
-        spec_direct = spec_key * key_color + spec_fill * fill_color;
+        vec3 key_L  = normalize(-u_key_dir);
+        vec3 fill_L = normalize(-u_fill_dir);
+        brdf_direct(N, V, key_L,  albedo, metallic, roughness, F0, diffuse_scale, diff_key,  spec_key);
+        brdf_direct(N, V, fill_L, albedo, metallic, roughness, F0, diffuse_scale, diff_fill, spec_fill);
+        // Only the key (sun) direction is shadowed in the fallback rig; the
+        // fill light is intentionally diffuse-only ambient and casting it
+        // would produce banded double shadows on the ground.
+        float key_shadow = 1.0;
+        if (u_shadow_fallback_idx >= 0) {
+            float occ = sample_shadow_2d(u_shadow_fallback_idx, v_world_pos, N, key_L);
+            key_shadow = mix(1.0 - u_shadow_strength, 1.0, occ);
+        }
+        diff_direct = diff_key * key_color * key_shadow + diff_fill * fill_color;
+        spec_direct = spec_key * key_color * key_shadow + spec_fill * fill_color;
     }
 
     // Image-based lighting from the analytic sky. The diffuse irradiance is a
@@ -478,22 +593,6 @@ void main() {
         absorbed_tm = mix(toon, vec3(0.03), smoothstep(0.75, 0.95, outline));
         reflected_tm = vec3(0.0);
     } else if (u_shader_mode == 2) {
-        // PS1 retro: ordered 4x4 Bayer dither combined with a 5-bit-per-
-        // channel colour quantize. Vertex snap + affine UVs live in the VS
-        // and the `uv` selection above.
-        float bayer[16] = float[16](
-             0.0/16.0,  8.0/16.0,  2.0/16.0, 10.0/16.0,
-            12.0/16.0,  4.0/16.0, 14.0/16.0,  6.0/16.0,
-             3.0/16.0, 11.0/16.0,  1.0/16.0,  9.0/16.0,
-            15.0/16.0,  7.0/16.0, 13.0/16.0,  5.0/16.0
-        );
-        int bx = int(mod(gl_FragCoord.x, 4.0));
-        int by = int(mod(gl_FragCoord.y, 4.0));
-        float thr = bayer[by * 4 + bx] - 0.5;
-        float levels = 32.0;
-        absorbed_tm = clamp(floor(tonemapped * levels + thr + 0.5) / levels, 0.0, 1.0);
-        reflected_tm = vec3(0.0);
-    } else if (u_shader_mode == 3) {
         // CRT: horizontal scanlines + an RGB aperture-grille mask. No post-
         // process FBO, so this rides on gl_FragCoord directly — the mask
         // pattern is in screen pixels, which matches how real trinitrons
@@ -506,7 +605,7 @@ void main() {
         else mask.b = 1.15;
         absorbed_tm = clamp(tonemapped * scan * mask, 0.0, 1.0);
         reflected_tm = vec3(0.0);
-    } else if (u_shader_mode == 4) {
+    } else if (u_shader_mode == 3) {
         // Matcap: a clay-lit hemisphere preview that ignores the PBR
         // material entirely. Great for checking silhouette and surface
         // curvature while sculpting.
@@ -667,5 +766,82 @@ void main() {
     alpha *= fade;
     if (alpha <= 0.0) discard;
     frag = vec4(color, alpha);
+}
+"#;
+
+/// Vertex shader for the directional / spot shadow depth pre-pass. Re-uses
+/// the main mesh's interleaved VBO format and skinning palette so animated
+/// rigs deform identically to the lit pass — the only difference is that the
+/// camera matrix is the light-space `viewproj`. Output is depth-only; the
+/// fragment shader writes nothing and `gl_Position` is all the rasterizer
+/// needs to fill the depth buffer.
+pub(super) const SHADOW_DIR_VS: &str = r#"#version 330 core
+layout (location = 0) in vec3 a_pos;
+layout (location = 1) in vec3 a_normal;
+layout (location = 2) in vec2 a_uv;
+layout (location = 3) in vec4 a_joints;
+layout (location = 4) in vec4 a_weights;
+
+uniform mat4 u_light_viewproj;
+uniform mat4 u_joint_mats[128];
+
+void main() {
+    ivec4 ji = clamp(ivec4(a_joints), ivec4(0), ivec4(127));
+    mat4 palette = u_joint_mats[ji.x] * a_weights.x
+                 + u_joint_mats[ji.y] * a_weights.y
+                 + u_joint_mats[ji.z] * a_weights.z
+                 + u_joint_mats[ji.w] * a_weights.w;
+    vec4 pos4 = palette * vec4(a_pos, 1.0);
+    gl_Position = u_light_viewproj * pos4;
+}
+"#;
+
+/// Fragment shader for the directional / spot depth pre-pass. Empty body —
+/// the depth buffer is written automatically from `gl_Position`. Kept
+/// declared so the program object validates with a colour-mask-disabled
+/// configuration on every driver.
+pub(super) const SHADOW_DIR_FS: &str = r#"#version 330 core
+void main() {}
+"#;
+
+/// Vertex shader for the point-light cubemap depth pre-pass. Same skinning
+/// path as the directional VS but additionally forwards the world-space
+/// vertex position so the FS can compute linear depth.
+pub(super) const SHADOW_POINT_VS: &str = r#"#version 330 core
+layout (location = 0) in vec3 a_pos;
+layout (location = 1) in vec3 a_normal;
+layout (location = 2) in vec2 a_uv;
+layout (location = 3) in vec4 a_joints;
+layout (location = 4) in vec4 a_weights;
+
+uniform mat4 u_light_viewproj;
+uniform mat4 u_joint_mats[128];
+
+out vec3 v_world;
+
+void main() {
+    ivec4 ji = clamp(ivec4(a_joints), ivec4(0), ivec4(127));
+    mat4 palette = u_joint_mats[ji.x] * a_weights.x
+                 + u_joint_mats[ji.y] * a_weights.y
+                 + u_joint_mats[ji.z] * a_weights.z
+                 + u_joint_mats[ji.w] * a_weights.w;
+    vec4 pos4 = palette * vec4(a_pos, 1.0);
+    v_world = pos4.xyz;
+    gl_Position = u_light_viewproj * pos4;
+}
+"#;
+
+/// Fragment shader for the point-light depth pass. Writes linear distance to
+/// the light, normalised by `u_far_plane`, into `gl_FragDepth` so the main
+/// FS can compare against `length(world - light_pos) / far_plane` directly.
+/// Hardware perspective depth would work too, but linear depth keeps PCF
+/// kernel error uniform across the cube faces.
+pub(super) const SHADOW_POINT_FS: &str = r#"#version 330 core
+in vec3 v_world;
+uniform vec3 u_light_pos;
+uniform float u_far_plane;
+void main() {
+    float d = length(v_world - u_light_pos) / max(u_far_plane, 1e-4);
+    gl_FragDepth = clamp(d, 0.0, 1.0);
 }
 "#;

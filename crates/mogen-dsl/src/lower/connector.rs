@@ -185,7 +185,7 @@ pub(super) fn default_connectors(node: &Node) -> Vec<(&'static str, Vec3, Vec3)>
             out.push(("tip",  Vec3::new(0.0, h, 0.0), Vec3::Y));
             out.push(("top",  Vec3::new(0.0, h, 0.0), Vec3::Y));
         }
-        "spline_tube" => {
+        "spline_tube" | "spline_ribbon" => {
             // `start` at the first control point (facing -tangent), `end` at the last.
             let points = node.attr_list_vec3("points").unwrap_or_default();
             if points.len() >= 2 {

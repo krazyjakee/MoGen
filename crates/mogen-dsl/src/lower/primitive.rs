@@ -6,8 +6,9 @@ use mogen_geom::{
     box_mesh, capsule_mesh, clean_csg_output, cone_mesh, curved_plane_mesh, cylinder_mesh,
     difference_many, disc_mesh, ellipsoid_mesh, frustum_mesh, half_cylinder_mesh, hemisphere_mesh,
     icosphere_mesh, lathe_mesh, leaf_card_mesh, mesh_from_glb_bytes, plane_mesh, prism_mesh,
-    pyramid_mesh, quad_mesh, read_glb_bytes, rounded_box_mesh, sphere_mesh, spline_tube_mesh,
-    superellipsoid_mesh, torus_arc_mesh, torus_mesh, transform_mesh, tube_mesh, wedge_mesh,
+    pyramid_mesh, quad_mesh, read_glb_bytes, rounded_box_mesh, sphere_mesh, spline_ribbon_mesh,
+    spline_tube_mesh, superellipsoid_mesh, torus_arc_mesh, torus_mesh, transform_mesh, tube_mesh,
+    wedge_mesh,
 };
 
 use crate::ast::Node;
@@ -34,6 +35,24 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
         "quad" => {
             let s = resolve_size_xy(node, [1.0, 1.0]);
             quad_mesh(s, uv_mode)
+        }
+        "decal" => {
+            // Decals are always image-as-texture, never tile — overriding the
+            // inherited `uv_mode` so a wrapping `Tile` material on the parent
+            // can't squash the decal artwork into a repeated micro-pattern.
+            let s = resolve_size_xy(node, [0.5, 0.5]);
+            let mut m = quad_mesh(s, UvMode::Fit);
+            // Lift the quad slightly along its local +Z so it doesn't z-fight
+            // against the surface it's sitting on. Default is small enough to
+            // read flush at typical scales; the author can override via
+            // `offset=`.
+            let offset = node.attr_number("offset").unwrap_or(0.001);
+            if offset != 0.0 {
+                for p in &mut m.positions {
+                    p[2] += offset;
+                }
+            }
+            m
         }
         "cylinder" => {
             let radius = node.attr_number("radius").unwrap_or(0.5);
@@ -228,6 +247,25 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
                 .unwrap_or_else(|| scaled_default(8, 2));
             let cap_ends = node.attr_number("cap_ends").map(|n| n != 0.0).unwrap_or(true);
             spline_tube_mesh(&points, &radii, segments, samples, cap_ends, uv_mode)
+        }
+        "spline_ribbon" => {
+            let points = node
+                .attr_list_vec3("points")
+                .unwrap_or_else(|| vec![[0.0, 0.0, 0.0], [0.0, 1.0, 0.0]]);
+            // `widths` (list, one per control point) takes precedence; else
+            // fall back to scalar `width`.
+            let widths = if let Some(w) = node.attr_list("widths") {
+                w.to_vec()
+            } else {
+                vec![node.attr_number("width").unwrap_or(0.1)]
+            };
+            let samples = node
+                .attr_number("samples")
+                .map(|n| n as u32)
+                .unwrap_or_else(|| scaled_default(8, 2));
+            // Author writes degrees (per the prompt), the mesh builder takes radians.
+            let twist = node.attr_number("twist").unwrap_or(0.0).to_radians();
+            spline_ribbon_mesh(&points, &widths, samples, twist, uv_mode)
         }
         "mesh" => {
             let src = match node.attr_string("src") {

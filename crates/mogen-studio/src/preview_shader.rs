@@ -8,16 +8,14 @@ pub enum PreviewShader {
     #[default]
     Standard,
     Toon,
-    Ps1,
     Crt,
     Matcap,
     Wireframe,
 }
 
-pub const PREVIEW_SHADERS: [PreviewShader; 6] = [
+pub const PREVIEW_SHADERS: [PreviewShader; 5] = [
     PreviewShader::Standard,
     PreviewShader::Toon,
-    PreviewShader::Ps1,
     PreviewShader::Crt,
     PreviewShader::Matcap,
     PreviewShader::Wireframe,
@@ -29,7 +27,6 @@ pub fn preview_shader_key(s: PreviewShader) -> &'static str {
     match s {
         PreviewShader::Standard => "standard",
         PreviewShader::Toon => "toon",
-        PreviewShader::Ps1 => "ps1",
         PreviewShader::Crt => "crt",
         PreviewShader::Matcap => "matcap",
         PreviewShader::Wireframe => "wireframe",
@@ -40,7 +37,6 @@ pub fn preview_shader_label(s: PreviewShader) -> &'static str {
     match s {
         PreviewShader::Standard => "Standard (PBR)",
         PreviewShader::Toon => "Toon (cel-shaded)",
-        PreviewShader::Ps1 => "PS1 (retro dither)",
         PreviewShader::Crt => "CRT (scanlines)",
         PreviewShader::Matcap => "Matcap (clay)",
         PreviewShader::Wireframe => "Wireframe",
@@ -51,7 +47,6 @@ pub fn parse_preview_shader(s: &str) -> Option<PreviewShader> {
     match s.trim().to_ascii_lowercase().as_str() {
         "standard" | "pbr" | "" => Some(PreviewShader::Standard),
         "toon" | "cel" => Some(PreviewShader::Toon),
-        "ps1" | "retro" => Some(PreviewShader::Ps1),
         "crt" | "scanlines" => Some(PreviewShader::Crt),
         "matcap" | "clay" => Some(PreviewShader::Matcap),
         "wireframe" | "wire" => Some(PreviewShader::Wireframe),
@@ -66,9 +61,8 @@ impl PreviewShader {
         match self {
             PreviewShader::Standard => 0,
             PreviewShader::Toon => 1,
-            PreviewShader::Ps1 => 2,
-            PreviewShader::Crt => 3,
-            PreviewShader::Matcap => 4,
+            PreviewShader::Crt => 2,
+            PreviewShader::Matcap => 3,
             // Wireframe uses the standard fragment path; the renderer swaps
             // polygon mode to LINE instead.
             PreviewShader::Wireframe => 0,

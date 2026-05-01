@@ -40,7 +40,7 @@ pub use image::{GeneratedImage, DEFAULT_IMAGE_MODEL};
 pub use imports::{
     format_import_aabb_preamble, format_imports_preserve_block, summarize_imports, ImportSummary,
 };
-pub use prompt::{system_instruction, StdlibIndex};
+pub use prompt::{cacheable_block, inline_block, system_instruction, StdlibIndex};
 pub use provider::{LlmClient, Provider, ProviderError};
 pub use repair::{
     generate_with_repair, repair_message, validate_text, GenerateOutcome, RepairConfig,

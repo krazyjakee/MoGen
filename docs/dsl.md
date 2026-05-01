@@ -14,7 +14,9 @@ modules, see [`modules.md`](./modules.md).
 - [Scene structure](#scene-structure-scene-group)
 - [Primitives](#primitives)
 - [Materials](#materials)
+- [Decals](#decals)
 - [Connectors](#connectors)
+- [Conform: moulding a primitive onto a target surface](#conform-moulding-a-primitive-onto-a-target-surface)
 - [Replicators: `mirror`, `array`, `stack`, `grid`](#replicators-mirror-array-stack-grid)
 - [CSG: `union` / `difference` / `intersect`](#csg-union--difference--intersect)
 - [Modules: `module` and `use`](#modules-module-and-use)
@@ -336,6 +338,14 @@ Declared at the top of the file or inside `scene { ... }`. Attributes:
 - `occlusion_texture` — ambient occlusion (red channel). Linear.
 - `emissive_texture` — emissive colour map, multiplied against `emissive`.
   sRGB.
+- `prompt` — optional free-form description of the surface, used by
+  `mogen textures` as the subject hint when generating an albedo image. Lets
+  you steer the model away from the auto-derived "material name + colour"
+  framing — useful when the material name is generic (`fabric_main`) or when
+  the default phrasing trips Gemini's recitation filter. Example:
+  `prompt="navy nylon ripstop weave"`. The texture pipeline rephrases this
+  on retry if the image generator rejects the request for recitation, so a
+  literal brand-adjacent phrasing won't permanently jam a build.
 
 Example:
 
@@ -354,6 +364,82 @@ are a hard error at export.
 
 Reference a material on any geometry or group via `mat="wood"`. The lookup is
 by exact string match; unknown names are a hard error at lowering.
+
+---
+
+## Decals
+
+A `decal` is a transparent image (logo, label, sticker, scribble, seal,
+handwritten note) projected onto a surface. It lowers to a thin double-sided
+quad floating slightly off the parent surface, with an auto-synthesized
+`alpha_mode="blend"` material whose albedo is an RGBA PNG.
+
+```
+decal "logo" (
+  pos = [0, 0.1, 0.101],
+  size = [0.25, 0.12],
+  prompt = "embroidered MoGen logo, white thread on dark fabric"
+)
+```
+
+Attributes:
+
+- `size` — `[w, h]` in local units. Default `[0.5, 0.5]`. The decal is a
+  flat XY quad whose normal points along its local +Z; rotate the decal
+  with `rot=` / `rx`/`ry`/`rz` to point its face wherever you need.
+- `prompt` — image description handed to Gemini when running
+  `mogen textures`. Asks for an RGBA PNG with a fully transparent
+  background; the resolved file path is spliced back into the source as
+  `image="…"` for reproducibility.
+- `image` — explicit path to an existing RGBA PNG (relative to the `.mog`
+  file). Wins over `prompt=`; skips the LLM call entirely.
+- `tint` — vec3 `[r, g, b]` multiplied against the decal's albedo.
+  Default `[1, 1, 1]` (no tint).
+- `roughness` — `0.0`–`1.0`. Default `0.6`.
+- `offset` — `+Z` gap from the surface, in local units, to avoid
+  z-fighting against the underlying mesh. Default `0.001` reads flush at
+  typical scales; raise on coarse geometry.
+
+If neither `prompt=` nor `image=` is set, the decal's name is used as the
+prompt. That makes the compact form `decal "embroidered logo, white thread"
+(size=[0.2, 0.1], pos=[0, 0.1, 0.101])` valid — handy when you want to keep
+the description and the node identity in one place.
+
+A few rules that aren't optional:
+
+- `mat=` is rejected on decals — they own their material outright. Use
+  `tint=`/`roughness=` to influence shading.
+- Each decal gets its own auto-named material (`__decal_<name>`) and
+  is never merged into adjacent same-material siblings by the export-time
+  merge pass.
+- The `mogen textures` pipeline asks Gemini for transparent-background
+  RGBA directly. There is no chroma-key step: the `alpha_mode="mask"`
+  foliage path is for foliage, not decals.
+
+Example: a logo on the front of a shirt, plus an authored handwriting
+overlay on a paper card.
+
+```
+material "shirt" (color=[0.1, 0.2, 0.6])
+material "paper" (color=[0.96, 0.94, 0.88], roughness=0.95)
+
+scene {
+  box "shirt" (size=[0.6, 0.8, 0.2], mat="shirt")
+  decal "shirt_logo" (
+    pos = [0, 0.1, 0.101],
+    size = [0.25, 0.12],
+    prompt = "embroidered MoGen logo, white thread on dark fabric"
+  )
+
+  panel "card" (size=[0.4, 0.3, 0.01], mat="paper", right_of="shirt", gap=0.2)
+  decal "note" (
+    pos = [0.6, 0.0, 0.0061],
+    size = [0.30, 0.20],
+    rot = [0, 0, 0],
+    image = "textures/notes/handwritten_thanks.png"
+  )
+}
+```
 
 ---
 
@@ -386,6 +472,198 @@ When a node is the `child` of an `attach`, its `pos` / `rot` are still honoured
 as a local offset on top of the alignment — `pos` shifts the anchor in the
 parent's frame and `rot` rotates the aligned node around its anchor — so a
 Studio gizmo drag persists across rebuilds.
+
+---
+
+## Conform: moulding a primitive onto a target surface
+
+`conform` deforms a child primitive's *vertex positions* so it lies on a
+target mesh's surface. It has two modes:
+
+- **Path mode (`from=` / `to=`)** — stretches a strip or tube between two
+  connectors on the target. The canonical case is a zip on a curved sports
+  bag; covers labels wrapped around bottles, gold trim along a shield's edge,
+  hoses lying on a chassis, ribbons spiralling around a vase, stitched seams.
+- **Patch mode (`at=`)** — lays a flat / disc-shaped child down at a single
+  anchor connector and bends it to follow surface curvature locally. The
+  canonical case is a round pocket on the side of the bag; covers brand
+  decals, plates, lids, eye spots, leather patches.
+
+Conform is the *deforming* counterpart to `attach`: where attach sets a rigid
+transform aligning two connector frames, conform mutates the child's mesh.
+Pick the mode by which attrs you provide — mixing `at=` with `from=`/`to=` is
+an error, and so is omitting both.
+
+```
+// Path mode — strip stretched along a curve.
+conform (target="bag", child="zip", from="zip_a", to="zip_b",
+         along=x, lift=0.005)
+
+// Patch mode — disc anchored at a single point.
+conform (target="bag", child="pocket", at="pocket_spot", lift=0.002)
+```
+
+### Shared attributes
+
+| attribute | required | default | effect |
+|---|---|---|---|
+| `target` | yes | — | name of the surface mesh node to mould onto |
+| `child` | yes | — | name of the primitive whose vertices get deformed |
+| `lift` | no | `0.0` | outward offset along the surface normal (m) — typically a fraction of a millimetre to avoid z-fighting |
+| `reparent` | no | `1` | reparent child under target after conform; pass `0` to keep its original parent |
+
+### Path mode — `from=` / `to=`
+
+Each child vertex's coordinate on the `along` axis becomes a position along
+the surface path; the perpendicular axes lie tangent / normal to the surface
+at each sample.
+
+| attribute | required | default | effect |
+|---|---|---|---|
+| `from` | yes | — | connector name on `target` — start of the path |
+| `to` | yes | — | connector name on `target` — end of the path |
+| `along` | no | `x` (flat strips) / `y` (tubes) | which child-local axis is the path axis |
+| `width` | no | inferred from `along` | child-local axis perpendicular to path, tangent to surface |
+| `height` | no | inferred from `along` | child-local "thickness" axis (along surface normal) |
+| `samples` | no | `64` | path subdivisions (clamped to ≥ 2). Increase for high-curvature surfaces |
+| `twist` | no | `0` | total roll (degrees) around the path tangent across the strip |
+
+**Compatible primitives** (path mode):
+
+- **Flat strips**: `box`, `plane`, `quad`, `curved_plane`, `slab`, `post`, `panel`, `wall`, `spline_ribbon`
+- **Tubes**: `cylinder`, `capsule`, `tube`, `spline_tube` (cross-section ring rotates with the surface frame)
+- **Imported meshes** via `mesh "..." (src="...")`: accepted, but `along=` is required
+
+### Patch mode — `at=`
+
+Each child vertex is independently snapped to its closest point on the target
+surface; the child's `up` axis becomes the surface-outward direction at every
+vertex. This makes flat decals (a disc, a quad) bend to follow curvature
+locally without forcing the author to pick a path or supply two endpoints.
+
+| attribute | required | default | effect |
+|---|---|---|---|
+| `at` | yes | — | connector name on `target` — patch centre |
+| `up` | no | `y` (most flat primitives) / `z` (`quad`, `leaf_card`) | which child-local axis aligns with the surface outward normal |
+
+**Compatible primitives** (patch mode):
+
+- **Flat decals**: `disc`, `plane`, `quad`, `curved_plane`, `leaf_card`
+- **Box-likes used as thin patches**: `box`, `slab`, `panel`, `wall` — give them a small extent on the `up` axis
+- **Round primitives with a flat side**: `cylinder`, `hemisphere`, `half_cylinder` (a thin cylinder makes a perfect round disc)
+- **Imported meshes**: accepted, but `up=` is required
+
+### Rejected primitives
+
+Closed shapes with no canonical surface axis (`sphere`, `ellipsoid`,
+`icosphere`, `torus`, `torus_arc`, `superellipsoid`, `pyramid`, `cone`,
+`frustum`, `lathe`, `prism`, `rounded_box`, `wedge`) and CSG result nodes
+(`union`/`difference`/`intersect`) are rejected in both modes. The error
+message names the kind and points to the other mode if it would have worked
+there (e.g. `disc` rejected in path mode → suggests patch mode).
+
+### Tessellation
+
+The deformation reads each child vertex's coordinate on the `along` axis as
+its position along the path. A bare `box` only has two distinct values per
+axis (the eight corners), so an un-subdivided box can't bend — every
+interior path frame is skipped and the strip stays straight no matter how
+curved the target surface is.
+
+`conform` therefore inserts planar cuts perpendicular to `along` whenever
+the child's tessellation is coarser than `samples / 4` segments (clamped to
+8–64). Author-controlled subdivision still wins: pass a primitive that's
+already dense (`curved_plane (segments_u=48)`, `cylinder (segments=64)`,
+`spline_ribbon (samples=64)`) and the auto-subdivision is a no-op.
+
+### Examples
+
+```
+// Zip on a sports bag.
+material "leather" (color=[0.18, 0.16, 0.14], roughness=0.85)
+material "rubber"  (color=[0.08, 0.08, 0.08], roughness=0.7)
+
+scene {
+  ellipsoid "bag" (size=[1.0, 0.5, 0.5], mat="leather") {
+    connector "zip_a" (at=[-0.4, 0.20, 0.22], dir=[0, 0, 1])
+    connector "zip_b" (at=[ 0.4, 0.20, 0.22], dir=[0, 0, 1])
+  }
+  box "zip" (size=[0.8, 0.012, 0.04], mat="rubber")
+  conform (target="bag", child="zip", from="zip_a", to="zip_b",
+           along=x, lift=0.005)
+}
+```
+
+```
+// Wine-bottle label wrapped around a cylindrical bottle.
+scene {
+  cylinder "bottle" (radius=0.04, height=0.3, mat="glass") {
+    connector "label_l" (at=[-0.04, 0.12, 0],  dir=[-1, 0, 0])
+    connector "label_r" (at=[ 0.04, 0.12, 0],  dir=[ 1, 0, 0])
+  }
+  curved_plane "label" (size=[0.25, 0.06], segments_u=48, mat="paper")
+  conform (target="bottle", child="label", from="label_l", to="label_r",
+           along=x, lift=0.0005)
+}
+```
+
+```
+// Hose draped along a chassis: tube child, along=y matches cylinder's long axis.
+scene {
+  superellipsoid "chassis" (size=[1.6, 0.4, 0.7], ew=2.0, ns=2.0, mat="metal") {
+    connector "port_a" (at=[-0.7, 0.20, 0.30], dir=[0, 1, 0])
+    connector "port_b" (at=[ 0.7, 0.20, 0.30], dir=[0, 1, 0])
+  }
+  cylinder "hose" (radius=0.03, height=1.4, mat="rubber")
+  conform (target="chassis", child="hose", from="port_a", to="port_b",
+           along=y, samples=96, lift=0.005)
+}
+```
+
+```
+// Patch mode — round pocket decals on the sides of a sports bag.
+scene {
+  superellipsoid "body" (size=[0.6, 0.3, 0.3], ew=1.5, ns=1.2, mat="fabric") {
+    connector "left_spot"  (at=[-0.3, 0, 0], dir=[-1, 0, 0])
+    connector "right_spot" (at=[ 0.3, 0, 0], dir=[ 1, 0, 0])
+  }
+  disc "pocket_l" (radius=0.08, segments=32, mat="accent")
+  disc "pocket_r" (radius=0.08, segments=32, mat="accent")
+  conform (target="body", child="pocket_l", at="left_spot",  lift=0.002)
+  conform (target="body", child="pocket_r", at="right_spot", lift=0.002)
+}
+```
+
+### Pass ordering and reparenting
+
+Conform runs after `attach` and before skin binding, so an attached child can
+also be conformed and bind-pose world matrices reflect the deformed geometry.
+
+By default (`reparent=1`) the child is moved under the target with an identity
+local transform — its deformed vertices already live in the target's local
+frame, so this keeps the scene tree clean. Any user `pos=` / `rot=` declared
+on the child is intentionally discarded once the conform fires. Pass
+`reparent=0` to keep the child's original parent; the deformed mesh is
+transformed back into the child's local frame and the child's location in the
+hierarchy is untouched.
+
+### Path generation
+
+The path is built by chord-and-snap: each sample's chord-interpolated point is
+projected onto the target surface via closest-point query. This is *not* a
+true geodesic, but for the typical conform use cases (smoothly curving
+surfaces between two connectors), it is visually indistinguishable. Crank
+`samples=` up for high-curvature paths.
+
+`twist` ramps a roll around the path tangent linearly from 0 at the first
+sample to `twist` degrees at the last — useful for spiralling ribbons or
+bandages where the strip rotates around the path as it walks.
+
+### Reserved (not yet implemented)
+
+The validator accepts but lowering rejects, with a clear message: `direction`
+(projection mode — decal splat from a direction), `curve` (only
+`"geodesic_lerp"` is supported in v1), and `via` (multi-segment paths).
 
 ---
 

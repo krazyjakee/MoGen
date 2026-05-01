@@ -11,6 +11,7 @@ mod plane;
 mod prism;
 mod rounded_box;
 mod sphere;
+mod spline_ribbon;
 mod torus;
 
 pub use cone::{cone_mesh, frustum_mesh};
@@ -25,4 +26,5 @@ pub use plane::{curved_plane_mesh, plane_mesh, quad_mesh};
 pub use prism::{prism_mesh, pyramid_mesh, wedge_mesh};
 pub use rounded_box::rounded_box_mesh;
 pub use sphere::{capsule_mesh, ellipsoid_mesh, hemisphere_mesh, sphere_mesh, superellipsoid_mesh};
+pub use spline_ribbon::spline_ribbon_mesh;
 pub use torus::{torus_arc_mesh, torus_mesh};

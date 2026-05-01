@@ -1,0 +1,382 @@
+//! Per-kind constraint checks that run on top of the generic attribute
+//! schema. These cover required attributes, value-domain checks (e.g.
+//! `light kind` must be one of three strings), and structural rules
+//! (e.g. `clip` children must be `track`s, `bone` children must be `bone`s).
+
+use mogen_core::Diagnostic;
+use mogen_dsl::ast::{Node, Value};
+
+use super::schema::as_string_or_ident;
+
+pub(super) fn check_anim_required(n: &Node, diags: &mut Vec<Diagnostic>) {
+    match n.kind.as_str() {
+        "material" => {
+            if let Some(name) = n.attr("alpha_mode").and_then(as_string_or_ident) {
+                if !matches!(name, "opaque" | "mask" | "blend") {
+                    diags.push(
+                        Diagnostic::error(
+                            "E0203",
+                            format!(
+                                "alpha_mode must be \"opaque\", \"mask\", or \"blend\"; got \"{name}\""
+                            ),
+                        )
+                        .with_span(n.span),
+                    );
+                }
+            }
+            if let Some(name) = n.attr("uv_mode").and_then(as_string_or_ident) {
+                if !matches!(name, "tile" | "fit") {
+                    diags.push(
+                        Diagnostic::error(
+                            "E0206",
+                            format!(
+                                "uv_mode must be \"tile\" or \"fit\"; got \"{name}\""
+                            ),
+                        )
+                        .with_span(n.span),
+                    );
+                }
+            }
+            if let Some(Value::Number(t)) = n.attr("transmission") {
+                if !(0.0..=1.0).contains(t) {
+                    diags.push(
+                        Diagnostic::warning(
+                            "W0204",
+                            format!("transmission {t} is outside the [0,1] range"),
+                        )
+                        .with_span(n.span),
+                    );
+                }
+            }
+            if let Some(Value::Number(s)) = n.attr("emissive_strength") {
+                if *s < 0.0 {
+                    diags.push(
+                        Diagnostic::warning(
+                            "W0205",
+                            format!("emissive_strength {s} is negative — clamped to 0 by most renderers"),
+                        )
+                        .with_span(n.span),
+                    );
+                }
+            }
+        }
+        "joint" => {
+            if n.name.is_none() {
+                diags.push(
+                    Diagnostic::error("E0401", "joint declaration requires a name")
+                        .with_span(n.span),
+                );
+            }
+            if n.attr("type").is_none() {
+                diags.push(
+                    Diagnostic::error("E0402", "joint requires type=hinge|slider|ball|rotor")
+                        .with_span(n.span),
+                );
+            } else if let Some(name) = n.attr("type").and_then(as_string_or_ident) {
+                if !matches!(name, "hinge" | "slider" | "ball" | "rotor") {
+                    diags.push(
+                        Diagnostic::error(
+                            "E0402",
+                            format!("unknown joint type `{name}`"),
+                        )
+                        .with_span(n.span),
+                    );
+                }
+            }
+            if n.attr("pivot").is_none() {
+                diags.push(
+                    Diagnostic::error("E0403", "joint requires pivot=\"<node_name>\"")
+                        .with_span(n.span),
+                );
+            }
+            if let Some(Value::List(v)) = n.attr("limits") {
+                if v.len() != 2 {
+                    diags.push(
+                        Diagnostic::error(
+                            "E0404",
+                            format!("joint limits must be a 2-element list, got {}", v.len()),
+                        )
+                        .with_span(n.span),
+                    );
+                }
+            }
+        }
+        "clip" => {
+            if n.name.is_none() {
+                diags.push(
+                    Diagnostic::error("E0411", "clip declaration requires a name")
+                        .with_span(n.span),
+                );
+            }
+            for c in &n.children {
+                if c.kind != "track" {
+                    diags.push(
+                        Diagnostic::error(
+                            "E0412",
+                            format!("clip children must be `track` nodes, got `{}`", c.kind),
+                        )
+                        .with_span(c.span),
+                    );
+                }
+            }
+        }
+        "track" => {
+            if n.name.is_none() {
+                diags.push(
+                    Diagnostic::error(
+                        "E0413",
+                        "track requires a target name (joint or node)",
+                    )
+                    .with_span(n.span),
+                );
+            }
+            if n.attr("to").is_none() && n.attr("keys").is_none() {
+                diags.push(
+                    Diagnostic::error(
+                        "E0414",
+                        "track requires either `to=` scalar or `keys=[[t,v], ...]`",
+                    )
+                    .with_span(n.span),
+                );
+            }
+        }
+        "spin" | "open_close" | "wave" | "flap" | "idle" => {
+            if n.attr("target").is_none() {
+                diags.push(
+                    Diagnostic::error(
+                        "E0421",
+                        format!("`{}` requires target=\"<name>\"", n.kind),
+                    )
+                    .with_span(n.span),
+                );
+            }
+        }
+        "skeleton" => {
+            if n.name.is_none() {
+                diags.push(
+                    Diagnostic::error("E0501", "skeleton declaration requires a name")
+                        .with_span(n.span),
+                );
+            }
+            if n.children.is_empty() {
+                diags.push(
+                    Diagnostic::error("E0502", "skeleton must contain at least one bone")
+                        .with_span(n.span),
+                );
+            }
+            for c in &n.children {
+                if c.kind != "bone" {
+                    diags.push(
+                        Diagnostic::error(
+                            "E0503",
+                            format!("skeleton children must be `bone` nodes, got `{}`", c.kind),
+                        )
+                        .with_span(c.span),
+                    );
+                }
+            }
+        }
+        "bone" => {
+            if n.name.is_none() {
+                diags.push(
+                    Diagnostic::error("E0504", "bone declaration requires a name")
+                        .with_span(n.span),
+                );
+            }
+            for c in &n.children {
+                if c.kind != "bone" {
+                    diags.push(
+                        Diagnostic::error(
+                            "E0505",
+                            format!("bone children must be `bone` nodes, got `{}`", c.kind),
+                        )
+                        .with_span(c.span),
+                    );
+                }
+            }
+        }
+        "solid" => {
+            if let Some(name) = n.attr("cleanup").and_then(as_string_or_ident) {
+                if !matches!(name, "coplanar" | "none") {
+                    diags.push(
+                        Diagnostic::error(
+                            "E0701",
+                            format!(
+                                "solid cleanup must be \"coplanar\" or \"none\"; got \"{name}\""
+                            ),
+                        )
+                        .with_span(n.span),
+                    );
+                }
+            }
+        }
+        "light" => {
+            let kind = n.attr("kind").and_then(as_string_or_ident);
+            match kind {
+                None => diags.push(
+                    Diagnostic::error(
+                        "E0801",
+                        "`light` requires kind=directional|point|spot",
+                    )
+                    .with_span(n.span),
+                ),
+                Some(name) if !matches!(name, "directional" | "point" | "spot") => {
+                    diags.push(
+                        Diagnostic::error(
+                            "E0802",
+                            format!(
+                                "unknown light kind \"{name}\" (expected directional|point|spot)"
+                            ),
+                        )
+                        .with_span(n.span),
+                    );
+                }
+                _ => {}
+            }
+            if let Some(Value::Number(i)) = n.attr("intensity") {
+                if *i < 0.0 {
+                    diags.push(
+                        Diagnostic::warning(
+                            "W0803",
+                            format!("light intensity {i} is negative — clamped to 0 by most renderers"),
+                        )
+                        .with_span(n.span),
+                    );
+                }
+            }
+            if let Some(Value::Number(r)) = n.attr("range") {
+                if *r <= 0.0 {
+                    diags.push(
+                        Diagnostic::error(
+                            "E0804",
+                            format!("light `range` must be > 0, got {r}"),
+                        )
+                        .with_span(n.span),
+                    );
+                }
+                if matches!(kind, Some("directional")) {
+                    diags.push(
+                        Diagnostic::warning(
+                            "W0805",
+                            "`range` is ignored on directional lights",
+                        )
+                        .with_span(n.span),
+                    );
+                }
+            }
+            let inner = match n.attr("inner_cone") {
+                Some(Value::Number(v)) => Some(*v),
+                _ => None,
+            };
+            let outer = match n.attr("outer_cone") {
+                Some(Value::Number(v)) => Some(*v),
+                _ => None,
+            };
+            for (label, val) in [("inner_cone", inner), ("outer_cone", outer)] {
+                if let Some(v) = val {
+                    if !(0.0..=90.0).contains(&v) {
+                        diags.push(
+                            Diagnostic::error(
+                                "E0806",
+                                format!("light `{label}` {v}° must be in [0, 90]"),
+                            )
+                            .with_span(n.span),
+                        );
+                    }
+                    if !matches!(kind, Some("spot")) {
+                        diags.push(
+                            Diagnostic::warning(
+                                "W0807",
+                                format!("`{label}` is only used by spot lights"),
+                            )
+                            .with_span(n.span),
+                        );
+                    }
+                }
+            }
+            if let (Some(i), Some(o)) = (inner, outer) {
+                if i > o {
+                    diags.push(
+                        Diagnostic::error(
+                            "E0808",
+                            format!(
+                                "light `inner_cone` ({i}°) must be ≤ `outer_cone` ({o}°)"
+                            ),
+                        )
+                        .with_span(n.span),
+                    );
+                }
+            }
+        }
+        "attach" => {
+            if n.attr("parent").and_then(as_string_or_ident).is_none() {
+                diags.push(
+                    Diagnostic::error("E0601", "attach requires parent=\"<node name>\"")
+                        .with_span(n.span),
+                );
+            }
+            if n.attr("child").and_then(as_string_or_ident).is_none() {
+                diags.push(
+                    Diagnostic::error("E0602", "attach requires child=\"<node name>\"")
+                        .with_span(n.span),
+                );
+            }
+        }
+        "decal" => {
+            // Decals own their synthesized material — `mat=` would silently
+            // shadow the decal's transparent / double-sided / fit-UV setup.
+            if n.attr("mat").is_some() {
+                diags.push(
+                    Diagnostic::error(
+                        "E0901",
+                        "`decal` does not accept `mat=` — decals own their material; \
+                         author `tint=`/`roughness=` directly on the decal instead",
+                    )
+                    .with_span(n.span),
+                );
+            }
+            // Both image= and prompt= present: image wins, prompt is dead text.
+            if n.attr("image").is_some() && n.attr("prompt").is_some() {
+                diags.push(
+                    Diagnostic::warning(
+                        "W0902",
+                        "`decal` has both `image=` and `prompt=` — `image=` wins; \
+                         the `prompt=` is unused",
+                    )
+                    .with_span(n.span),
+                );
+            }
+            // size= must be a 2-element list of positive numbers.
+            if let Some(v) = n.attr("size") {
+                let arity = match v {
+                    Value::List(xs) => Some(xs.len()),
+                    Value::ListExpr(xs) => Some(xs.len()),
+                    _ => None,
+                };
+                if let Some(a) = arity {
+                    if a != 2 {
+                        diags.push(
+                            Diagnostic::error(
+                                "E0903",
+                                format!("`decal` size must be a 2-element list [w, h], got {a}"),
+                            )
+                            .with_span(n.span),
+                        );
+                    }
+                }
+                if let Value::List(xs) = v {
+                    if xs.iter().any(|n| !n.is_finite() || *n <= 0.0) {
+                        diags.push(
+                            Diagnostic::error(
+                                "E0903",
+                                "`decal` size components must be finite and > 0",
+                            )
+                            .with_span(n.span),
+                        );
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}

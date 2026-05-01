@@ -47,7 +47,7 @@ pub const DEFAULT_ENVIRONMENT: Environment = Environment::Studio;
 /// Resolved lighting values handed to the renderer for one preset. Direction
 /// vectors are stored unnormalised so the parameter table reads naturally; the
 /// renderer normalises before upload.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct EnvironmentParams {
     /// Direction the analytic key light points along (pre-normalisation). The
     /// shader negates this when computing the lambert dot, so picture this as

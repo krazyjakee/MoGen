@@ -171,6 +171,17 @@ impl MogenStudioApp {
             tone: LlmEventTone::Info,
         });
         af.llm_error = None;
+        // Stamp the retry slot so the error banner's Retry button routes back
+        // into the textures pipeline instead of falling through to whatever
+        // text-LLM kind set `llm_last_prompt` last. The prompt string slot is
+        // unused for textures (the call has no free-text prompt) but must be
+        // populated for `has_last` in the banner to enable the button.
+        let retry_label = match &material_filter {
+            Some(m) if !m.is_empty() => format!("regenerate textures for {}", m.join(", ")),
+            _ => "regenerate textures".to_string(),
+        };
+        af.llm_last_prompt = Some((LlmKind::Textures, retry_label));
+        af.texture_retry_filter = material_filter.clone();
         af.status = banner;
 
         let worker_tx = tx.clone();
@@ -224,7 +235,25 @@ impl MogenStudioApp {
                 self.start_llm_repair(ctx);
             }
             LlmKind::Textures => {
-                self.start_llm_textures(ctx);
+                // If the failed run was a per-material regenerate, retry the
+                // same material(s) — otherwise fall back to a full-scene
+                // textures pass. The filter lives on the FileState so the
+                // retry button surfaces a single click of work.
+                let filter = self.active().texture_retry_filter.clone();
+                match filter {
+                    Some(materials) if !materials.is_empty() => {
+                        // `start_llm_textures_for_material` only takes one
+                        // name today; widen the loop if the regenerate path
+                        // ever picks multiple materials. Single-element call
+                        // is the only shape currently produced.
+                        if materials.len() == 1 {
+                            self.start_llm_textures_for_material(ctx, materials[0].clone());
+                        } else {
+                            self.start_llm_textures_inner(ctx, Some(materials));
+                        }
+                    }
+                    _ => self.start_llm_textures(ctx),
+                }
             }
         }
     }
@@ -519,6 +548,10 @@ impl MogenStudioApp {
         });
         f.llm_error = None;
         f.llm_last_prompt = Some((kind, prompt.clone()));
+        // Clear any leftover textures-retry filter from a prior run — without
+        // this, a Generate that follows a per-material regenerate could carry
+        // the stale material list into a future Textures retry.
+        f.texture_retry_filter = None;
         f.status = match kind {
             LlmKind::Generate => format!("calling {provider_label} (generate)…"),
             LlmKind::Modify => format!("calling {provider_label} (modify)…"),
@@ -636,15 +669,28 @@ impl MogenStudioApp {
                 .add_image(outcome.image_calls, image_cost);
         }
 
-        if let Some(info) = outcome.error {
-            // Preserve retry_prompt so the user can re-submit without re-typing.
-            if let Some(p) = outcome.retry_prompt {
-                f.llm_last_prompt = Some((outcome.kind, p));
+        // Textures partial-success: the run finished but some materials
+        // failed. `outcome.dsl` already contains the splice for the materials
+        // that did succeed and `outcome.calls` is the count of slots written
+        // — so we still want to apply the DSL and save it to disk, then
+        // surface the failure list as a banner. Any other kind, or a textures
+        // run that produced zero edits, falls through the existing
+        // hard-failure path.
+        let textures_partial_success = matches!(outcome.kind, LlmKind::Textures)
+            && outcome.error.is_some()
+            && outcome.calls > 0;
+
+        if let Some(info) = outcome.error.clone() {
+            if !textures_partial_success {
+                // Preserve retry_prompt so the user can re-submit without re-typing.
+                if let Some(p) = outcome.retry_prompt {
+                    f.llm_last_prompt = Some((outcome.kind, p));
+                }
+                let short = info.headline.clone();
+                f.llm_error = Some(info);
+                f.status = format!("{}: {short}", outcome.kind.label());
+                return;
             }
-            let short = info.headline.clone();
-            f.llm_error = Some(info);
-            f.status = format!("{}: {short}", outcome.kind.label());
-            return;
         }
 
         // Remember the prompt so a post-success Retry (e.g. to re-roll the
@@ -717,13 +763,23 @@ impl MogenStudioApp {
                 format_usd(text_cost),
             )
         } else if matches!(outcome.kind, LlmKind::Textures) {
-            format!(
-                "textures: wrote {} PNG{} ({} image call(s), {})",
-                outcome.calls,
-                if outcome.calls == 1 { "" } else { "s" },
-                outcome.image_calls,
-                format_usd(image_cost),
-            )
+            if textures_partial_success {
+                format!(
+                    "textures: partial — wrote {} PNG{} ({} image call(s), {}); see banner",
+                    outcome.calls,
+                    if outcome.calls == 1 { "" } else { "s" },
+                    outcome.image_calls,
+                    format_usd(image_cost),
+                )
+            } else {
+                format!(
+                    "textures: wrote {} PNG{} ({} image call(s), {})",
+                    outcome.calls,
+                    if outcome.calls == 1 { "" } else { "s" },
+                    outcome.image_calls,
+                    format_usd(image_cost),
+                )
+            }
         } else {
             format!(
                 "{kind_label}: ready ({} call(s), {} tokens, {})",
@@ -733,6 +789,16 @@ impl MogenStudioApp {
             )
         };
         self.files[i].status = status;
+
+        // Surface the partial-failure banner *after* the DSL has been written
+        // and the file recompiled, so the user sees the spliced PNGs in the
+        // viewer alongside the "N material(s) failed" notice. `outcome.error`
+        // is `Some(_)` on this branch by definition (textures_partial_success).
+        if textures_partial_success {
+            if let Some(info) = outcome.error {
+                self.files[i].llm_error = Some(info);
+            }
+        }
     }
 
     pub(super) fn any_in_flight(&self) -> bool {
@@ -778,6 +844,7 @@ fn event_for_progress(p: &LlmProgress) -> (String, LlmEventTone) {
                 TextureStage::Existing => "using existing PNG",
                 TextureStage::Deriving => "deriving PBR",
                 TextureStage::Done => "finished",
+                TextureStage::Failed => "failed",
             };
             (
                 format!("{current}/{total} · {verb} — {material}"),

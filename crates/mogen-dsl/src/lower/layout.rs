@@ -7,6 +7,7 @@ use mogen_core::{subtree_local_aabb, Aabb, NodeId, SceneGraph, Transform};
 
 use crate::ast::{Node, Value};
 use crate::attach::resolve_attaches_in_scope;
+use crate::conform::resolve_conforms_in_scope;
 
 use super::connector::{add_aabb_connectors_if_missing, add_connector};
 use super::helpers::{axis_vec3, string_or_ident, transform_from_attrs};
@@ -52,7 +53,7 @@ pub(super) fn expand_stack(
     let mut child_ids: Vec<NodeId> = Vec::new();
     for c in &node.children {
         match c.kind.as_str() {
-            "material" | "attach" => continue,
+            "material" | "attach" | "conform" => continue,
             "connector" => { add_connector(c, wrapper_id, graph)?; }
             _ => {
                 let id = lower_into(c, Some(wrapper_id), graph)?;
@@ -197,12 +198,13 @@ pub(super) fn expand_grid(
                 );
                 for c in &node.children {
                     match c.kind.as_str() {
-                        "material" | "attach" => continue,
+                        "material" | "attach" | "conform" => continue,
                         "connector" => { add_connector(c, iid, graph)?; }
                         _ => { lower_into(c, Some(iid), graph)?; }
                     }
                 }
                 resolve_attaches_in_scope(&node.children, graph, iid)?;
+                resolve_conforms_in_scope(&node.children, graph, iid)?;
                 add_aabb_connectors_if_missing(iid, graph);
             }
         }
@@ -395,15 +397,16 @@ pub(super) fn expand_replicator(
         let iid = graph.add_child(wrapper_id, instance_name, "group", *t);
         for c in &node.children {
             match c.kind.as_str() {
-                "material" | "attach" => continue,
+                "material" | "attach" | "conform" => continue,
                 "connector" => add_connector(c, iid, graph)?,
                 _ => { lower_into(c, Some(iid), graph)?; }
             }
         }
-        // Resolve attach specs declared inside the replicator body, scoped to
-        // this instance's subtree. Without this, every copy would resolve
-        // parent/child against the first instance's nodes (name collision).
+        // Resolve attach + conform specs declared inside the replicator body,
+        // scoped to this instance's subtree. Without this, every copy would
+        // resolve parent/child against the first instance's nodes (name collision).
         resolve_attaches_in_scope(&node.children, graph, iid)?;
+        resolve_conforms_in_scope(&node.children, graph, iid)?;
         add_aabb_connectors_if_missing(iid, graph);
     }
     // Each replicator instance is a synthetic copy — multiple scene nodes can

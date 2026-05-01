@@ -35,6 +35,127 @@ pub fn is_mask_material(node: &Node) -> bool {
     )
 }
 
+/// Read the optional `prompt="…"` attribute on a material. Authors use this
+/// to override the auto-derived "material name + colour" framing the texture
+/// pipeline falls back to — useful when the material name is generic
+/// (`fabric_main`) or when the default phrasing trips Gemini's recitation
+/// filter. Empty / whitespace-only strings are treated as absent so a stale
+/// `prompt=""` left over from an LLM repair doesn't suppress the fallback.
+pub fn material_prompt(node: &Node) -> Option<&str> {
+    let v = node.attr("prompt")?;
+    let s = match v {
+        Value::String(s) | Value::Ident(s) => s.as_str(),
+        _ => return None,
+    };
+    let t = s.trim();
+    if t.is_empty() {
+        None
+    } else {
+        Some(t)
+    }
+}
+
+/// Marker line the retry helper rewrites on `IMAGE_RECITATION`. The prompt
+/// builders emit at most one `Material note: …` line — sourced from the
+/// material's own `prompt="…"` attribute — so the retry path can find,
+/// rephrase, and replace it without disturbing the rest of the prompt. The
+/// note is supplementary on top of the auto-derived subject (material name,
+/// colour, anatomy motif), not a replacement for it.
+pub const NOTE_PREFIX: &str = "Material note: ";
+
+/// One `decal` node the texture pipeline should produce an image for. Carries
+/// the AST node so callers can read placement-related attrs and the resolved
+/// display name (decal name, falling back to "decal").
+pub struct DecalHit<'a> {
+    pub node: &'a Node,
+    pub name: String,
+}
+
+/// Recursively walk `ast` and pull out every `decal` node. Unlike `material`,
+/// decals can live anywhere geometry can — inside `scene`, `group`, `solid`,
+/// CSG containers, etc. — so the walk is depth-first across all children.
+pub fn collect_decals<'a>(ast: &'a [Node]) -> Vec<DecalHit<'a>> {
+    fn walk<'a>(n: &'a Node, out: &mut Vec<DecalHit<'a>>) {
+        if n.kind == "decal" {
+            let name = n.name.clone().unwrap_or_else(|| "decal".to_string());
+            out.push(DecalHit { node: n, name });
+        }
+        for c in &n.children {
+            walk(c, out);
+        }
+    }
+    let mut out = Vec::new();
+    for n in ast {
+        walk(n, &mut out);
+    }
+    out
+}
+
+/// Build the image prompt for a `decal` node. The prompt asks Gemini for an
+/// RGBA cutout against a transparent background — no chroma-key step, the
+/// alpha channel is requested directly. Source of the user-facing description,
+/// in priority order: the `prompt="…"` attribute, then the decal's name.
+pub fn build_decal_prompt(hit: &DecalHit<'_>, style: &str) -> String {
+    let intent = decal_intent(hit);
+    let mut s = String::new();
+    s.push_str(
+        "Output a transparent-background DECAL image for projection onto a 3D \
+         model surface — a logo, sticker, label, badge, handwritten note, \
+         seal, stamp, or similar small piece of artwork. The image is a \
+         flat 2D motif rendered against a fully transparent backdrop \
+         (alpha = 0 outside the artwork). The 3D scene this decal will be \
+         pasted onto is rendered separately; this image must NOT contain \
+         any of that scene.\n\n\
+         Framing: the artwork sits centred in a square frame, fitting \
+         comfortably within ~85% of the image area so the silhouette has a \
+         small alpha margin. The artwork itself is what the viewer sees; \
+         everything outside it must be fully transparent (no background, \
+         no card, no paper, no fabric \u{2014} just alpha=0).\n\n\
+         Hard exclusions (image must contain NONE of these):\n\
+         - no background, no scenery, no environment, no surface texture \
+         behind the motif\n\
+         - no body parts, characters, animals, or models the decal would be \
+         applied to (we are NOT rendering the shirt/page/wall \u{2014} just \
+         the decal that goes on it)\n\
+         - no drop shadows, glows, halos, vignettes, or rim lighting bleeding \
+         into the alpha channel\n\
+         - no rectangular borders, frames, sticker outlines, or paper edges \
+         unless those are explicitly part of the requested artwork\n\
+         - no watermarks, signatures, or unrelated text — only what the \
+         description asks for\n\n\
+         Required qualities:\n\
+         - RGBA output: opaque pixels for the artwork, fully transparent \
+         (alpha=0) for everything else; soft anti-aliased alpha along edges \
+         is fine\n\
+         - flat, even, diffuse lighting on the artwork itself \u{2014} no \
+         strong directional highlights\n\
+         - crisp silhouette: the motif should still read clearly when scaled \
+         down to ~256px\n\
+         - square aspect, motif centred in the frame\n\n",
+    );
+    s.push_str(&format!("Decal subject: {intent}\n"));
+    s.push_str(&format!("Style: {style}\n"));
+    s.push_str(
+        "\nReminder: a single decal motif on FULLY TRANSPARENT background. \
+         No surrounding paper, fabric, wall, or scene. The transparent area \
+         is the alpha channel \u{2014} not white, not black, not a colour key.",
+    );
+    s
+}
+
+fn decal_intent(hit: &DecalHit<'_>) -> String {
+    if let Some(p) = hit.node.attr_string("prompt") {
+        let trimmed = p.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+    }
+    // Fall back to the decal's name — usually a short identifier, but for
+    // decals it's idiomatic to write a longer descriptive name (e.g.
+    // `decal "embroidered logo, white thread"`), so this is often enough.
+    hit.name.clone()
+}
+
 /// Build the image prompt for one material. Two prompt families:
 ///
 /// - **Surface swatch** (default): a tileable PBR albedo for a continuous
@@ -118,6 +239,14 @@ fn build_surface_swatch_prompt(
             ));
         }
     }
+    // Author-supplied prompt is supplementary to the framing above — it
+    // sharpens the subject (e.g. "navy nylon ripstop weave") without
+    // replacing the material-name / colour / motif lines. The retry helper
+    // rephrases just this line on `IMAGE_RECITATION`, leaving the rest
+    // intact.
+    if let Some(note) = material_prompt(hit.node) {
+        s.push_str(&format!("{NOTE_PREFIX}{note}\n"));
+    }
     s.push_str(
         "\nReminder: the output is a flat tileable surface scan. \
          No subject. No scene. Surface only.",
@@ -194,6 +323,9 @@ fn build_cutout_atlas_prompt(
                  arrangement \u{2014} do NOT draw the named subject): {trimmed}\n"
             ));
         }
+    }
+    if let Some(note) = material_prompt(hit.node) {
+        s.push_str(&format!("{NOTE_PREFIX}{note}\n"));
     }
     s.push_str(
         "\nReminder: foliage cluster on PURE BLACK. Keep a thin black margin \
@@ -344,6 +476,37 @@ scene { box "b" (size=[1,1,1]) }"#;
         assert!(p.contains("back, shoulder"));
         assert!(p.contains("Pattern motif"));
         assert!(p.contains("DO NOT depict"));
+    }
+
+    #[test]
+    fn material_prompt_appears_as_supplementary_note() {
+        // Author-supplied `prompt="…"` is *additive*: the auto-derived
+        // material-name / colour / anatomy framing stays, and the user's
+        // text is appended as a `Material note:` line that the retry helper
+        // can rephrase on `IMAGE_RECITATION`.
+        let src = r#"material "fabric_main" (
+            color=[0.15, 0.30, 0.60], roughness=0.9,
+            prompt="navy nylon ripstop weave"
+        )"#;
+        let ast = parse_or_panic(src);
+        let hits = collect_materials(&ast);
+        let p = build_prompt(&hits[0], "photorealistic", Some("back"));
+        assert!(p.contains("Material note: navy nylon ripstop weave"));
+        // Auto-derived framing stays intact.
+        assert!(p.contains("Material name: fabric_main"));
+        assert!(p.contains("Pattern motif"));
+    }
+
+    #[test]
+    fn empty_material_prompt_emits_no_note() {
+        // A blank `prompt=""` (e.g. left over from an LLM repair) shouldn't
+        // produce an empty `Material note:` line — the absence is treated
+        // identically to the attribute being missing.
+        let src = r#"material "stone" (color=[0.5,0.5,0.5], prompt="   ")"#;
+        let ast = parse_or_panic(src);
+        let hits = collect_materials(&ast);
+        let p = build_prompt(&hits[0], "photorealistic", None);
+        assert!(!p.contains(NOTE_PREFIX));
     }
 
     #[test]

@@ -1,0 +1,9 @@
+// Conform's `to=` references a connector the target doesn't expose.
+// The diagnostic should list available connector names.
+scene {
+  plane "ground" (size=[4, 0, 4]) {
+    connector "a" (at=[-1, 0, 0], dir=[0, 1, 0])
+  }
+  box "stripe" (size=[2, 0.05, 0.2])
+  conform (target="ground", child="stripe", from="a", to="zzz", along=x)
+}

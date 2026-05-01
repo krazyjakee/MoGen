@@ -152,3 +152,10 @@ mogen-dsl  ──parse──►  AST  ──validate_ast──►  lower  ──
 This repository includes a compiled documentation database/knowledgebase at `AGENTS.db`.
 For context for any task, you MUST use MCP `agents_search` to look up context including architectural, API, and historical changes.
 Treat `AGENTS.db` layers as immutable; avoid in-place mutation utilities unless required by the design.
+
+## Git
+
+- **Never use `git stash`** unless the user explicitly requests it. Stashed work is easy to
+  forget and silently drops uncommitted changes from the working tree. If you need a clean
+  tree to perform some operation, ask the user how to proceed (commit, branch, or abort)
+  rather than stashing.

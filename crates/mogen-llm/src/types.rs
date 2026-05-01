@@ -117,9 +117,12 @@ pub struct GenerateConfig {
     pub history: Vec<Turn>,
     /// System instruction (grammar + stdlib). See [`crate::prompt`].
     pub system_instruction: Option<String>,
-    /// **Gemini only.** Name of a `cachedContents` resource — if set, skips
-    /// re-uploading the system instruction. Overrides `system_instruction`.
-    /// Other providers ignore this field.
+    /// **Gemini only.** Name of a `cachedContents` resource — if set, the
+    /// stable reference block lives server-side and is not re-uploaded per
+    /// call. May coexist with `system_instruction`: the Gemini API forbids
+    /// sending both `cachedContent` and `systemInstruction` on the same
+    /// request, so the client moves the inline portion into a synthetic
+    /// preamble inside `contents` instead. Other providers ignore this field.
     pub cached_content: Option<String>,
     /// Output cap enforced client-side after the response arrives.
     /// `None` means no cap.

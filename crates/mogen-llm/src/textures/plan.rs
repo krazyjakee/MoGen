@@ -6,7 +6,10 @@ use mogen_dsl::ast::{Node, Value};
 #[cfg(test)]
 use crate::image::DEFAULT_IMAGE_MODEL;
 
-use super::prompt::{build_prompt, collect_material_anatomy, collect_materials, is_mask_material};
+use super::prompt::{
+    build_decal_prompt, build_prompt, collect_decals, collect_material_anatomy, collect_materials,
+    is_mask_material,
+};
 use super::splice::safe_filename_stem;
 
 /// Default `textures_dir` for a given input `.mog` — `textures/<stem>` so
@@ -132,6 +135,11 @@ pub struct Plan {
     /// through the foliage-cutout post-process (chroma-key the pure-black
     /// backdrop into alpha=0) and preserves RGBA through resize / re-encode.
     pub is_mask: bool,
+    /// True when this plan was synthesized from a `decal` node, not a
+    /// `material` declaration. Decals request a transparent-background RGBA
+    /// image directly (no chroma-key); the spliced attribute is `image=`,
+    /// not `base_color_texture=`; and they never produce derived PBR maps.
+    pub is_decal: bool,
 }
 
 pub enum PlanAction {
@@ -191,6 +199,7 @@ pub fn build_plan(ast: &[Node], args: &TexturesArgs) -> Vec<Plan> {
             prompt: albedo_prompt,
             existing_albedo_path: existing_albedo.clone(),
             is_mask,
+            is_decal: false,
         });
 
         // --- derived maps ---
@@ -219,9 +228,38 @@ pub fn build_plan(ast: &[Node], args: &TexturesArgs) -> Vec<Plan> {
                 prompt: String::new(),
                 existing_albedo_path: None,
                 is_mask,
+                is_decal: false,
             });
         }
     }
+
+    // Decals: one albedo plan each, no derived PBR maps. Decal images are
+    // RGBA with a transparent background — they're never tileable surface
+    // swatches, so derived normal/MR/AO would just produce noise.
+    for d in collect_decals(ast) {
+        let stem = safe_filename_stem(&d.name);
+        let rel_path = args.textures_dir.join(format!("{stem}_decal.png"));
+        let existing_image = attr_path(d.node, "image");
+        let (action, prompt) = if existing_image.is_some() && !args.force {
+            (PlanAction::Skip("already has image"), String::new())
+        } else if !args.force && base_dir.join(&rel_path).is_file() {
+            (PlanAction::UseExisting, String::new())
+        } else {
+            (PlanAction::Generate, build_decal_prompt(&d, &args.style))
+        };
+        plans.push(Plan {
+            material: format!("__decal_{}", d.name),
+            span: d.node.span,
+            kind: SlotKind::Albedo,
+            action,
+            rel_path,
+            prompt,
+            existing_albedo_path: existing_image,
+            is_mask: false,
+            is_decal: true,
+        });
+    }
+
     plans
 }
 
@@ -411,5 +449,100 @@ mod tests {
         assert!(matches!(plans[1].action, PlanAction::Derive));
         assert!(matches!(plans[2].action, PlanAction::Derive));
         assert!(matches!(plans[3].action, PlanAction::Derive));
+    }
+
+    #[test]
+    fn decal_yields_one_albedo_plan_with_is_decal() {
+        // A standalone decal with a `prompt=` should produce exactly one
+        // albedo plan and zero derived PBR plans (no normal/MR/AO maps for
+        // transparent overlays).
+        let src = r#"scene { decal "logo" (prompt="a tiny logo", size=[0.2,0.1]) }"#;
+        let ast = parse_or_panic(src);
+        let args = TexturesArgs::with_defaults(PathBuf::from("x.mog"));
+        let plans = build_plan(&ast, &args);
+        assert_eq!(plans.len(), 1, "decal should yield exactly one plan");
+        let p = &plans[0];
+        assert!(p.is_decal, "is_decal flag should be set");
+        assert!(!p.is_mask, "decals are never mask materials");
+        assert_eq!(p.kind, SlotKind::Albedo);
+        assert!(matches!(p.action, PlanAction::Generate));
+        assert!(p.prompt.contains("a tiny logo"), "prompt= should appear in body");
+        assert!(p.prompt.contains("DECAL"), "decal prompt has DECAL framing");
+        assert_eq!(
+            p.rel_path,
+            PathBuf::from("textures").join("x").join("logo_decal.png"),
+        );
+    }
+
+    #[test]
+    fn decal_with_existing_image_attr_is_skipped() {
+        // `image="…"` already on the decal: no API call, no splicing.
+        let src = r#"scene { decal "logo" (image="textures/x/logo_decal.png", size=[0.2,0.1]) }"#;
+        let ast = parse_or_panic(src);
+        let args = TexturesArgs::with_defaults(PathBuf::from("x.mog"));
+        let plans = build_plan(&ast, &args);
+        assert_eq!(plans.len(), 1);
+        assert!(matches!(plans[0].action, PlanAction::Skip(_)));
+        assert!(plans[0].is_decal);
+        assert_eq!(
+            plans[0].existing_albedo_path.as_deref(),
+            Some(std::path::Path::new("textures/x/logo_decal.png")),
+        );
+    }
+
+    #[test]
+    fn decal_uses_existing_png_on_disk() {
+        // No image=, but the planned PNG already lives on disk → UseExisting.
+        let dir = fresh_tempdir("decal-on-disk");
+        let mog = dir.join("x.mog");
+        std::fs::write(&mog, "").unwrap();
+        let tex_dir = dir.join("textures").join("x");
+        std::fs::create_dir_all(&tex_dir).unwrap();
+        std::fs::write(tex_dir.join("logo_decal.png"), b"png").unwrap();
+
+        let src = r#"scene { decal "logo" (prompt="ignored", size=[0.2,0.1]) }"#;
+        let ast = parse_or_panic(src);
+        let args = TexturesArgs::with_defaults(mog);
+        let plans = build_plan(&ast, &args);
+        assert_eq!(plans.len(), 1);
+        assert!(plans[0].is_decal);
+        assert!(matches!(plans[0].action, PlanAction::UseExisting));
+    }
+
+    #[test]
+    fn decal_falls_back_to_node_name_when_prompt_absent() {
+        // No prompt= and no image=: the decal's name acts as the prompt.
+        let src = r#"scene { decal "embroidered logo" (size=[0.2,0.1]) }"#;
+        let ast = parse_or_panic(src);
+        let args = TexturesArgs::with_defaults(PathBuf::from("x.mog"));
+        let plans = build_plan(&ast, &args);
+        assert_eq!(plans.len(), 1);
+        assert!(matches!(plans[0].action, PlanAction::Generate));
+        assert!(
+            plans[0].prompt.contains("embroidered logo"),
+            "decal name should appear when prompt= is absent: {}",
+            plans[0].prompt
+        );
+    }
+
+    #[test]
+    fn decal_plan_lives_alongside_material_plans() {
+        // Materials still produce 4 plans each (1 albedo + 3 derived); a
+        // decal sibling adds exactly 1 more — no derived maps for decals.
+        let src = r#"
+            material "wood" (color=[0.5,0.3,0.1])
+            scene {
+              box "shelf" (size=[1,0.05,1], mat="wood")
+              decal "logo" (prompt="a logo", size=[0.2,0.1])
+            }
+        "#;
+        let ast = parse_or_panic(src);
+        let args = TexturesArgs::with_defaults(PathBuf::from("x.mog"));
+        let plans = build_plan(&ast, &args);
+        assert_eq!(plans.len(), 5, "4 material slots + 1 decal albedo");
+        let decal = plans.iter().find(|p| p.is_decal).expect("decal plan");
+        assert_eq!(decal.kind, SlotKind::Albedo);
+        let material_plans: Vec<_> = plans.iter().filter(|p| !p.is_decal).collect();
+        assert_eq!(material_plans.len(), 4);
     }
 }

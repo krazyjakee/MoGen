@@ -45,6 +45,39 @@ impl AttachBinding {
     }
 }
 
+/// Records that a node's mesh was deformed by a `conform` pass. Carries enough
+/// state for tooling to reason about the deformation without re-running the
+/// pipeline. Conform has two modes:
+///
+/// - [`ConformBinding::Path`] — strip stretched between two connectors.
+/// - [`ConformBinding::Patch`] — flat / disc-shaped child laid down at a
+///   single anchor connector on the target.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum ConformBinding {
+    Path {
+        target: NodeId,
+        from: String,
+        to: String,
+        /// Number of path samples used during deformation.
+        #[serde(default)]
+        samples: u32,
+    },
+    Patch {
+        target: NodeId,
+        at: String,
+    },
+}
+
+impl ConformBinding {
+    /// Target node common to both variants.
+    pub fn target(&self) -> NodeId {
+        match self {
+            ConformBinding::Path { target, .. } | ConformBinding::Patch { target, .. } => *target,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SceneNode {
     pub name: String,
@@ -93,6 +126,11 @@ pub struct SceneNode {
     /// `pos=` / `rot=` portion (`transform - anchor`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attach_binding: Option<AttachBinding>,
+    /// Set when this node's mesh was deformed by a `conform` pass. Carries
+    /// the target node and the two connectors that defined the path. The
+    /// node's stored `mesh.positions` are post-deformation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conform_binding: Option<ConformBinding>,
     /// Module-use expansion frame this node was lowered from, copied from
     /// the AST. `None` for nodes the user wrote directly in their scene.
     /// Drives scoped `attach` / anim resolution via [`SceneGraph::use_parents`]:
@@ -141,6 +179,7 @@ impl Default for SceneNode {
             editable: true,
             relative_placed: false,
             attach_binding: None,
+            conform_binding: None,
             use_id: None,
             origin: None,
         }

@@ -421,6 +421,7 @@ fn node_kind_pool() -> Vec<Candidate> {
         ("panel", "box alias, anchor=back"),
         ("wall", "wall with cutouts"),
         ("roof", "roof shell"),
+        ("decal", "transparent image overlay (logo, label, handwriting)"),
         // CSG / replicators
         ("union", "CSG union of children"),
         ("difference", "CSG first minus rest"),
@@ -626,6 +627,14 @@ fn attr_key_pool(parent_kind: Option<&str>) -> Vec<Candidate> {
         "bone" => &[
             ("pos", "position relative to parent bone"),
             ("envelope", "weight-radius in world units"),
+        ],
+        "decal" => &[
+            ("size", "[w, h] (default [0.5, 0.5])"),
+            ("prompt", "image description for Gemini"),
+            ("image", "path to RGBA PNG (overrides prompt)"),
+            ("tint", "[r, g, b] base-color tint"),
+            ("roughness", "0..1 (default 0.6)"),
+            ("offset", "+Z gap from surface (default 0.001)"),
         ],
         _ => &[],
     };

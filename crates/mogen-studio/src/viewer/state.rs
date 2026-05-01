@@ -13,6 +13,7 @@ use super::cinema::CinemaDirector;
 use super::environment::Environment;
 use super::flatten::{flatten, update_palettes, FlatMesh};
 use super::lights::{collect_lights, ResolvedLight};
+use super::shadows::ShadowQuality;
 use crate::preview_shader::PreviewShader;
 
 /// Shared state between the egui main thread and the render-time paint callback.
@@ -94,6 +95,11 @@ pub struct ViewerState {
     /// nodes. Persisted in the studio settings file via the matching string
     /// key in [`super::environment::environment_key`].
     pub environment: Environment,
+    /// Active shadow-mapping quality preset. Drives the depth pre-pass
+    /// resolution and per-frame caster cap; `Off` skips the entire pre-pass
+    /// so older GPUs sit out the work. Persisted globally via
+    /// `Settings::shadow_quality`.
+    pub shadows: ShadowQuality,
     /// Cap on continuous viewport repaints (animation tick, cinema pan, gizmo
     /// drag). `None` = uncapped — the per-frame `request_repaint()` call goes
     /// through unchanged. `Some(fps)` routes through `request_repaint_after(
@@ -408,6 +414,7 @@ impl Default for ViewerState {
             show_light_gizmos: true,
             show_transform_gizmo: true,
             environment: Environment::default(),
+            shadows: ShadowQuality::default(),
             max_fps: None,
             capture_request: None,
             capture_outcome: None,

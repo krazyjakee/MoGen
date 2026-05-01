@@ -1,0 +1,11 @@
+// Imported `mesh` children have no canonical long axis — conform should
+// reject when `along=` is omitted. (This file fails earlier because
+// mesh src= would not resolve; included for documentation of the rule.)
+scene {
+  plane "ground" (size=[4, 4]) {
+    connector "a" (at=[-1, 0, 0], dir=[0, 1, 0])
+    connector "b" (at=[ 1, 0, 0], dir=[0, 1, 0])
+  }
+  mesh "imported" (src="missing.glb")
+  conform (target="ground", child="imported", from="a", to="b")
+}

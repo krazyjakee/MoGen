@@ -229,13 +229,12 @@ they don't affect the exported GLB.
 |---|---|---|
 | `standard` | Standard (PBR) | full PBR with embedded textures — *default* |
 | `toon` | Toon (cel-shaded) | hard-shaded NPR look |
-| `ps1` | PS1 (retro dither) | low-res, dithered, vertex-snapped |
 | `crt` | CRT (scanlines) | post-process scanlines + bloom |
 | `matcap` | Matcap (clay) | unlit material capture for sculpt-style review |
 | `wireframe` | Wireframe | edges only, ignores materials |
 
 Wireframe is useful for inspecting topology after CSG or sibling-mesh
-merge. PS1 / CRT are for vibes.
+merge. CRT is for vibes.
 
 ---
 

@@ -3,9 +3,9 @@ use std::path::PathBuf;
 
 use anyhow::{bail, Context, Result};
 use mogen_llm::{
-    default_cache_path, generate_with_repair, resolve_or_create_cache, system_instruction,
-    GenerateConfig, LlmClient, Provider, RepairConfig, StdlibIndex, ThinkingLevel,
-    DEFAULT_TTL_SECONDS,
+    cacheable_block, default_cache_path, generate_with_repair, inline_block,
+    resolve_or_create_cache, system_instruction, GenerateConfig, LlmClient, Provider,
+    RepairConfig, StdlibIndex, ThinkingLevel, DEFAULT_TTL_SECONDS,
 };
 
 use crate::common::{resolve_api_key, resolve_model};
@@ -40,17 +40,23 @@ pub(crate) fn bench(
     // same system instruction, so a single cache entry serves the whole run.
     // Only Gemini honours `cachedContents`; on other providers we fall back
     // to inline.
-    let system = system_instruction(&StdlibIndex::from_registry(
-        mogen_dsl::stdlib_registry(),
-    ));
+    //
+    // Post-split (see `mogen_llm::prompt`): the cache holds `cacheable_block`
+    // (grammar + kinds + allowlist, ~17 KB) and each per-prompt request
+    // carries `inline_block(idx)` fresh as `systemInstruction`. When the
+    // cache is unavailable, fall back to the full `system_instruction` inline.
+    let idx = StdlibIndex::from_registry(mogen_dsl::stdlib_registry());
+    let inline = inline_block(&idx);
+    let full_inline = system_instruction(&idx);
     let cached_name: Option<String> = if no_cache {
         None
     } else if let Some(gemini) = client.as_gemini() {
         if let Some(cache_path) = default_cache_path() {
+            let cacheable = cacheable_block();
             match resolve_or_create_cache(
                 gemini,
                 &model,
-                &system,
+                &cacheable,
                 &cache_path,
                 DEFAULT_TTL_SECONDS,
             ) {
@@ -87,8 +93,9 @@ pub(crate) fn bench(
         cfg.model = model.clone();
         if let Some(name) = &cached_name {
             cfg.cached_content = Some(name.clone());
+            cfg.system_instruction = Some(inline.clone());
         } else {
-            cfg.system_instruction = Some(system.clone());
+            cfg.system_instruction = Some(full_inline.clone());
         }
         cfg.budget_tokens = budget_tokens;
         cfg.thinking_level = Some(thinking);

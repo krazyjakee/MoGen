@@ -11,7 +11,7 @@ uniform mat4 u_viewproj;
 // so the same skinning path covers static and skinned geometry uniformly.
 // Keep in sync with MAX_JOINTS in viewer.rs.
 uniform mat4 u_joint_mats[128];
-// Preview shader selector. 0=Standard, 1=Toon, 2=PS1, 3=CRT, 4=Matcap.
+// Preview shader selector. 0=Standard, 1=Toon, 2=CRT, 3=Matcap.
 // Wireframe runs the Standard path with polygon-mode set to LINE on the CPU
 // side, so it doesn't need its own branch here.
 uniform int u_shader_mode;
@@ -19,11 +19,6 @@ uniform int u_shader_mode;
 out vec3 v_world_pos;
 out vec3 v_normal;
 out vec2 v_uv;
-// Affine-interpolated copy of the UV for the PS1 preview mode. `noperspective`
-// disables the perspective-correct divide, which reproduces the wobbling /
-// sliding texture seams characteristic of PS1-era hardware. The standard
-// fragment shader still samples the perspective-correct `v_uv`.
-noperspective out vec2 v_uv_aff;
 
 void main() {
     // Clamp defensively: huge skins get their palette truncated on the CPU
@@ -39,22 +34,10 @@ void main() {
     // mat3(palette) is a reasonable approximation of the normal transform so
     // long as the palette stays close to rigid; the FS re-normalizes anyway.
     vec3 n = mat3(palette) * a_normal;
-    vec4 clip = u_viewproj * pos4;
-    if (u_shader_mode == 2) {
-        // PS1 vertex snap: quantize NDC.xy to a coarse grid so the geometry
-        // jitters in screen space as the camera moves, matching how the
-        // console's fixed-point vertex pipeline rounded positions before
-        // rasterization.
-        float grid = 160.0;
-        vec2 ndc = clip.xy / clip.w;
-        ndc = floor(ndc * grid) / grid;
-        clip.xy = ndc * clip.w;
-    }
-    gl_Position = clip;
+    gl_Position = u_viewproj * pos4;
     v_world_pos = pos4.xyz;
     v_normal = n;
     v_uv = a_uv;
-    v_uv_aff = a_uv;
 }
 "#;
 
@@ -62,7 +45,6 @@ pub(super) const FS_SRC: &str = r#"#version 330 core
 in vec3 v_world_pos;
 in vec3 v_normal;
 in vec2 v_uv;
-noperspective in vec2 v_uv_aff;
 out vec4 frag;
 
 uniform vec3 u_camera_pos;
@@ -249,10 +231,7 @@ void brdf_direct(vec3 N, vec3 V, vec3 L, vec3 albedo, float metallic, float roug
 }
 
 void main() {
-    // PS1 mode swaps to the affine-interpolated UV so textured surfaces get
-    // the authentic "sliding UV" look. All other modes use the perspective-
-    // correct varying.
-    vec2 uv = (u_shader_mode == 2) ? v_uv_aff : v_uv;
+    vec2 uv = v_uv;
     // Gather material samples.
     vec4 base_sample = vec4(u_base_color, u_base_color_alpha);
     if (u_use_base_tex == 1) {
@@ -384,22 +363,6 @@ void main() {
         absorbed_tm = mix(toon, vec3(0.03), smoothstep(0.75, 0.95, outline));
         reflected_tm = vec3(0.0);
     } else if (u_shader_mode == 2) {
-        // PS1 retro: ordered 4x4 Bayer dither combined with a 5-bit-per-
-        // channel colour quantize. Vertex snap + affine UVs live in the VS
-        // and the `uv` selection above.
-        float bayer[16] = float[16](
-             0.0/16.0,  8.0/16.0,  2.0/16.0, 10.0/16.0,
-            12.0/16.0,  4.0/16.0, 14.0/16.0,  6.0/16.0,
-             3.0/16.0, 11.0/16.0,  1.0/16.0,  9.0/16.0,
-            15.0/16.0,  7.0/16.0, 13.0/16.0,  5.0/16.0
-        );
-        int bx = int(mod(gl_FragCoord.x, 4.0));
-        int by = int(mod(gl_FragCoord.y, 4.0));
-        float thr = bayer[by * 4 + bx] - 0.5;
-        float levels = 32.0;
-        absorbed_tm = clamp(floor(tonemapped * levels + thr + 0.5) / levels, 0.0, 1.0);
-        reflected_tm = vec3(0.0);
-    } else if (u_shader_mode == 3) {
         // CRT: horizontal scanlines + an RGB aperture-grille mask. No post-
         // process FBO, so this rides on gl_FragCoord directly — the mask
         // pattern is in screen pixels, which matches how real trinitrons
@@ -412,7 +375,7 @@ void main() {
         else mask.b = 1.15;
         absorbed_tm = clamp(tonemapped * scan * mask, 0.0, 1.0);
         reflected_tm = vec3(0.0);
-    } else if (u_shader_mode == 4) {
+    } else if (u_shader_mode == 3) {
         // Matcap: a clay-lit hemisphere preview that ignores the PBR
         // material entirely. Great for checking silhouette and surface
         // curvature while sculpting.

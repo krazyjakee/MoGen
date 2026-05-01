@@ -10,6 +10,7 @@ mod lights;
 mod lights_gl;
 mod renderer;
 mod shaders;
+pub mod shadows;
 mod state;
 
 use std::path::Path;
@@ -23,6 +24,8 @@ pub use camera::{CameraSnapshot, OrbitCamera};
 pub use environment::Environment;
 pub use flatten::{ClipSummary, FlatMesh, FLOATS_PER_VERTEX};
 pub use lights::ResolvedLight;
+#[allow(unused_imports)]
+pub use shadows::ShadowQuality;
 pub use state::{
     CaptureFrame, CaptureKind, CaptureOutcome, CaptureRequest, PendingEdit,
 };
@@ -193,6 +196,19 @@ impl Viewer {
 
     pub fn environment(&self) -> Environment {
         self.state.lock().unwrap().environment
+    }
+
+    /// Update the shadow-quality preset. The actual GPU-resource resize
+    /// happens lazily in the paint callback where a `glow::Context` is in
+    /// scope; this just stashes the desired quality. The renderer compares
+    /// against its own cached quality each paint and reallocates only when
+    /// they diverge.
+    pub fn set_shadows(&self, quality: shadows::ShadowQuality) {
+        self.state.lock().unwrap().shadows = quality;
+    }
+
+    pub fn shadows(&self) -> shadows::ShadowQuality {
+        self.state.lock().unwrap().shadows
     }
 
     /// Cap continuous viewport repaints (animation, cinema, gizmo drag).
@@ -379,7 +395,7 @@ impl Viewer {
     }
 
     pub fn destroy(&self, gl: &glow::Context) {
-        if let Ok(r) = self.renderer.lock() {
+        if let Ok(mut r) = self.renderer.lock() {
             r.destroy(gl);
         }
     }
@@ -672,6 +688,16 @@ impl Viewer {
             // resolved params each paint. Cheap (a struct copy) and lets the
             // user swap presets from the overlay without forcing a recompile.
             rr.set_environment(st.environment.params());
+            // Sync shadow quality lazily: UI clicks only stash the desired
+            // value on `state.shadows` because they have no `glow::Context`
+            // in scope, so the actual depth-atlas reallocation happens here.
+            // No-op when quality is unchanged across paints (the common
+            // case).
+            rr.set_shadow_quality(gl, st.shadows);
+            // Forward the static-pose AABB so the shadow pre-pass can size
+            // its directional ortho frustum and the spot/point far planes
+            // without a borrow back into the viewer state.
+            rr.set_scene_aabb(st.static_center, st.static_radius);
             // Resolve DSL `light` nodes against the live (animation- and
             // drag-modulated) world transforms so a light parented to a
             // moving rig follows it. With no scene loaded, hand back an empty
