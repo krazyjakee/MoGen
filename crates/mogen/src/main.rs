@@ -17,6 +17,7 @@ use commands::inspect::{check, dump_scene, inspect, parse_cmd};
 use commands::modify::{modify, ModifyArgs};
 use commands::repair::{repair, RepairArgs};
 use commands::textures::textures_cmd;
+use commands::update::{update, UpdateArgs};
 
 /// CLI-facing mirror of [`ThinkingLevel`]. Kept separate so we don't leak
 /// `clap::ValueEnum` into the `mogen-llm` library crate.
@@ -376,6 +377,23 @@ enum Cmd {
         #[arg(long, default_value_t = mogen_llm::textures::DEFAULT_TEXTURE_SIZE)]
         texture_size: u32,
     },
+    /// Download the latest release from GitHub and replace the running
+    /// `mogen` (and sibling `mogen-studio`) binary in place. By default this
+    /// only checks for an update and prints what it would do — pass `--yes`
+    /// to actually install. Updates are matched against the host's target
+    /// triple from the assets uploaded by the project's release workflow.
+    Update {
+        /// Install the update without prompting.
+        #[arg(long)]
+        yes: bool,
+        /// Print the latest release tag and exit without downloading anything.
+        #[arg(long)]
+        check: bool,
+        /// Reinstall the latest release even if the running binary already
+        /// matches it. Useful for repairing a corrupted install.
+        #[arg(long)]
+        force: bool,
+    },
     /// Run a suite of prompts through `generate` and report success rate and
     /// mean token cost. Does not write GLBs.
     Bench {
@@ -578,6 +596,11 @@ fn main() -> ExitCode {
             no_metallic_roughness,
             no_occlusion,
             texture_size,
+        }),
+        Cmd::Update { yes, check, force } => update(UpdateArgs {
+            yes,
+            check_only: check,
+            force,
         }),
         Cmd::Bench {
             prompts,

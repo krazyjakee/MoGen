@@ -10,6 +10,7 @@ members = [
     "crates/mogen-llm",
     "crates/mogen",
     "crates/mogen-studio",
+    "crates/mogen-update",
     "crates/mogen-wasm",
 ]
 
@@ -45,3 +46,4 @@ mogen-validate = { path = "crates/mogen-validate", default-features = false }
 mogen-anim = { path = "crates/mogen-anim" }
 mogen-export = { path = "crates/mogen-export", default-features = false }
 mogen-llm = { path = "crates/mogen-llm" }
+mogen-update = { path = "crates/mogen-update" }

@@ -18,6 +18,7 @@ mod external;
 mod new_prompt;
 mod prefs;
 mod quit;
+mod update;
 mod video;
 
 pub use prefs::PrefsTab;
