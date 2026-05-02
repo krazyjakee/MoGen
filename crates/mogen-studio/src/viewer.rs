@@ -1,6 +1,7 @@
 mod anim;
 mod camera;
 mod cinema;
+mod colliders_gl;
 pub mod environment;
 pub(crate) mod flatten;
 mod gizmo_gl;
@@ -35,7 +36,7 @@ use crate::preview_shader::PreviewShader;
 use renderer::Renderer;
 use state::{
     aspect_for, begin_gizmo_drag, commit_gizmo_drag, gizmo_handles_supported, node_path,
-    resolve_node_path, select_by_id, update_gizmo_drag, ViewerState,
+    replace_selection, resolve_node_path, toggle_selection, update_gizmo_drag, ViewerState,
 };
 
 pub struct Viewer {
@@ -55,10 +56,19 @@ impl Viewer {
         let mut st = self.state.lock().unwrap();
         let viewer_was_empty = st.scene.is_none();
         st.base_dir = base_dir.map(|p| p.to_path_buf());
-        st.selected = match &st.selected_path {
-            Some(path) => resolve_node_path(&scene, path),
-            None => None,
-        };
+        // Re-resolve every saved path against the new scene; drop any that
+        // no longer resolve (a node deleted by the latest edit just falls
+        // out of selection silently).
+        let mut new_selected = Vec::with_capacity(st.selected_paths.len());
+        let mut new_paths = Vec::with_capacity(st.selected_paths.len());
+        for path in &st.selected_paths {
+            if let Some(id) = resolve_node_path(&scene, path) {
+                new_selected.push(id);
+                new_paths.push(path.clone());
+            }
+        }
+        st.selected = new_selected;
+        st.selected_paths = new_paths;
         st.gizmo_drag = None;
 
         let prev_active: Vec<String> = match &st.scene {
@@ -131,39 +141,52 @@ impl Viewer {
         st.base_dir = None;
         st.clip_active.clear();
         st.anim_times.clear();
-        st.selected = None;
-        st.selected_path = None;
+        st.selected.clear();
+        st.selected_paths.clear();
         st.gizmo_drag = None;
     }
 
-    pub fn set_selection(&self, id: Option<NodeId>) {
+    /// Replace the selection with a single node (or clear it). Equivalent
+    /// to a plain click in the viewport.
+    pub fn set_primary_selection(&self, id: Option<NodeId>) {
         let mut st = self.state.lock().unwrap();
-        st.selected = id;
-        st.selected_path = id.and_then(|n| {
-            st.scene.as_ref().and_then(|s| node_path(s, n))
-        });
+        st.selected.clear();
+        st.selected_paths.clear();
+        if let Some(n) = id {
+            st.selected.push(n);
+            if let Some(path) = st.scene.as_ref().and_then(|s| node_path(s, n)) {
+                st.selected_paths.push(path);
+            }
+        }
         st.gizmo_drag = None;
     }
 
-    pub fn selection(&self) -> Option<NodeId> {
-        self.state.lock().unwrap().selected
+    /// Most-recently-selected node — the one the gizmo, inspector, and
+    /// caret-jump follow. `None` when no node is selected.
+    pub fn primary_selection(&self) -> Option<NodeId> {
+        self.state.lock().unwrap().selected.last().copied()
     }
 
-    /// Stable name-path of the current selection (`["root", "torso", "arm_l"]`),
-    /// used by the undo stack to capture / restore selection across recompiles
-    /// when raw `NodeId` indices may have shifted.
-    pub fn selected_path(&self) -> Option<Vec<String>> {
-        self.state.lock().unwrap().selected_path.clone()
+    /// Full selection set in click order; the last entry is the primary.
+    pub fn all_selected(&self) -> Vec<NodeId> {
+        self.state.lock().unwrap().selected.clone()
     }
 
-    /// Set the desired selection by stable path. The live `selected` NodeId
-    /// is cleared so the inspector doesn't render against a stale index;
-    /// the next `set_scene` call resolves the path back to a NodeId once the
+    /// All stable name-paths in click order, parallel to `all_selected()`.
+    /// Used by the undo stack to capture / restore the full selection across
+    /// recompiles when raw `NodeId` indices may have shifted.
+    pub fn all_selected_paths(&self) -> Vec<Vec<String>> {
+        self.state.lock().unwrap().selected_paths.clone()
+    }
+
+    /// Set the desired selection by stable paths. Live `NodeId`s are cleared
+    /// so the inspector doesn't render against stale indices; the next
+    /// `set_scene` call resolves the paths back to `NodeId`s once the
     /// recompile lands.
-    pub fn set_selected_path(&self, path: Option<Vec<String>>) {
+    pub fn set_selected_paths(&self, paths: Vec<Vec<String>>) {
         let mut st = self.state.lock().unwrap();
-        st.selected_path = path;
-        st.selected = None;
+        st.selected_paths = paths;
+        st.selected.clear();
         st.gizmo_drag = None;
     }
 
@@ -185,6 +208,10 @@ impl Viewer {
 
     pub fn set_show_transform_gizmo(&self, on: bool) {
         self.state.lock().unwrap().show_transform_gizmo = on;
+    }
+
+    pub fn set_show_colliders(&self, on: bool) {
+        self.state.lock().unwrap().show_colliders = on;
     }
 
     /// Swap in a fresh environment-lighting preset. The next viewport paint
@@ -450,6 +477,11 @@ impl Viewer {
         let dt = ui.input(|i| i.stable_dt);
         let shift_held = ui.input(|i| i.modifiers.shift);
         let ctrl_held = ui.input(|i| i.modifiers.ctrl || i.modifiers.command);
+        // `command` is Cmd on macOS, Ctrl on Linux/Windows — the
+        // cross-platform "additive selection" modifier. Shift is the second
+        // additive modifier (matches Blender/Maya/Finder convention) and
+        // stays reserved for camera pan when combined with a drag.
+        let cmd_held = ui.input(|i| i.modifiers.command);
         let cursor_now = ui.input(|i| i.pointer.hover_pos());
         let (primary_pressed_raw, press_pos_raw, primary_released_raw) =
             ui.input(|i| {
@@ -481,8 +513,13 @@ impl Viewer {
             }
 
             let mut gizmo_handled_primary = false;
-            if !cinema_active && primary_pressed_on_widget && !shift_held {
-                if let (Some(cursor), Some(sel)) = (press_pos_raw, st.selected) {
+            // Shift and Cmd/Ctrl are reserved for additive selection (and
+            // shift-drag for pan); never grab a gizmo handle while either
+            // is held, otherwise an extend-selection click on a node whose
+            // handle happens to project under the cursor would start a drag
+            // instead.
+            if !cinema_active && primary_pressed_on_widget && !shift_held && !cmd_held {
+                if let (Some(cursor), Some(sel)) = (press_pos_raw, st.primary_selected()) {
                     let drag_opt = begin_gizmo_drag(&st, sel, rect, cursor, aspect_for(rect));
                     if std::env::var_os("MOGEN_GIZMO_TRACE").is_some() {
                         eprintln!(
@@ -556,6 +593,10 @@ impl Viewer {
                             "[gizmo] commit SetAttrCanonical node={} attr={} value={} delete={:?}",
                             node.0, attr, value, delete
                         ),
+                        Some(PendingEdit::DeleteNode { node }) => eprintln!(
+                            "[gizmo] commit DeleteNode node={}",
+                            node.0
+                        ),
                         None => eprintln!("[gizmo] commit SKIPPED (trivial delta)"),
                     }
                 }
@@ -578,17 +619,34 @@ impl Viewer {
                     // billboard halo test sees exactly the same world poses
                     // the renderer drew this frame. Cheap (≤ MAX_LIGHTS).
                     let lights = st.resolve_lights();
-                    if let Some(id) = crate::pick::pick_node_or_light(
+                    let hit = crate::pick::pick_node_or_light(
                         &st.camera,
                         rect,
                         cursor,
                         &st.mesh,
                         &lights,
-                    ) {
-                        select_by_id(&mut st, Some(id));
-                        needs_repaint = true;
-                    } else {
-                        select_by_id(&mut st, None);
+                    );
+                    let additive = shift_held || cmd_held;
+                    match (additive, hit) {
+                        // Plain click on a node → replace; on empty space → clear.
+                        (false, Some(id)) => {
+                            replace_selection(&mut st, Some(id));
+                            needs_repaint = true;
+                        }
+                        (false, None) => {
+                            replace_selection(&mut st, None);
+                        }
+                        // Shift/cmd-click on a node → toggle membership. Empty
+                        // space with a modifier is intentionally a no-op:
+                        // shift-drag is camera pan, and a shift-click that
+                        // misses the model is just the start of a pan that
+                        // didn't move — wiping the selection there would feel
+                        // like a bug.
+                        (true, Some(id)) => {
+                            toggle_selection(&mut st, id);
+                            needs_repaint = true;
+                        }
+                        (true, None) => {}
                     }
                 }
             }
@@ -599,12 +657,38 @@ impl Viewer {
             // the keypress doesn't also trigger any downstream listeners.
             if !cinema_active
                 && !gizmo_in_progress
-                && st.selected.is_some()
+                && !st.selected.is_empty()
                 && response.hovered()
                 && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
             {
-                select_by_id(&mut st, None);
+                replace_selection(&mut st, None);
                 needs_repaint = true;
+            }
+
+            // Backspace / Delete removes the selected node when the viewport
+            // is hovered. Same hover gate as Esc so the keypress doesn't fire
+            // through from the editor or inspector. The actual source mutation
+            // and undo bookkeeping happen in `drain_viewport_edits`.
+            if !cinema_active
+                && !gizmo_in_progress
+                && response.hovered()
+                && !st.selected.is_empty()
+            {
+                let pressed = ui.input_mut(|i| {
+                    i.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
+                        || i.consume_key(egui::Modifiers::NONE, egui::Key::Backspace)
+                });
+                if pressed {
+                    // One PendingEdit per selected node — `drain_viewport_edits`
+                    // resolves spans and applies them right-to-left so the
+                    // multi-delete batch leaves the source valid even when
+                    // the selection mixes a parent and one of its children.
+                    let nodes: Vec<NodeId> = st.selected.clone();
+                    for node in nodes {
+                        st.pending_edits.push(PendingEdit::DeleteNode { node });
+                    }
+                    needs_repaint = true;
+                }
             }
 
             if st.anim_playing && st.any_active() {
@@ -716,10 +800,17 @@ impl Viewer {
                 // drawn underneath the always-on-top transform handles so
                 // selection markers don't fight for the same screen pixels.
                 if st.show_light_gizmos {
-                    rr.draw_lights_overlay(gl, viewproj, eye, viewport_height, st.selected);
+                    rr.draw_lights_overlay(gl, viewproj, eye, viewport_height, &st.selected);
+                }
+                if st.show_colliders {
+                    if let Some(scene) = st.scene.as_ref() {
+                        let worlds = scene.world_transforms();
+                        let instances = colliders_gl::collect(scene, &worlds, &st.selected);
+                        rr.draw_colliders_overlay(gl, viewproj, &instances);
+                    }
                 }
                 if let (true, Some(sel), Some(scene)) =
-                    (st.show_transform_gizmo, st.selected, st.scene.as_ref())
+                    (st.show_transform_gizmo, st.primary_selected(), st.scene.as_ref())
                 {
                     // Single source of truth shared with `begin_gizmo_drag`:
                     // skip drawing for non-editable / relative-placed nodes,

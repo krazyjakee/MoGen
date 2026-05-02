@@ -18,6 +18,7 @@ mod build;
 mod compile;
 mod crash_consent;
 mod error_class;
+mod file_picker;
 mod files;
 mod find;
 mod generate;
@@ -28,6 +29,7 @@ mod onboarding;
 mod pricing;
 mod spotlight;
 mod text_menu;
+mod thumbnail;
 mod types;
 mod ui_dialogs;
 mod ui_llm;
@@ -36,6 +38,7 @@ mod ui_panels;
 mod undo;
 mod update;
 mod util;
+mod viewport_menu;
 mod watcher;
 
 use self::types::{
@@ -301,6 +304,25 @@ pub struct MogenStudioApp {
     /// only safe default for nodes whose mesh was authored at 1× across the
     /// board.
     inspector_scale_linked: bool,
+
+    /// Custom file picker modal state. `Some(_)` while the picker is open;
+    /// cleared by confirm or cancel. Replaces the native `rfd` dialog for
+    /// Open / Import / Save As so the body can render thumbnail previews.
+    pub(in crate::app) picker: Option<file_picker::FilePickerState>,
+
+    /// Background thumbnail engine that produces the rendered previews
+    /// shown in the picker grid. Independent of the file-picker lifetime
+    /// because the worker threads + on-disk PNG cache outlive any single
+    /// picker session.
+    pub(in crate::app) thumbnail_mgr: thumbnail::ThumbnailManager,
+
+    /// Camera snapshot captured the moment the picker opens. The thumbnail
+    /// engine swaps the live viewer's scene under us for each render —
+    /// this lets us put the user's camera framing back when the picker
+    /// closes. Scene restore goes through `refresh_viewer_from_active`
+    /// since the active file already owns the source-of-truth scene Arc.
+    pub(in crate::app) picker_prev_camera:
+        Option<crate::viewer::CameraSnapshot>,
 }
 
 impl MogenStudioApp {
@@ -321,6 +343,7 @@ impl MogenStudioApp {
         viewer.set_show_grid(settings.show_grid());
         viewer.set_show_light_gizmos(settings.show_light_gizmos());
         viewer.set_show_transform_gizmo(settings.show_transform_gizmo());
+        viewer.set_show_colliders(settings.show_colliders());
         viewer.set_environment(settings.environment());
         viewer.set_shadows(settings.shadow_quality());
         viewer.set_max_fps(settings.max_fps());
@@ -437,6 +460,9 @@ impl MogenStudioApp {
             show_video_options: false,
             video_opts_draft: self::generate::VideoOptions::default(),
             inspector_scale_linked: true,
+            picker: None,
+            thumbnail_mgr: thumbnail::ThumbnailManager::new(cc.egui_ctx.clone()),
+            picker_prev_camera: None,
         }
     }
 
@@ -607,7 +633,7 @@ impl eframe::App for MogenStudioApp {
 
         // Drain LLM / build completions and run any pending compile from
         // the editor's debounce window before painting.
-        self.poll_llm();
+        self.poll_llm(ctx);
         self.poll_prompt_enhance();
         self.poll_ask();
         self.poll_build();
@@ -714,6 +740,7 @@ impl eframe::App for MogenStudioApp {
             });
 
         let mut viewport_rect: Option<egui::Rect> = None;
+        let picker_open = self.picker.is_some();
         egui::CentralPanel::default().show(ctx, |ui| {
             // The 3D viewport is deliberately independent of the UI theme —
             // a calibrated neutral charcoal matches the look of every major
@@ -722,8 +749,37 @@ impl eframe::App for MogenStudioApp {
             // Users can still override the colour via View → Background.
             let fill = viewer_bg_color(&self.settings);
             egui::Frame::canvas(ui.style()).fill(fill).show(ui, |ui| {
-                let resp = self.viewer.show(ui);
-                viewport_rect = Some(resp.rect);
+                if picker_open {
+                    // While the picker is open, the thumbnail engine is
+                    // swapping the viewer's scene under us for each render
+                    // — paint a solid scrim so the user doesn't see the
+                    // cycling. The viewer itself still has to paint (its
+                    // paint callback drives the capture pipeline), so we
+                    // shove it into a 1×1 hidden corner instead of skipping
+                    // it. The corner sits inside the panel so input still
+                    // goes to the viewer's allocated rect, not the scrim.
+                    let avail = ui.available_size();
+                    ui.painter().rect_filled(
+                        ui.max_rect(),
+                        0.0,
+                        ui.style().visuals.extreme_bg_color,
+                    );
+                    ui.allocate_ui(egui::vec2(1.0, 1.0), |ui| {
+                        let _ = self.viewer.show(ui);
+                    });
+                    // Reserve the rest of the space so the panel doesn't
+                    // collapse around the 1×1 viewer (would offset the
+                    // scrim). `add_space` is enough since this branch
+                    // doesn't need to know the viewport rect.
+                    ui.allocate_space(egui::vec2(
+                        avail.x.max(1.0),
+                        (avail.y - 1.0).max(0.0),
+                    ));
+                } else {
+                    let resp = self.viewer.show(ui);
+                    viewport_rect = Some(resp.rect);
+                    resp.context_menu(|ui| self.ui_viewport_context_menu(ui));
+                }
             });
         });
         if let Some(r) = viewport_rect {
@@ -732,8 +788,13 @@ impl eframe::App for MogenStudioApp {
         // Cache for the next frame's gizmo hotkey gate — `dispatch_shortcuts`
         // runs at the start of `update`, so it reads last frame's rect rather
         // than this frame's. The rect is stable across frames at steady state
-        // so a one-frame lag is invisible.
-        self.last_viewport_rect = viewport_rect;
+        // so a one-frame lag is invisible. While the picker is hiding the
+        // viewport, leave the cached rect untouched so gizmo hotkeys remain
+        // gated against the *previous* viewport rect rather than the 1×1
+        // worker rect.
+        if !picker_open {
+            self.last_viewport_rect = viewport_rect;
+        }
 
         // Pick up any gizmo drags / caret jumps produced by the viewport.
         // Must run after `viewer.show` because that's where new drag
@@ -742,8 +803,24 @@ impl eframe::App for MogenStudioApp {
 
         // After the editor has rendered for the active tab, snapshot its
         // camera back into the FileState so future tab switches restore it.
-        let snap = self.viewer.camera_snapshot();
-        self.files[self.active].camera = Some(snap);
+        // Skip while the picker has the viewer scene swapped out for thumb
+        // renders — sampling here would persist the thumbnail's framing.
+        if !picker_open {
+            let snap = self.viewer.camera_snapshot();
+            self.files[self.active].camera = Some(snap);
+        }
+
+        // Drive the thumbnail pipeline: drain compile + decode results,
+        // submit the next render to the live viewer's capture system.
+        // Idempotent + cheap when nothing's queued; safe to run every
+        // frame regardless of whether the picker is open (a queued render
+        // from a previous picker session might still need draining).
+        self.thumbnail_mgr.tick(&self.viewer, ctx);
+        if picker_open && self.thumbnail_mgr.is_busy() {
+            // Force the next frame to repaint so render outcomes get
+            // picked up promptly even when no input is arriving.
+            ctx.request_repaint();
+        }
 
         // Privacy prompt comes before the welcome flow so the user makes
         // exactly one decision per modal — they're sequenced, not stacked.
@@ -761,6 +838,7 @@ impl eframe::App for MogenStudioApp {
         self.ui_spotlight(ctx);
         self.ui_video_options(ctx);
         self.ui_capture_progress(ctx);
+        self.ui_file_picker(ctx);
 
         // Paint the autocomplete popup last so it floats above every panel.
         // The editor panel updated state earlier in the frame; here we just

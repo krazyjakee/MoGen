@@ -1038,11 +1038,18 @@ import "objects/chair.mog"
 import "objects/table.mog"
 
 scene {
-  group (pos=[ 1, 0, 0]) { use "chair" () }
-  group (pos=[ 0, 0, 0]) { use "table" () }
-  group (pos=[-1, 0, 0]) { use "chair" (), rot=[0, 180, 0] }
+  use "chair" (pos=[ 1, 0, 0])
+  use "table" (pos=[ 0, 0, 0])
+  use "chair" (pos=[-1, 0, 0], rot=[0, 180, 0])
 }
 ```
+
+`use` accepts the same translation/rotation/scale shortcuts as every other
+node kind — `pos`, `rot`, `scale`, `x` / `y` / `z`, `rx` / `ry` / `rz`, and
+`from` / `to` — and applies them as an implicit wrapping `group` around the
+expanded body. Equivalent to `group (pos=…) { use "x" () }` but without the
+ceremony. If the module declares a parameter with one of those names (e.g.
+a scalar `pos` param), the caller's value binds to the parameter instead.
 
 `import` is a top-level directive — declare it alongside `material` and
 `module`, before or after them. It takes a quoted file path and an optional
@@ -1280,6 +1287,47 @@ shortcuts (`above`/`below`/…) — only transforms (`pos`, `rot`, `scale`,
 light, and Godot derives ambient from a `WorldEnvironment` node downstream.
 For low-intensity fill, use a dim directional light (e.g.
 `intensity=0.5, dir=[0, -1, 0]`) or set up an environment in your engine.
+
+---
+
+## Colliders
+
+Annotate any geometry, `group`, `solid`, or `use` with `collider="aabb"` to
+mark it as a collision volume:
+
+```
+slab "floor"     (size=[18.4, 0.1, 10.4], mat="wood", collider="aabb")
+slab "wall_back" (size=[18.4, 3, 0.2], z=-5.1, mat="plaster", collider="aabb")
+use  "desk"      (pos=[0, 0, 0.4], collider="aabb")
+```
+
+The bounding box is derived at compile time from the node's **subtree mesh
+extents** in node-local space, after attach / conform / skin binding have
+finished — so a collider on `use "desk"` encloses the whole desk, and a
+collider on a `conform`-deformed plank reflects the bent vertices, not the
+straight ones.
+
+`"aabb"` is the only accepted value in v1; anything else raises a build error.
+A collider on a node whose subtree carries no mesh is silently dropped (the
+attribute lives on, but the box is omitted from the output).
+
+The export writes one entry per collider'd node into glTF
+`node.extras.collider`:
+
+```json
+"extras": {
+  "collider": {
+    "type": "aabb",
+    "min": [-9.2, -0.05, -5.2],
+    "max": [ 9.2,  0.05,  5.2]
+  }
+}
+```
+
+`mogen` does not run a physics simulation — this is metadata for the
+downstream importer to convert into a `CollisionShape3D` (or equivalent).
+MoGen Studio renders an off-by-default wireframe gizmo at each collider'd
+node; toggle it from **View → Show Colliders** or the viewport context menu.
 
 ---
 

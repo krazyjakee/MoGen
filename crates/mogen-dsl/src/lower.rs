@@ -17,7 +17,7 @@ use anyhow::Result;
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
 
-use mogen_core::SceneGraph;
+use mogen_core::{subtree_local_aabb, NodeId, SceneGraph};
 
 use crate::ast::Node;
 use crate::attach::resolve_attaches;
@@ -39,6 +39,10 @@ thread_local! {
     // primitive to resolve relative `src` paths. None = no source path
     // available; the lowering will fail if the path isn't absolute.
     pub(super) static SOURCE_DIR: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+    // Nodes whose source carried `collider="aabb"`. Filled in by `lower_into`
+    // and drained by a post-pass in `lower_with_source` after attach/conform/
+    // skin binding so the computed AABB reflects the *final* mesh state.
+    pub(super) static COLLIDER_REQUESTS: RefCell<Vec<NodeId>> = const { RefCell::new(Vec::new()) };
 }
 
 /// Returns the source directory currently set on the lowering thread, if any.
@@ -63,6 +67,27 @@ impl Drop for SourceDirGuard {
     fn drop(&mut self) {
         let prev = self.prev.take();
         SOURCE_DIR.with(|s| s.replace(prev));
+    }
+}
+
+/// RAII guard that clears the collider-request list for the duration of one
+/// `lower()` call so requests from a previous (possibly failed) lowering can't
+/// leak into this one's post-pass.
+struct ColliderRequestsGuard {
+    prev: Vec<NodeId>,
+}
+
+impl ColliderRequestsGuard {
+    fn fresh() -> Self {
+        let prev = COLLIDER_REQUESTS.with(|s| std::mem::take(&mut *s.borrow_mut()));
+        Self { prev }
+    }
+}
+
+impl Drop for ColliderRequestsGuard {
+    fn drop(&mut self) {
+        let prev = std::mem::take(&mut self.prev);
+        COLLIDER_REQUESTS.with(|s| *s.borrow_mut() = prev);
     }
 }
 
@@ -94,6 +119,7 @@ pub fn lower(ast: &[Node]) -> Result<SceneGraph> {
 /// to `mogen build`.
 pub fn lower_with_source(ast: &[Node], source_dir: Option<&Path>) -> Result<SceneGraph> {
     let _src = SourceDirGuard::set(source_dir.map(|p| p.to_path_buf()));
+    let _coll = ColliderRequestsGuard::fresh();
     // Top-level `lod_scale (value=N)` multiplies primitive default segment/
     // ring counts. Stash on a thread-local before lowering so `primitive_mesh`
     // can read it without threading an extra arg through every recursive call.
@@ -169,6 +195,20 @@ pub fn lower_with_source(ast: &[Node], source_dir: Option<&Path>) -> Result<Scen
     // Runs after every mesh exists and before animations so weights are
     // computed against bind-pose world transforms.
     bind_meshes(&expanded, &mut graph)?;
+
+    // Pass 2.6: resolve every `collider="aabb"` request into a node-local
+    // `Aabb`. Runs after attach/conform/skin so the AABB matches the final
+    // mesh state (a conformed mesh's bent vertices, an attached child's
+    // re-positioned subtree). Nodes whose subtree carries no mesh leave
+    // `collider = None` silently — the user wrote the attribute but had
+    // nothing to enclose; the studio inspector / glTF extras simply omit it.
+    let pending: Vec<NodeId> =
+        COLLIDER_REQUESTS.with(|r| std::mem::take(&mut *r.borrow_mut()));
+    for id in pending {
+        if let Some(aabb) = subtree_local_aabb(&graph, id) {
+            graph.nodes[id.0 as usize].collider = Some(aabb);
+        }
+    }
 
     // Pass 3: joints first (clips may reference joint names), then clips,
     // then procedural templates (which can target either joints or nodes).

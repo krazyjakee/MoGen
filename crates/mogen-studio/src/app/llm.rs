@@ -590,7 +590,7 @@ impl MogenStudioApp {
     /// updates and the final `Done` flow on the same channel, so we handle
     /// them together: progress updates the spinner caption; `Done` applies
     /// the outcome to the file.
-    pub(super) fn poll_llm(&mut self) {
+    pub(super) fn poll_llm(&mut self, ctx: &egui::Context) {
         // Collect each file's pending messages without holding a borrow on
         // `self.files` across the apply step (which reborrows mutably).
         let mut to_apply: Vec<(usize, LlmOutcome)> = Vec::new();
@@ -642,11 +642,21 @@ impl MogenStudioApp {
             }
         }
         for (i, outcome) in to_apply {
-            self.apply_llm_outcome(i, outcome);
+            self.apply_llm_outcome(ctx, i, outcome);
         }
     }
 
-    pub(super) fn apply_llm_outcome(&mut self, i: usize, outcome: LlmOutcome) {
+    pub(super) fn apply_llm_outcome(
+        &mut self,
+        ctx: &egui::Context,
+        i: usize,
+        outcome: LlmOutcome,
+    ) {
+        // Snapshot the source as it stood before the LLM result lands so we
+        // can splice the change into the editor's native undo history below.
+        let pre_source = self.files[i].source.clone();
+        let editor_id = egui::Id::new(("mog_editor_textedit", self.files[i].tab_id));
+
         let f = &mut self.files[i];
         f.llm_rx = None;
         f.llm_in_flight = None;
@@ -713,6 +723,14 @@ impl MogenStudioApp {
         // (covers CLI/global fallback too).
         f.thinking_override = mogen_llm::parse_thinking_header(&f.source);
 
+        // Splice the LLM-driven replacement into the code editor's native
+        // TextEdit undo history so Cmd+Z reverts to pre-LLM source and a
+        // following Cmd+Shift+Z replays the LLM change. Without this push,
+        // re-focusing the editor lets egui's undoer observe the changed
+        // buffer mid-flight and clear the redo stack as a side-effect — so
+        // changes the user undoes before the LLM runs become unreachable.
+        push_llm_change_to_editor_history(ctx, editor_id, pre_source, f.source.clone());
+
         // Textures wrote PNG files next to the .mog; persist the spliced DSL
         // there too so the texture paths resolve on the next GLB export.
         if matches!(outcome.kind, LlmKind::Textures) {
@@ -740,11 +758,10 @@ impl MogenStudioApp {
             self.files[i].first_render = true;
         }
 
-        // LLM completions are deliberately NOT undoable — the wholesale
-        // source replacement is treated as a "commit" the user has to react
-        // to with another LLM run or a manual edit. Break the coalesce chain
-        // so a subsequent gizmo / inspector edit doesn't merge into a stack
-        // entry whose `before` predates the LLM run.
+        // The editor-side undo history captured the LLM change above. Reset
+        // the programmatic (gizmo/inspector) coalesce window so a subsequent
+        // transform edit doesn't merge into a stack entry whose `before`
+        // predates the LLM run — the two undo surfaces stay independent.
         self.break_undo_chain(i);
 
         self.compile_file(i);
@@ -852,4 +869,35 @@ fn event_for_progress(p: &LlmProgress) -> (String, LlmEventTone) {
             )
         }
     }
+}
+
+/// Splice a wholesale LLM-driven source replacement into the editor
+/// `TextEdit`'s native undo stack so users can Cmd+Z back to the pre-LLM
+/// buffer and Cmd+Shift+Z to replay the LLM change. Two `add_undo`s with a
+/// `feed_state` between them ensure pre-LLM is the latest entry, the stale
+/// redo stack from any prior in-editor undos is cleared, and post-LLM lands
+/// as the new tip — egui's undoer does this automatically only while the
+/// widget owns focus, which it does not during an LLM call.
+fn push_llm_change_to_editor_history(
+    ctx: &egui::Context,
+    editor_id: egui::Id,
+    pre: String,
+    post: String,
+) {
+    if pre == post {
+        return;
+    }
+    let mut state = egui::TextEdit::load_state(ctx, editor_id).unwrap_or_default();
+    let cursor = state.cursor.char_range().unwrap_or_default();
+    let mut undoer = state.undoer();
+    let now = ctx.input(|i| i.time);
+    undoer.add_undo(&(cursor, pre));
+    // `feed_state` clears `redos` whenever the new state differs from
+    // `undos.back()` — exploited here to drop redo entries that pointed at a
+    // timeline the LLM just forked away from. The follow-up `add_undo` is
+    // what actually pushes the post-LLM tip onto the stack.
+    undoer.feed_state(now, &(cursor, post.clone()));
+    undoer.add_undo(&(cursor, post));
+    state.set_undoer(undoer);
+    state.store(ctx, editor_id);
 }

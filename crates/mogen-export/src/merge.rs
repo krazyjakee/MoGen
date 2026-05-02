@@ -234,6 +234,12 @@ fn is_mergeable(n: &SceneNode, id: NodeId, protected: &HashSet<NodeId>) -> bool 
     if n.skin.is_some() {
         return false;
     }
+    // Colliders are derived from a specific node's local AABB; merging the
+    // mesh into a sibling group would orphan the collider from any node with
+    // a meaningful local frame, so keep collider'd leaves as-is.
+    if n.collider.is_some() {
+        return false;
+    }
     match &n.mesh {
         Some(m) if !m.is_skinned() => true,
         _ => false,
@@ -309,6 +315,7 @@ fn build_merged_node(
         parent: new_parent,
         children: Vec::new(),
         connectors: Vec::new(),
+        collider: None,
         tags: vec!["merged".into()],
         role: None,
         source_span: None,

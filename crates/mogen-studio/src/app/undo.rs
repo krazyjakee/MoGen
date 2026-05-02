@@ -116,7 +116,7 @@ impl MogenStudioApp {
         &mut self,
         i: usize,
         target_source: String,
-        sel_path: Option<Vec<String>>,
+        sel_paths: Vec<Vec<String>>,
     ) {
         {
             let f = &mut self.files[i];
@@ -126,22 +126,22 @@ impl MogenStudioApp {
             f.last_edit_at = Some(Instant::now());
         }
         if i == self.active {
-            // `set_selected_path` clears the live `selected` NodeId so the
-            // inspector doesn't render against a stale index for the one
-            // frame between here and the recompile that resolves the path.
-            self.viewer.set_selected_path(sel_path);
+            // `set_selected_paths` clears the live `selected` NodeIds so the
+            // inspector doesn't render against stale indices for the one
+            // frame between here and the recompile that resolves the paths.
+            self.viewer.set_selected_paths(sel_paths);
             self.compile_active();
         }
     }
 
-    /// Stable name-path of the currently selected node, sourced from the
-    /// viewer for the active tab. Returns `None` for non-active tabs (we
-    /// don't carry per-tab selection in Phase 1).
-    pub(super) fn current_selection_path(&self, i: usize) -> Option<Vec<String>> {
+    /// Stable name-paths of the currently selected nodes, sourced from the
+    /// viewer for the active tab. Empty vec for non-active tabs (we don't
+    /// carry per-tab selection in Phase 1).
+    pub(super) fn current_selection_path(&self, i: usize) -> Vec<Vec<String>> {
         if i == self.active {
-            self.viewer.selected_path()
+            self.viewer.all_selected_paths()
         } else {
-            None
+            Vec::new()
         }
     }
 }

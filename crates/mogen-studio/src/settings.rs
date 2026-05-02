@@ -44,6 +44,13 @@ pub struct Settings {
     /// [`Self::MAX_RECENT`] entries. Drives the File → Open Recent menu.
     #[serde(default)]
     pub recent_files: Vec<String>,
+    /// Directory the custom file picker last browsed. Persisted across
+    /// sessions so reopening Open / Save As / Import lands the user back
+    /// where they were instead of in the project root every time. `None`
+    /// falls back to the active file's parent (or the project root) at
+    /// open time.
+    #[serde(default)]
+    pub last_picker_dir: Option<String>,
     /// Persisted as a lowercase label (see `theme_key`) so new `Theme` variants
     /// can be added without a migration. Empty / unknown falls back to
     /// `DEFAULT_THEME` at read time.
@@ -177,6 +184,12 @@ pub struct Settings {
     /// selected node. `None` falls back to `true`.
     #[serde(default)]
     pub show_transform_gizmo: Option<bool>,
+
+    /// Whether the AABB collider wireframe overlay is drawn in the 3D
+    /// viewport. `None` falls back to `false` — colliders are an opt-in
+    /// view that most users won't be authoring against.
+    #[serde(default)]
+    pub show_colliders: Option<bool>,
 
     /// Active environment-lighting preset, persisted as a lowercase label
     /// (see `environment_key`). Empty / unknown falls back to
@@ -483,6 +496,16 @@ impl Settings {
         self.show_transform_gizmo = Some(on);
     }
 
+    /// Whether the AABB collider overlay is visible. Defaults to `false`
+    /// when unset — opt-in view for users actively working on collision.
+    pub fn show_colliders(&self) -> bool {
+        self.show_colliders.unwrap_or(false)
+    }
+
+    pub fn set_show_colliders(&mut self, on: bool) {
+        self.show_colliders = Some(on);
+    }
+
     /// Resolve the persisted label to an [`Environment`], falling back to
     /// [`DEFAULT_ENVIRONMENT`] when the field is empty or unknown.
     pub fn environment(&self) -> Environment {
@@ -531,6 +554,19 @@ impl Settings {
     /// Drop `path` from [`Self::recent_files`] if present.
     pub fn forget_recent(&mut self, path: &str) {
         self.recent_files.retain(|p| p != path);
+    }
+
+    /// Persist the directory the custom picker last browsed. Pass an empty
+    /// string to clear. Best-effort — the caller is expected to call
+    /// [`Self::save`] separately so persistence and the in-memory update
+    /// land in the same write.
+    pub fn set_last_picker_dir(&mut self, dir: &std::path::Path) {
+        let s = dir.display().to_string();
+        if s.is_empty() {
+            self.last_picker_dir = None;
+        } else {
+            self.last_picker_dir = Some(s);
+        }
     }
 }
 

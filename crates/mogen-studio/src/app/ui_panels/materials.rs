@@ -28,7 +28,7 @@ impl MogenStudioApp {
         use mogen_core::{AlphaMode, UvMode};
 
         let i = self.active;
-        let selection = self.viewer.selection();
+        let selection = self.viewer.primary_selection();
         let Some(result) = &self.files[i].last_result else {
             ui.label("(no build yet)");
             return;
@@ -539,7 +539,7 @@ impl MogenStudioApp {
                     UndoKey {
                         surface: "material",
                         attr: coalesce_attr,
-                        node_path: None,
+                        node_path: Vec::new(),
                     },
                 );
                 // Immediate recompile so the widgets read the updated

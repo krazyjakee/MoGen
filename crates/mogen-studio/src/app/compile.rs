@@ -84,50 +84,119 @@ impl MogenStudioApp {
             // collapses into a single undo entry, while a switch from `pos`
             // to `rot` opens a new entry.
             let mut last_attr: Option<String> = None;
-            for edit in edits {
-                let PendingEdit::SetAttrCanonical { node, attr, value, delete } = edit;
-                // Look up the node's span in the current compile result —
-                // recompile-consistent because take_pending_edits is drained
-                // before the next compile fires.
-                let Some(result) = &self.files[i].last_result else {
-                    if trace {
-                        eprintln!("[gizmo] drain SKIPPED: no last_result");
+            // Set-attr edits coalesce on (surface, attr, node_path); delete is
+            // discrete — flagged here so we pick the right surface and force
+            // a fresh undo entry below.
+            let mut any_delete = false;
+            let mut cleared_selection = false;
+
+            // Pre-resolve each edit's source span against the current compile
+            // result, then sort by `span.start` DESCENDING. Applying right-to
+            // -left keeps every later edit's span valid even when an earlier
+            // delete removes bytes — which is the multi-delete guarantee a
+            // single shift-click batch needs (delete two siblings, or a
+            // parent + child, in one Backspace press).
+            //
+            // Nested delete spans (parent + descendant in the same batch)
+            // get deduped: the parent's delete already removes the
+            // descendant, so a follow-up delete on the now-stale child span
+            // would corrupt the source. Set-attrs are span-stable so we
+            // leave them out of the dedup pass.
+            let resolved: Vec<(PendingEdit, mogen_core::Span)> =
+                match &self.files[i].last_result {
+                    Some(result) => {
+                        let mut out: Vec<(PendingEdit, mogen_core::Span)> =
+                            Vec::with_capacity(edits.len());
+                        for edit in edits {
+                            let node = match &edit {
+                                PendingEdit::SetAttrCanonical { node, .. } => *node,
+                                PendingEdit::DeleteNode { node } => *node,
+                            };
+                            match result
+                                .node_spans
+                                .get(node.0 as usize)
+                                .and_then(|s| *s)
+                            {
+                                Some(span) => out.push((edit, span)),
+                                None => {
+                                    if trace {
+                                        eprintln!(
+                                            "[gizmo] drain SKIPPED: no span for node {} (node_spans.len={})",
+                                            node.0,
+                                            result.node_spans.len()
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                        // Drop any DeleteNode whose span is contained in
+                        // another DeleteNode in the same batch.
+                        let delete_spans: Vec<mogen_core::Span> = out
+                            .iter()
+                            .filter(|(e, _)| matches!(e, PendingEdit::DeleteNode { .. }))
+                            .map(|(_, s)| *s)
+                            .collect();
+                        let kept = edit::dedup_contained_spans(&delete_spans);
+                        out.retain(|(e, s)| match e {
+                            PendingEdit::DeleteNode { .. } => kept.contains(s),
+                            _ => true,
+                        });
+                        out.sort_by(|a, b| b.1.start.cmp(&a.1.start));
+                        out
                     }
-                    continue;
-                };
-                let Some(span) = result.node_spans.get(node.0 as usize).and_then(|s| *s)
-                else {
-                    if trace {
-                        eprintln!(
-                            "[gizmo] drain SKIPPED: no span for node {} (node_spans.len={})",
-                            node.0,
-                            result.node_spans.len()
-                        );
+                    None => {
+                        if trace {
+                            eprintln!("[gizmo] drain SKIPPED: no last_result");
+                        }
+                        Vec::new()
                     }
-                    continue;
                 };
-                // Strip shadowing attrs BEFORE setting the canonical one.
-                // Doing deletes first keeps all the spans valid for the
-                // final `set_attr` (set_attr only needs the node's outer
-                // span, which doesn't shift when attrs inside it shrink).
-                for shadow in &delete {
-                    source = edit::delete_attr(&source, span, shadow);
+
+            for (edit, span) in resolved {
+                match edit {
+                    PendingEdit::SetAttrCanonical { node, attr, value, delete } => {
+                        // Strip shadowing attrs BEFORE setting the canonical one.
+                        // Doing deletes first keeps all the spans valid for the
+                        // final `set_attr` (set_attr only needs the node's outer
+                        // span, which doesn't shift when attrs inside it shrink).
+                        for shadow in &delete {
+                            source = edit::delete_attr(&source, span, shadow);
+                        }
+                        let before = source.clone();
+                        source = edit::set_attr(&source, span, &attr, &value);
+                        if trace {
+                            eprintln!(
+                                "[gizmo] drain APPLIED node={} attr={} value={} delete={:?} span={:?} changed={}",
+                                node.0,
+                                attr,
+                                value,
+                                delete,
+                                span,
+                                before != source
+                            );
+                        }
+                        last_attr = Some(attr);
+                        any_applied = true;
+                    }
+                    PendingEdit::DeleteNode { node } => {
+                        let before = source.clone();
+                        source = edit::delete_node(&source, span);
+                        if trace {
+                            eprintln!(
+                                "[gizmo] drain DELETED node={} span={:?} changed={}",
+                                node.0,
+                                span,
+                                before != source
+                            );
+                        }
+                        any_applied = true;
+                        any_delete = true;
+                        if !cleared_selection {
+                            self.viewer.set_primary_selection(None);
+                            cleared_selection = true;
+                        }
+                    }
                 }
-                let before = source.clone();
-                source = edit::set_attr(&source, span, &attr, &value);
-                if trace {
-                    eprintln!(
-                        "[gizmo] drain APPLIED node={} attr={} value={} delete={:?} span={:?} changed={}",
-                        node.0,
-                        attr,
-                        value,
-                        delete,
-                        span,
-                        before != source
-                    );
-                }
-                last_attr = Some(attr);
-                any_applied = true;
             }
             if any_applied {
                 {
@@ -142,8 +211,13 @@ impl MogenStudioApp {
                 // the time window) into a single entry — gizmo releases are
                 // already discrete (one PendingEdit per drag) but inspector
                 // DragValues fire per-frame and need the merge to behave.
+                // Deletes are discrete: break the chain so they never merge
+                // with a prior gizmo entry, and tag with their own surface.
+                if any_delete {
+                    self.break_undo_chain(i);
+                }
                 let key = UndoKey {
-                    surface: "viewport",
+                    surface: if any_delete { "viewport-delete" } else { "viewport" },
                     attr: last_attr,
                     node_path: self.current_selection_path(i),
                 };

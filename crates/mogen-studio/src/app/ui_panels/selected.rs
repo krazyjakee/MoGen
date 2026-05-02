@@ -15,10 +15,28 @@ impl MogenStudioApp {
         use crate::gizmo::GizmoMode;
         use crate::viewer::PendingEdit;
 
-        let Some(sel) = self.viewer.selection() else {
+        let Some(sel) = self.viewer.primary_selection() else {
             ui.label("(click a node in the 3D view to select it)");
             return;
         };
+        // Multi-select hint: tell the user the inspector is editing the
+        // primary (most-recently-selected) node; the others come along for
+        // delete/highlight only. Without this, a shift-click that adds to
+        // the selection looks identical in the inspector and the user can't
+        // tell the inspector is intentionally pinned to the primary.
+        let selected_count = self.viewer.all_selected().len();
+        if selected_count > 1 {
+            ui.colored_label(
+                egui::Color32::from_rgb(170, 200, 240),
+                format!("{selected_count} nodes selected — editing primary"),
+            )
+            .on_hover_text(
+                "Shift/Cmd-click adds nodes to the selection. The inspector \
+                 shows the most recently clicked node; Delete removes every \
+                 selected node.",
+            );
+            ui.add_space(4.0);
+        }
         let i = self.active;
         let Some(result) = &self.files[i].last_result else {
             ui.label("(no build yet)");
@@ -69,7 +87,7 @@ impl MogenStudioApp {
             return;
         }
         if node.use_id.is_some() {
-            // Selection landed on an imported-module node. `select_by_id`
+            // Selection landed on an imported-module node. `replace_selection`
             // normally redirects picks to the nearest user-authored wrapper,
             // so this only fires when there is no wrapper to redirect to
             // (e.g. `scene { use "desk" }` with the `use` directly under
@@ -282,6 +300,56 @@ impl MogenStudioApp {
                 }
                 ui.end_row();
             });
+
+        // Collider editor — single checkbox toggling `collider="aabb"` on
+        // the node. Skipped for `light` nodes since the validator rejects
+        // `collider=` there (lights have no AABB to enclose).
+        let collider_present = node.collider.is_some();
+        let collider_aabb = node.collider;
+        let mut wants_set_collider = false;
+        let mut wants_remove_collider = false;
+        if node.light.is_none() {
+            ui.add_space(8.0);
+            ui.separator();
+            ui.label(egui::RichText::new("Collider").strong());
+            let mut on = collider_present;
+            if ui
+                .checkbox(&mut on, "AABB")
+                .on_hover_text(
+                    "Mark this node as a collider. The AABB is derived from \
+                     the node's subtree mesh extents at compile time and \
+                     written to the .glb as `extras.collider`.",
+                )
+                .changed()
+            {
+                if on {
+                    wants_set_collider = true;
+                } else {
+                    wants_remove_collider = true;
+                }
+            }
+            if let Some(aabb) = collider_aabb {
+                let extent = aabb.max - aabb.min;
+                ui.label(format!(
+                    "  size: [{:.3}, {:.3}, {:.3}]",
+                    extent.x, extent.y, extent.z
+                ));
+                let center = (aabb.min + aabb.max) * 0.5;
+                ui.label(format!(
+                    "  center: [{:.3}, {:.3}, {:.3}]",
+                    center.x, center.y, center.z
+                ));
+            } else if collider_present {
+                // Should be unreachable — the field tracks the source attr.
+                // Left as a defensive label so an empty subtree (collider
+                // requested but no mesh) reads as a tooltip rather than a
+                // blank panel.
+                ui.colored_label(
+                    egui::Color32::from_rgb(230, 200, 100),
+                    "  (no mesh in subtree — AABB skipped)",
+                );
+            }
+        }
 
         // Light editor — punctual lights expose kind/colour/intensity (and the
         // kind-conditional range / cone angles) through the same span-aware
@@ -510,10 +578,42 @@ impl MogenStudioApp {
                         UndoKey {
                             surface: "inspector-action",
                             attr: None,
-                            node_path: None,
+                            node_path: Vec::new(),
                         },
                     );
                 }
+            }
+        }
+
+        if wants_set_collider {
+            edits.push(PendingEdit::SetAttrCanonical {
+                node: node_id,
+                attr: "collider".into(),
+                value: "\"aabb\"".into(),
+                delete: Vec::new(),
+            });
+        }
+        if wants_remove_collider {
+            if let Some(span) = node_span {
+                let before = self.files[i].source.clone();
+                let new_src = crate::edit::delete_attr(&before, span, "collider");
+                {
+                    let f = &mut self.files[i];
+                    f.source = new_src;
+                    f.dirty = f.source != f.last_saved_source;
+                    f.needs_compile = true;
+                    f.last_edit_at = Some(Instant::now());
+                }
+                self.break_undo_chain(i);
+                self.push_undo(
+                    i,
+                    before,
+                    UndoKey {
+                        surface: "inspector-action",
+                        attr: Some("collider".into()),
+                        node_path: Vec::new(),
+                    },
+                );
             }
         }
 
@@ -549,38 +649,77 @@ impl MogenStudioApp {
                         UndoKey {
                             surface: "inspector-action",
                             attr: None,
-                            node_path: None,
+                            node_path: Vec::new(),
                         },
                     );
                 }
             }
-            if ui
-                .add_enabled(span_ok, egui::Button::new("Delete"))
-                .on_hover_text("Remove this node from the DSL source")
-                .clicked()
-            {
-                if let Some(span) = node_span {
-                    let before = self.files[i].source.clone();
-                    let new_src = edit::delete_node(&before, span);
+            // Multi-select aware delete: removes every node in the current
+            // selection, not just the inspector's primary. Spans come from
+            // the last compile result and are applied right-to-left so
+            // earlier byte offsets stay valid as later regions are removed —
+            // same reason `drain_viewport_edits` does the sort. Disabled
+            // when no spans resolve (rare; only in stale-selection-after-
+            // failed-compile cases).
+            let all_selected = self.viewer.all_selected();
+            let delete_label = if all_selected.len() > 1 {
+                format!("Delete {} nodes", all_selected.len())
+            } else {
+                "Delete".to_string()
+            };
+            let mut delete_spans: Vec<mogen_core::Span> = Vec::new();
+            if let Some(result) = &self.files[i].last_result {
+                for n in &all_selected {
+                    if let Some(s) = result
+                        .node_spans
+                        .get(n.0 as usize)
+                        .and_then(|s| *s)
                     {
-                        let f = &mut self.files[i];
-                        f.source = new_src;
-                        f.dirty = f.source != f.last_saved_source;
-                        f.needs_compile = true;
-                        f.last_edit_at = Some(Instant::now());
+                        delete_spans.push(s);
                     }
-                    self.break_undo_chain(i);
-                    self.push_undo(
-                        i,
-                        before,
-                        UndoKey {
-                            surface: "inspector-action",
-                            attr: None,
-                            node_path: None,
-                        },
-                    );
-                    self.viewer.set_selection(None);
                 }
+            }
+            // If the user shift-selected a parent and a descendant, the
+            // parent's delete already removes the descendant — keep only
+            // the outermost spans so the right-to-left pass below can't
+            // fire a stale child-span delete after its parent is gone.
+            let mut delete_spans = edit::dedup_contained_spans(&delete_spans);
+            delete_spans.sort_by(|a, b| b.start.cmp(&a.start));
+            let delete_ok = !delete_spans.is_empty();
+            let hover_text = if all_selected.len() > 1 {
+                "Remove every selected node from the DSL source"
+            } else {
+                "Remove this node from the DSL source"
+            };
+            if ui
+                .add_enabled(delete_ok, egui::Button::new(delete_label))
+                .on_hover_text(hover_text)
+                .clicked()
+                && delete_ok
+            {
+                let before = self.files[i].source.clone();
+                let mut src = before.clone();
+                for span in &delete_spans {
+                    src = edit::delete_node(&src, *span);
+                }
+                {
+                    let f = &mut self.files[i];
+                    f.source = src;
+                    f.dirty = f.source != f.last_saved_source;
+                    f.needs_compile = true;
+                    f.last_edit_at = Some(Instant::now());
+                }
+                self.break_undo_chain(i);
+                self.push_undo(
+                    i,
+                    before,
+                    UndoKey {
+                        surface: "inspector-action",
+                        attr: None,
+                        node_path: Vec::new(),
+                    },
+                );
+                self.viewer.set_primary_selection(None);
             }
         });
     }

@@ -225,7 +225,8 @@ impl MogenStudioApp {
                 .map(|name| format!("now: {name}"))
         } else {
             Some(
-                "click: select · drag: orbit · shift+drag/middle/right: pan · \
+                "click: select · shift/cmd+click: add · del: delete selected · \
+                 esc: clear · drag: orbit · shift+drag/middle/right: pan · \
                  scroll: zoom · ctrl: snap"
                     .to_string(),
             )

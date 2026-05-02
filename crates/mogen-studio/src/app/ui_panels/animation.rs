@@ -23,7 +23,7 @@ impl MogenStudioApp {
         if scene.clips.is_empty() {
             return false;
         }
-        let visible = visible_origins(scene, self.viewer.selection());
+        let visible = visible_origins(scene, self.viewer.primary_selection());
         scene
             .clips
             .iter()
@@ -58,7 +58,7 @@ impl MogenStudioApp {
                 .last_result
                 .as_ref()
                 .and_then(|r| r.scene.as_ref())
-                .map(|s| visible_origins(s, self.viewer.selection()))
+                .map(|s| visible_origins(s, self.viewer.primary_selection()))
                 .unwrap_or_default()
         };
         let visible_clip_indices: Vec<usize> = clips
@@ -212,7 +212,7 @@ impl MogenStudioApp {
                     UndoKey {
                         surface: "animation",
                         attr: None,
-                        node_path: None,
+                        node_path: Vec::new(),
                     },
                 );
             }

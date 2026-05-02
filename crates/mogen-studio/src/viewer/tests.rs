@@ -1,8 +1,8 @@
     use super::flatten::{flatten, PaletteSource, FLOATS_PER_VERTEX};
     use super::state::{
         apply_gizmo_drag, commit_gizmo_drag, gizmo_handles_supported, redirect_pick,
-        select_by_id, snap_rotate_delta, snap_scale_factor, snap_translate_delta,
-        GizmoDrag, PendingEdit, ViewerState, SCALE_SNAP_STEP,
+        replace_selection, snap_rotate_delta, snap_scale_factor, snap_translate_delta,
+        toggle_selection, GizmoDrag, PendingEdit, ViewerState, SCALE_SNAP_STEP,
     };
     use glam::{Mat4, Quat, Vec3};
     use mogen_core::{AlphaMode, Material, Mesh, NodeId, SceneGraph, Transform};
@@ -604,23 +604,23 @@
     }
 
     #[test]
-    fn select_by_id_redirects_pick_to_wrapper() {
+    fn replace_selection_redirects_pick_to_wrapper() {
         // Picking the imported child must land selection on the wrapper —
         // the gizmo + inspector both read `st.selected`, so this is what
         // makes the visual editor "edit the group, not the import".
         let (scene, wrapper, imported) = scene_with_imported_child();
         let mut st = ViewerState::default();
         st.scene = Some(Arc::new(scene));
-        select_by_id(&mut st, Some(imported));
-        assert_eq!(st.selected, Some(wrapper));
+        replace_selection(&mut st, Some(imported));
+        assert_eq!(st.selected, vec![wrapper]);
         assert_eq!(
-            st.selected_path.as_deref(),
-            Some(&["lptp".to_string()][..])
+            st.selected_paths,
+            vec![vec!["lptp".to_string()]],
         );
     }
 
     #[test]
-    fn select_by_id_clears_selection_when_redirect_finds_no_wrapper() {
+    fn replace_selection_clears_selection_when_redirect_finds_no_wrapper() {
         // Bare imported root (no enclosing user-authored group): the
         // redirect returns `None`, so the viewer should clear its selection
         // rather than latch onto an un-editable node.
@@ -629,9 +629,71 @@
         scene.nodes[imported.0 as usize].use_id = Some(1);
         let mut st = ViewerState::default();
         st.scene = Some(Arc::new(scene));
-        select_by_id(&mut st, Some(imported));
-        assert_eq!(st.selected, None);
-        assert!(st.selected_path.is_none());
+        replace_selection(&mut st, Some(imported));
+        assert!(st.selected.is_empty());
+        assert!(st.selected_paths.is_empty());
+    }
+
+    /// Three-sibling scene with three user-authored boxes under one root.
+    /// Used by the toggle-selection tests to exercise add / remove / primary
+    /// transitions. Returns `(scene, [a, b, c])`.
+    fn scene_with_three_siblings() -> (SceneGraph, [NodeId; 3]) {
+        let mut scene = SceneGraph::new();
+        let root = scene.add_root("scene", "group", Transform::IDENTITY);
+        let a = scene.add_child(root, "a", "box", Transform::IDENTITY);
+        let b = scene.add_child(root, "b", "box", Transform::IDENTITY);
+        let c = scene.add_child(root, "c", "box", Transform::IDENTITY);
+        (scene, [a, b, c])
+    }
+
+    #[test]
+    fn toggle_selection_appends_new_node_as_primary() {
+        let (scene, [a, b, _]) = scene_with_three_siblings();
+        let mut st = ViewerState::default();
+        st.scene = Some(Arc::new(scene));
+        replace_selection(&mut st, Some(a));
+        toggle_selection(&mut st, b);
+        assert_eq!(st.selected, vec![a, b]);
+        assert_eq!(st.primary_selected(), Some(b));
+    }
+
+    #[test]
+    fn toggle_selection_removes_already_selected_node() {
+        let (scene, [a, b, _]) = scene_with_three_siblings();
+        let mut st = ViewerState::default();
+        st.scene = Some(Arc::new(scene));
+        replace_selection(&mut st, Some(a));
+        toggle_selection(&mut st, b);
+        toggle_selection(&mut st, b);
+        assert_eq!(st.selected, vec![a]);
+        assert_eq!(st.primary_selected(), Some(a));
+    }
+
+    #[test]
+    fn toggle_selection_removing_primary_promotes_previous_to_primary() {
+        // a then b — b is primary. Toggling b removes it; a remains and
+        // becomes primary again.
+        let (scene, [a, b, _]) = scene_with_three_siblings();
+        let mut st = ViewerState::default();
+        st.scene = Some(Arc::new(scene));
+        replace_selection(&mut st, Some(a));
+        toggle_selection(&mut st, b);
+        assert_eq!(st.primary_selected(), Some(b));
+        toggle_selection(&mut st, b);
+        assert_eq!(st.primary_selected(), Some(a));
+        assert_eq!(st.selected.len(), 1);
+    }
+
+    #[test]
+    fn toggle_selection_redirects_through_imported_subtree() {
+        // Toggling an imported node should land on the wrapper, mirroring
+        // what `replace_selection` does for plain clicks. Otherwise
+        // shift-click on an imported leaf would silently no-op.
+        let (scene, wrapper, imported) = scene_with_imported_child();
+        let mut st = ViewerState::default();
+        st.scene = Some(Arc::new(scene));
+        toggle_selection(&mut st, imported);
+        assert_eq!(st.selected, vec![wrapper]);
     }
 
     #[test]

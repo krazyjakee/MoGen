@@ -34,11 +34,12 @@ pub(super) const UNDO_COALESCE_WINDOW: Duration = Duration::from_millis(500);
 pub(super) struct UndoEntry {
     pub(super) before: String,
     pub(super) after: String,
-    /// Stable node path captured before/after the edit so a delete-undo can
-    /// re-highlight the restored node after recompile. `None` when nothing
-    /// was selected.
-    pub(super) selection_before: Option<Vec<String>>,
-    pub(super) selection_after: Option<Vec<String>>,
+    /// Stable node paths captured before/after the edit so a delete-undo can
+    /// re-highlight the restored node(s) after recompile. Empty vec when
+    /// nothing was selected. Order matches the viewport selection order
+    /// (last entry is the primary).
+    pub(super) selection_before: Vec<Vec<String>>,
+    pub(super) selection_after: Vec<Vec<String>>,
 }
 
 /// Coalesce key. Two entries merge only when every field matches AND the
@@ -47,7 +48,11 @@ pub(super) struct UndoEntry {
 pub(super) struct UndoKey {
     pub(super) surface: &'static str,
     pub(super) attr: Option<String>,
-    pub(super) node_path: Option<Vec<String>>,
+    /// Stable name-paths of the selected nodes at the time of the edit, in
+    /// click order. Empty when nothing was selected. Used so a multi-frame
+    /// inspector burst on the same selection coalesces, but switching
+    /// selection breaks the chain.
+    pub(super) node_path: Vec<Vec<String>>,
 }
 
 /// Per-tab undo history. Newest entries at the back of `past`; redo lives in
@@ -312,6 +317,7 @@ pub(super) enum ShortcutAction {
     NewUntitled,
     OpenNewPromptModal,
     OpenDialog,
+    ImportDsl,
     Save,
     SaveAs,
     Build,
@@ -334,6 +340,7 @@ impl ShortcutAction {
             ShortcutAction::NewUntitled => KeyboardShortcut::new(cmd, Key::N),
             ShortcutAction::OpenNewPromptModal => KeyboardShortcut::new(cmd_shift, Key::N),
             ShortcutAction::OpenDialog => KeyboardShortcut::new(cmd, Key::O),
+            ShortcutAction::ImportDsl => KeyboardShortcut::new(cmd_shift, Key::I),
             ShortcutAction::Save => KeyboardShortcut::new(cmd, Key::S),
             ShortcutAction::SaveAs => KeyboardShortcut::new(cmd_shift, Key::S),
             ShortcutAction::Build => KeyboardShortcut::new(cmd, Key::B),
@@ -351,6 +358,7 @@ impl ShortcutAction {
             ShortcutAction::NewUntitled => MenuAction::NewUntitled,
             ShortcutAction::OpenNewPromptModal => MenuAction::OpenNewPromptModal,
             ShortcutAction::OpenDialog => MenuAction::OpenDialog,
+            ShortcutAction::ImportDsl => MenuAction::ImportDsl,
             ShortcutAction::Save => MenuAction::Save,
             ShortcutAction::SaveAs => MenuAction::SaveAs,
             ShortcutAction::Build => MenuAction::Build,
@@ -372,6 +380,7 @@ impl ShortcutAction {
         ShortcutAction::OpenNewPromptModal,
         ShortcutAction::NewUntitled,
         ShortcutAction::OpenDialog,
+        ShortcutAction::ImportDsl,
         ShortcutAction::SaveAs,
         ShortcutAction::Save,
         ShortcutAction::Build,

@@ -91,13 +91,14 @@ impl MogenStudioApp {
                     action = MenuAction::OpenDialog;
                     ui.close_menu();
                 }
-                if ui
-                    .button("Import…")
-                    .on_hover_text(
-                        "Pick one or more .mog object files to add as `import \"…\"` \
-                         lines at the top of the active file",
-                    )
-                    .clicked()
+                if shortcut_menu_item(
+                    ui,
+                    "Import…",
+                    ShortcutAction::ImportDsl,
+                    "Pick one or more .mog object files to add as `import \"…\"` \
+                     lines at the top of the active file",
+                )
+                .clicked()
                 {
                     action = MenuAction::ImportDsl;
                     ui.close_menu();
@@ -432,6 +433,18 @@ impl MogenStudioApp {
                 {
                     self.settings.set_show_transform_gizmo(show_xform);
                     self.viewer.set_show_transform_gizmo(show_xform);
+                    let _ = self.settings.save();
+                }
+                let mut show_colliders = self.settings.show_colliders();
+                if ui
+                    .checkbox(&mut show_colliders, "Show Colliders")
+                    .on_hover_text(
+                        "Toggle the AABB collider wireframe overlay (off by default)",
+                    )
+                    .changed()
+                {
+                    self.settings.set_show_colliders(show_colliders);
+                    self.viewer.set_show_colliders(show_colliders);
                     let _ = self.settings.save();
                 }
                 ui.separator();

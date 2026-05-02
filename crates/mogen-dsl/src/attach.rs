@@ -88,6 +88,12 @@ pub fn resolve_attaches(ast: &[Node], graph: &mut SceneGraph) -> Result<()> {
 /// mirror instance). Parent/child names are looked up within `scope_root`'s
 /// descendants only, so sibling instances with identical node names don't
 /// collide.
+///
+/// Specs are also partitioned by `use_id` (mirroring [`resolve_attaches`]) so
+/// two imported objects whose internals happen to share a child name — e.g.
+/// `mouse.mog` and `keyboard.mog` both calling their cord `"cable"` — don't
+/// trip the duplicate-child check or steal each other's connectors when both
+/// are pulled into the same replicated body.
 pub fn resolve_attaches_in_scope(
     children: &[Node],
     graph: &mut SceneGraph,
@@ -97,7 +103,14 @@ pub fn resolve_attaches_in_scope(
     for c in children {
         walk(c, &mut specs)?;
     }
-    apply_specs(&specs, graph, Some(scope_root))
+    let mut by_use: HashMap<Option<u32>, Vec<AttachSpec>> = HashMap::new();
+    for s in specs {
+        by_use.entry(s.use_id).or_default().push(s);
+    }
+    for (_, group) in by_use {
+        apply_specs(&group, graph, Some(scope_root))?;
+    }
+    Ok(())
 }
 
 fn apply_specs(
@@ -207,7 +220,11 @@ fn apply_attach(
     scope: Option<NodeId>,
 ) -> Result<()> {
     // Lookup precedence:
-    //   1. Explicit `scope` (used by replicator per-instance pass) — strict.
+    //   1. Explicit `scope` (used by replicator per-instance pass) — limit to
+    //      the instance's subtree so sibling replicas don't steal names from
+    //      each other. Within that subtree, still filter by frame visibility
+    //      so two imported objects with same-named internals (e.g. mouse and
+    //      keyboard both having a `cable`) each see only their own frame.
     //   2. Frame-visible — `spec.use_id` itself plus any descendant frame in
     //      `graph.use_parents`. Lets an outer module's attach reach into a
     //      nested `use`'s nodes (e.g. `humanoid_full` attaching to a `torso`
@@ -215,7 +232,15 @@ fn apply_attach(
     //      sibling-instance frames isolated from each other.
     let find = |name: &str| -> Option<NodeId> {
         if let Some(root) = scope {
-            return graph.find_node_in_subtree(root, name);
+            let mut stack = vec![root];
+            while let Some(id) = stack.pop() {
+                let n = &graph.nodes[id.0 as usize];
+                if n.name == name && graph.use_id_visible(spec.use_id, n.use_id) {
+                    return Some(id);
+                }
+                stack.extend(n.children.iter().copied());
+            }
+            return None;
         }
         graph
             .nodes
@@ -535,6 +560,53 @@ mod tests {
             }
         }
         assert_eq!(tips_with_correct_parent, 3, "expected 3 tips, one per pen");
+    }
+
+    #[test]
+    fn replicator_isolates_same_named_children_across_frames() {
+        // Regression: when two modules brought into a replicator body each
+        // declared an attach for a child with the same name, the per-instance
+        // resolver lumped them into one bucket and tripped E0701
+        // ("attached twice"). Each attach lives in its own `use` frame, so
+        // they should be partitioned by `use_id` and resolve independently.
+        let src = r#"
+            module "mouse" () {
+              group "mouse_root" {
+                box "body" (size=[0.06, 0.03, 0.10])
+                cylinder "cable" (radius=0.003, height=0.2)
+                attach (parent="body", child="cable", socket="back", plug="bottom")
+              }
+            }
+            module "keyboard" () {
+              group "kbd_root" {
+                box "case" (size=[0.4, 0.02, 0.15])
+                cylinder "cable" (radius=0.003, height=0.2)
+                attach (parent="case", child="cable", socket="back", plug="bottom")
+              }
+            }
+            scene {
+              array "desks" (count=2, around=y) {
+                use "mouse" ()
+                use "keyboard" ()
+              }
+            }
+        "#;
+        let g = build(src);
+        // Each replica should own one mouse "cable" parented under its own
+        // "body" and one keyboard "cable" parented under its own "case".
+        let mut under_body = 0;
+        let mut under_case = 0;
+        for n in &g.nodes {
+            if n.name != "cable" { continue; }
+            let parent = n.parent.expect("cable should be reparented");
+            match g.nodes[parent.0 as usize].name.as_str() {
+                "body" => under_body += 1,
+                "case" => under_case += 1,
+                other => panic!("cable parented under unexpected node: {other}"),
+            }
+        }
+        assert_eq!(under_body, 2, "expected one mouse cable per replica");
+        assert_eq!(under_case, 2, "expected one keyboard cable per replica");
     }
 
     #[test]

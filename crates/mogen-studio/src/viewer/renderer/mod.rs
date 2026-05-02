@@ -18,6 +18,7 @@ use glow::HasContext;
 
 use super::environment::{Environment, EnvironmentParams};
 use super::flatten::{DrawBatch, FlatMesh, SkinPalette};
+use super::colliders_gl::{ColliderInstance, CollidersGl};
 use super::gizmo_gl::GizmoGl;
 use super::gl_util::{bytes_of_f32, bytes_of_u32, compile_program};
 use super::grid_gl::GridGl;
@@ -133,6 +134,9 @@ pub struct Renderer {
     /// cone). Always drawn after the main scene; depth-tests against geometry
     /// so a light tucked inside a wall reads as occluded.
     lights_overlay: LightsGl,
+    /// Wireframe overlay for AABB colliders. Off by default; toggled from the
+    /// viewport context menu. Same depth-test rules as the lights overlay.
+    colliders_overlay: CollidersGl,
     /// Per-batch resolved texture handles, parallel to [`Self::batches`].
     /// Refreshed on the first draw of each frame and reused across the
     /// per-batch loop so the loop can iterate `&self.batches` without the
@@ -300,6 +304,7 @@ impl Renderer {
             let gizmo = GizmoGl::new(gl)?;
             let grid = GridGl::new(gl)?;
             let lights_overlay = LightsGl::new(gl)?;
+            let colliders_overlay = CollidersGl::new(gl)?;
             let shadows = ShadowSystem::new(gl)?;
 
             Ok(Self {
@@ -310,6 +315,7 @@ impl Renderer {
                 gizmo,
                 grid,
                 lights_overlay,
+                colliders_overlay,
                 u_viewproj,
                 u_camera_pos,
                 u_key_dir,
@@ -510,6 +516,7 @@ impl Renderer {
         self.gizmo.destroy(gl);
         self.grid.destroy(gl);
         self.lights_overlay.destroy(gl);
+        self.colliders_overlay.destroy(gl);
         self.shadows.destroy(gl);
     }
 
@@ -542,12 +549,24 @@ impl Renderer {
         viewproj: glam::Mat4,
         eye: Vec3,
         viewport_height: f32,
-        selected: Option<mogen_core::NodeId>,
+        selected: &[mogen_core::NodeId],
     ) {
         if self.lights.is_empty() {
             return;
         }
         self.lights_overlay
             .draw(gl, viewproj, eye, viewport_height, &self.lights, selected);
+    }
+
+    /// Draw the AABB collider wireframe overlay. Caller resolves the per-node
+    /// world transforms + selection state into [`ColliderInstance`]s via
+    /// [`super::colliders_gl::collect`] and hands them in.
+    pub fn draw_colliders_overlay(
+        &self,
+        gl: &glow::Context,
+        viewproj: glam::Mat4,
+        instances: &[ColliderInstance],
+    ) {
+        self.colliders_overlay.draw(gl, viewproj, instances);
     }
 }

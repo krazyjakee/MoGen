@@ -186,7 +186,7 @@ impl LightsGl {
         eye: Vec3,
         viewport_height: f32,
         lights: &[ResolvedLight],
-        selected: Option<NodeId>,
+        selected: &[NodeId],
     ) {
         unsafe {
             gl.use_program(Some(self.program));
@@ -213,7 +213,7 @@ impl LightsGl {
                 // weight on screen.
                 let halo_size =
                     crate::gizmo::handle_scale(l.position, eye, viewport_height) * 0.35;
-                let is_selected = selected.map(|s| s == l.node).unwrap_or(false);
+                let is_selected = selected.contains(&l.node);
                 // Tint the glyph with the light's authored color so the user
                 // can read which light is which at a glance, but lift it
                 // toward white so dim/dark colors stay readable. Selection

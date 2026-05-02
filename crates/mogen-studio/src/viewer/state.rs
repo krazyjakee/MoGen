@@ -51,15 +51,17 @@ pub struct ViewerState {
     /// active animations.
     pub static_center: Vec3,
     pub static_radius: f32,
-    /// Currently-selected scene node, or `None` for no selection. Transient
-    /// UI state — wiped when a compile fails, re-resolved by path across
-    /// successful recompiles.
-    pub selected: Option<NodeId>,
-    /// Path (root → ... → selected) of node names — used to re-resolve the
-    /// `NodeId` after a recompile renumbers scene nodes. Kept separate from
-    /// `selected` so `set_scene` can refresh the id without the app code
-    /// having to track both.
-    pub selected_path: Option<Vec<String>>,
+    /// Currently-selected scene nodes. Empty vec = no selection. The **last
+    /// entry is the primary** node (the one the gizmo and inspector follow);
+    /// earlier entries are secondary selections added via shift/cmd-click.
+    /// Transient UI state — wiped when a compile fails, re-resolved by path
+    /// across successful recompiles.
+    pub selected: Vec<NodeId>,
+    /// Stable name-paths parallel to `selected` (same length, same order).
+    /// Used to re-resolve `NodeId`s after a recompile renumbers scene nodes.
+    /// Kept separate from `selected` so `set_scene` can refresh ids without
+    /// app code having to track both.
+    pub selected_paths: Vec<Vec<String>>,
     /// Viewport gizmo mode. Toggled by toolbar buttons; the drag handler
     /// looks at this to pick which axis-hit/drag-math function to call.
     pub gizmo_mode: crate::gizmo::GizmoMode,
@@ -90,6 +92,10 @@ pub struct ViewerState {
     /// User toggle for the translate/rotate/scale handles drawn on the selected
     /// node. Cinema mode hides them regardless of this flag.
     pub show_transform_gizmo: bool,
+    /// User toggle for the AABB collider wireframe overlay. Off by default —
+    /// this overlay is opt-in noise for users actively working on collision.
+    /// Cinema mode hides them regardless of this flag.
+    pub show_colliders: bool,
     /// Active environment-lighting preset. Drives the analytic sky probe and
     /// the fallback key/fill rig used when the scene declares no `light`
     /// nodes. Persisted in the studio settings file via the matching string
@@ -385,6 +391,10 @@ pub enum PendingEdit {
         value: String,
         delete: Vec<String>,
     },
+    /// Remove the node entirely from the source. Emitted by the viewport
+    /// Backspace/Delete shortcut; the drain looks up the node's source span
+    /// and splices it out via `edit::delete_node`.
+    DeleteNode { node: NodeId },
 }
 
 impl Default for ViewerState {
@@ -402,8 +412,8 @@ impl Default for ViewerState {
             playback_speed: 1.0,
             static_center: Vec3::ZERO,
             static_radius: 0.0,
-            selected: None,
-            selected_path: None,
+            selected: Vec::new(),
+            selected_paths: Vec::new(),
             gizmo_mode: Default::default(),
             gizmo_drag: None,
             pending_edits: Vec::new(),
@@ -413,6 +423,7 @@ impl Default for ViewerState {
             show_grid: true,
             show_light_gizmos: true,
             show_transform_gizmo: true,
+            show_colliders: false,
             environment: Environment::default(),
             shadows: ShadowQuality::default(),
             max_fps: None,
@@ -426,6 +437,12 @@ impl Default for ViewerState {
 impl ViewerState {
     pub(super) fn any_active(&self) -> bool {
         self.clip_active.iter().any(|&b| b)
+    }
+
+    /// Most-recently-selected node — the one the gizmo, inspector, and
+    /// caret-jump follow. `None` when no node is selected.
+    pub(super) fn primary_selected(&self) -> Option<NodeId> {
+        self.selected.last().copied()
     }
 
     /// Full vertex+index+palette rebuild. Use only when scene topology or
@@ -538,7 +555,7 @@ pub(super) fn gizmo_handles_supported(
         return false;
     }
     // Imported subtree (`use_id != None`): the node's source span points at
-    // the imported file, not the active source. `select_by_id` redirects
+    // the imported file, not the active source. `replace_selection` redirects
     // picks to the nearest user-authored wrapper, but a stale selection
     // (set before the redirect existed, or restored from a path that now
     // resolves into an imported subtree) can still land here. Refusing the
@@ -791,22 +808,26 @@ fn format_scalar(v: f32) -> String {
     }
 }
 
-pub(super) fn select_by_id(st: &mut ViewerState, id: Option<NodeId>) {
-    // Picks that land on an imported subtree (`use_id != None`) get
-    // redirected to the nearest user-authored wrapper — the group whose
-    // span lives in the active source. Without this the gizmo / inspector
-    // would write back at byte offsets from a different file and either
-    // no-op or silently corrupt the active scene. See `redirect_pick`.
+/// Replace the selection with a single node (or clear it). Used for plain
+/// (non-modifier) clicks and `Esc`. Picks that land on an imported subtree
+/// (`use_id != None`) get redirected to the nearest user-authored wrapper —
+/// the group whose span lives in the active source. Without this the gizmo
+/// / inspector would write back at byte offsets from a different file and
+/// either no-op or silently corrupt the active scene. See `redirect_pick`.
+///
+/// On a successful selection the editor caret jumps to the node's declaration.
+pub(super) fn replace_selection(st: &mut ViewerState, id: Option<NodeId>) {
     let id = id.and_then(|n| {
         st.scene.as_ref().and_then(|s| redirect_pick(s, n))
     });
-    st.selected = id;
-    st.selected_path = match id {
-        Some(n) => st.scene.as_ref().and_then(|s| node_path(s, n)),
-        None => None,
-    };
-    // Surface the selected node's source-span start so the editor caret
-    // jumps to its declaration.
+    st.selected.clear();
+    st.selected_paths.clear();
+    if let Some(n) = id {
+        st.selected.push(n);
+        if let Some(path) = st.scene.as_ref().and_then(|s| node_path(s, n)) {
+            st.selected_paths.push(path);
+        }
+    }
     st.pending_caret = id
         .and_then(|n| {
             st.scene
@@ -816,6 +837,52 @@ pub(super) fn select_by_id(st: &mut ViewerState, id: Option<NodeId>) {
         })
         .map(|span| span.start);
 }
+
+/// Toggle a node's membership in the selection. Used for shift/cmd-click.
+/// Picks are redirected through `redirect_pick` first (same reason as
+/// `replace_selection`). If the node is already selected, it's removed and
+/// the primary becomes whichever entry is now last (no caret jump unless the
+/// primary changed). Otherwise the node is appended (becoming the new primary)
+/// and the caret jumps to its declaration.
+pub(super) fn toggle_selection(st: &mut ViewerState, id: NodeId) {
+    let Some(target) = st.scene.as_ref().and_then(|s| redirect_pick(s, id)) else {
+        return;
+    };
+    if let Some(pos) = st.selected.iter().position(|n| *n == target) {
+        let was_primary = pos + 1 == st.selected.len();
+        st.selected.remove(pos);
+        if pos < st.selected_paths.len() {
+            st.selected_paths.remove(pos);
+        }
+        if was_primary {
+            // Caret follows the new primary, if there is one. No jump when
+            // the selection emptied — the editor stays put.
+            st.pending_caret = st
+                .selected
+                .last()
+                .copied()
+                .and_then(|n| {
+                    st.scene
+                        .as_ref()
+                        .and_then(|s| s.nodes.get(n.0 as usize))
+                        .and_then(|node| node.source_span)
+                })
+                .map(|span| span.start);
+        }
+    } else {
+        st.selected.push(target);
+        if let Some(path) = st.scene.as_ref().and_then(|s| node_path(s, target)) {
+            st.selected_paths.push(path);
+        }
+        st.pending_caret = st
+            .scene
+            .as_ref()
+            .and_then(|s| s.nodes.get(target.0 as usize))
+            .and_then(|node| node.source_span)
+            .map(|span| span.start);
+    }
+}
+
 
 /// Walk from `id` up through parents to the nearest ancestor authored
 /// directly in the active source (`use_id == None`). Returns the original

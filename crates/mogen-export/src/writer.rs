@@ -320,6 +320,16 @@ fn emit_node(n: &SceneNode, mesh: Option<usize>, light: Option<usize>) -> Value 
     if !n.tags.is_empty() {
         extras.insert("tags".into(), json!(n.tags));
     }
+    if let Some(aabb) = n.collider {
+        extras.insert(
+            "collider".into(),
+            json!({
+                "type": "aabb",
+                "min": [aabb.min.x, aabb.min.y, aabb.min.z],
+                "max": [aabb.max.x, aabb.max.y, aabb.max.z],
+            }),
+        );
+    }
     if !extras.is_empty() {
         obj.insert("extras".into(), Value::Object(extras));
     }

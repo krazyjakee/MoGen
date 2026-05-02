@@ -255,6 +255,94 @@ mod tests {
     }
 
     #[test]
+    fn use_with_transform_attrs_wraps_in_group() {
+        // `pos` is not a declared parameter — it should not error. Instead the
+        // expanded body should land inside a synthesised `group` carrying the
+        // transform, named after the module so the scene tree stays readable.
+        let ast = expand(
+            r#"
+            module "leg" () { box "b" (size=[1,1,1]) }
+            scene { use "leg" (pos=[1, 2, 3]) }
+        "#,
+        );
+        let scene = &ast[0];
+        assert_eq!(scene.kind, "scene");
+        assert_eq!(scene.children.len(), 1);
+        let wrapper = &scene.children[0];
+        assert_eq!(wrapper.kind, "group");
+        assert_eq!(wrapper.name.as_deref(), Some("leg"));
+        match first_attr(wrapper, "pos") {
+            Value::Vec3([x, y, z]) => {
+                assert_eq!(*x, 1.0);
+                assert_eq!(*y, 2.0);
+                assert_eq!(*z, 3.0);
+            }
+            other => panic!("expected Vec3, got {:?}", other),
+        }
+        assert_eq!(wrapper.children.len(), 1);
+        assert_eq!(wrapper.children[0].kind, "box");
+    }
+
+    #[test]
+    fn use_mixes_transform_attrs_and_params() {
+        // `height` binds as a param, `pos` becomes the wrapping transform.
+        let ast = expand(
+            r#"
+            module "leg" (height=0.5) { cylinder "leg" (height=$height) }
+            scene { use "leg" (height=0.9, pos=[0, 1, 0]) }
+        "#,
+        );
+        let wrapper = &ast[0].children[0];
+        assert_eq!(wrapper.kind, "group");
+        assert!(wrapper.attr("pos").is_some());
+        let leg = &wrapper.children[0];
+        assert_eq!(leg.kind, "cylinder");
+        match first_attr(leg, "height") {
+            Value::Number(n) => assert!((n - 0.9).abs() < 1e-6),
+            other => panic!("expected Number, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn module_param_named_pos_is_not_treated_as_transform() {
+        // A module declaring `pos` as a scalar param should bind the caller's
+        // `pos=…` to that param, not steal it for a wrapping transform.
+        let ast = expand(
+            r#"
+            module "shim" (pos=0.0) { box "b" (size=[1,1,1], y=$pos) }
+            scene { use "shim" (pos=2.0) }
+        "#,
+        );
+        // No wrapping group — the body lowers directly into the scene.
+        let scene = &ast[0];
+        let b = &scene.children[0];
+        assert_eq!(b.kind, "box");
+        match first_attr(b, "y") {
+            Value::Number(n) => assert!((n - 2.0).abs() < 1e-6),
+            other => panic!("expected Number, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn use_with_transform_attrs_lowers_to_translated_node() {
+        // End-to-end: a `use` with `pos=` should translate the expanded body
+        // by that vector. Verifies the wrapping group is honoured by lowering.
+        let src = r#"
+            module "leg" () { box "b" (size=[1,1,1]) }
+            scene { use "leg" (pos=[1, 2, 3]) }
+        "#;
+        let scene = crate::lower::lower(&parse(src).unwrap()).unwrap();
+        let wrapper = scene
+            .nodes
+            .iter()
+            .find(|n| n.kind == "group" && n.name == "leg")
+            .expect("synthesised wrapper group");
+        assert_eq!(wrapper.transform.translation.x, 1.0);
+        assert_eq!(wrapper.transform.translation.y, 2.0);
+        assert_eq!(wrapper.transform.translation.z, 3.0);
+    }
+
+    #[test]
     fn module_nodes_stripped_from_output() {
         let ast = expand(
             r#"

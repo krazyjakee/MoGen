@@ -20,39 +20,6 @@ fn ensure_mog_extension(path: &Path) -> PathBuf {
     }
 }
 
-/// Compute a path that, when joined onto `from`, resolves to `to`. Returns
-/// `None` when the inputs aren't comparable component-wise (e.g. different
-/// drive prefixes on Windows). Used by the import dialog to emit
-/// `import "<rel>"` lines that follow the .mog file when the project is
-/// moved.
-fn relative_path(from: &Path, to: &Path) -> Option<PathBuf> {
-    let from_components: Vec<_> = from.components().collect();
-    let to_components: Vec<_> = to.components().collect();
-    // Bail when the path roots differ — emitting `..` across roots is
-    // nonsensical.
-    let same_root = from_components
-        .first()
-        .zip(to_components.first())
-        .map(|(a, b)| a == b)
-        .unwrap_or(false);
-    if !same_root {
-        return None;
-    }
-    let common = from_components
-        .iter()
-        .zip(to_components.iter())
-        .take_while(|(a, b)| a == b)
-        .count();
-    let mut rel = PathBuf::new();
-    for _ in common..from_components.len() {
-        rel.push("..");
-    }
-    for c in &to_components[common..] {
-        rel.push(c.as_os_str());
-    }
-    Some(rel)
-}
-
 use eframe::egui;
 
 use super::types::FileState;
@@ -373,7 +340,15 @@ impl MogenStudioApp {
     }
 
     pub(super) fn save(&mut self) {
-        self.save_index(self.active);
+        if self.files[self.active].path.is_some() {
+            self.save_index(self.active);
+        } else {
+            // Untitled buffer — defer to the custom picker so Cmd+S on a
+            // fresh tab gets the same `.mog` preview list as Save As. The
+            // synchronous rfd path on `save_index` is still used by the
+            // quit / external-conflict modals where blocking is expected.
+            self.save_as();
+        }
     }
 
     /// Save file `i` to its known path, falling back to a Save As dialog when
@@ -398,27 +373,24 @@ impl MogenStudioApp {
     }
 
     pub(super) fn save_as(&mut self) {
-        let mut dialog = rfd::FileDialog::new()
-            .add_filter("MoGen DSL", &["mog"])
-            .set_directory(&self.project_root);
-        if let Some(p) = &self.active().path {
-            if let Some(name) = p.file_name() {
-                dialog = dialog.set_file_name(name.to_string_lossy());
-            }
-        }
-        if let Some(chosen) = dialog.save_file() {
-            let chosen = ensure_mog_extension(&chosen);
-            self.save_to(&chosen);
-        }
+        let default_name = self
+            .active()
+            .path
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| {
+                let mut name = self.active().display_name();
+                if Path::new(&name).extension().is_none() {
+                    name.push_str(".mog");
+                }
+                name
+            });
+        self.open_picker(super::file_picker::PickerMode::SaveAs { default_name });
     }
 
     pub(super) fn open_dialog(&mut self) {
-        let dialog = rfd::FileDialog::new()
-            .add_filter("MoGen DSL", &["mog"])
-            .set_directory(&self.project_root);
-        if let Some(chosen) = dialog.pick_file() {
-            self.open_path(&chosen);
-        }
+        self.open_picker(super::file_picker::PickerMode::Open);
     }
 
     /// Pick one or more `.mog` files and splice `import "<path>"` lines into
@@ -427,93 +399,7 @@ impl MogenStudioApp {
     /// reachable; otherwise they fall back to absolute. Already-imported and
     /// self-imports are filtered out.
     pub(super) fn import_dialog(&mut self) {
-        let start_dir = self
-            .active()
-            .path
-            .as_ref()
-            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-            .unwrap_or_else(|| self.project_root.clone());
-        let chosen = rfd::FileDialog::new()
-            .add_filter("MoGen DSL", &["mog"])
-            .set_directory(&start_dir)
-            .pick_files();
-        let Some(picked) = chosen else { return };
-        if picked.is_empty() {
-            return;
-        }
-        self.apply_import_selection(&picked);
-    }
-
-    fn apply_import_selection(&mut self, picked: &[PathBuf]) {
-        use crate::edit;
-        use super::types::UndoKey;
-
-        let i = self.active;
-        let active_path = self.files[i].path.clone();
-        let active_dir = active_path
-            .as_ref()
-            .and_then(|p| p.parent().map(|p| p.to_path_buf()));
-
-        // Resolve each picked file to a path string suitable for embedding in
-        // an `import "…"` line. Drop self-references so the user can't import
-        // the buffer they're editing.
-        let mut paths: Vec<String> = Vec::new();
-        let mut skipped_self = 0usize;
-        for p in picked {
-            let canonical = fs::canonicalize(p).unwrap_or_else(|_| p.clone());
-            if let Some(active) = &active_path {
-                if let Ok(active_canon) = fs::canonicalize(active) {
-                    if active_canon == canonical {
-                        skipped_self += 1;
-                        continue;
-                    }
-                }
-            }
-            let rel = active_dir
-                .as_deref()
-                .and_then(|base| relative_path(base, &canonical));
-            let rendered = rel
-                .map(|r| r.to_string_lossy().into_owned())
-                .unwrap_or_else(|| canonical.to_string_lossy().into_owned());
-            paths.push(rendered);
-        }
-        if paths.is_empty() {
-            self.active_mut().status = if skipped_self > 0 {
-                "import: skipped self-import".into()
-            } else {
-                "import: nothing selected".into()
-            };
-            return;
-        }
-
-        let undo_before = self.files[i].source.clone();
-        let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
-        let new_source = edit::insert_imports(&self.files[i].source, &path_refs);
-        if new_source == self.files[i].source {
-            self.active_mut().status =
-                "import: every selected file is already imported".into();
-            return;
-        }
-
-        let added = paths.len();
-        {
-            let f = &mut self.files[i];
-            f.source = new_source;
-            f.dirty = f.source != f.last_saved_source;
-            f.needs_compile = true;
-            f.last_edit_at = Some(Instant::now());
-            f.status = format!(
-                "import: added {added} file{}",
-                if added == 1 { "" } else { "s" }
-            );
-        }
-        let key = UndoKey {
-            surface: "menu",
-            attr: Some("import".into()),
-            node_path: None,
-        };
-        self.push_undo(i, undo_before, key);
-        self.compile_active();
+        self.open_picker(super::file_picker::PickerMode::Import);
     }
 
     /// Route OS drag-and-drop onto the window into the tab stack. Each `.mog`

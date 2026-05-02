@@ -129,21 +129,26 @@ fn expand_use(
         );
     }
 
-    // Resolve caller args (in the caller's scope) first, then fill in defaults.
-    let mut supplied: HashMap<String, f32> = HashMap::new();
-    for (k, v) in &node.attrs {
-        let n = scalar_value(v, scope).ok_or_else(|| {
-            anyhow!(
-                "argument `{k}` for module \"{module_name}\" must be a number or expression"
-            )
-        })?;
-        supplied.insert(k.clone(), n);
-    }
-
-    // Reject unknown args early so typos don't silently no-op.
+    // Partition caller args. Anything matching a declared parameter binds into
+    // the call scope (and must be a scalar); transform shortcuts (`pos`, `rot`,
+    // `scale`, `x/y/z`, `rx/ry/rz`, `from/to`) that are *not* declared params
+    // are pulled aside and applied as a wrapping group transform around the
+    // expanded body — same effect as `group (pos=…) { use "m" () }` but
+    // without the ceremony. Anything else is an unknown-parameter error.
     let param_names: Vec<&str> = def.params.iter().map(|p| p.name.as_str()).collect();
-    for k in supplied.keys() {
-        if !param_names.contains(&k.as_str()) {
+    let mut supplied: HashMap<String, f32> = HashMap::new();
+    let mut wrapper_attrs: Vec<(String, Value)> = Vec::new();
+    for (k, v) in &node.attrs {
+        if param_names.contains(&k.as_str()) {
+            let n = scalar_value(v, scope).ok_or_else(|| {
+                anyhow!(
+                    "argument `{k}` for module \"{module_name}\" must be a number or expression"
+                )
+            })?;
+            supplied.insert(k.clone(), n);
+        } else if is_wrapper_attr(k) {
+            wrapper_attrs.push((k.clone(), substitute_value(v, scope)?));
+        } else {
             bail!(
                 "module \"{}\" has no parameter `{}` (known: {:?})",
                 module_name,
@@ -188,21 +193,65 @@ fn expand_use(
     use_parents.insert(id, current_use);
     let body_use = Some(id);
 
-    stack.push(module_name);
+    let mut wrapper_children: Vec<Node> = Vec::new();
+    let target: &mut Vec<Node> = if wrapper_attrs.is_empty() {
+        out
+    } else {
+        &mut wrapper_children
+    };
+
+    stack.push(module_name.clone());
     for body_node in &def.body {
         expand_node_into(
             body_node,
             reg,
             &call_scope,
             stack,
-            out,
+            target,
             body_use,
             next_use,
             use_parents,
         )?;
     }
     stack.pop();
+
+    if !wrapper_attrs.is_empty() {
+        out.push(Node {
+            kind: "group".to_string(),
+            name: Some(module_name),
+            attrs: wrapper_attrs,
+            children: wrapper_children,
+            span: node.span,
+            kind_span: node.kind_span,
+            use_id: body_use,
+            origin: node.origin.clone(),
+        });
+    }
     Ok(())
+}
+
+/// Caller-supplied attrs on `use` that are not module parameters but should
+/// pass through to a synthesized wrapping `group`. Covers the transform
+/// shortcuts already accepted by every other node kind (see
+/// [`crate::lower::helpers::transform_from_attrs`]) plus the `collider`
+/// attribute, so `use "desk" (pos=…, collider="aabb")` works the same as
+/// wrapping the use in a group.
+fn is_wrapper_attr(k: &str) -> bool {
+    matches!(
+        k,
+        "pos"
+            | "rot"
+            | "scale"
+            | "x"
+            | "y"
+            | "z"
+            | "rx"
+            | "ry"
+            | "rz"
+            | "from"
+            | "to"
+            | "collider"
+    )
 }
 
 fn substitute_value(value: &Value, scope: &Scope) -> Result<Value> {

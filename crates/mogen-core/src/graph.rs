@@ -95,6 +95,13 @@ pub struct SceneNode {
     pub children: Vec<NodeId>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub connectors: Vec<Connector>,
+    /// Optional axis-aligned collision box in node-local space, derived from
+    /// the node's subtree mesh extents at lower-time when the source carried
+    /// `collider="aabb"`. Exported to glTF as `node.extras.collider` so a
+    /// downstream importer (e.g. Godot) can synthesize a `CollisionShape3D`.
+    /// mogen does not run physics — this is metadata only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub collider: Option<crate::Aabb>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -172,6 +179,7 @@ impl Default for SceneNode {
             parent: None,
             children: Vec::new(),
             connectors: Vec::new(),
+            collider: None,
             tags: Vec::new(),
             role: None,
             kind: String::new(),

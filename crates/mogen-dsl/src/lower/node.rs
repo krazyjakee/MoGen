@@ -39,6 +39,17 @@ pub(super) fn lower_into(
         return lower_light(node, parent, graph);
     }
 
+    // Validate the collider attribute up-front so a bad value fails fast even
+    // for kinds (group, solid, geometry primitives) where the post-pass would
+    // otherwise just leave `collider = None`.
+    if let Some(s) = node.attr_string("collider") {
+        if s != "aabb" {
+            bail!(
+                "collider value must be \"aabb\" (got: \"{s}\")"
+            );
+        }
+    }
+
     let transform = transform_from_attrs(node);
     let name = node.name.clone().unwrap_or_else(|| node.kind.clone());
 
@@ -49,6 +60,12 @@ pub(super) fn lower_into(
     graph.set_source_span(id, node.span);
     graph.nodes[id.0 as usize].use_id = node.use_id;
     graph.nodes[id.0 as usize].origin = node.origin.clone();
+
+    // Record the request now (independent of subtree contents); the post-pass
+    // in `lower_with_source` walks the resolved subtree and assigns the AABB.
+    if matches!(node.attr_string("collider"), Some("aabb")) {
+        super::COLLIDER_REQUESTS.with(|r| r.borrow_mut().push(id));
+    }
 
     // Metadata: role, tags (comma-separated string).
     if let Some(Value::String(role)) = node.attr("role") {

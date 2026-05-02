@@ -11,7 +11,7 @@ impl MogenStudioApp {
         use mogen_core::NodeId;
 
         let i = self.active;
-        let selection = self.viewer.selection();
+        let selection = self.viewer.primary_selection();
         // (counts, scope_header) — `scope_header` is `Some(name)` when stats
         // are scoped to a selected node's subtree, `None` for the global /
         // file-scoped totals.
@@ -182,7 +182,7 @@ impl MogenStudioApp {
                     UndoKey {
                         surface: "lod",
                         attr: None,
-                        node_path: None,
+                        node_path: Vec::new(),
                     },
                 );
             }

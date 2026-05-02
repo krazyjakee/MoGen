@@ -3,10 +3,11 @@
 //! the validator to detect disconnected part clusters.
 
 use glam::{Mat4, Vec3};
+use serde::{Deserialize, Serialize};
 
 use crate::{Mesh, NodeId, SceneGraph};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct Aabb {
     pub min: Vec3,
     pub max: Vec3,

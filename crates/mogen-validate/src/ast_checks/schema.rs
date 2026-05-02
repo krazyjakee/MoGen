@@ -35,6 +35,9 @@ pub const GEOMETRY_COMMON_ATTRS: &[&str] = &[
     // Placement ergonomics.
     "anchor", "from", "to", "gap",
     "above", "below", "left_of", "right_of", "in_front_of", "behind",
+    // Collider request: `collider="aabb"` is the only accepted value in v1;
+    // the lowering pass derives the box from the node's subtree mesh extents.
+    "collider",
 ];
 
 /// Transform-only subset. Used by `skeleton` (places the whole rig) and `bone`
@@ -371,6 +374,7 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         | ("light", "outer_cone") => "number",
         (_, "mat") | (_, "role") | (_, "skin") | (_, "bind") => "string",
         (_, "tags") => "string",
+        (_, "collider") => "string",
         _ => return None,
     };
     Some(t)
