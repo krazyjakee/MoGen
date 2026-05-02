@@ -553,16 +553,20 @@ void main() {
     vec3 diffuse_ibl = kd_ibl * diff_env * albedo;
 
     // Split the lit radiance into two compositing channels:
-    //   `absorbed` — diffuse + emissive, fades with alpha in the blend.
+    //   `absorbed` — diffuse light, fades with alpha in the blend.
     //   `reflected` — direct + IBL specular, stays at full strength so a
     //                 transmissive surface still shows environment reflections
     //                 (KHR_materials_transmission preview without SSR).
+    // Emissive is intentionally excluded here and composited *after* AgX
+    // (see below) — running it through the tonemap desaturates hot
+    // emissives toward white, which is wrong for things like neon tubes
+    // and warning lights where the authored hue is the whole point.
     // AO modulates both direct and indirect diffuse so cavities read as shaded
     // even under a dominant key light (pure IBL-only AO was invisible on
     // well-lit surfaces). Specular is damped slightly to avoid hotspots
     // glowing out of crevices.
     float ao_spec = mix(1.0, ao, 0.5);
-    vec3 absorbed = (diff_direct + diffuse_ibl) * ao + emissive;
+    vec3 absorbed = (diff_direct + diffuse_ibl) * ao;
     vec3 reflected = spec_direct * ao_spec + specular_ibl * ao_spec;
 
     // AgX is the closest match for Blender's default view transform without
@@ -574,6 +578,22 @@ void main() {
     vec3 reflect_frac = clamp(reflected / max(combined, vec3(1e-4)), vec3(0.0), vec3(1.0));
     vec3 reflected_tm = tonemapped * reflect_frac;
     vec3 absorbed_tm = tonemapped - reflected_tm;
+
+    // Emissive is composited in display space, after AgX, so the authored
+    // hue survives at high `emissive_strength` (AgX intentionally rolls
+    // saturated highlights toward white, which makes a "red emergency
+    // light" at strength=8 look like a flat white panel). A mild Fresnel
+    // rim boost (`pow(1-NdV, 2)`) brightens the grazing edge of curved
+    // emissive surfaces — the cheap stand-in for a real bloom halo on a
+    // neon tube or glowing ring. Per-channel `1 - exp(-x)` softly
+    // saturates above 1 while preserving hue, so a strength sweep reads
+    // as the channel getting brighter rather than greyer. The Toon and
+    // CRT branches below replace `absorbed_tm` wholesale, so they take
+    // their own emissive paths (Toon adds raw `emissive` in its band
+    // sum; CRT/Matcap are stylistic and intentionally omit it).
+    vec3 emissive_rim = emissive * (1.0 + 1.5 * pow(1.0 - NdV, 2.0));
+    vec3 emissive_disp = vec3(1.0) - exp(-emissive_rim);
+    absorbed_tm += emissive_disp;
 
     // Style overrides. Stylistic modes don't model reflection-vs-transmission,
     // so they collapse everything into `absorbed_tm` and the transparent
