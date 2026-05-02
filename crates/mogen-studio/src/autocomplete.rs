@@ -635,6 +635,10 @@ fn attr_key_pool(parent_kind: Option<&str>) -> Vec<Candidate> {
             ("tint", "[r, g, b] base-color tint"),
             ("roughness", "0..1 (default 0.6)"),
             ("offset", "+Z gap from surface (default 0.001)"),
+            ("on", "target node — bends the decal onto its curved surface"),
+            ("at", "connector on `on=` target (required when on= is set)"),
+            ("up", "x|y|z — local axis aligned with surface normal (default z)"),
+            ("lift", "extra outward offset along surface normal (default 0)"),
         ],
         _ => &[],
     };

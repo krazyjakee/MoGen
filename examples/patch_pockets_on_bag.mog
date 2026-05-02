@@ -1,10 +1,16 @@
-// Patch-mode conform — round disc pockets on a sports bag.
+// Sports bag: zip across the top, round side pockets, front panel pocket,
+// and a transparent brand decal stuck onto the curved front face.
 //
-// Path-mode conform stretches a strip between two connectors; patch-mode
-// conform lays a single flat / disc-shaped child down at one connector and
-// bends it to follow surface curvature. That makes a `disc` or thin
-// `cylinder` work naturally as a round pocket decal — something path mode
-// cannot do because closed/round shapes have no canonical "long" axis.
+// Two flavours of `conform` are demonstrated:
+//   * Path mode — strip stretched between two connectors (the zipper).
+//   * Patch mode — flat / disc child laid down at a single anchor and bent
+//     to follow surface curvature (the pockets).
+//
+// For the brand decal, the `decal` node's own `on=`/`at=` shortcut
+// synthesizes the patch-mode conform automatically — no separate `conform`
+// node needed. That's the preferred way to stick a transparent image onto a
+// curved surface; you only fall back to authoring `decal` + `conform`
+// explicitly when you need attrs the shortcut doesn't expose.
 
 material "fabric_main"   (color=[0.15, 0.30, 0.60], roughness=0.9)
 material "fabric_accent" (color=[0.12, 0.12, 0.12], roughness=0.85)
@@ -16,10 +22,11 @@ scene {
     connector "zip_a" (at=[-0.28, 0.15, 0], dir=[0, 1, 0])
     connector "zip_b" (at=[ 0.28, 0.15, 0], dir=[0, 1, 0])
 
-    // Patch-mode anchors — a single point per pocket.
-    connector "left_spot"  (at=[-0.30, 0.0, 0.0], dir=[-1, 0, 0])
-    connector "right_spot" (at=[ 0.30, 0.0, 0.0], dir=[ 1, 0, 0])
-    connector "front_spot" (at=[ 0.00, 0.0, -0.15], dir=[0, 0, -1])
+    // Patch-mode anchors — a single point per pocket / decal.
+    connector "left_spot"  (at=[-0.30,  0.0,  0.0 ], dir=[-1, 0, 0])
+    connector "right_spot" (at=[ 0.30,  0.0,  0.0 ], dir=[ 1, 0, 0])
+    connector "front_spot" (at=[ 0.00,  0.0, -0.15], dir=[ 0, 0, -1])
+    connector "logo_spot"  (at=[ 0.00,  0.10,-0.15], dir=[ 0, 0, -1])
   }
 
   // The zip is a strip, so it stays in path mode.
@@ -38,4 +45,16 @@ scene {
   // dense enough to follow curvature smoothly.
   curved_plane "front_pocket" (size=[0.3, 0.18], segments_u=24, segments_v=14, mat="fabric_accent")
   conform (target="body", child="front_pocket", at="front_spot", lift=0.002)
+
+  // Transparent brand decal: one node, no separate `conform` declaration.
+  // `on=`/`at=` desugars to a patch conform under the hood; the decal's
+  // vertices are bent onto the bag's curved front so the artwork actually
+  // wraps the surface instead of floating on a flat tangent quad.
+  decal "brand_logo" (
+    size = [0.18, 0.10],
+    on   = "body",
+    at   = "logo_spot",
+    lift = 0.002,
+    prompt = "embroidered MoGen wordmark, cream-white thread on dark navy fabric"
+  )
 }

@@ -356,6 +356,59 @@ mod common_attr_scope_tests {
     }
 
     #[test]
+    fn decal_on_requires_at() {
+        let src = r#"
+            scene {
+              ellipsoid "bag" (size=[1,0.5,0.5]) {
+                connector "spot" (at=[0.4,0.2,0.3], dir=[0,0,1])
+              }
+              decal "logo" (prompt="x", size=[0.2,0.1], on="bag")
+            }
+        "#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "E0904"),
+            "expected E0904 when on= is set without at=: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn decal_at_without_on_is_rejected() {
+        // `at=` only makes sense paired with `on=`; alone it's silent noise.
+        let src = r#"scene { decal "logo" (prompt="x", size=[0.2,0.1], at="spot") }"#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "E0905"),
+            "expected E0905 when at= used without on=: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn decal_lift_without_on_is_rejected() {
+        let src = r#"scene { decal "logo" (prompt="x", size=[0.2,0.1], lift=0.005) }"#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "E0905"),
+            "expected E0905 when lift= used without on=: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn decal_on_with_at_validates_clean() {
+        let src = r#"
+            scene {
+              ellipsoid "bag" (size=[1,0.5,0.5]) {
+                connector "spot" (at=[0.4,0.2,0.3], dir=[0,0,1])
+              }
+              decal "logo" (prompt="x", size=[0.2,0.1], on="bag", at="spot", lift=0.002)
+            }
+        "#;
+        let diags = diags_for(src);
+        let errs: Vec<_> = diags.iter().filter(|d| matches!(d.severity, Severity::Error)).collect();
+        assert!(errs.is_empty(), "no errors expected on valid on= shortcut: {errs:?}");
+    }
+
+    #[test]
     fn decal_accepts_transform_attrs_but_not_skin_or_bind() {
         // Decal accepts pos/rot/scale and placement helpers; skin/bind don't
         // make sense on a non-skinned overlay.

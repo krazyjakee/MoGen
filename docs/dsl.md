@@ -400,6 +400,45 @@ Attributes:
   z-fighting against the underlying mesh. Default `0.001` reads flush at
   typical scales; raise on coarse geometry.
 
+### Curved surfaces: `on=` / `at=`
+
+For flat surfaces, place the decal as a child of the surface and let `pos=`
+handle alignment. For *curved* surfaces, write the decal once with `on=` and
+`at=` and the lowering pass synthesizes a `conform` patch behind the scenes —
+the decal's vertices are bent onto the target's surface so it actually hugs
+the curvature.
+
+```
+ellipsoid "bag" (size=[1.0, 0.5, 0.5], mat="leather") {
+  connector "front_spot" (at=[0.0, 0.0, 0.25], dir=[0, 0, 1])
+}
+decal "bag_logo" (
+  size = [0.18, 0.10],
+  on   = "bag",
+  at   = "front_spot",
+  prompt = "embroidered MoGen wordmark, cream thread on dark leather"
+)
+```
+
+- `on` — name of the target node to conform onto. Triggers the shortcut.
+- `at` — required when `on=` is set; names the connector on the target that
+  acts as the patch anchor.
+- `up` — optional `x|y|z`; which local axis points along the surface normal.
+  Defaults to `z` (the decal quad's face direction).
+- `lift` — optional outward offset along the surface normal, applied during
+  conform. Layered on top of the per-mesh `offset=` value, so use `lift=`
+  on coarse target geometry where you need extra separation. Defaults to 0.
+
+When `on=` is used the decal is reparented under the target. Its `pos=` is
+dropped (positioning comes from `at=`, not user transforms), but `rot=` and
+`scale=` are baked into the artwork before projection — so `rot=[0, 0, 90]`
+spins the logo 90° in the tangent plane (the useful "rotate the artwork
+around the surface normal" case), and `scale=[2, 1, 1]` makes it twice as
+wide. Off-plane rotations like `rot=[90, 0, 0]` tilt the artwork off the
+surface; the conform kernel reproduces them faithfully but the result is
+rarely what authors want — reach for `rz=` / `rot=[0, 0, deg]` for the
+common "spin the logo" case.
+
 If neither `prompt=` nor `image=` is set, the decal's name is used as the
 prompt. That makes the compact form `decal "embroidered logo, white thread"
 (size=[0.2, 0.1], pos=[0, 0.1, 0.101])` valid — handy when you want to keep
@@ -415,6 +454,8 @@ A few rules that aren't optional:
 - The `mogen textures` pipeline asks Gemini for transparent-background
   RGBA directly. There is no chroma-key step: the `alpha_mode="mask"`
   foliage path is for foliage, not decals.
+- `at=`, `up=`, and `lift=` are inert without `on=` — the validator rejects
+  them so a typo doesn't silently disappear.
 
 Example: a logo on the front of a shirt, plus an authored handwriting
 overlay on a paper card.

@@ -376,6 +376,39 @@ pub(super) fn check_anim_required(n: &Node, diags: &mut Vec<Diagnostic>) {
                     }
                 }
             }
+            // Curved-surface shortcut: `on=<target>` synthesizes a `conform`
+            // patch internally. `at=` is required so we know which connector
+            // on the target acts as the anchor; `up=`/`lift=` are optional.
+            // Without `on=`, those three attributes are inert noise — reject
+            // them so the author doesn't think they're doing something.
+            let has_on = n.attr("on").is_some();
+            let has_at = n.attr("at").is_some();
+            if has_on && !has_at {
+                diags.push(
+                    Diagnostic::error(
+                        "E0904",
+                        "`decal` with `on=\"<target>\"` requires `at=\"<connector>\"` \
+                         — the patch needs an anchor connector on the target",
+                    )
+                    .with_span(n.span),
+                );
+            }
+            if !has_on {
+                for inert in ["at", "up", "lift"] {
+                    if n.attr(inert).is_some() {
+                        diags.push(
+                            Diagnostic::error(
+                                "E0905",
+                                format!(
+                                    "`decal` `{inert}=` only applies with `on=\"<target>\"` \
+                                     (curved-surface shortcut); drop it or add `on=`"
+                                ),
+                            )
+                            .with_span(n.span),
+                        );
+                    }
+                }
+            }
         }
         _ => {}
     }

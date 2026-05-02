@@ -150,20 +150,28 @@ A `.mog` file is a sequence of nodes. Each node is:
 - `conform (target=\"t\", child=\"c\", from=\"a\", to=\"b\", along=x|y|z, lift=0.002, samples=64)` \
   deforms `child`'s vertices so the strip/tube runs along the surface of \
   `target` from connector `a` to connector `b`. Use for zips, labels \
-  wrapped on bottles, hoses draped on chassis, decals on curved bodies, \
-  trim along edges. Allowed `child` kinds: flat strips (`box`, `plane`, \
-  `quad`, `curved_plane`, `slab`, `post`, `panel`, `wall`, \
-  `spline_ribbon`) and tubes (`cylinder`, `capsule`, `tube`, \
-  `spline_tube`). Closed/curved primitives (`sphere`, `ellipsoid`, \
-  `superellipsoid`, `cone`, `pyramid`, `disc`, etc.) are rejected — they \
-  have no canonical \"along\" axis. Add `connector \"a\" (at=[...], \
-  dir=[...])` / `connector \"b\" (...)` on the target nested inside its \
-  declaration, then reference them in `from=` / `to=`. `lift` (a few \
-  millimetres) prevents z-fighting with the target. Tessellation is \
-  automatic — a plain `box` strip is cut into enough segments to follow \
-  the surface curvature, so you don't need to set `segments_u=` on \
-  `curved_plane` or `samples=` on `spline_ribbon` for conform children \
-  unless the target is unusually wavy.
+  wrapped on bottles, hoses draped on chassis, trim along edges. Allowed \
+  `child` kinds: flat strips (`box`, `plane`, `quad`, `curved_plane`, \
+  `slab`, `post`, `panel`, `wall`, `spline_ribbon`) and tubes (`cylinder`, \
+  `capsule`, `tube`, `spline_tube`). Closed/curved primitives (`sphere`, \
+  `ellipsoid`, `superellipsoid`, `cone`, `pyramid`, `disc`, etc.) are \
+  rejected — they have no canonical \"along\" axis. Add `connector \"a\" \
+  (at=[...], dir=[...])` / `connector \"b\" (...)` on the target nested \
+  inside its declaration, then reference them in `from=` / `to=`. `lift` \
+  (a few millimetres) prevents z-fighting with the target. Tessellation \
+  is automatic — a plain `box` strip is cut into enough segments to \
+  follow the surface curvature, so you don't need to set `segments_u=` \
+  on `curved_plane` or `samples=` on `spline_ribbon` for conform children \
+  unless the target is unusually wavy. **Patch mode** (single-anchor): \
+  `conform (target=\"t\", child=\"c\", at=\"spot\", lift=0.002)` lays a \
+  flat / disc-shaped child at one connector and bends it to follow local \
+  curvature — round pockets on a bag, brand patches, eye spots on \
+  creatures. **Decal shortcut**: for transparent images on curved \
+  surfaces (logos, labels, stickers), DO NOT pair `decal` + `conform` \
+  manually — write `decal \"name\" (on=\"target\", at=\"spot\", \
+  size=[w,h], prompt=\"…\")` instead. The lowering pass synthesizes the \
+  patch conform automatically. Reach for explicit `conform` only for \
+  non-decal geometry.
 - `mirror axis=x|y|z { ... }` reflects its children; \
   `array count=N around=y|x|z { ... }` repeats around an axis. \
   `stack (axis=y, gap=0, align=center, pack=start) { ... }` lays children \
@@ -347,6 +355,7 @@ pub(super) const KINDS_REFERENCE: &str = "\
 | `spline_tube` | `points=[[x,y,z], …]` | `radius` or `radii=[…]`, `segments`, `samples`; bananas, stems, horns, handles |
 | `spline_ribbon` | `points=[[x,y,z], …]` | `width` or `widths=[…]`, `samples`, `twist` deg; flat double-sided strip — sashes, ribbons, straps |
 | `leaf_card` | `size=[w,h]` | `cards` (2 cross / 3 fan); paired alpha-cutout planes for foliage — pair with `alpha_mode=\"mask\", double_sided=1` |
+| `decal` | name (acts as prompt fallback) | `size=[w,h]` (default `[0.5, 0.5]`), `prompt` (Gemini description), `image` (path; wins over `prompt`), `tint=[r,g,b]`, `roughness` (0.6), `offset` (+Z gap from surface, 0.001), **`on`/`at`/`up`/`lift`** (curved-surface shortcut — see below), `pos`, `rot`. Synthesizes its own transparent `alpha_mode=\"blend\"` material — DO NOT set `mat=`. Use for logos, labels, stickers, handwritten notes, patches: anything that's a transparent image overlaid on another surface. For flat hosts (a panel, a box face), parent the decal under the host and set `pos=`. For curved hosts (a bag, a bottle, a helmet), use `on=\"<host>\", at=\"<connector>\"` so the decal's vertices bend onto the surface — much better than floating a flat quad above curvature. |
 | `branch` | `length`, `radius`, `depth` | `splits`, `length_falloff`, `radius_falloff`, `branch_angle`, `roll`, `tropism`, `bend`, `seed`, `jitter`, `leaves`, `leaf_size`, `leaf_cards`, `leaf_mat`; **recursive procedural tree — one declaration becomes a whole tree** |
 | `slab` | `size=[x,y,z]` | `box` alias; default `anchor=bottom` (sits on ground) |
 | `post` | `size=[x,y,z]` | `box` alias; default `anchor=bottom` (pillar/leg/column) |
@@ -354,7 +363,7 @@ pub(super) const KINDS_REFERENCE: &str = "\
 | `wall` | `size=[x,y,z]` | `holes=[[cx, cy, w, h], …]`; rectangular CSG cutouts through Z — one watertight mesh, use for walls with doors/windows instead of nested `difference` |
 | `connector` | name, `at=[...]` | `dir=[...]`, `tag=<ident>`, `radius` |
 | `attach` | `parent`, `child` | `socket`, `plug` (default `top`/`bottom`), `offset`, `twist` |
-| `conform` | `target`, `child`, `from`, `to` | `along=x\\|y\\|z`, `lift`, `samples` (64), `twist`, `reparent`; deforms a strip/tube along a path on the target's surface — zips, labels, hoses, trim. Tessellation auto-subdivides. |
+| `conform` | `target`, `child` + (`from`, `to`) **or** `at` | path mode: `along=x\\|y\\|z`, `lift`, `samples` (64), `twist`, `reparent` — zips, labels, hoses, trim along a curve. Patch mode: `at=\"<connector>\", up=x\\|y\\|z, lift, reparent` — round pockets, brand patches at one anchor. For transparent-image stickers on curved surfaces, prefer the **`decal` shortcut** (`on=`/`at=` on the decal itself) instead of authoring `decal` + `conform` separately. |
 | `mirror` | `axis=x|y|z` | children |
 | `array` | `count`, `around=x|y|z` | `start_angle`, children |
 | `module` | name, optional params | body |

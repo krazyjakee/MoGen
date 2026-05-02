@@ -122,6 +122,10 @@ pub fn attrs_for_kind(kind: &str) -> &'static [&'static str] {
         ],
         "decal" => &[
             "size", "prompt", "image", "tint", "roughness", "offset",
+            // Curved-surface shortcut: synthesizes a `conform` patch under
+            // the hood so authors can stick a transparent image onto a
+            // curved target without writing a separate `conform` node.
+            "on", "at", "up", "lift",
         ],
         "material" => &[
             "color", "alpha", "metallic", "roughness",
@@ -217,6 +221,8 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         ("decal", "prompt") | ("decal", "image") => "string",
         ("decal", "tint") => "vec3",
         ("decal", "roughness") | ("decal", "offset") => "number",
+        ("decal", "on") | ("decal", "at") | ("decal", "up") => "string",
+        ("decal", "lift") => "number",
         ("mesh", "src") => "string",
         ("branch", "length")
         | ("branch", "radius")

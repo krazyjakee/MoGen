@@ -24,6 +24,8 @@ use mogen_geom::{
     AxisMap, ConformParams, PatchParams, SurfaceIndex,
 };
 
+use glam::{Mat4, Quat, Vec3};
+
 use crate::ast::{Node, Value};
 use crate::attach::reparent_pub;
 
@@ -175,6 +177,17 @@ fn walk(n: &Node, out: &mut Vec<ConformSpec>) -> Result<()> {
         out.push(build_spec(n)?);
         return Ok(());
     }
+    // `decal (on=..., at=..., up=..., lift=...)` is sugar for an explicit
+    // `conform` patch — the user authors a single decal node and we synthesize
+    // the conform behind the scenes. Decals stay in the AST so downstream
+    // passes that walk for transparent images (texture pipeline, span-aware
+    // splicing of `image="…"`) still see them.
+    if n.kind == "decal" && n.attr("on").is_some() {
+        out.push(build_decal_spec(n)?);
+        // Fall through into children — a decal with `on=` is rare to nest
+        // children under, but be consistent with `conform` (which returns
+        // early because conform never owns geometry of its own).
+    }
     if n.kind == "array" || n.kind == "mirror" {
         return Ok(());
     }
@@ -271,6 +284,48 @@ fn build_spec(n: &Node) -> Result<ConformSpec> {
         use_id: n.use_id,
         span: n.span,
         mode,
+    })
+}
+
+/// Build a synthesized patch-mode `ConformSpec` from a `decal` node carrying
+/// the `on=`/`at=`/`up=`/`lift=` shortcut. Mirrors `build_spec` for explicit
+/// `conform` nodes but knows the decal's contract: target = `on=`, child =
+/// the decal's own name, mode = patch, default `up` is +Z (the decal quad's
+/// face normal — picked up automatically from `default_up_for("decal")`
+/// when `up=` is omitted).
+fn build_decal_spec(n: &Node) -> Result<ConformSpec> {
+    let target = str_attr(n, "on")
+        .ok_or_else(|| anyhow!("decal `on=` shortcut requires a target node name"))?;
+    // The decal's own name is the conform child. Validation already requires
+    // `at=` when `on=` is set; the runtime error here is a defensive fallback
+    // in case `validate_ast` was bypassed.
+    let at = str_attr(n, "at").ok_or_else(|| {
+        anyhow!(
+            "decal \"{}\" has `on=\"{}\"` but no `at=\"<connector>\"` — \
+             the patch needs an anchor connector on the target",
+            n.name.clone().unwrap_or_else(|| "decal".to_string()),
+            target,
+        )
+    })?;
+    let child = n.name.clone().ok_or_else(|| {
+        anyhow!(
+            "decal with `on=` must have a name so the synthesized conform can \
+             reference it (got an unnamed decal targeting \"{target}\")"
+        )
+    })?;
+    let up = parse_axis(n, "up");
+    let lift = n.attr_number("lift").unwrap_or(0.0);
+    Ok(ConformSpec {
+        target,
+        child,
+        lift,
+        // Reparent under the target so the conformed decal moves with it,
+        // matching the explicit-conform default and the prior decal-as-child
+        // authoring pattern.
+        reparent: true,
+        use_id: n.use_id,
+        span: n.span,
+        mode: ConformMode::Patch { at, up },
     })
 }
 
@@ -416,6 +471,10 @@ fn apply_path(
         .as_ref()
         .ok_or_else(|| anyhow!("conform: child \"{}\" has no mesh", spec.child))?
         .clone();
+    // Honor the user's local rotation/scale before path conform — see
+    // `apply_patch` for the rationale. Translation is dropped because the
+    // strip's positioning comes from `from=`/`to=` on the target.
+    let child_mesh = bake_local_rs_into_mesh(&graph.nodes[child_id.0 as usize].transform, &child_mesh);
     // Auto-subdivide the child along the path axis when its tessellation is
     // too coarse to follow the path's curvature. A bare `box` has only two
     // distinct values along each axis, so without this every interior path
@@ -503,6 +562,27 @@ fn apply_patch(
         .as_ref()
         .ok_or_else(|| anyhow!("conform: child \"{}\" has no mesh", spec.child))?
         .clone();
+    // Bake the user's local rotation/scale into the mesh before deformation.
+    // `place_deformed_mesh` will reset the node transform to identity, so any
+    // `rot=`/`scale=` on the source decal/disc/etc. would otherwise be silently
+    // discarded. The user's `pos=` is intentionally dropped — patch positioning
+    // comes from `at=`, not from `pos=`. For a decal the meaningful rotation is
+    // a tangent-plane spin (`rz=` / `rot=[0,0,deg]`); off-plane rotations bend
+    // the artwork off the surface, which the conform kernel will faithfully
+    // reproduce — surprising results there are author-driven, not silent.
+    let child_mesh = bake_local_rs_into_mesh(&graph.nodes[child_id.0 as usize].transform, &child_mesh);
+    // Auto-subdivide along the two planar axes so the patch can follow surface
+    // curvature. A bare disc has only a centre + rim (≈31 verts); without
+    // densification the triangles between rim vertices stay flat and the patch
+    // doesn't wrap the target. Mirrors the path-mode subdivision in apply_path.
+    let (planar_a, planar_b) = match up_axis {
+        Axis::X => (Axis::Y, Axis::Z),
+        Axis::Y => (Axis::X, Axis::Z),
+        Axis::Z => (Axis::X, Axis::Y),
+    };
+    let target_segments = 16;
+    let child_mesh = subdivide_along_axis(&child_mesh, planar_a, target_segments);
+    let child_mesh = subdivide_along_axis(&child_mesh, planar_b, target_segments);
 
     let deformed_target_local = conform_patch(
         &child_mesh,
@@ -668,6 +748,24 @@ fn remaining_axis(a: Axis, b: Axis) -> Axis {
     }
     // Defensive default: should be unreachable given non-equal inputs.
     Axis::Z
+}
+
+/// Bake the user's local rotation and (non-unit) scale from `transform` into
+/// `mesh`'s vertex positions and normals. Translation is intentionally
+/// dropped — conform positions the result via the target's connector(s),
+/// not the child's `pos=`. Returns the input cloned untouched when the
+/// rotation/scale are both identity.
+///
+/// Without this step, a `decal "logo" (rot=[0, 0, 90])` (or any rotated
+/// conform child) would silently lose its rotation: `place_deformed_mesh`
+/// resets `node.transform` to identity after deformation, so the only place
+/// the user's rotation can survive is baked into the geometry.
+fn bake_local_rs_into_mesh(transform: &mogen_core::Transform, mesh: &mogen_core::Mesh) -> mogen_core::Mesh {
+    if transform.rotation == Quat::IDENTITY && transform.scale == Vec3::ONE {
+        return mesh.clone();
+    }
+    let m = Mat4::from_scale_rotation_translation(transform.scale, transform.rotation, Vec3::ZERO);
+    transform_mesh(mesh, m)
 }
 
 fn aabb_extent(mesh: &mogen_core::Mesh, axis: usize) -> Option<f32> {
@@ -1002,6 +1100,33 @@ mod tests {
     }
 
     #[test]
+    fn conform_inside_group_lowers_cleanly() {
+        // Regression: when an imported scene-as-module body carrying conform
+        // directives is expanded inside a `group` wrapper, those conform
+        // children land under the group rather than at scene level. The
+        // node-lowering pass must skip them so they don't trip
+        // "unknown node kind: conform" — `resolve_conforms` walks the
+        // expanded AST recursively and picks them up regardless of nesting.
+        let src = r#"
+            scene {
+              group "wrap" {
+                plane "ground" (size=[4, 4]) {
+                  connector "spot" (at=[0, 0, 0], dir=[0, 1, 0])
+                }
+                disc "patch" (radius=0.1, segments=12)
+                conform (target="ground", child="patch", at="spot", lift=0.01)
+              }
+            }
+        "#;
+        let g = build(src);
+        let patch = g.find_node("patch").expect("patch node lowered");
+        // The conform should still have run despite the wrapper — patch is
+        // reparented under ground (the conform default).
+        let ground = g.find_node("ground").unwrap();
+        assert_eq!(g.nodes[patch.0 as usize].parent, Some(ground));
+    }
+
+    #[test]
     fn patch_mode_rejects_path_only_attrs() {
         let err = build_err(
             r#"
@@ -1015,6 +1140,150 @@ mod tests {
             "#,
         );
         assert!(err.contains("path-mode only"), "err = {err}");
+    }
+
+    #[test]
+    fn conformed_decal_rot_z_spins_in_tangent_plane() {
+        // Pre-conform `rot=[0, 0, 90]` should swap the decal's local X and Y
+        // extents (rotation around the surface normal). Match against the
+        // decal's local AABB on the deformed mesh — width and height swap.
+        let src = r#"
+            scene {
+              plane "ground" (size=[4, 4]) {
+                connector "spot" (at=[0, 0, 0], dir=[0, 1, 0])
+              }
+              decal "logo" (size=[0.4, 0.2], prompt="x", rot=[0, 0, 90])
+              conform (target="ground", child="logo", at="spot", lift=0.001)
+            }
+        "#;
+        let g = build(src);
+        let logo = g.find_node("logo").unwrap();
+        let mesh = g.nodes[logo.0 as usize].mesh.as_ref().unwrap();
+        let mut x_extent = (f32::INFINITY, f32::NEG_INFINITY);
+        let mut z_extent = (f32::INFINITY, f32::NEG_INFINITY);
+        for p in &mesh.positions {
+            x_extent.0 = x_extent.0.min(p[0]);
+            x_extent.1 = x_extent.1.max(p[0]);
+            z_extent.0 = z_extent.0.min(p[2]);
+            z_extent.1 = z_extent.1.max(p[2]);
+        }
+        let x_size = x_extent.1 - x_extent.0;
+        let z_size = z_extent.1 - z_extent.0;
+        // Without the rotation, x_size would be ~0.4 and z_size ~0.2 (the decal
+        // sized [0.4, 0.2] sits flat on a +Y plane mapping its local +X→world+X
+        // and local +Y→world+Z). With `rot=[0,0,90]` the rotation around +Z
+        // (the surface normal) swaps X and Y in the decal frame, so X→world Z
+        // and Y→world X.
+        assert!(
+            (x_size - 0.2).abs() < 0.05,
+            "expected x_size ≈ 0.2 after Z rotation, got {x_size:.3}"
+        );
+        assert!(
+            (z_size - 0.4).abs() < 0.05,
+            "expected z_size ≈ 0.4 after Z rotation, got {z_size:.3}"
+        );
+    }
+
+    #[test]
+    fn conformed_decal_rot_x_tilts_artwork() {
+        // The user's reported case: `rot=[90, 0, 0]` tilts the decal's
+        // artwork off the surface — the decal's local +Z (originally the
+        // surface normal direction) gets rotated to -Y, so vertices that
+        // were at z=±tiny now displace ±size/2 along the original +Y / -Y.
+        // The point of the test is not to prescribe the exact look, but to
+        // prove the rotation is no longer silently dropped — the deformed
+        // mesh must have notably different geometry from the un-rotated
+        // baseline.
+        let baseline_src = r#"
+            scene {
+              plane "ground" (size=[4, 4]) {
+                connector "spot" (at=[0, 0, 0], dir=[0, 1, 0])
+              }
+              decal "logo" (size=[0.2, 0.3], prompt="x")
+              conform (target="ground", child="logo", at="spot", lift=0.001)
+            }
+        "#;
+        let rotated_src = r#"
+            scene {
+              plane "ground" (size=[4, 4]) {
+                connector "spot" (at=[0, 0, 0], dir=[0, 1, 0])
+              }
+              decal "logo" (size=[0.2, 0.3], prompt="x", rot=[90, 0, 0])
+              conform (target="ground", child="logo", at="spot", lift=0.001)
+            }
+        "#;
+        let g_a = build(baseline_src);
+        let g_b = build(rotated_src);
+        let mesh_a = g_a.nodes[g_a.find_node("logo").unwrap().0 as usize].mesh.as_ref().unwrap();
+        let mesh_b = g_b.nodes[g_b.find_node("logo").unwrap().0 as usize].mesh.as_ref().unwrap();
+        let mut max_diff = 0.0_f32;
+        for (a, b) in mesh_a.positions.iter().zip(&mesh_b.positions) {
+            for k in 0..3 {
+                max_diff = max_diff.max((a[k] - b[k]).abs());
+            }
+        }
+        assert!(
+            max_diff > 0.05,
+            "expected rotation to alter geometry; max position diff was {max_diff:.4}"
+        );
+    }
+
+    #[test]
+    fn decal_on_synthesizes_patch_conform() {
+        // `decal (on="bag", at="spot")` should produce the same end state as
+        // an explicit `conform (target="bag", child="logo", at="spot")`: the
+        // decal's vertices land on the ellipsoid surface.
+        let src = r#"
+            scene {
+              ellipsoid "bag" (size=[1.0, 0.6, 0.6]) {
+                connector "spot" (at=[0.4, 0.2, 0.3], dir=[0, 0, 1])
+              }
+              decal "logo" (size=[0.2, 0.12], on="bag", at="spot", lift=0.005)
+            }
+        "#;
+        let g = build(src);
+        let logo = g.find_node("logo").unwrap();
+        let cb = g.nodes[logo.0 as usize]
+            .conform_binding
+            .as_ref()
+            .expect("decal on= should write a Patch ConformBinding");
+        match cb {
+            ConformBinding::Patch { target, at } => {
+                assert_eq!(*target, g.find_node("bag").unwrap());
+                assert_eq!(at, "spot");
+            }
+            other => panic!("expected Patch binding, got {other:?}"),
+        }
+        // Vertices should be on (or just above) the ellipsoid isosurface.
+        let mesh = g.nodes[logo.0 as usize].mesh.as_ref().unwrap();
+        for p in &mesh.positions {
+            let v = (p[0] * p[0]) / 0.25 + (p[1] * p[1]) / 0.09 + (p[2] * p[2]) / 0.09;
+            assert!(
+                v > 0.95 && v < 1.20,
+                "decal vertex {p:?} far from ellipsoid (iso={v})",
+            );
+        }
+        // Decal must be reparented under the bag.
+        assert_eq!(g.nodes[logo.0 as usize].parent, Some(g.find_node("bag").unwrap()));
+    }
+
+    #[test]
+    fn decal_rotation_is_applied_when_not_conformed() {
+        // Sanity check: a plain decal honors `rot=`. (The shortcut path resets
+        // the transform to identity because conform reparents under the
+        // target, but standalone decals should still rotate.)
+        let src = r#"
+            scene {
+              decal "logo" (size=[0.2, 0.1], prompt="x", rot=[0, 90, 0])
+            }
+        "#;
+        let g = build(src);
+        let logo = g.find_node("logo").unwrap();
+        let q = g.nodes[logo.0 as usize].transform.rotation;
+        // Quat for 90° around Y under EulerRot::XYZ has w ≈ cos(45°) ≈ 0.7071
+        // and y ≈ sin(45°) ≈ 0.7071.
+        assert!((q.w - 0.7071).abs() < 1e-3, "expected ~0.707 w, got {q:?}");
+        assert!((q.y - 0.7071).abs() < 1e-3, "expected ~0.707 y, got {q:?}");
     }
 
     #[test]

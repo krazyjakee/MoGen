@@ -138,7 +138,12 @@ pub(super) fn lower_into(
 
     for c in &node.children {
         match c.kind.as_str() {
-            "material" | "attach" => continue,
+            // `conform` is resolved by `resolve_conforms`, which walks the
+            // expanded AST recursively and finds conform nodes regardless of
+            // nesting. Skipping it here matters when an imported scene-as-
+            // module body (e.g. `sports_bag.mog`) carrying conform directives
+            // is expanded inside a `group` wrapper.
+            "material" | "attach" | "conform" => continue,
             // Animation, skeleton, and clip-track decls are processed by their
             // own passes (see lower_animations / lower_skeleton). They get
             // here when an imported scene-as-module body — which can carry
