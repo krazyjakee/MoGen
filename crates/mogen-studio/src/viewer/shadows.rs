@@ -704,10 +704,10 @@ impl ShadowSystem {
 
     /// Render the depth pre-pass for every caster in `frame`. Pass `vao` /
     /// `mesh` from the main renderer so we re-use the same VBO / EBO bind.
-    /// Caller is responsible for restoring the bound FBO + viewport
-    /// afterwards — this function leaves the default framebuffer bound and
-    /// resets the viewport back to `(viewport_x, viewport_y, viewport_w,
-    /// viewport_h)` before returning.
+    /// Restores the FBO that was bound on entry and resets the viewport back
+    /// to `(viewport_x, viewport_y, viewport_w, viewport_h)` before returning,
+    /// so callers that draw into an offscreen target (the capture path) can
+    /// invoke this without losing their framebuffer binding.
     #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
@@ -730,6 +730,12 @@ impl ShadowSystem {
         }
 
         unsafe {
+            // Snapshot the FBO bound on entry so we can restore it before
+            // returning. The on-screen draw path enters with FBO 0 bound and
+            // expects to leave with FBO 0 bound; the offscreen capture path
+            // enters with an MSAA FBO bound and would otherwise have its
+            // target silently swapped out from under it.
+            let prev_fbo = gl.get_parameter_i32(glow::DRAW_FRAMEBUFFER_BINDING);
             // Common state for every depth pass: depth test on with LESS,
             // depth-write on, no colour writes, front-face cull (peter-
             // panning mitigation), no scissor.
@@ -870,7 +876,12 @@ impl ShadowSystem {
             gl.disable(glow::POLYGON_OFFSET_FILL);
             gl.color_mask(true, true, true, true);
             gl.cull_face(glow::BACK);
-            gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+            let prev_fbo_handle = if prev_fbo == 0 {
+                None
+            } else {
+                std::num::NonZeroU32::new(prev_fbo as u32).map(glow::NativeFramebuffer)
+            };
+            gl.bind_framebuffer(glow::FRAMEBUFFER, prev_fbo_handle);
             gl.viewport(viewport_x, viewport_y, viewport_w, viewport_h);
             gl.bind_vertex_array(None);
             gl.use_program(None);
