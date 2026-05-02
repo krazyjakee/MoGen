@@ -508,6 +508,17 @@ impl MogenStudioApp {
                 ui.hyperlink_to("License (MIT)", LICENSE_URL);
                 ui.separator();
                 if ui
+                    .button("Check for Updates…")
+                    .on_hover_text(
+                        "Look for a newer release on GitHub and optionally \
+                         download and install it in place",
+                    )
+                    .clicked()
+                {
+                    action = MenuAction::OpenUpdate;
+                    ui.close_menu();
+                }
+                if ui
                     .button("About MoGen Studio…")
                     .on_hover_text("Version and credits")
                     .clicked()
@@ -599,6 +610,9 @@ impl MogenStudioApp {
             MenuAction::Frame => self.viewer.frame_view(),
             MenuAction::OpenAbout => {
                 self.show_about = true;
+            }
+            MenuAction::OpenUpdate => {
+                self.open_update_dialog();
             }
             MenuAction::GenerateThumbnail => self.generate_thumbnail(ctx),
             MenuAction::GenerateVideo => {

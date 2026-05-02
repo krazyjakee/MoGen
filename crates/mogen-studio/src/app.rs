@@ -34,6 +34,7 @@ mod ui_llm;
 mod ui_menu;
 mod ui_panels;
 mod undo;
+mod update;
 mod util;
 mod watcher;
 
@@ -171,6 +172,15 @@ pub struct MogenStudioApp {
 
     /// Help → About modal visibility.
     show_about: bool,
+
+    /// Help → Check for Updates modal visibility. Independent of
+    /// `update_state` so the user can close the modal mid-install and the
+    /// worker keeps running in the background.
+    show_update: bool,
+    /// Self-updater state machine. `None` means nothing has been kicked off
+    /// (or the user closed the dialog while idle); a `Some(_)` survives modal
+    /// closes when an install is in flight so the worker isn't orphaned.
+    update_state: Option<self::update::UpdateState>,
 
     /// "Build GLB" modal visibility. Also acts as the ui gate on the export
     /// toggles while a build is in flight — the worker writes status through
@@ -397,6 +407,8 @@ impl MogenStudioApp {
             recently_closed: VecDeque::new(),
             last_viewport_rect: None,
             show_about: false,
+            show_update: false,
+            update_state: None,
             show_export: false,
             export_opts_draft: ExportOptions::default(),
             build_rx: None,
@@ -599,6 +611,7 @@ impl eframe::App for MogenStudioApp {
         self.poll_prompt_enhance();
         self.poll_ask();
         self.poll_build();
+        self.poll_update();
         self.poll_generate(ctx);
         self.drive_compile_debounce(ctx);
         self.check_external_changes(ctx);
@@ -743,6 +756,7 @@ impl eframe::App for MogenStudioApp {
         self.ui_export_dialog(ctx);
         self.ui_external_conflict(ctx);
         self.ui_about(ctx);
+        self.ui_update_dialog(ctx);
         self.ui_ask(ctx);
         self.ui_spotlight(ctx);
         self.ui_video_options(ctx);
@@ -763,6 +777,7 @@ impl eframe::App for MogenStudioApp {
             || self.any_enhance_in_flight()
             || self.any_ask_in_flight()
             || self.build_rx.is_some()
+            || self.update_in_flight()
         {
             ctx.request_repaint_after(std::time::Duration::from_millis(120));
         }

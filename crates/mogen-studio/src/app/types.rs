@@ -294,6 +294,9 @@ pub(super) enum MenuAction {
     OpenOptions,
     Frame,
     OpenAbout,
+    /// Open the Help → Check for Updates… modal. The actual GitHub query is
+    /// kicked off by the user clicking "Check now" inside the dialog.
+    OpenUpdate,
     GenerateThumbnail,
     GenerateVideo,
     /// VS Code–style line / selection ops dispatched against the active

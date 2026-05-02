@@ -1,0 +1,22 @@
+[package]
+name = "mogen-update"
+version.workspace = true
+edition.workspace = true
+description = "GitHub release self-updater for the MoGen CLI and Studio."
+license = "MIT"
+
+[dependencies]
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+# `tls` here picks rustls so we don't drag OpenSSL onto Linux just to talk to
+# api.github.com. ureq is sync and short-circuits the need for a tokio runtime
+# inside the worker thread that drives the download.
+ureq = { version = "2.12", default-features = false, features = ["tls", "json", "gzip"] }
+semver = "1"
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+tar = { version = "0.4", default-features = false }
+self-replace = "1"
+
+[target.'cfg(windows)'.dependencies]
+zip = { version = "0.6", default-features = false, features = ["deflate"] }
