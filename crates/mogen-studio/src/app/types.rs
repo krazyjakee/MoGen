@@ -307,6 +307,7 @@ pub(super) enum MenuAction {
     /// VS Code–style line / selection ops dispatched against the active
     /// editor. The same handlers fire from the keyboard in `line_ops.rs`.
     EditorLineOp(super::line_ops::LineOp),
+    OpenDocs,
 }
 
 /// The subset of `MenuAction` variants that are bound to a global keyboard
@@ -327,6 +328,7 @@ pub(super) enum ShortcutAction {
     Quit,
     OpenOptions,
     Frame,
+    OpenDocs,
 }
 
 impl ShortcutAction {
@@ -350,6 +352,9 @@ impl ShortcutAction {
             ShortcutAction::Quit => KeyboardShortcut::new(cmd, Key::Q),
             ShortcutAction::OpenOptions => KeyboardShortcut::new(cmd, Key::Comma),
             ShortcutAction::Frame => KeyboardShortcut::new(cmd, Key::Num0),
+            // F1 mirrors the convention of every JetBrains / VS Code IDE —
+            // unmodified F-row key, opens contextual help.
+            ShortcutAction::OpenDocs => KeyboardShortcut::new(Modifiers::NONE, Key::F1),
         }
     }
 
@@ -368,6 +373,7 @@ impl ShortcutAction {
             ShortcutAction::Quit => MenuAction::Quit,
             ShortcutAction::OpenOptions => MenuAction::OpenOptions,
             ShortcutAction::Frame => MenuAction::Frame,
+            ShortcutAction::OpenDocs => MenuAction::OpenDocs,
         }
     }
 
@@ -393,6 +399,7 @@ impl ShortcutAction {
         ShortcutAction::Quit,
         ShortcutAction::OpenOptions,
         ShortcutAction::Frame,
+        ShortcutAction::OpenDocs,
     ];
 }
 
@@ -618,6 +625,27 @@ pub(super) struct SpotlightState {
     /// Latched on open; cleared after focus is requested on the input. Same
     /// pattern as the find bar / Ask modal.
     pub(super) focus_pending: bool,
+}
+
+/// Documentation window state. The docs viewer is a single-instance modal
+/// that the user opens from Help → Documentation, F1, or a Ctrl+click on a
+/// keyword in the editor. State persists across opens so flipping between
+/// the editor and the docs window doesn't reset the user's place.
+#[derive(Default)]
+pub(super) struct DocsState {
+    /// Currently displayed page id (`"dsl"`, `"modules"`, `"cli"`,
+    /// `"studio"`). Empty until the window is opened for the first time;
+    /// `ui_docs` initialises to the DSL page on first paint.
+    pub(super) page_id: String,
+    /// Slug to scroll to on the next paint. Populated by Ctrl+click and by
+    /// sidebar outline clicks; cleared by the renderer once it has scrolled.
+    pub(super) pending_scroll: Option<String>,
+    /// Previously viewed (page, slug) pairs. Drives the Back button so users
+    /// can step out of a Ctrl+click jump.
+    pub(super) history: Vec<(String, Option<String>)>,
+    /// Substring filter applied to the section outline in the sidebar so
+    /// users can narrow long pages (the DSL page has 30+ headings).
+    pub(super) outline_filter: String,
 }
 
 /// Per-file state. Every open `.mog` owns its own buffer, compile result,

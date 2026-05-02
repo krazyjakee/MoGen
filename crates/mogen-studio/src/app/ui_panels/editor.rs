@@ -198,6 +198,16 @@ impl MogenStudioApp {
                         }
                     }
 
+                    // Ctrl+click navigation: jumps to imported module
+                    // declarations, opens URLs / referenced files, or
+                    // scrolls the in-app docs window to the matching
+                    // section. Dispatched here so we run while the click is
+                    // still in-flight and can paint the link cursor on
+                    // hover.
+                    if !generating {
+                        let _ = self.handle_editor_link_click(ui, &output);
+                    }
+
                     // Paint find-match overlays + drive scroll-to-match. Both
                     // need to happen inside this ScrollArea closure so the
                     // overlay scrolls with the text and `scroll_to_rect`

@@ -17,6 +17,7 @@ mod autocomplete;
 mod build;
 mod compile;
 mod crash_consent;
+mod editor_link;
 mod error_class;
 mod file_picker;
 mod files;
@@ -32,6 +33,7 @@ mod text_menu;
 mod thumbnail;
 mod types;
 mod ui_dialogs;
+mod ui_docs;
 mod ui_llm;
 mod ui_menu;
 mod ui_panels;
@@ -42,7 +44,7 @@ mod viewport_menu;
 mod watcher;
 
 use self::types::{
-    viewer_bg_color, AskInFlight, AutocompleteState, BuildOutcome, EnhanceInFlight,
+    viewer_bg_color, AskInFlight, AutocompleteState, BuildOutcome, DocsState, EnhanceInFlight,
     EnhanceTarget, ExternalConflict, FileState, FindState, GenImageInput, SessionUsage,
     SpotlightState, ThumbCache,
 };
@@ -184,6 +186,15 @@ pub struct MogenStudioApp {
     /// (or the user closed the dialog while idle); a `Some(_)` survives modal
     /// closes when an install is in flight so the worker isn't orphaned.
     update_state: Option<self::update::UpdateState>,
+
+    /// Help → Documentation window visibility. Toggled by F1 / the Help
+    /// menu / a Ctrl+click on a keyword in the editor. The window is
+    /// non-modal so users can keep editing while reading docs side-by-side.
+    show_docs: bool,
+    /// Persistent docs viewer state — current page, pending scroll target,
+    /// navigation history, sidebar filter. Survives close/reopen so the
+    /// user lands back where they left off.
+    docs: DocsState,
 
     /// "Build GLB" modal visibility. Also acts as the ui gate on the export
     /// toggles while a build is in flight — the worker writes status through
@@ -432,6 +443,8 @@ impl MogenStudioApp {
             show_about: false,
             show_update: false,
             update_state: None,
+            show_docs: false,
+            docs: DocsState::default(),
             show_export: false,
             export_opts_draft: ExportOptions::default(),
             build_rx: None,
@@ -834,6 +847,7 @@ impl eframe::App for MogenStudioApp {
         self.ui_external_conflict(ctx);
         self.ui_about(ctx);
         self.ui_update_dialog(ctx);
+        self.ui_docs(ctx);
         self.ui_ask(ctx);
         self.ui_spotlight(ctx);
         self.ui_video_options(ctx);
