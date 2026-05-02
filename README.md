@@ -1,5 +1,7 @@
 # MoGen — procedural 3D model generator
 
+Website: <https://krazyjakee.github.io/MoGen/>
+
 `mogen` turns a compact, declarative DSL into `.glb` assets. It is designed to be the
 deterministic backend of an LLM-driven 3D generation pipeline: the language model writes
 high-level structured scenes, `mogen` expands them into real geometry.
