@@ -16,12 +16,15 @@ modules, see [`modules.md`](./modules.md).
 - [Materials](#materials)
 - [Decals](#decals)
 - [Connectors](#connectors)
+- [Attach: rigid alignment of two connector frames](#attach-rigid-alignment-of-two-connector-frames)
 - [Conform: moulding a primitive onto a target surface](#conform-moulding-a-primitive-onto-a-target-surface)
 - [Replicators: `mirror`, `array`, `stack`, `grid`](#replicators-mirror-array-stack-grid)
 - [CSG: `union` / `difference` / `intersect`](#csg-union--difference--intersect)
+- [Solid groups: `solid`](#solid-groups-solid)
 - [Modules: `module` and `use`](#modules-module-and-use)
 - [Imports: `import`](#imports-import)
 - [Animation: `joint`, `clip`, templates](#animation-joint-clip-templates)
+- [Skeletons and skinning: `skeleton`, `bone`, `skin=`, `bind=`](#skeletons-and-skinning-skeleton-bone-skin-bind)
 - [Lights: `light`](#lights-light)
 - [Full example](#full-example)
 
@@ -220,11 +223,21 @@ All primitives accept the common attributes above (`pos`, `rot`, `scale`,
 | `disc` | `radius` | `segments` (24) |
 | `icosphere` | `radius` | `subdivisions` (2) |
 | `rounded_box` | `size=[x,y,z]`, `radius` | `segments` per corner (4) |
+| `wedge` | `size=[x,y,z]` | right-triangle prism — flat bottom on -Y, hypotenuse climbing toward +Y/+Z. Useful for ramps, roof pitches, doorstops |
+| `frustum` | `bottom=[w,d]`, `top=[w,d]`, `height` | truncated rectangular pyramid (defaults `bottom=[1,1]`, `top=[0.5,0.5]`, `height=1`) |
+| `tube` | `outer`, `inner`, `height` | hollow cylinder (pipe / ring); `segments` (24) |
+| `hemisphere` | `radius` | half-sphere, flat side on -Y; `rings` (8), `segments` (24) |
+| `half_cylinder` | `radius`, `height` | D-profile half-cylinder, flat side facing -Z; `segments` (24) |
+| `torus_arc` | `major`, `minor` | partial torus; `arc` (degrees, default 90) sweeps around +Y; `major_segments` (24), `minor_segments` (12). Useful for arches and handles |
 | `ellipsoid` | `size=[x,y,z]` | `rings` (16), `segments` (24); independent radii per axis |
 | `superellipsoid` | `size=[x,y,z]` | `ew`, `ns` (1 = sphere, > 1 boxy, < 1 pinched), `rings` (16), `segments` (24) |
 | `curved_plane` | `size=[x,z]` or `vec3` | `bend_u`, `bend_v` (degrees; arc angle along X/Z), `segments_u`/`segments_v` (12) |
 | `lathe` | `profile=[[r,y], …]` | `segments` (24), `cap_ends` (1 = capped); profile authored bottom-to-top in `(radius, y)` pairs |
 | `spline_tube` | `points=[[x,y,z], …]` | `radius` (scalar) or `radii=[…]` (per-point), `segments` (12), `samples` (8), `cap_ends` (1) |
+| `spline_ribbon` | `points=[[x,y,z], …]` | `width` (scalar) or `widths=[…]` (per-point), `samples` (8), `twist` (degrees, default `0`); flat strip along a Catmull–Rom curve |
+| `leaf_card` | `size=[w,h]` | `cards` (default `2`); alpha-cutout foliage card cluster — one quad plus `cards-1` rotated copies sharing the same XY plane. Pair with a `mat="…"` whose `alpha_mode="mask"` and `double_sided=1` |
+| `mesh` | `src="path.glb"` | load and embed an external glTF binary as a single mesh. Path is relative to the calling `.mog`. Materials, skinning, and animations on the source GLB are dropped — set them in the DSL instead |
+| `branch` | — | procedural tree / vine / antler. See [Branch](#branch) below |
 | `slab` | `size=[x,y,z]` | box alias; default anchor `bottom` (sits on ground) |
 | `post` | `size=[x,y,z]` | box alias; default anchor `bottom` (pillar/leg) |
 | `panel` | `size=[x,y,z]` | box alias; default anchor `back` (flat panel flush to a surface) |
@@ -238,12 +251,23 @@ bullet shapes) and stylised soft boxes — pick `ew`/`ns` together for a
 symmetric shape, or split them for asymmetric profiles like an apple
 (`ew=1.2`, `ns=0.8`).
 
-`curved_plane`, `lathe`, and `spline_tube` accept nested list literals:
-`points=[[0, 0, 0], [1, 0.5, 0]]`, `profile=[[0.2, 0], [0.5, 0.4]]`. Inner
-lists must be constant (no `$param`) — parameterise the whole node via a
-module wrapper instead. `spline_tube` runs a Catmull–Rom curve through its
-control points and uses a parallel-transport frame so the cross-section
-doesn't flip at inflection points.
+`curved_plane`, `lathe`, `spline_tube`, and `spline_ribbon` accept nested
+list literals: `points=[[0, 0, 0], [1, 0.5, 0]]`,
+`profile=[[0.2, 0], [0.5, 0.4]]`. Inner lists must be constant (no
+`$param`) — parameterise the whole node via a module wrapper instead.
+`spline_tube` and `spline_ribbon` both run a Catmull–Rom curve through
+their control points and use a parallel-transport frame so the cross
+section doesn't flip at inflection points; `spline_ribbon` adds a `twist`
+that ramps a roll around the path tangent.
+
+`tube`, `hemisphere`, `half_cylinder`, and `torus_arc` are the open /
+hollow / partial counterparts of the canonical round primitives. They give
+you ring tops, bowls, columns with a flat back, arches, and handles
+without an extra CSG step.
+
+`leaf_card` is the workhorse for foliage and feathers: it builds a small
+cluster of crossed quads that sit on top of an alpha-cutout texture, so an
+entire bush or pine sprig reads as one mesh.
 
 `slab`, `post`, and `panel` are box aliases that exist only to change the
 **default anchor** — their geometry is identical to `box`. Use them to make
@@ -264,6 +288,40 @@ wall "barracks" (size=[3, 3, 0.1], holes=[
   [ 0.9,  0.3, 0.8, 0.8],    // window
 ])
 ```
+
+### Branch
+
+`branch` is a self-contained procedural tree builder. One node expands
+into a recursive cluster of `spline_tube` segments tapering from a thick
+trunk down to twigs, with optional `leaf_card` clusters at the tips. The
+result reads as one editable wrapper in the scene graph; the inner
+segments are stamped non-editable because their geometry is a
+deterministic function of `seed=`.
+
+| attribute | default | effect |
+|---|---|---|
+| `length` | `1.0` | trunk length (m) |
+| `radius` | `0.05` | trunk base radius (m) |
+| `depth` | `4` | recursion depth (number of branching levels) |
+| `splits` | `2` | child branches per parent at each split |
+| `length_falloff` | `0.7` | per-level length multiplier |
+| `radius_falloff` | `0.6` | per-level radius multiplier |
+| `branch_angle` | `35` | angle (degrees) child branches lean off the parent tangent |
+| `roll` | `137.5` | roll (degrees) between successive children — the golden angle by default, breaks bilateral symmetry |
+| `tropism` | `0.0` | bias toward +Y per segment (positive = upright trees, negative = drooping) |
+| `bend` | `10` | random bend (degrees) added to each segment frame |
+| `segments` | `8` | radial segments per spline_tube |
+| `samples` | `4` | samples per spline segment |
+| `seed` | `1` | RNG seed; same seed = identical tree |
+| `jitter` | `0.2` | `0.0`–`1.0` random perturbation amount on lengths/angles |
+| `leaves` | `1` | emit `leaf_card` clusters at terminal tips (`0` to disable) |
+| `leaf_size` | `0.35` | leaf-card extent (m) |
+| `leaf_cards` | `2` | crossed cards per leaf cluster |
+| `leaf_mat` | — | material name for leaves; defaults to inherited `mat=` |
+
+Wrap a `branch` in a `group` and apply `scale=` / `rot=` to compose
+forests, antlers, vines, or root systems out of the same generator. Pair
+it with the stdlib `branch` and `leaf` modules for hand-tuned shapes.
 
 Default values mean that `cylinder "leg"` with no attrs is a 1 m unit-radius
 cylinder centered on the origin. Every primitive is authored in its local
@@ -513,6 +571,48 @@ When a node is the `child` of an `attach`, its `pos` / `rot` are still honoured
 as a local offset on top of the alignment — `pos` shifts the anchor in the
 parent's frame and `rot` rotates the aligned node around its anchor — so a
 Studio gizmo drag persists across rebuilds.
+
+---
+
+## Attach: rigid alignment of two connector frames
+
+`attach` is the rigid counterpart to `conform`: it sets a child node's
+transform so its `plug` connector lines up exactly with a `socket`
+connector on a parent, then reparents the child under the parent. No
+deformation, no per-vertex work — just a clean alignment with optional
+roll.
+
+```
+scene {
+  cylinder "trunk"  (radius=0.2, height=1.0) {
+    connector "top" (at=[0, 0.5, 0], dir=[0, 1, 0], tag=trunk_top)
+  }
+  sphere   "canopy" (radius=0.5) {
+    connector "stem" (at=[0, -0.5, 0], dir=[0, -1, 0], tag=canopy_stem)
+  }
+  attach (parent="trunk", child="canopy", socket="top", plug="stem")
+}
+```
+
+| attribute | required | default | effect |
+|---|---|---|---|
+| `parent` | yes | — | name of the node carrying the `socket` connector |
+| `child`  | yes | — | name of the node carrying the `plug` connector |
+| `socket` | no  | `"top"` | connector name on `parent` |
+| `plug`   | no  | `"bottom"` | connector name on `child` |
+| `offset` | no  | `0.0` | gap (m) along the socket's outward direction; positive lifts the child away from the parent |
+| `twist`  | no  | `0.0` | roll (degrees) around the socket's axis after alignment |
+
+After lowering, the child is reparented under the parent and its local
+TRS is recomputed so the two connector frames are coincident (`+offset`
+along the socket normal, plus `twist` around it). Any `pos=` / `rot=`
+declared on the child stays as an additive local offset on top of the
+alignment — that's what lets a Studio gizmo drag survive a rebuild.
+
+`attach` also runs per-instance inside `array` and `mirror` replicators:
+when you write the attach inside the body of an `array (count=4)`, each
+of the four expanded copies resolves its own pair of connectors, so a
+single declaration glues every copy.
 
 ---
 
@@ -809,7 +909,12 @@ difference "wall_with_door" (mat="concrete") {
 }
 ```
 
-- `union` — N ≥ 1 operands; the union of all.
+- `union` — N ≥ 1 operands; the union of all. Accepts an optional
+  `smooth=<radius>` attribute that swaps the boolean union for a smooth
+  minimum (`smin`) blend with that radius. Used by the humanoid stdlib
+  modules to fillet limb-to-torso seams; values of a few centimetres are
+  typical at human scale. `smooth=0` (the default) is identical to the
+  hard boolean.
 - `difference` — the first operand minus every subsequent operand.
 - `intersect` — N ≥ 2 operands; the shared volume.
 
@@ -992,8 +1097,12 @@ at the offending `import`.
 
 ## Animation: `joint`, `clip`, templates
 
-All animation in v1 lowers to glTF node-transform animation tracks. There is
-no skeleton / skinning (see M10 for that).
+Animation lowers to glTF node-transform tracks. Every clip animates one or
+more scene nodes (or joints, which are scene-node aliases with a typed
+DOF) — there is no separate animation graph or state machine. Clips are
+top-level declarations alongside `material`/`module`/`joint`. Skinning is
+additive: see [Skeletons and skinning](#skeletons-and-skinning-skeleton-bone-skin-bind)
+below for the `skeleton`/`bone`/`skin=` half of the story.
 
 ### Joints
 
@@ -1021,12 +1130,18 @@ clip "open" (seconds=1.0) {
 
 - `clip` holds a single duration and an ordered list of `track` children.
 - `track` targets a joint (by name) or a scene node directly. When targeting
-  a node, add `prop="translation"|"rotation"|"scale"` to pick the channel.
+  a node, add `prop="translation"|"rotation"|"scale"` to pick the channel
+  (`pos` / `rot` are accepted aliases).
 - `from` / `to` are scalars. For rotation they're degrees around the joint's
-  `axis`; for translation they're distance along the axis; for scale they're
-  the uniform factor.
-- Two keyframes are emitted at `0` and `seconds`; the exporter linearly
-  interpolates between them.
+  `axis` (or the track's `axis=` when targeting a plain node); for
+  translation they're distance along the axis; for scale they're the
+  uniform factor. Two keyframes are emitted at `0` and `seconds` and
+  linearly interpolated.
+- For multi-keyframe authored curves, pass `keys=[[t, v], …]` instead of
+  `from`/`to`. Times must be strictly ascending and span any subset of
+  `[0, seconds]` — the exporter emits one glTF keyframe per pair and
+  interpolates linearly between them. This is what the stdlib walk / run
+  / jump clips use to drive bones with hand-tuned curves.
 
 ### Procedural templates
 
@@ -1048,6 +1163,88 @@ pass `axis` explicitly.
 spin "rotor_spin" (target="rotor", axis=[0, 0, 1], rpm=30)
 open_close "door_swing" (target="door_hinge", angle=90, seconds=1.2)
 ```
+
+---
+
+## Skeletons and skinning: `skeleton`, `bone`, `skin=`, `bind=`
+
+A `skeleton` is a hierarchy of named `bone` nodes that drives skinning
+weights on procedural meshes. Bones are ordinary scene nodes (`kind="bone"`);
+the skeleton block produces a `Skin` whose `joints` list captures every
+descendant bone in depth-first order. Bind-pose inverse matrices are
+computed automatically from the bones' world transforms at lower time, so
+the author never writes a `Mat4`.
+
+```
+scene {
+  skeleton "rig" {
+    bone "hip"      (pos=[0, 0.95, 0], envelope=0.25) {
+      bone "spine"  (pos=[0, 0.30, 0], envelope=0.25) {
+        bone "neck" (pos=[0, 0.30, 0], envelope=0.10)
+      }
+      bone "thigh_l" (pos=[ 0.10, -0.05, 0], envelope=0.25)
+      bone "thigh_r" (pos=[-0.10, -0.05, 0], envelope=0.25)
+    }
+  }
+
+  capsule "torso" (pos=[0, 1.25, 0], radius=0.18, height=0.6,
+                   mat="cloth", skin="rig")
+  sphere  "head"  (pos=[0, 1.7,  0], radius=0.12, mat="skin",
+                   skin="rig", bind="neck")
+}
+```
+
+### `skeleton` and `bone`
+
+- `skeleton "name" { … }` declares the rig. Inside, every child must be a
+  `bone`. Bones may nest arbitrarily — each `bone` becomes a scene node
+  parented under the previous one, so its `pos`/`rot`/`scale` are
+  parent-relative.
+- `bone "name" (pos=…, rot=…, scale=…, envelope=…)` declares a joint.
+  `envelope=` (default `0.75`) controls how far the bone's influence
+  reaches when the auto-skinner assigns weights to nearby vertices —
+  smaller envelopes are tighter, larger envelopes blend more across
+  joints. Adjacent bones should overlap in envelope so vertices near a
+  shared joint receive weight from both sides.
+
+Skeletons are top-level or scene-level declarations. They place
+themselves in the scene tree (so they animate alongside other nodes),
+but they don't carry geometry of their own.
+
+### Binding meshes: `skin="rig"`
+
+Any mesh-bearing node (primitive or import) with `skin="<skel name>"`
+becomes a skinned mesh: the lowering pass walks the skeleton, computes
+per-vertex weights against the four nearest bones (capped by each bone's
+`envelope`), and writes them into the GLB as `JOINTS_0` / `WEIGHTS_0`
+accessors. Group-like containers (`group`, `solid`, `stack`, `grid`,
+`array`, `mirror`, `module`, `use`) propagate `skin=` to every mesh
+descendant, so wrapping a sub-tree in `group (skin="rig") { … }` skins
+the whole thing in one line.
+
+### Rigid pinning: `bind="bone_name"`
+
+Add `bind="bone"` alongside `skin=` to pin every vertex of that mesh
+rigidly to a single bone — weight 1.0, no envelope blend. Used for
+accessories that should track a joint without deforming: heads (bound to
+the neck), helmets, backpacks, hand-held props. `bind` propagates from a
+group to its descendants the same way `skin=` does, so a face cluster
+parented under a `group (bind="neck")` follows the head as one rigid
+piece.
+
+### Animating bones
+
+Bones are scene nodes, so the regular `clip { track … }` machinery drives
+them: `track "thigh_l" (prop=rotation, axis=[1, 0, 0], keys=[…])`. The
+stdlib `humanoid_walk` / `humanoid_run` / `humanoid_idle` / `humanoid_jump`
+modules expand into clips of exactly this shape, targeting the bones
+declared by `humanoid_full`. There is no separate "animation rig" — if
+you can drive a node, you can drive a bone.
+
+CSG operands (`union`/`difference`/`intersect` children) are fused into
+the parent's mesh during lowering, so a stray `skin=` on an operand never
+survives. Put `skin=` on the CSG node itself (or on a wrapping group)
+instead.
 
 ---
 

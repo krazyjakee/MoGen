@@ -3,10 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>MoGen — procedural 3D models from a tiny DSL</title>
-  <meta name="description" content="MoGen turns a compact declarative DSL into glTF 2.0 GLB assets. The deterministic backend of an LLM-driven 3D generation pipeline.">
+  <title>MoGen — procedural 3D models from a few lines of MoG</title>
+  <meta name="description" content="MoGen turns short MoG files into glTF 2.0 GLB models you can drop straight into Godot, Unity, Unreal, Blender, or three.js.">
   <meta property="og:title" content="MoGen — procedural 3D models">
-  <meta property="og:description" content="Compile a tiny DSL into engine-ready GLB. CLI + desktop studio + LLM-driven generate/modify/animate (Gemini Pro recommended).">
+  <meta property="og:description" content="Write MoG, get engine-ready GLB. CLI + desktop studio + an LLM loop that generates, modifies, and animates models for you (Gemini Pro recommended).">
   <meta property="og:image" content="splash.png">
   <link rel="icon" href="icon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -26,7 +26,7 @@
       <a href="index.html">Home</a>
       <a href="index.html#gallery">Gallery</a>
       <a href="playground/index.html">Playground</a>
-      <a href="dsl.html">DSL</a>
+      <a href="dsl.html">MoG</a>
       <a href="cli.html">CLI</a>
       <a href="studio.html">Studio</a>
       <a class="gh" href="https://github.com/krazyjakee/MoGen" target="_blank" rel="noopener">
@@ -41,17 +41,18 @@
   <div class="wrap hero-grid">
     <div>
       <div class="eyebrow">Procedural · LLM-friendly · Engine-ready</div>
-      <h1>From a few lines of DSL to a <span class="grad">.glb</span> you can drop into your engine.</h1>
+      <h1>From a few lines of MoG to a <span class="grad">.glb</span> you can drop into your engine.</h1>
       <p class="lede">
-        MoGen compiles a compact declarative language into glTF 2.0. It's the deterministic
-        backend of an LLM-driven 3D generation pipeline: the model writes intent, MoGen writes triangles.
-        Single binary CLI, a desktop studio, and an LLM-powered <code>generate</code> / <code>modify</code> / <code>animate</code> loop.
-        Works with multiple LLM backends — <strong>Gemini Pro is the strongest model we've tested and the recommended default</strong>.
+        MoGen turns short <strong>MoG</strong> files (<code>.mog</code>) into glTF 2.0 GLB models you can
+        drop straight into Godot, Unity, Unreal, Blender, or three.js. Use the CLI, the desktop studio,
+        or the built-in <code>generate</code> / <code>modify</code> / <code>animate</code> loop where an LLM
+        writes the MoG and MoGen builds the model.
+        Works with multiple LLM backends — <strong>Gemini Pro is the strongest we've tested and the recommended default</strong>.
       </p>
       <div class="cta-row">
         <a class="btn btn-primary" href="playground/index.html">▶ Try the Playground</a>
         <a class="btn btn-ghost" href="#downloads">↓ Download</a>
-        <a class="btn btn-ghost" href="dsl.html">Read the DSL →</a>
+        <a class="btn btn-ghost" href="dsl.html">Read the MoG reference →</a>
         <a class="btn btn-ghost" href="https://github.com/krazyjakee/MoGen" target="_blank" rel="noopener">Source on GitHub</a>
       </div>
     </div>
@@ -80,8 +81,8 @@
 <section>
   <div class="features">
     <div class="feature">
-      <h3><span class="dot"></span> Tiny DSL, real geometry</h3>
-      <p>30+ primitives, CSG <code>union</code>/<code>difference</code>/<code>intersect</code>, modules with parameters, replicators (<code>array</code>, <code>mirror</code>, <code>stack</code>, <code>grid</code>), and a placement vocabulary an LLM can actually use.</p>
+      <h3><span class="dot"></span> Tiny MoG files, real geometry</h3>
+      <p>30+ primitives, CSG <code>union</code>/<code>difference</code>/<code>intersect</code>, reusable modules with parameters, replicators (<code>array</code>, <code>mirror</code>, <code>stack</code>, <code>grid</code>), and a placement vocabulary an LLM can actually use.</p>
     </div>
     <div class="feature">
       <h3><span class="dot"></span> Self-contained GLBs</h3>
@@ -89,14 +90,14 @@
     </div>
     <div class="feature">
       <h3><span class="dot"></span> LLM-aware pipeline</h3>
-      <p><code>mogen generate "a wooden stool"</code> writes a <code>.mog</code>, validates it, repairs JSON diagnostics in a loop, and emits a GLB. Seeds are embedded for reproducibility.</p>
+      <p><code>mogen generate "a wooden stool"</code> writes a <code>.mog</code>, validates it, repairs any errors automatically, and emits a GLB. Seeds are embedded for reproducibility.</p>
     </div>
   </div>
 </section>
 
 <section>
   <h2 id="playground">Playground</h2>
-  <p>The whole MoGen pipeline — parser, validator, lowering, glTF exporter — is compiled to WebAssembly and runs in your browser. Type on the left, see the GLB on the right, no installs and nothing leaves your machine. Examples from the repo are pre-loaded; pick one from the dropdown to start.</p>
+  <p>The whole MoGen toolchain runs in your browser. Type MoG on the left, see the GLB on the right — no installs, nothing leaves your machine. Examples from the repo are pre-loaded; pick one from the dropdown to start.</p>
   <div class="playground-card">
     <a class="playground-launch" href="playground/index.html">
       <div class="playground-preview">
@@ -117,17 +118,17 @@
       </div>
       <div class="playground-cta">
         <strong>Open the Playground</strong>
-        <span>Edit MoGen DSL with live diagnostics and a three.js GLB preview, all in-browser.</span>
+        <span>Edit MoG with live diagnostics and a three.js GLB preview, all in-browser.</span>
         <span class="playground-go">Launch ▶</span>
       </div>
     </a>
-    <p class="playground-note">Note: CSG (<code>union</code>/<code>difference</code>/<code>intersect</code>) and the texture pipeline aren't available in the wasm build — both rely on native libraries (<code>manifold</code>, <code>image</code>) that don't link for <code>wasm32-unknown-unknown</code>. Use the desktop <a href="cli.html"><code>mogen</code></a> CLI for those.</p>
+    <p class="playground-note">Note: CSG (<code>union</code>/<code>difference</code>/<code>intersect</code>) and the texture pipeline aren't available in the in-browser version. Use the desktop <a href="cli.html"><code>mogen</code></a> CLI for those.</p>
   </div>
 </section>
 
 <section>
   <h2 id="gallery">Gallery</h2>
-  <p>Each of these started as a one-line prompt fed to <code>mogen generate</code> — the LLM wrote the <code>.mog</code>, MoGen lowered it to glTF, and the output below is the raw GLB rendered in MoGen Studio. Hover any tile to play.</p>
+  <p>Each of these started as a one-line prompt fed to <code>mogen generate</code> — the LLM wrote the MoG, MoGen built the GLB, and the output below is the raw model rendered in MoGen Studio. Hover any tile to play.</p>
   <div class="gallery">
     <figure class="gallery-item">
       <video src="gallery/axe.mp4" poster="gallery/axe.thumb.png" muted loop playsinline preload="none"></video>
@@ -158,7 +159,7 @@
 
 <section>
   <h2>Hello, chair.</h2>
-  <p>This is a real, complete <code>.mog</code> file. Save it as <code>chair.mog</code> and run <code>mogen build chair.mog --out chair.glb</code>:</p>
+  <p>This is a real, complete MoG file. Save it as <code>chair.mog</code> and run <code>mogen build chair.mog --out chair.glb</code>:</p>
 <pre><code class="language-mog">// A simple four-legged chair.
 material "wood" (color=[0.55, 0.35, 0.18], roughness=0.8)
 
@@ -184,12 +185,12 @@ scene {
   attach (parent="seat", child="leg_br", socket="c_br", plug="top")
   attach (parent="seat", child="backrest", socket="c_back", plug="bottom")
 }</code></pre>
-  <p>The whole language is one shape — <code>kind "name" (attrs) { children }</code> — repeated. <a href="dsl.html">Full reference →</a></p>
+  <p>MoG is one shape — <code>kind "name" (attrs) { children }</code> — repeated. <a href="dsl.html">Full reference →</a></p>
 </section>
 
 <section>
   <h2 id="studio-screenshots">MoGen Studio</h2>
-  <p>The desktop editor pairs the DSL source with a live 3D viewer — type, see, repeat. Click a screenshot to open full size.</p>
+  <p>The desktop editor pairs your MoG source with a live 3D viewer — type, see, repeat. Click a screenshot to open full size.</p>
   <div class="screenshots">
     <a class="screenshot" href="screenshots/ksnip_20260427-230415.png" target="_blank" rel="noopener">
       <img src="screenshots/ksnip_20260427-230415.png" alt="MoGen Studio editor with live 3D preview" loading="lazy">
@@ -248,7 +249,7 @@ cd MoGen
       &nbsp;·&nbsp;
       <a href="https://github.com/krazyjakee/MoGen/issues" target="_blank" rel="noopener">Issues</a>
       &nbsp;·&nbsp;
-      <a href="dsl.html">DSL reference</a>
+      <a href="dsl.html">MoG reference</a>
     </div>
   </div>
 </footer>
