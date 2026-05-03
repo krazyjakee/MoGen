@@ -853,4 +853,64 @@ mod tests {
             "imported module body should not appear when shadowed"
         );
     }
+
+    #[test]
+    fn imported_replicator_kinds_propagate_origin_to_lowered_node() {
+        // Regression: replicator/stack/grid/branch/csg lowerers used to copy
+        // `use_id` from the AST onto the SceneNode but skip `origin`. After
+        // import, an imported `stack`/`grid`/etc. would land in the scene
+        // with `origin = None` even though every other node from the same
+        // file had `origin = Some(imported.mog)`. That breaks Studio's
+        // viewport edits: a click on the import would resolve to the
+        // origin-less wrapper, whose `source_span` is bytes inside the
+        // imported file — applied to the active source it splices garbage
+        // into an unrelated line. (Real-world reproduction: the office
+        // assetpack's `printer.mog` ships a top-level `stack "printer_body"
+        // (...)`. Dragging the printer in Studio inserted ` (pos=...)` into
+        // a different `import` line.)
+        let tmp = TempDir::new("origin_replicator");
+        tmp.write(
+            "obj.mog",
+            r#"
+            scene {
+              stack "stk" (axis=y) {
+                box "a" (size=[1, 0.5, 1])
+                box "b" (size=[0.8, 0.4, 0.8])
+              }
+              array "arr" (count=3, step=[1, 0, 0]) {
+                box "tile" (size=[0.5, 0.5, 0.5])
+              }
+              grid "g" (count=[2, 1, 1], step=[1, 0, 0]) {
+                box "cell" (size=[0.4, 0.4, 0.4])
+              }
+              difference "diff" {
+                box "outer" (size=[1, 1, 1])
+                box "inner" (size=[0.6, 0.6, 0.6])
+              }
+            }
+            "#,
+        );
+        let main_src = r#"
+            import "obj.mog"
+            scene { use "obj" (pos=[1, 2, 3]) }
+        "#;
+        let ast = parse(main_src).unwrap();
+        let scene = crate::lower::lower_with_source(&ast, Some(tmp.path.as_path())).unwrap();
+        let imported_path = tmp.path.join("obj.mog").canonicalize().unwrap();
+        for kind in &["stack", "array", "grid", "difference"] {
+            let node = scene
+                .nodes
+                .iter()
+                .find(|n| n.kind == *kind)
+                .unwrap_or_else(|| panic!("expected an imported `{kind}` node in the scene"));
+            assert_eq!(
+                node.origin.as_deref(),
+                Some(imported_path.as_path()),
+                "imported `{kind}` lost its origin (got {:?}). The viewport editor relies on \
+                 `origin` to distinguish active-source nodes from imported ones — without it, \
+                 set_attr resolves the node's span against the wrong file.",
+                node.origin,
+            );
+        }
+    }
 }

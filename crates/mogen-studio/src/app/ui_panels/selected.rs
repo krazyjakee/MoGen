@@ -86,13 +86,18 @@ impl MogenStudioApp {
             );
             return;
         }
-        if node.use_id.is_some() {
+        if node.use_id.is_some() && !crate::viewer::is_import_wrapper(scene, sel) {
             // Selection landed on an imported-module node. `replace_selection`
             // normally redirects picks to the nearest user-authored wrapper,
             // so this only fires when there is no wrapper to redirect to
             // (e.g. `scene { use "desk" }` with the `use` directly under
             // `scene`). Surface the constraint instead of offering a
             // transform grid that would write back into the imported file.
+            //
+            // The wrapper of `use "X" (pos=...)` for an imported file is
+            // exempt: its source span is the `use` line in the active
+            // source, so the inspector's transform grid writes back
+            // through `set_attr` cleanly.
             ui.add_space(6.0);
             ui.colored_label(
                 egui::Color32::from_rgb(230, 200, 100),

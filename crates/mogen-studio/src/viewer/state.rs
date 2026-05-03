@@ -197,10 +197,18 @@ pub(super) fn snap_scale_factor(factor: f32) -> f32 {
 /// What kind of capture the user requested. Carried alongside the per-frame
 /// rendering instructions so the app can route the result to the right
 /// completion handler (write a thumbnail PNG, kick off ffmpeg).
+///
+/// `PickerThumb` is a separate variant from `Thumbnail` so the file-picker's
+/// background thumbnail engine can pump captures through the viewer without
+/// `poll_generate` stealing the outcome and treating it as the user-driven
+/// "Generate Thumbnail" menu action. Both behave identically inside the GL
+/// paint callback (no animation override, single frame); the only thing
+/// the variant carries is "who owns this outcome".
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CaptureKind {
     Thumbnail,
     Video,
+    PickerThumb,
 }
 
 /// One frame the renderer should produce as part of a capture. Yaw/pitch
@@ -562,7 +570,12 @@ pub(super) fn gizmo_handles_supported(
     // gizmo handles is the same affordance as for replicators: no draggable
     // handle, so the user can't initiate an edit that would be silently
     // dropped or corrupt the wrong file.
-    if node.use_id.is_some() {
+    //
+    // Exception: the synthesised wrapper group of `use "X" (pos=...)` for
+    // an imported file also has `use_id = Some(...)`, but its source span
+    // is the `use` line in the active source — set_attr can write the
+    // `pos=`/`rot=`/`scale=` back through it cleanly, so allow the gizmo.
+    if node.use_id.is_some() && !is_import_wrapper(scene, node_id) {
         return false;
     }
     // Relative placement re-shifts the node's translation every compile, so
@@ -894,20 +907,72 @@ pub(super) fn toggle_selection(st: &mut ViewerState, id: NodeId) {
 /// `.mog` source at byte offsets that come from the imported file, so the
 /// viewport's gizmo + inspector route every interaction through this
 /// redirect first. The output is what the user actually manipulates.
+///
+/// Import wrappers are a special case: `use "X" (pos=...)` of an imported
+/// file synthesises a wrapper group whose `use_id` is set (it opens a new
+/// frame) but whose `origin` is `None` (the `use` line lives in the active
+/// source). For a top-level `use` the wrapper is a root with no further
+/// ancestors, so the plain walk-up-to-`use_id == None` rule bottoms out at
+/// `None` and the user can never select the import. The fallback below
+/// detects the wrapper by the origin transition (parent `origin = None`,
+/// child `origin = Some(...)`) and returns it when no fully use-free
+/// ancestor exists.
 pub(super) fn redirect_pick(scene: &SceneGraph, id: NodeId) -> Option<NodeId> {
     let node = scene.nodes.get(id.0 as usize)?;
     if node.use_id.is_none() {
         return Some(id);
     }
+    let mut import_wrapper: Option<NodeId> = None;
+    let mut prev_origin_some = node.origin.is_some();
     let mut cur = node.parent;
     while let Some(pid) = cur {
         let parent = scene.nodes.get(pid.0 as usize)?;
         if parent.use_id.is_none() {
             return Some(pid);
         }
+        if parent.origin.is_none() && prev_origin_some && import_wrapper.is_none() {
+            import_wrapper = Some(pid);
+        }
+        prev_origin_some = parent.origin.is_some();
         cur = parent.parent;
     }
-    None
+    import_wrapper
+}
+
+/// True when `id` is the synthesised wrapper group of a `use "..."` of an
+/// imported file. Such wrappers carry `use_id = Some(...)` (they open a
+/// new frame) but `origin = None` (the `use` was authored in the active
+/// source) and contain at least one descendant whose `origin` is `Some`
+/// (the imported body). The viewport gizmo and inspector treat them as
+/// editable even though `use_id` is set, because the wrapper's source
+/// span points at the active `.mog` and a `pos=` writeback round-trips
+/// cleanly through `set_attr` on the `use` line.
+pub fn is_import_wrapper(scene: &SceneGraph, id: NodeId) -> bool {
+    let Some(node) = scene.nodes.get(id.0 as usize) else {
+        return false;
+    };
+    if node.use_id.is_none() || node.origin.is_some() {
+        return false;
+    }
+    has_imported_descendant(scene, id)
+}
+
+fn has_imported_descendant(scene: &SceneGraph, id: NodeId) -> bool {
+    let Some(node) = scene.nodes.get(id.0 as usize) else {
+        return false;
+    };
+    for &cid in &node.children {
+        let Some(child) = scene.nodes.get(cid.0 as usize) else {
+            continue;
+        };
+        if child.origin.is_some() {
+            return true;
+        }
+        if has_imported_descendant(scene, cid) {
+            return true;
+        }
+    }
+    false
 }
 
 pub(super) fn apply_gizmo_drag(drag: &GizmoDrag) -> Transform {

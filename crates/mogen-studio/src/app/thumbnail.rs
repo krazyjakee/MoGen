@@ -30,7 +30,7 @@ use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -128,25 +128,44 @@ impl ThumbnailManager {
     /// lands — without that wakeup the UI thread can sit idle between
     /// renders (when `is_busy()` is false but a compile is still in flight)
     /// and the picker grid stalls until the next user input.
+    ///
+    /// Compile and decode each get a small thread pool. Compile is the
+    /// expensive step (parser + lower + validate per file); a directory of
+    /// 50 `.mog` files compiled serially takes long enough to be visible
+    /// before the first thumbnail can even start rendering. Multiple
+    /// workers let the GL render pipeline start chewing on results while
+    /// the compile pool is still busy on later files.
     pub(super) fn new(ctx: egui::Context) -> Self {
         let cache_dir = thumb_cache_dir();
         let _ = fs::create_dir_all(&cache_dir);
+        let worker_count = thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4)
+            .clamp(2, 6);
+
         let (compile_tx, compile_in) = channel::<CompileJob>();
+        let compile_in = Arc::new(Mutex::new(compile_in));
         let (compile_out, compile_rx) = channel::<CompileResultMsg>();
-        {
+        for i in 0..worker_count {
+            let compile_in = compile_in.clone();
+            let compile_out = compile_out.clone();
             let cache_dir = cache_dir.clone();
             let ctx = ctx.clone();
             thread::Builder::new()
-                .name("mogen-thumb-compile".into())
+                .name(format!("mogen-thumb-compile-{i}"))
                 .spawn(move || compile_worker(compile_in, compile_out, cache_dir, ctx))
                 .expect("spawn thumb compile worker");
         }
+
         let (decode_tx, decode_in) = channel::<DecodeJob>();
+        let decode_in = Arc::new(Mutex::new(decode_in));
         let (decode_out, decode_rx) = channel::<DecodeResult>();
-        {
+        for i in 0..worker_count {
+            let decode_in = decode_in.clone();
+            let decode_out = decode_out.clone();
             let ctx = ctx.clone();
             thread::Builder::new()
-                .name("mogen-thumb-decode".into())
+                .name(format!("mogen-thumb-decode-{i}"))
                 .spawn(move || decode_worker(decode_in, decode_out, ctx))
                 .expect("spawn thumb decode worker");
         }
@@ -276,8 +295,14 @@ impl ThumbnailManager {
         }
 
         // 3. Pick up the in-flight render if it finished.
+        //    Filter on `PickerThumb` so a stray user-driven Thumbnail or
+        //    Video outcome (left over from before the picker opened) isn't
+        //    mis-attributed to our queue. Symmetrical with the inverse
+        //    filter in `poll_generate`.
         if let Some(job) = self.in_flight_render.clone() {
-            if let Some(outcome) = viewer.take_capture_outcome() {
+            if let Some(outcome) =
+                viewer.take_capture_outcome_if(|kind| matches!(kind, CaptureKind::PickerThumb))
+            {
                 self.in_flight_render = None;
                 if outcome.error.is_none() && !outcome.frame_paths.is_empty() {
                     if let Some(entry) = self.entries.get_mut(&job.path) {
@@ -299,7 +324,7 @@ impl ThumbnailManager {
             if let Some(job) = self.render_queue.pop_front() {
                 viewer.set_scene(job.scene.clone(), job.source_dir.as_deref(), true);
                 let request = CaptureRequest {
-                    kind: CaptureKind::Thumbnail,
+                    kind: CaptureKind::PickerThumb,
                     size: THUMB_SIZE,
                     bg: crate::settings::DEFAULT_VIEWER_BG_RGB,
                     // Single frame at a 3/4 angle — close to what the user
@@ -331,12 +356,22 @@ impl ThumbnailManager {
 }
 
 fn compile_worker(
-    in_rx: Receiver<CompileJob>,
+    in_rx: Arc<Mutex<Receiver<CompileJob>>>,
     out_tx: Sender<CompileResultMsg>,
     cache_dir: PathBuf,
     ctx: egui::Context,
 ) {
-    while let Ok(job) = in_rx.recv() {
+    loop {
+        // Hold the recv lock only long enough to grab one job; the actual
+        // compile must run unlocked so siblings can pull their own jobs in
+        // parallel. Mirrors the `EncodePool` worker pattern.
+        let job = {
+            let rx = in_rx.lock().unwrap();
+            match rx.recv() {
+                Ok(j) => j,
+                Err(_) => return,
+            }
+        };
         let result = compile_one(&job.path, &cache_dir);
         if out_tx.send(result).is_err() {
             // Manager dropped — exit quietly.
@@ -399,11 +434,18 @@ fn compile_one(path: &Path, cache_dir: &Path) -> CompileResultMsg {
 }
 
 fn decode_worker(
-    in_rx: Receiver<DecodeJob>,
+    in_rx: Arc<Mutex<Receiver<DecodeJob>>>,
     out_tx: Sender<DecodeResult>,
     ctx: egui::Context,
 ) {
-    while let Ok(job) = in_rx.recv() {
+    loop {
+        let job = {
+            let rx = in_rx.lock().unwrap();
+            match rx.recv() {
+                Ok(j) => j,
+                Err(_) => return,
+            }
+        };
         let result = decode_one(job);
         if out_tx.send(result).is_err() {
             return;

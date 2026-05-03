@@ -30,6 +30,7 @@ pub(super) fn lower_csg(
     };
     graph.set_source_span(id, node.span);
     graph.nodes[id.0 as usize].use_id = node.use_id;
+    graph.nodes[id.0 as usize].origin = node.origin.clone();
 
     // Metadata + material exactly as for other kinds.
     apply_metadata(node, id, graph)?;

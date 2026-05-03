@@ -1,8 +1,9 @@
     use super::flatten::{flatten, PaletteSource, FLOATS_PER_VERTEX};
     use super::state::{
-        apply_gizmo_drag, commit_gizmo_drag, gizmo_handles_supported, redirect_pick,
-        replace_selection, snap_rotate_delta, snap_scale_factor, snap_translate_delta,
-        toggle_selection, GizmoDrag, PendingEdit, ViewerState, SCALE_SNAP_STEP,
+        apply_gizmo_drag, commit_gizmo_drag, gizmo_handles_supported, is_import_wrapper,
+        redirect_pick, replace_selection, snap_rotate_delta, snap_scale_factor,
+        snap_translate_delta, toggle_selection, GizmoDrag, PendingEdit, ViewerState,
+        SCALE_SNAP_STEP,
     };
     use glam::{Mat4, Quat, Vec3};
     use mogen_core::{AlphaMode, Material, Mesh, NodeId, SceneGraph, Transform};
@@ -718,4 +719,95 @@
             wrapper,
             crate::gizmo::GizmoMode::Translate,
         ));
+    }
+
+    /// Mirror the office assetpack pattern: a top-level
+    /// `use "watercooler" (pos=...)` of an imported file. After expansion
+    /// the synthesised wrapper group has `use_id = Some(...)` (it opens a
+    /// new frame) and `origin = None` (the `use` line lives in the active
+    /// source); its imported body has `use_id = Some(...)` (same frame)
+    /// and `origin = Some("watercooler.mog")`. The wrapper is a scene root
+    /// with no parent, so the plain walk-up to `use_id == None` finds no
+    /// match. Returns `(scene, wrapper_id, imported_body_id)`.
+    fn scene_with_imported_use_wrapper() -> (SceneGraph, NodeId, NodeId) {
+        let mut scene = SceneGraph::new();
+        let wrapper = scene.add_root("watercooler", "group", Transform::IDENTITY);
+        scene.nodes[wrapper.0 as usize].use_id = Some(2);
+        scene.nodes[wrapper.0 as usize].origin = None;
+        let body = scene.add_child(wrapper, "lower_cabinet", "post", Transform::IDENTITY);
+        scene.nodes[body.0 as usize].use_id = Some(2);
+        scene.nodes[body.0 as usize].origin = Some(PathBuf::from("watercooler.mog"));
+        (scene, wrapper, body)
+    }
+
+    #[test]
+    fn redirect_pick_lands_on_import_wrapper_when_wrapper_is_a_root() {
+        // Regression for the office assetpack bug: a top-level
+        // `use "watercooler" (pos=...)` of an imported file used to be
+        // unselectable because the redirect walked up looking for a
+        // `use_id == None` ancestor and bottomed out at `parent = None`.
+        // The wrapper itself is editable (its span is the `use` line in
+        // the active source), so we now fall back to it.
+        let (scene, wrapper, body) = scene_with_imported_use_wrapper();
+        assert_eq!(redirect_pick(&scene, body), Some(wrapper));
+    }
+
+    #[test]
+    fn is_import_wrapper_detects_use_wrapper_for_imported_file() {
+        let (scene, wrapper, body) = scene_with_imported_use_wrapper();
+        assert!(is_import_wrapper(&scene, wrapper));
+        // The body itself is imported (origin=Some), so it's not the
+        // wrapper — only the active-source synthesised group is.
+        assert!(!is_import_wrapper(&scene, body));
+    }
+
+    #[test]
+    fn is_import_wrapper_rejects_local_use_wrapper() {
+        // A `use` of a locally-defined module (no import involved) also
+        // produces a wrapper with `use_id = Some(...)` and `origin = None`,
+        // but its body has `origin = None` too. We must NOT treat that as
+        // an import wrapper — the existing redirect-up-to-the-user-group
+        // behavior is the right answer for local prototypes.
+        let mut scene = SceneGraph::new();
+        let wrapper = scene.add_root("legs", "group", Transform::IDENTITY);
+        scene.nodes[wrapper.0 as usize].use_id = Some(5);
+        let body = scene.add_child(wrapper, "leg", "cylinder", Transform::IDENTITY);
+        scene.nodes[body.0 as usize].use_id = Some(5);
+        let _ = body;
+        assert!(!is_import_wrapper(&scene, wrapper));
+    }
+
+    #[test]
+    fn gizmo_handles_allowed_on_import_wrapper() {
+        // The wrapper group of `use "watercooler" (pos=...)` for an
+        // imported file is editable: dragging its gizmo writes pos= back
+        // to the `use` line in the active source.
+        let (scene, wrapper, _) = scene_with_imported_use_wrapper();
+        assert!(gizmo_handles_supported(
+            &scene,
+            wrapper,
+            crate::gizmo::GizmoMode::Translate,
+        ));
+    }
+
+    #[test]
+    fn gizmo_handles_still_refused_on_imported_body_inside_wrapper() {
+        // Defense-in-depth: even with the wrapper exemption, the imported
+        // body itself stays un-editable — its source span lives in the
+        // imported file, so a writeback would corrupt the wrong file.
+        let (scene, _, body) = scene_with_imported_use_wrapper();
+        assert!(!gizmo_handles_supported(
+            &scene,
+            body,
+            crate::gizmo::GizmoMode::Translate,
+        ));
+    }
+
+    #[test]
+    fn replace_selection_lands_on_import_wrapper() {
+        let (scene, wrapper, body) = scene_with_imported_use_wrapper();
+        let mut st = ViewerState::default();
+        st.scene = Some(Arc::new(scene));
+        replace_selection(&mut st, Some(body));
+        assert_eq!(st.selected, vec![wrapper]);
     }

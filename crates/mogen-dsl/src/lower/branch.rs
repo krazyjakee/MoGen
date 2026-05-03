@@ -55,6 +55,7 @@ pub(super) fn expand_branch(
     };
     graph.set_source_span(wrapper_id, node.span);
     graph.nodes[wrapper_id.0 as usize].use_id = node.use_id;
+    graph.nodes[wrapper_id.0 as usize].origin = node.origin.clone();
     apply_metadata(node, wrapper_id, graph)?;
 
     let pre_expand_count = graph.nodes.len();

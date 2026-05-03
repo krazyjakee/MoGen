@@ -48,6 +48,7 @@ pub(super) fn expand_stack(
     };
     graph.set_source_span(wrapper_id, node.span);
     graph.nodes[wrapper_id.0 as usize].use_id = node.use_id;
+    graph.nodes[wrapper_id.0 as usize].origin = node.origin.clone();
     apply_metadata(node, wrapper_id, graph)?;
 
     let mut child_ids: Vec<NodeId> = Vec::new();
@@ -168,6 +169,7 @@ pub(super) fn expand_grid(
     };
     graph.set_source_span(wrapper_id, node.span);
     graph.nodes[wrapper_id.0 as usize].use_id = node.use_id;
+    graph.nodes[wrapper_id.0 as usize].origin = node.origin.clone();
     apply_metadata(node, wrapper_id, graph)?;
     let pre_expand_count = graph.nodes.len();
 
@@ -359,6 +361,7 @@ pub(super) fn expand_replicator(
     };
     graph.set_source_span(wrapper_id, node.span);
     graph.nodes[wrapper_id.0 as usize].use_id = node.use_id;
+    graph.nodes[wrapper_id.0 as usize].origin = node.origin.clone();
     let pre_expand_count = graph.nodes.len();
 
     let instance_transforms: Vec<Transform> = match node.kind.as_str() {

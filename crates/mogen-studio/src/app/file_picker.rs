@@ -301,7 +301,7 @@ impl MogenStudioApp {
         let screen = ctx.screen_rect();
         let max_w = (screen.width() - 40.0).max(360.0);
         let max_h = (screen.height() - 80.0).max(280.0);
-        let win_w = 880.0_f32.min(max_w);
+        let win_w = 886.0_f32.min(max_w);
         let win_h = 600.0_f32.min(max_h);
 
         // Split state out of `self` so the egui closures can borrow the

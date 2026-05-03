@@ -28,7 +28,7 @@ pub use lights::ResolvedLight;
 #[allow(unused_imports)]
 pub use shadows::ShadowQuality;
 pub use state::{
-    CaptureFrame, CaptureKind, CaptureOutcome, CaptureRequest, PendingEdit,
+    is_import_wrapper, CaptureFrame, CaptureKind, CaptureOutcome, CaptureRequest, PendingEdit,
 };
 
 use crate::preview_shader::PreviewShader;
@@ -446,10 +446,28 @@ impl Viewer {
         st.capture_outcome = None;
     }
 
-    /// Drain any completed capture. Returns `None` when no request is
-    /// pending and none has completed since the last drain.
-    pub fn take_capture_outcome(&self) -> Option<CaptureOutcome> {
-        self.state.lock().unwrap().capture_outcome.take()
+    /// Drain the completed capture only when its kind matches `predicate`.
+    /// Used to keep `poll_generate` and the picker's background thumbnail
+    /// engine from racing over the single `capture_outcome` slot — each
+    /// caller passes a filter that matches only the kinds it owns. Without
+    /// this discrimination, whichever caller polls first (currently
+    /// `poll_generate`) drains every outcome, including the picker's, and
+    /// the picker's thumbnail pipeline stalls after one render.
+    pub fn take_capture_outcome_if(
+        &self,
+        predicate: impl FnOnce(CaptureKind) -> bool,
+    ) -> Option<CaptureOutcome> {
+        let mut st = self.state.lock().unwrap();
+        let matches = st
+            .capture_outcome
+            .as_ref()
+            .map(|o| predicate(o.kind))
+            .unwrap_or(false);
+        if matches {
+            st.capture_outcome.take()
+        } else {
+            None
+        }
     }
 
     /// Whether a capture request is queued or actively rendering. The app
