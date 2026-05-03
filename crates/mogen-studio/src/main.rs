@@ -1,6 +1,7 @@
 mod app;
 mod autocomplete;
 mod crash;
+mod docs;
 mod edit;
 mod gizmo;
 mod highlight;

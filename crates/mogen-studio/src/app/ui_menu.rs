@@ -516,8 +516,20 @@ impl MogenStudioApp {
             }
 
             ui.menu_button("Help", |ui| {
+                if shortcut_menu_item(
+                    ui,
+                    "Documentation",
+                    ShortcutAction::OpenDocs,
+                    "Open the bundled DSL / modules / studio / CLI reference",
+                )
+                .clicked()
+                {
+                    action = MenuAction::OpenDocs;
+                    ui.close_menu();
+                }
+                ui.separator();
                 ui.hyperlink_to("GitHub repository", GITHUB_REPO_URL);
-                ui.hyperlink_to("Documentation", DOCS_URL);
+                ui.hyperlink_to("Documentation on GitHub", DOCS_URL);
                 ui.hyperlink_to("License (MIT)", LICENSE_URL);
                 ui.separator();
                 if ui
@@ -649,6 +661,9 @@ impl MogenStudioApp {
                     self.files[i].last_edit_at = Some(std::time::Instant::now());
                     self.break_undo_chain(i);
                 }
+            }
+            MenuAction::OpenDocs => {
+                self.open_docs_home();
             }
         }
     }
