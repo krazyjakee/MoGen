@@ -1,16 +1,24 @@
 //! Resolve top-level `import "path.mog"` directives — load the referenced
-//! files, lift their `module` and `material` declarations, and synthesise a
-//! module from any `scene { … }` body so the importing file can `use` it.
+//! files (via a [`Loader`]), lift their `module` and `material` declarations,
+//! and synthesise a module from any `scene { … }` body so the importing file
+//! can `use` it.
+//!
+//! The walker is loader-agnostic: the desktop CLI hands it an [`FsLoader`]
+//! and reads from disk, while `mogen-wasm` plugs in a loader backed by an
+//! in-memory file map plus a JS-supplied registry fetcher. Without this
+//! split the two resolvers would drift, breaking the "validation lives where
+//! the compiler does" promise in MoGHub's `PLAN.md`.
 
 use std::collections::{HashMap, HashSet};
-use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, bail, Result};
 use mogen_core::Span;
 
 use crate::ast::{Node, Value};
 use crate::parser::parse;
+
+use super::loader::{FsLoader, Loader};
 
 /// Walk top-level `import "path.mog"` declarations, recursively load the
 /// referenced files, and return the union of (a) every `module` declaration
@@ -31,6 +39,19 @@ use crate::parser::parse;
 /// material name — are hard errors. The user can shadow either by re-declaring
 /// locally; user-declared modules and materials always win over imports.
 pub fn resolve_imports(ast: &[Node], base_dir: Option<&Path>) -> Result<Vec<Node>> {
+    let mut loader = FsLoader::new();
+    resolve_imports_with_loader(ast, base_dir, &mut loader)
+}
+
+/// Like [`resolve_imports`] but with a caller-supplied [`Loader`]. The
+/// in-process axum upload validator passes a registry-backed loader against
+/// `model_file` rows; the wasm editor passes one backed by open tabs plus a
+/// JS fetch callback. Desktop callers should prefer [`resolve_imports`].
+pub fn resolve_imports_with_loader(
+    ast: &[Node],
+    base_dir: Option<&Path>,
+    loader: &mut dyn Loader,
+) -> Result<Vec<Node>> {
     let mut visited: HashSet<PathBuf> = HashSet::new();
     let mut stack: Vec<PathBuf> = Vec::new();
     let mut out: Vec<Node> = Vec::new();
@@ -39,6 +60,7 @@ pub fn resolve_imports(ast: &[Node], base_dir: Option<&Path>) -> Result<Vec<Node
     resolve_imports_into(
         ast,
         base_dir,
+        loader,
         &mut visited,
         &mut stack,
         &mut out,
@@ -51,6 +73,7 @@ pub fn resolve_imports(ast: &[Node], base_dir: Option<&Path>) -> Result<Vec<Node
 fn resolve_imports_into(
     ast: &[Node],
     base_dir: Option<&Path>,
+    loader: &mut dyn Loader,
     visited: &mut HashSet<PathBuf>,
     stack: &mut Vec<PathBuf>,
     out: &mut Vec<Node>,
@@ -65,10 +88,9 @@ fn resolve_imports_into(
             anyhow!("`import` requires a quoted file path, e.g. `import \"shared.mog\"`")
         })?;
         let alias = import_alias(n)?;
-        let resolved = resolve_import_path(raw, base_dir)?;
-        let canonical = fs::canonicalize(&resolved).with_context(|| {
-            format!("import \"{}\" — could not open {}", raw, resolved.display())
-        })?;
+        let loaded = loader.load(raw, base_dir)?;
+        let canonical = loaded.canonical;
+        let src = loaded.source;
         if stack.iter().any(|p| p == &canonical) {
             let chain: Vec<String> = stack
                 .iter()
@@ -81,10 +103,8 @@ fn resolve_imports_into(
             // Already loaded by a prior import — skip.
             continue;
         }
-        let src = fs::read_to_string(&canonical)
-            .with_context(|| format!("reading imported file {}", canonical.display()))?;
         let inner_ast = parse(&src)
-            .with_context(|| format!("parsing imported file {}", canonical.display()))?;
+            .map_err(|e| anyhow!("parsing imported file {}: {}", canonical.display(), e))?;
         let inner_dir = canonical.parent().map(|p| p.to_path_buf());
 
         // Resolve transitive imports first so the deepest dependencies land in
@@ -93,6 +113,7 @@ fn resolve_imports_into(
         resolve_imports_into(
             &inner_ast,
             inner_dir.as_deref(),
+            loader,
             visited,
             stack,
             out,
@@ -361,22 +382,6 @@ fn rewrite_texture_paths(node: &mut Node, base: Option<&Path>) {
     for c in &mut node.children {
         rewrite_texture_paths(c, base);
     }
-}
-
-fn resolve_import_path(raw: &str, base_dir: Option<&Path>) -> Result<PathBuf> {
-    let p = Path::new(raw);
-    if p.is_absolute() {
-        return Ok(p.to_path_buf());
-    }
-    let base = base_dir.ok_or_else(|| {
-        anyhow!(
-            "import \"{}\" is relative but no source directory is set; \
-             pass an absolute path or call `lower_with_source` with the \
-             importing file's directory",
-            raw
-        )
-    })?;
-    Ok(base.join(p))
 }
 
 #[cfg(test)]

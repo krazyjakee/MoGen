@@ -2325,7 +2325,7 @@ dependencies = [
 
 [[package]]
 name = "mogen"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "clap",
@@ -2341,7 +2341,7 @@ dependencies = [
 
 [[package]]
 name = "mogen-anim"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "glam",
  "mogen-core",
@@ -2349,7 +2349,7 @@ dependencies = [
 
 [[package]]
 name = "mogen-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "glam",
  "serde",
@@ -2357,7 +2357,7 @@ dependencies = [
 
 [[package]]
 name = "mogen-dsl"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "glam",
@@ -2371,7 +2371,7 @@ dependencies = [
 
 [[package]]
 name = "mogen-export"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "glam",
@@ -2386,7 +2386,7 @@ dependencies = [
 
 [[package]]
 name = "mogen-geom"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "glam",
@@ -2397,7 +2397,7 @@ dependencies = [
 
 [[package]]
 name = "mogen-llm"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2415,7 +2415,7 @@ dependencies = [
 
 [[package]]
 name = "mogen-studio"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "arboard",
@@ -2440,7 +2440,7 @@ dependencies = [
 
 [[package]]
 name = "mogen-update"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "flate2",
@@ -2455,7 +2455,7 @@ dependencies = [
 
 [[package]]
 name = "mogen-validate"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "codespan-reporting 0.12.0",
  "mogen-core",
@@ -2466,9 +2466,11 @@ dependencies = [
 
 [[package]]
 name = "mogen-wasm"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
+ "anyhow",
  "console_error_panic_hook",
+ "js-sys",
  "mogen-core",
  "mogen-dsl",
  "mogen-export",
@@ -2476,6 +2478,7 @@ dependencies = [
  "serde",
  "serde_json",
  "wasm-bindgen",
+ "wasm-bindgen-futures",
 ]
 
 [[package]]

@@ -22,6 +22,9 @@ mogen-validate = { path = "../mogen-validate", default-features = false }
 mogen-export = { path = "../mogen-export", default-features = false, features = ["merge"] }
 
 wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 console_error_panic_hook = "0.1"
