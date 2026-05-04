@@ -1,9 +1,10 @@
 //! On-disk persistence for [`OAuthBundle`].
 //!
-//! Path resolution: `$MOGEN_CACHE_DIR/google_auth.json` else
-//! `$HOME/.cache/mogen/google_auth.json` else
-//! `%LOCALAPPDATA%\mogen\google_auth.json` (Windows fallback when `$HOME`
-//! is unset).
+//! Path resolution lives in [`super::client::resolve_user_path`] so the
+//! token store and `oauth_client.json` end up in the same directory:
+//! `~/.mogen/google_auth.json` is the primary default, with
+//! `~/.cache/mogen/` and `%LOCALAPPDATA%\mogen\` honoured as legacy
+//! fallbacks for older installs that already wrote tokens there.
 //!
 //! Atomic write via `tempfile::NamedTempFile::persist` (rename within the
 //! same directory). On Unix we also chmod 0600 so other users on shared
@@ -34,46 +35,14 @@ struct StoredBundle {
 }
 
 /// Resolve the on-disk token path. Returns `None` only when no candidate
-/// directory is configured — that case is rare (no `MOGEN_CACHE_DIR`, no
-/// `HOME`, no `LOCALAPPDATA`) but the CLI surfaces it as a clear error.
+/// directory is configured (no `MOGEN_CACHE_DIR`, no `HOME`/`USERPROFILE`,
+/// no `LOCALAPPDATA`) — the CLI surfaces it as a clear error.
+///
+/// Read paths walk `~/.mogen/` → `~/.cache/mogen/` → `%LOCALAPPDATA%\mogen\`
+/// so existing installs keep finding their old `google_auth.json` while
+/// new logins land in `~/.mogen/`.
 pub fn token_store_path() -> Option<PathBuf> {
-    if let Ok(dir) = std::env::var("MOGEN_CACHE_DIR") {
-        if !dir.trim().is_empty() {
-            return Some(PathBuf::from(dir).join(TOKEN_STORE_FILENAME));
-        }
-    }
-    if let Ok(home) = std::env::var("HOME") {
-        if !home.trim().is_empty() {
-            return Some(
-                PathBuf::from(home)
-                    .join(".cache")
-                    .join("mogen")
-                    .join(TOKEN_STORE_FILENAME),
-            );
-        }
-    }
-    if let Ok(localapp) = std::env::var("LOCALAPPDATA") {
-        if !localapp.trim().is_empty() {
-            return Some(
-                PathBuf::from(localapp)
-                    .join("mogen")
-                    .join(TOKEN_STORE_FILENAME),
-            );
-        }
-    }
-    // Last-ditch on Windows: USERPROFILE\.cache\mogen — keeps parity with
-    // the Unix layout when LOCALAPPDATA is unset (custom shell envs).
-    if let Ok(profile) = std::env::var("USERPROFILE") {
-        if !profile.trim().is_empty() {
-            return Some(
-                PathBuf::from(profile)
-                    .join(".cache")
-                    .join("mogen")
-                    .join(TOKEN_STORE_FILENAME),
-            );
-        }
-    }
-    None
+    super::client::resolve_user_path(TOKEN_STORE_FILENAME, "MOGEN_TOKEN_STORE")
 }
 
 /// Load a previously-saved bundle. Returns `Ok(None)` when the file does
