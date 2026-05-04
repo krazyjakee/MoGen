@@ -10,15 +10,21 @@ crate-type = ["cdylib", "rlib"]
 # Direct path dependencies (instead of `workspace = true`) so we can pass
 # `default-features = false` and actually have it stick — workspace
 # inheritance can't override defaults when the workspace entry leaves them
-# on. Disabling defaults across the chain drops `manifold3d` (CSG, C++ via
-# cmake) and `oxipng`/`image` (PNG re-encoding via libdeflate-sys), neither
-# of which builds for `wasm32-unknown-unknown`.
+# on.
+#
+# CSG works on wasm via `manifold-csg`'s provisional `unstable-wasm-uu`
+# feature, forwarded through `mogen-dsl`. That requires LLVM 20+ on the
+# build host (see workspace README). The `oxipng`/`image` PNG-encoding
+# stack still can't cross-compile, so the `textures` feature stays off.
 mogen-core = { path = "../mogen-core" }
-mogen-dsl = { path = "../mogen-dsl", default-features = false }
+mogen-dsl = { path = "../mogen-dsl", default-features = false, features = ["unstable-wasm-uu"] }
 mogen-validate = { path = "../mogen-validate", default-features = false }
-mogen-export = { path = "../mogen-export", default-features = false }
+mogen-export = { path = "../mogen-export", default-features = false, features = ["merge"] }
 
 wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 console_error_panic_hook = "0.1"

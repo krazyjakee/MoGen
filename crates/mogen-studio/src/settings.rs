@@ -191,6 +191,12 @@ pub struct Settings {
     /// `ZAI_API_KEY` env var when this field is empty.
     #[serde(default)]
     pub zai_api_key: String,
+    /// Base URL for the MoGHub registry / community API. Default points
+    /// at production; set to `http://localhost:3000` for dev or to a
+    /// private deployment URL. Honoured at runtime by the Community
+    /// window and by the registry-aware `mogen build`.
+    #[serde(default = "default_moghub_url")]
+    pub moghub_url: String,
     /// Persisted as a lowercase label (`low` | `medium` | `high` | `xhigh`) so
     /// new `ThinkingLevel` variants can be added without a migration. Empty /
     /// unknown falls back to the library default at read time.
@@ -959,4 +965,11 @@ fn settings_path(mode: mogen_llm::PathMode) -> Option<PathBuf> {
 /// to `~/.mogen/` keep their saved keys/preferences on first launch.
 fn legacy_settings_path() -> Option<PathBuf> {
     dirs::config_dir().map(|d| d.join("mogen").join("settings.json"))
+}
+
+/// Default MoGHub origin. Production deployment lives here; the field
+/// is editable in Preferences (and overridable at process scope via the
+/// `MOGHUB_URL` env var honoured by `MoghubClient::from_env`).
+fn default_moghub_url() -> String {
+    "https://moghub.app".to_string()
 }

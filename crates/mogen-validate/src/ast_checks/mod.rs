@@ -42,6 +42,14 @@ pub fn validate_ast_with_source(ast: &[Node], base_dir: Option<&Path>) -> Vec<Di
     let mut diags = Vec::new();
     let mut materials = collect_material_names(ast, &mut diags);
     let mut modules = collect_module_names(ast, &mut diags);
+    // Cross-author registry refs (`use "@user/slug[@v]"`) resolve at
+    // build time via `Loader::load_registry`. At validation time we
+    // can't reach the network, but we *can* recognise the syntactic
+    // shape and pre-register each ref's raw token as a known module so
+    // the unknown-module check doesn't fire. Build/Studio do the actual
+    // resolution; if a ref doesn't resolve there, that's a build error
+    // surfaced with a registry-aware diagnostic instead.
+    register_registry_use_names(ast, &mut modules);
     let has_imports = ast.iter().any(|n| n.kind == "import");
     let suppress_unknown_module = match merge_imported_names(
         ast,
@@ -58,6 +66,24 @@ pub fn validate_ast_with_source(ast: &[Node], base_dir: Option<&Path>) -> Vec<Di
         walk(n, &materials, &modules, suppress_unknown_module, &mut diags);
     }
     diags
+}
+
+/// Walk the AST recursively for `use` nodes whose name parses as a
+/// `@user/slug[@v]` registry reference and register each verbatim token
+/// as a known module name. Build-time resolution will synthesise a
+/// real module under that name; validation just needs to know the name
+/// will exist.
+fn register_registry_use_names(ast: &[Node], modules: &mut HashSet<String>) {
+    for n in ast {
+        if n.kind == "use" {
+            if let Some(name) = &n.name {
+                if mogen_dsl::module::parse_registry_spec(name).is_some() {
+                    modules.insert(name.clone());
+                }
+            }
+        }
+        register_registry_use_names(&n.children, modules);
+    }
 }
 
 /// Validate position and uniqueness of `meta(...)` blocks. The body and attr

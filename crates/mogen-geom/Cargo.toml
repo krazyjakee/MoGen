@@ -5,16 +5,20 @@ edition.workspace = true
 
 [features]
 default = ["csg"]
-# `csg` pulls in `manifold3d`, which builds the C++ Manifold library via cmake.
-# That toolchain is not available on `wasm32-unknown-unknown`, so the wasm
-# crate disables this feature. With the feature off, `union`/`difference`/
-# `intersect` and friends become panic stubs — callers must guard against
-# CSG ops upstream (e.g. by validating the AST and rejecting them).
-csg = ["dep:manifold3d"]
+# Desktop CSG. `csg` pulls in `manifold-csg`, which builds Google's Manifold
+# C++ library via cmake. Native target uses TBB-backed parallelism inside
+# Manifold's boolean kernel.
+csg = ["dep:manifold-csg", "manifold-csg/parallel"]
+# Wasm CSG. Forwards to `manifold-csg`'s provisional `unstable-wasm-uu`
+# feature, which builds Manifold + Clipper2 for `wasm32-unknown-unknown`
+# via the `wasm-cxx-shim` C++ runtime shim. Mutually exclusive with `csg`
+# in practice (the `parallel` feature can't link on wasm). Build host
+# requires LLVM 20+ on PATH; see the workspace README for setup.
+unstable-wasm-uu = ["dep:manifold-csg", "manifold-csg/unstable-wasm-uu"]
 
 [dependencies]
 mogen-core = { workspace = true }
 glam = { workspace = true }
 anyhow = { workspace = true }
 gltf = { workspace = true }
-manifold3d = { version = "0.1", optional = true }
+manifold-csg = { version = "0.1.8", optional = true, default-features = false }

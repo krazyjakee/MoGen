@@ -340,6 +340,10 @@ pub(super) enum MenuAction {
     OpenOptions,
     Frame,
     OpenAbout,
+    /// Open the View → Community window — the MoGHub registry browser.
+    /// Read-only in v1; publish + social actions land in subsequent
+    /// slices (P2/P3).
+    OpenCommunity,
     /// Open the Help → Check for Updates… modal. The actual GitHub query is
     /// kicked off by the user clicking "Check now" inside the dialog.
     OpenUpdate,
