@@ -29,7 +29,6 @@ pub mod store;
 pub mod token;
 
 use std::io;
-use std::path::PathBuf;
 
 use thiserror::Error;
 
@@ -72,11 +71,6 @@ pub enum OAuthError {
     Io(String),
     #[error("token store decode error: {0}")]
     Json(String),
-    #[error("OAuth client secrets file unavailable{}: {reason}; create oauth_client.json with {{\"client_id\":\"...\",\"client_secret\":\"...\"}} (see README \"Sign in with a paid Gemini account\")", path.as_ref().map(|p| format!(" at {}", p.display())).unwrap_or_default())]
-    MissingClientSecrets {
-        path: Option<PathBuf>,
-        reason: String,
-    },
 }
 
 impl From<reqwest::Error> for OAuthError {

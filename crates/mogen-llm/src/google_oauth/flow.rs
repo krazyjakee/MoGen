@@ -51,12 +51,9 @@ pub struct LoginOutcome {
 /// loadCodeAssist). Does *not* persist the bundle — the caller chooses
 /// where to write it.
 pub fn run_login_flow(opts: LoginOptions) -> Result<LoginOutcome, OAuthError> {
-    // Fail fast if oauth_client.json is missing — better to surface a clear
-    // setup error before binding ports or opening browsers.
-    let secrets = client::load_client_secrets()?;
     let pkce = PkcePair::generate();
     let server = server::bind()?;
-    let authorize_url = build_authorize_url_with(&secrets, &pkce);
+    let authorize_url = build_authorize_url(&pkce);
 
     if opts.open_browser {
         if let Err(err) = webbrowser::open(&authorize_url) {
@@ -115,11 +112,11 @@ fn now_unix() -> u64 {
 /// returns a refresh token, and `prompt=consent` to be sure the consent
 /// screen runs even on second logins (otherwise refresh tokens may be
 /// withheld for already-consented apps).
-fn build_authorize_url_with(secrets: &client::ClientSecrets, pkce: &PkcePair) -> String {
+fn build_authorize_url(pkce: &PkcePair) -> String {
     let mut url = String::with_capacity(512);
     url.push_str(client::AUTH_URL);
     url.push('?');
-    append_param(&mut url, "client_id", &secrets.client_id, true);
+    append_param(&mut url, "client_id", client::CLIENT_ID, true);
     append_param(&mut url, "redirect_uri", client::REDIRECT_URI, false);
     append_param(&mut url, "response_type", "code", false);
     append_param(&mut url, "scope", client::SCOPES, false);
@@ -178,10 +175,9 @@ fn exchange_code(
     verifier: &str,
     _now_unix: u64,
 ) -> Result<TokenExchangeResponse, OAuthError> {
-    let secrets = client::load_client_secrets()?;
     let form = [
-        ("client_id", secrets.client_id.as_str()),
-        ("client_secret", secrets.client_secret.as_str()),
+        ("client_id", client::CLIENT_ID),
+        ("client_secret", client::CLIENT_SECRET),
         ("code", code),
         ("code_verifier", verifier),
         ("grant_type", "authorization_code"),
@@ -243,10 +239,9 @@ pub fn exchange_code_against(
     verifier: &str,
     token_url: &str,
 ) -> Result<(String, String, u64, Option<String>), OAuthError> {
-    let secrets = client::load_client_secrets()?;
     let form = [
-        ("client_id", secrets.client_id.as_str()),
-        ("client_secret", secrets.client_secret.as_str()),
+        ("client_id", client::CLIENT_ID),
+        ("client_secret", client::CLIENT_SECRET),
         ("code", code),
         ("code_verifier", verifier),
         ("grant_type", "authorization_code"),
@@ -270,13 +265,15 @@ mod tests {
     #[test]
     fn authorize_url_contains_required_params() {
         let pkce = PkcePair::generate();
-        let secrets = client::ClientSecrets {
-            client_id: "test-client-id".into(),
-            client_secret: "test-secret".into(),
-        };
-        let url = build_authorize_url_with(&secrets, &pkce);
+        let url = build_authorize_url(&pkce);
         assert!(url.starts_with(client::AUTH_URL));
-        assert!(url.contains("client_id=test-client-id"));
+        // CLIENT_ID is percent-encoded in the URL but contains only
+        // unreserved characters (digits + `-` + `.`), so the raw value
+        // appears verbatim.
+        assert!(
+            url.contains(&format!("client_id={}", client::CLIENT_ID)),
+            "got: {url}"
+        );
         assert!(url.contains("code_challenge_method=S256"));
         assert!(url.contains(&format!("code_challenge={}", pkce.challenge)));
         assert!(url.contains(&format!("state={}", pkce.state)));
