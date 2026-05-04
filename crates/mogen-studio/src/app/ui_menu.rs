@@ -515,6 +515,17 @@ impl MogenStudioApp {
                 let _ = self.settings.save();
             }
 
+            ui.menu_button("Community", |ui| {
+                if ui
+                    .button("Browse MoGHub…")
+                    .on_hover_text("Open the Community window to discover and open published .mog files")
+                    .clicked()
+                {
+                    action = MenuAction::OpenCommunity;
+                    ui.close_menu();
+                }
+            });
+
             ui.menu_button("Help", |ui| {
                 if shortcut_menu_item(
                     ui,
@@ -635,6 +646,9 @@ impl MogenStudioApp {
             MenuAction::Frame => self.viewer.frame_view(),
             MenuAction::OpenAbout => {
                 self.show_about = true;
+            }
+            MenuAction::OpenCommunity => {
+                self.community.open = true;
             }
             MenuAction::OpenUpdate => {
                 self.open_update_dialog();

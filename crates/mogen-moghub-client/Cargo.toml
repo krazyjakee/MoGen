@@ -1,0 +1,23 @@
+[package]
+name = "mogen-moghub-client"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+mogen-registry.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+# `blocking`: Studio + CLI run sync workers per the project plumbing
+# rules — no tokio in the desktop hot path. `rustls-tls` keeps the binary
+# small and avoids the OpenSSL system-lib quagmire on Linux. `multipart`
+# is reserved for the publish thumbnail upload (P2); harmless to include.
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls", "multipart"] }
+url = "2"
+
+[dev-dependencies]
+# Tiny in-process HTTP server we mount per test so we don't depend on a
+# running moghub for unit tests. Same approach mogen-llm uses for its
+# Gemini stub.
+tiny_http = "0.12"

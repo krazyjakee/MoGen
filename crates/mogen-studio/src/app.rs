@@ -26,6 +26,7 @@ mod generate;
 mod indent;
 mod line_ops;
 mod llm;
+mod moghub;
 mod multi_caret;
 mod onboarding;
 mod pricing;
@@ -178,6 +179,11 @@ pub struct MogenStudioApp {
 
     /// Help → About modal visibility.
     show_about: bool,
+
+    /// View → Community window state. Holds the discover feed, active
+    /// detail, search box, and any in-flight HTTP workers. Reset to
+    /// `default()` when the window closes so the next open re-fetches.
+    community: ui_dialogs::community::CommunityState,
 
     /// Help → Check for Updates modal visibility. Independent of
     /// `update_state` so the user can close the modal mid-install and the
@@ -442,6 +448,7 @@ impl MogenStudioApp {
             recently_closed: VecDeque::new(),
             last_viewport_rect: None,
             show_about: false,
+            community: ui_dialogs::community::CommunityState::default(),
             show_update: false,
             update_state: None,
             show_docs: false,
@@ -847,6 +854,7 @@ impl eframe::App for MogenStudioApp {
         self.ui_export_dialog(ctx);
         self.ui_external_conflict(ctx);
         self.ui_about(ctx);
+        self.community_window(ctx);
         self.ui_update_dialog(ctx);
         self.ui_docs(ctx);
         self.ui_ask(ctx);

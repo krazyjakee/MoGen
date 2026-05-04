@@ -4,6 +4,7 @@ pub(crate) mod build;
 pub(crate) mod generate;
 pub(crate) mod inspect;
 pub(crate) mod modify;
+pub(crate) mod relock;
 pub(crate) mod repair;
 pub(crate) mod textures;
 pub(crate) mod update;

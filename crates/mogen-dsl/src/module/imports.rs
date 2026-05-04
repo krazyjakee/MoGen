@@ -18,7 +18,7 @@ use mogen_core::Span;
 use crate::ast::{Node, Value};
 use crate::parser::parse;
 
-use super::loader::{FsLoader, Loader};
+use super::loader::{parse_registry_spec, FsLoader, LoadedFile, Loader, RegistrySpec};
 
 /// Walk top-level `import "path.mog"` declarations, recursively load the
 /// referenced files, and return the union of (a) every `module` declaration
@@ -70,6 +70,36 @@ pub fn resolve_imports_with_loader(
     Ok(out)
 }
 
+/// Resolve `use "@user/slug[@v]"` registry references. Walks the AST
+/// recursively (registry refs can appear nested inside scene blocks),
+/// dispatches each unique ref through [`Loader::load_registry`], and
+/// returns the synthesised module declarations to merge into the
+/// composing scene's registry. Kept separate from
+/// [`resolve_imports_with_loader`] so callers that don't want to touch
+/// the network — `mogen check`, `mogen-validate`, the wasm playground —
+/// can use a default `FsLoader` without it erroring on `@`-prefixed
+/// names.
+pub fn resolve_registry_uses_with_loader(
+    ast: &[Node],
+    loader: &mut dyn Loader,
+) -> Result<Vec<Node>> {
+    let mut visited: HashSet<PathBuf> = HashSet::new();
+    let mut stack: Vec<PathBuf> = Vec::new();
+    let mut out: Vec<Node> = Vec::new();
+    let mut module_names: HashMap<String, PathBuf> = HashMap::new();
+    let mut material_names: HashMap<String, PathBuf> = HashMap::new();
+    resolve_registry_uses_into(
+        ast,
+        loader,
+        &mut visited,
+        &mut stack,
+        &mut out,
+        &mut module_names,
+        &mut material_names,
+    )?;
+    Ok(out)
+}
+
 fn resolve_imports_into(
     ast: &[Node],
     base_dir: Option<&Path>,
@@ -89,30 +119,22 @@ fn resolve_imports_into(
         })?;
         let alias = import_alias(n)?;
         let loaded = loader.load(raw, base_dir)?;
-        let canonical = loaded.canonical;
-        let src = loaded.source;
-        if stack.iter().any(|p| p == &canonical) {
+        if stack.iter().any(|p| p == &loaded.canonical) {
             let chain: Vec<String> = stack
                 .iter()
-                .chain(std::iter::once(&canonical))
+                .chain(std::iter::once(&loaded.canonical))
                 .map(|p| p.display().to_string())
                 .collect();
             bail!("recursive import: {}", chain.join(" -> "));
         }
-        if !visited.insert(canonical.clone()) {
+        if !visited.insert(loaded.canonical.clone()) {
             // Already loaded by a prior import — skip.
             continue;
         }
-        let inner_ast = parse(&src)
-            .map_err(|e| anyhow!("parsing imported file {}: {}", canonical.display(), e))?;
-        let inner_dir = canonical.parent().map(|p| p.to_path_buf());
-
-        // Resolve transitive imports first so the deepest dependencies land in
-        // `out` ahead of the file that imported them.
-        stack.push(canonical.clone());
-        resolve_imports_into(
-            &inner_ast,
-            inner_dir.as_deref(),
+        lift_loaded_into(
+            loaded,
+            alias,
+            raw,
             loader,
             visited,
             stack,
@@ -120,181 +142,275 @@ fn resolve_imports_into(
             module_names,
             material_names,
         )?;
-        stack.pop();
+    }
+    Ok(())
+}
 
-        // Now lift this file's own contributions: modules, the implicit
-        // scene-as-module (if any), and materials. Texture paths are rewritten
-        // to absolute against `inner_dir` so they survive composition into a
-        // scene that lives in a different directory.
-        let base_for_textures = inner_dir.as_deref();
-        let mut scene_body: Vec<Node> = Vec::new();
-        let mut scene_span: Option<Span> = None;
-        // Animation / skeleton declarations buffer until we know whether the
-        // file has a scene block. They get appended into the synthesised
-        // module body so they only fire when the user `use`s the object —
-        // lifting them to top-level instead would orphan them whenever the
-        // composing scene imports an object but doesn't instantiate it.
-        let mut anim_decls: Vec<Node> = Vec::new();
-        for inner_node in inner_ast {
-            match inner_node.kind.as_str() {
-                "import" => {} // already handled above
-                "module" => {
-                    let mut m = inner_node;
-                    rewrite_texture_paths(&mut m, base_for_textures);
-                    set_origin_recursive(&mut m, &canonical);
-                    let name = m.name.clone().ok_or_else(|| {
-                        anyhow!("module declaration requires a name")
-                    })?;
-                    if let Some(prev) = module_names.get(&name) {
-                        bail!(
-                            "module \"{name}\" is declared in two imported files: {} and {}",
-                            prev.display(),
-                            canonical.display()
-                        );
-                    }
-                    module_names.insert(name, canonical.clone());
-                    out.push(m);
-                }
-                "material" => {
-                    let mut mat = inner_node;
-                    rewrite_texture_paths(&mut mat, base_for_textures);
-                    set_origin_recursive(&mut mat, &canonical);
-                    // Cross-file material name duplicates aren't fatal:
-                    // `find_material` returns the first match by index, and
-                    // user-declared materials register before imported ones,
-                    // so the user's definition (or the first import) wins.
-                    // Collisions are tracked just so the importing file can
-                    // surface a diagnostic if it cares.
-                    if let Some(name) = mat.name.clone() {
-                        material_names.entry(name).or_insert_with(|| canonical.clone());
-                    }
-                    out.push(mat);
-                }
-                "scene" => {
-                    if scene_span.is_some() {
-                        bail!(
-                            "imported file {} declares more than one top-level `scene` block",
-                            canonical.display()
-                        );
-                    }
-                    scene_span = Some(inner_node.span);
-                    for c in inner_node.children {
-                        if c.kind == "material" {
-                            // Hoist scene-nested materials to top level too —
-                            // `collect_materials` only looks at depth ≤ 1, so a
-                            // material left inside the synthesised module body
-                            // would be invisible after `use`.
-                            let mut mat = c;
-                            rewrite_texture_paths(&mut mat, base_for_textures);
-                            set_origin_recursive(&mut mat, &canonical);
-                            if let Some(name) = mat.name.clone() {
-                                material_names
-                                    .entry(name)
-                                    .or_insert_with(|| canonical.clone());
-                            }
-                            out.push(mat);
-                        } else {
-                            let mut child = c;
-                            rewrite_texture_paths(&mut child, base_for_textures);
-                            set_origin_recursive(&mut child, &canonical);
-                            scene_body.push(child);
-                        }
+/// Walk `ast` recursively for `use "@user/slug[@v]"` registry references,
+/// resolve each via [`Loader::load_registry`], parse the returned source,
+/// and lift its contents the same way an imported file is lifted — except
+/// the synthesised module name is the registry token itself
+/// (`@alice/chairs@2`), so `expand_modules` finds it when the user's
+/// `use "@alice/chairs@2"` runs.
+///
+/// Cycle detection rides on the same `stack` as file imports: registry
+/// loaders return synthetic but stable `LoadedFile::canonical` values
+/// (e.g. `registry/alice/chairs/2/main.mog`) so a chain like
+/// `@a/x@1 -> @b/y@1 -> @a/x@1` surfaces here just like a recursive
+/// `import` chain does.
+fn resolve_registry_uses_into(
+    ast: &[Node],
+    loader: &mut dyn Loader,
+    visited: &mut HashSet<PathBuf>,
+    stack: &mut Vec<PathBuf>,
+    out: &mut Vec<Node>,
+    module_names: &mut HashMap<String, PathBuf>,
+    material_names: &mut HashMap<String, PathBuf>,
+) -> Result<()> {
+    // Collect every unique registry ref reachable from `ast`. Walking
+    // first instead of fetching inline keeps fetch order independent of
+    // AST traversal order, which makes diagnostics deterministic.
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut refs: Vec<RegistrySpec> = Vec::new();
+    collect_registry_refs(ast, &mut seen, &mut refs);
+
+    for spec in refs {
+        let loaded = loader.load_registry(&spec)?;
+        if stack.iter().any(|p| p == &loaded.canonical) {
+            let chain: Vec<String> = stack
+                .iter()
+                .chain(std::iter::once(&loaded.canonical))
+                .map(|p| p.display().to_string())
+                .collect();
+            bail!("recursive registry use: {}", chain.join(" -> "));
+        }
+        if !visited.insert(loaded.canonical.clone()) {
+            continue;
+        }
+        lift_loaded_into(
+            loaded,
+            Some(spec.raw.clone()),
+            &spec.raw,
+            loader,
+            visited,
+            stack,
+            out,
+            module_names,
+            material_names,
+        )?;
+    }
+    Ok(())
+}
+
+/// Recursive walk that finds every `use` whose name parses as a registry
+/// reference. Dedupes by the verbatim raw token so two identical refs
+/// resolve once.
+fn collect_registry_refs(
+    nodes: &[Node],
+    seen: &mut HashSet<String>,
+    out: &mut Vec<RegistrySpec>,
+) {
+    for n in nodes {
+        if n.kind == "use" {
+            if let Some(name) = &n.name {
+                if let Some(spec) = parse_registry_spec(name) {
+                    if seen.insert(spec.raw.clone()) {
+                        out.push(spec);
                     }
                 }
-                "lod_scale" => {
-                    // `lod_scale` is a per-file build setting (it scales
-                    // primitive segment counts during lowering). Lifting an
-                    // imported file's setting into the composing scene would
-                    // silently change every primitive's tessellation, which
-                    // the user almost never wants. Drop it; the imported
-                    // geometry was already tessellated against the import's
-                    // own setting, and the composing scene's setting governs
-                    // anything authored locally.
-                }
-                "meta" => {
-                    // `meta` is per-file provenance (name, version, seed,
-                    // thinking budget, original prompt). It belongs to the
-                    // file that authored it; merging it into the composing
-                    // scene would clobber that scene's own meta. Drop it —
-                    // the importing file keeps its own meta block.
-                }
-                "joint" | "clip" | "track" | "skeleton" | "spin" | "open_close"
-                | "wave" | "flap" | "idle" => {
-                    let mut anim = inner_node;
-                    rewrite_texture_paths(&mut anim, base_for_textures);
-                    set_origin_recursive(&mut anim, &canonical);
-                    anim_decls.push(anim);
-                }
-                _ => {
+            }
+        }
+        collect_registry_refs(&n.children, seen, out);
+    }
+}
+
+/// Shared lift logic: parse `loaded.source`, recursively chase its
+/// `import` and registry-`use` refs, then hoist the loaded source's
+/// `module` / `material` / `scene` / animation declarations into `out`
+/// the same way `resolve_imports_into` does for an imported file. Used
+/// for both file imports (`explicit_module_name` = the `(as=…)` alias or
+/// `None` to default to the file stem) and registry refs
+/// (`explicit_module_name` = the `@user/slug[@v]` token).
+fn lift_loaded_into(
+    loaded: LoadedFile,
+    explicit_module_name: Option<String>,
+    raw_for_errors: &str,
+    loader: &mut dyn Loader,
+    visited: &mut HashSet<PathBuf>,
+    stack: &mut Vec<PathBuf>,
+    out: &mut Vec<Node>,
+    module_names: &mut HashMap<String, PathBuf>,
+    material_names: &mut HashMap<String, PathBuf>,
+) -> Result<()> {
+    let canonical = loaded.canonical;
+    let inner_ast = parse(&loaded.source)
+        .map_err(|e| anyhow!("parsing imported file {}: {}", canonical.display(), e))?;
+    let inner_dir = canonical.parent().map(|p| p.to_path_buf());
+
+    // Resolve transitive imports + registry refs first so deepest
+    // dependencies land in `out` ahead of the file that pulled them in.
+    // Both passes are run regardless of how `lift_loaded_into` was
+    // entered: a registry-fetched source can `import` siblings, and an
+    // imported file can `use "@user/slug"`. Cycle detection on the
+    // shared `visited`/`stack` keeps both halves bounded.
+    stack.push(canonical.clone());
+    resolve_imports_into(
+        &inner_ast,
+        inner_dir.as_deref(),
+        loader,
+        visited,
+        stack,
+        out,
+        module_names,
+        material_names,
+    )?;
+    resolve_registry_uses_into(
+        &inner_ast,
+        loader,
+        visited,
+        stack,
+        out,
+        module_names,
+        material_names,
+    )?;
+    stack.pop();
+
+    let base_for_textures = inner_dir.as_deref();
+    let mut scene_body: Vec<Node> = Vec::new();
+    let mut scene_span: Option<Span> = None;
+    let mut anim_decls: Vec<Node> = Vec::new();
+    for inner_node in inner_ast {
+        match inner_node.kind.as_str() {
+            "import" => {}
+            "module" => {
+                let mut m = inner_node;
+                rewrite_texture_paths(&mut m, base_for_textures);
+                set_origin_recursive(&mut m, &canonical);
+                let name = m
+                    .name
+                    .clone()
+                    .ok_or_else(|| anyhow!("module declaration requires a name"))?;
+                if let Some(prev) = module_names.get(&name) {
                     bail!(
-                        "imported file {} has top-level `{}` — only `module`, \
-                         `material`, `scene`, `import`, and animation / \
-                         skeleton declarations are supported in imports",
-                        canonical.display(),
-                        inner_node.kind
+                        "module \"{name}\" is declared in two imported files: {} and {}",
+                        prev.display(),
+                        canonical.display()
                     );
                 }
+                module_names.insert(name, canonical.clone());
+                out.push(m);
             }
-        }
-        if scene_span.is_none() && !anim_decls.is_empty() {
-            // Animations need a scene to attach to. Without one we can't tell
-            // whether the user meant them to fire globally or to belong to a
-            // particular module; rather than guess, ask them to wrap the
-            // animated geometry in `scene { … }`.
-            bail!(
-                "imported file {} has top-level animation/skeleton declarations \
-                 but no `scene` block — wrap the animated geometry in a scene \
-                 so the animations travel with it",
-                canonical.display()
-            );
-        }
-        // Animations live inside the synthesised module body so a `use
-        // "<stem>"` instantiation expands them into the composing scene
-        // alongside the geometry they target. An imported file whose
-        // scene-as-module is never invoked therefore contributes neither
-        // geometry nor orphan animation tracks.
-        scene_body.extend(anim_decls);
-        if let Some(span) = scene_span {
-            let module_name = alias
-                .clone()
-                .or_else(|| module_name_from_path(&canonical))
-                .ok_or_else(|| {
-                    anyhow!(
-                        "import \"{}\" — could not derive a module name from the file stem; \
-                         supply one with `(as=<ident>)`",
-                        raw
-                    )
-                })?;
-            if let Some(prev) = module_names.get(&module_name) {
+            "material" => {
+                let mut mat = inner_node;
+                rewrite_texture_paths(&mut mat, base_for_textures);
+                set_origin_recursive(&mut mat, &canonical);
+                if let Some(name) = mat.name.clone() {
+                    material_names
+                        .entry(name)
+                        .or_insert_with(|| canonical.clone());
+                }
+                out.push(mat);
+            }
+            "scene" => {
+                if scene_span.is_some() {
+                    bail!(
+                        "imported file {} declares more than one top-level `scene` block",
+                        canonical.display()
+                    );
+                }
+                scene_span = Some(inner_node.span);
+                for c in inner_node.children {
+                    if c.kind == "material" {
+                        let mut mat = c;
+                        rewrite_texture_paths(&mut mat, base_for_textures);
+                        set_origin_recursive(&mut mat, &canonical);
+                        if let Some(name) = mat.name.clone() {
+                            material_names
+                                .entry(name)
+                                .or_insert_with(|| canonical.clone());
+                        }
+                        out.push(mat);
+                    } else {
+                        let mut child = c;
+                        rewrite_texture_paths(&mut child, base_for_textures);
+                        set_origin_recursive(&mut child, &canonical);
+                        scene_body.push(child);
+                    }
+                }
+            }
+            "lod_scale" => {}
+            "meta" => {
+                // `meta` is per-file provenance (name, version, seed,
+                // thinking budget, original prompt). It belongs to the
+                // file that authored it; merging it into the composing
+                // scene would clobber that scene's own meta. Drop it —
+                // the importing file keeps its own meta block.
+            }
+            "joint" | "clip" | "track" | "skeleton" | "spin" | "open_close" | "wave" | "flap"
+            | "idle" => {
+                let mut anim = inner_node;
+                rewrite_texture_paths(&mut anim, base_for_textures);
+                set_origin_recursive(&mut anim, &canonical);
+                anim_decls.push(anim);
+            }
+            _ => {
                 bail!(
-                    "import \"{}\" — synthesised module name \"{}\" collides with another \
-                     module declared in {}; rename with `(as=<ident>)`",
-                    raw,
-                    module_name,
-                    prev.display()
+                    "imported file {} has top-level `{}` — only `module`, \
+                     `material`, `scene`, `import`, and animation / \
+                     skeleton declarations are supported in imports",
+                    canonical.display(),
+                    inner_node.kind
                 );
             }
-            module_names.insert(module_name.clone(), canonical.clone());
-            out.push(Node {
-                kind: "module".to_string(),
-                name: Some(module_name),
-                attrs: Vec::new(),
-                children: scene_body,
-                span,
-                kind_span: span,
-                use_id: None,
-                origin: Some(canonical.clone()),
-            });
-        } else if let Some(alias) = alias {
-            // The user explicitly asked for an alias but the file has no
-            // scene to bind it to — that's almost certainly a mistake.
+        }
+    }
+    if scene_span.is_none() && !anim_decls.is_empty() {
+        bail!(
+            "imported file {} has top-level animation/skeleton declarations \
+             but no `scene` block — wrap the animated geometry in a scene \
+             so the animations travel with it",
+            canonical.display()
+        );
+    }
+    scene_body.extend(anim_decls);
+    if let Some(span) = scene_span {
+        let module_name = explicit_module_name
+            .clone()
+            .or_else(|| module_name_from_path(&canonical))
+            .ok_or_else(|| {
+                anyhow!(
+                    "import \"{}\" — could not derive a module name from the file stem; \
+                     supply one with `(as=<ident>)`",
+                    raw_for_errors
+                )
+            })?;
+        if let Some(prev) = module_names.get(&module_name) {
             bail!(
-                "import \"{}\" specified `(as={})`, but the imported file has no \
-                 top-level `scene` block to alias",
-                raw,
-                alias
+                "import \"{}\" — synthesised module name \"{}\" collides with another \
+                 module declared in {}; rename with `(as=<ident>)`",
+                raw_for_errors,
+                module_name,
+                prev.display()
             );
         }
+        module_names.insert(module_name.clone(), canonical.clone());
+        out.push(Node {
+            kind: "module".to_string(),
+            name: Some(module_name),
+            attrs: Vec::new(),
+            children: scene_body,
+            span,
+            kind_span: span,
+            use_id: None,
+            origin: Some(canonical.clone()),
+        });
+    } else if let Some(alias) = explicit_module_name {
+        bail!(
+            "import \"{}\" specified `(as={})`, but the imported file has no \
+             top-level `scene` block to alias",
+            raw_for_errors,
+            alias
+        );
     }
     Ok(())
 }

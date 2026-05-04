@@ -13,6 +13,7 @@
 
 mod about;
 mod ask;
+pub(super) mod community;
 mod export;
 mod external;
 mod new_prompt;

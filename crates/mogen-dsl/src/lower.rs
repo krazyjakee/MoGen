@@ -23,7 +23,8 @@ use crate::ast::Node;
 use crate::attach::resolve_attaches;
 use crate::conform::resolve_conforms;
 use crate::module::{
-    collect_modules, expand_modules, resolve_imports_with_loader, FsLoader, Loader,
+    collect_modules, expand_modules, resolve_imports_with_loader,
+    resolve_registry_uses_with_loader, FsLoader, Loader,
 };
 use crate::skin_lower::{bind_meshes, lower_skeleton};
 
@@ -151,7 +152,12 @@ pub fn lower_with_loader(
     // < imports < user, so a user module shadows an imported one and an
     // imported module shadows a stdlib one.
     let mut reg = crate::stdlib::stdlib_registry().clone();
-    let imported_decls = resolve_imports_with_loader(ast, base_dir, loader)?;
+    let mut imported_decls = resolve_imports_with_loader(ast, base_dir, loader)?;
+    // Cross-author registry refs (`use "@user/slug[@v]"`) flow through
+    // `Loader::load_registry`. Walking them as a separate pass keeps
+    // local-only callers (mogen-validate, the wasm playground, plain
+    // `mogen check`) from triggering registry resolution.
+    imported_decls.extend(resolve_registry_uses_with_loader(ast, loader)?);
     let imported_reg = collect_modules(&imported_decls)?;
     reg.extend_overlay(imported_reg);
     let user = collect_modules(ast)?;
