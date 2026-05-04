@@ -30,6 +30,14 @@ pub struct Settings {
     /// window and by the registry-aware `mogen build`.
     #[serde(default = "default_moghub_url")]
     pub moghub_url: String,
+    /// Persisted MoGHub session token (UUID string) returned by the
+    /// loopback OAuth flow. Sent as `Authorization: Bearer <uuid>` on
+    /// every authenticated call. Empty when signed-out. Stored alongside
+    /// the LLM keys; same threat model as `gemini_api_key` — anyone with
+    /// read access to `~/.config/mogen/settings.json` can act as the user
+    /// against MoGHub. Keyring storage is on the deferred list.
+    #[serde(default)]
+    pub moghub_session: String,
     /// Persisted as a lowercase label (`low` | `medium` | `high` | `xhigh`) so
     /// new `ThinkingLevel` variants can be added without a migration. Empty /
     /// unknown falls back to the library default at read time.
@@ -622,5 +630,5 @@ fn settings_path() -> Option<PathBuf> {
 /// is editable in Preferences (and overridable at process scope via the
 /// `MOGHUB_URL` env var honoured by `MoghubClient::from_env`).
 fn default_moghub_url() -> String {
-    "https://moghub.app".to_string()
+    "https://moghub.org".to_string()
 }

@@ -102,7 +102,17 @@ pub(super) struct FilePickerState {
     /// Cleared on every successful navigation.
     error: Option<String>,
     /// Latched on open so the path input grabs focus on the first frame.
+    /// Mutually exclusive with `focus_save_name_pending`.
     focus_path_pending: bool,
+    /// SaveAs mode: latches focus onto the filename input on the first frame
+    /// and selects the basename so a single keystroke replaces the user-
+    /// supplied portion while the `.mog` extension is left intact.
+    focus_save_name_pending: bool,
+    /// Inline "create folder" prompt: `Some(draft)` while the user is typing
+    /// a new folder name, `None` otherwise. Cleared on confirm/cancel.
+    new_folder_draft: Option<String>,
+    /// Latches focus onto the new-folder input the frame it appears.
+    focus_new_folder_pending: bool,
 }
 
 impl FilePickerState {
@@ -111,6 +121,7 @@ impl FilePickerState {
             PickerMode::SaveAs { default_name } => default_name.clone(),
             _ => String::new(),
         };
+        let is_save = matches!(mode, PickerMode::SaveAs { .. });
         let mut s = Self {
             mode,
             current_dir: start_dir.clone(),
@@ -119,7 +130,10 @@ impl FilePickerState {
             path_input: start_dir.display().to_string(),
             save_name_draft,
             error: None,
-            focus_path_pending: true,
+            focus_path_pending: !is_save,
+            focus_save_name_pending: is_save,
+            new_folder_draft: None,
+            focus_new_folder_pending: false,
         };
         s.refresh_entries();
         s
@@ -187,6 +201,29 @@ impl FilePickerState {
         if let Some(parent) = self.current_dir.parent().map(Path::to_path_buf) {
             self.navigate_to(parent);
         }
+    }
+
+    /// Create `name` as a subdirectory of `current_dir` and step into it so
+    /// the user can immediately save / browse there. Rejects empty names and
+    /// names containing path separators — callers should treat the resulting
+    /// `error` as the surfaced reason on failure.
+    fn create_folder(&mut self, name: &str) {
+        let trimmed = name.trim();
+        if trimmed.is_empty() {
+            self.error = Some("folder name can't be empty".into());
+            return;
+        }
+        if trimmed.contains('/') || trimmed.contains('\\') {
+            self.error = Some("folder name can't contain path separators".into());
+            return;
+        }
+        let new_path = self.current_dir.join(trimmed);
+        if let Err(e) = fs::create_dir(&new_path) {
+            self.error = Some(format!("can't create {}: {e}", new_path.display()));
+            return;
+        }
+        self.new_folder_draft = None;
+        self.navigate_to(new_path);
     }
 
     fn toggle_select(&mut self, path: PathBuf, multi: bool) {
@@ -294,6 +331,8 @@ impl MogenStudioApp {
         let mut path_input_submitted = false;
         let mut select_toggle: Option<(PathBuf, bool)> = None;
         let mut newly_selected_for_thumb: Option<PathBuf> = None;
+        let mut new_folder_create: Option<String> = None;
+        let mut new_folder_cancel = false;
 
         // Pin the window inside the screen rect. `egui::Window` auto-sizes
         // to fit its content, so capping width/height here keeps the modal
@@ -338,6 +377,18 @@ impl MogenStudioApp {
                             {
                                 nav_up = true;
                             }
+                            if ui
+                                .button("New folder")
+                                .on_hover_text("Create a new folder in the current directory")
+                                .clicked()
+                            {
+                                if picker.new_folder_draft.is_some() {
+                                    picker.new_folder_draft = None;
+                                } else {
+                                    picker.new_folder_draft = Some(String::new());
+                                    picker.focus_new_folder_pending = true;
+                                }
+                            }
                             let path_resp = ui.add(
                                 egui::TextEdit::singleline(&mut picker.path_input)
                                     .desired_width(f32::INFINITY)
@@ -353,6 +404,40 @@ impl MogenStudioApp {
                                 path_input_submitted = true;
                             }
                         });
+                        if picker.new_folder_draft.is_some() {
+                            ui.horizontal(|ui| {
+                                ui.label("Folder name:");
+                                let draft = picker
+                                    .new_folder_draft
+                                    .as_mut()
+                                    .expect("guarded above");
+                                let resp = ui.add(
+                                    egui::TextEdit::singleline(draft)
+                                        .desired_width(240.0)
+                                        .hint_text("subfolder"),
+                                );
+                                if picker.focus_new_folder_pending {
+                                    resp.request_focus();
+                                    picker.focus_new_folder_pending = false;
+                                }
+                                let enter_pressed = resp.lost_focus()
+                                    && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                                let escape_pressed = resp.has_focus()
+                                    && ui.input(|i| i.key_pressed(egui::Key::Escape));
+                                let create_clicked = ui
+                                    .add_enabled(
+                                        !draft.trim().is_empty(),
+                                        egui::Button::new("Create"),
+                                    )
+                                    .clicked();
+                                let cancel_clicked = ui.button("Cancel").clicked();
+                                if enter_pressed || create_clicked {
+                                    new_folder_create = Some(draft.clone());
+                                } else if escape_pressed || cancel_clicked {
+                                    new_folder_cancel = true;
+                                }
+                            });
+                        }
                         if let Some(err) = &picker.error {
                             ui.colored_label(ui.style().visuals.warn_fg_color, err);
                         }
@@ -367,11 +452,42 @@ impl MogenStudioApp {
                         ui.horizontal(|ui| {
                             if picker.mode.is_save() {
                                 ui.label("Filename:");
-                                ui.add(
+                                let save_resp = ui.add(
                                     egui::TextEdit::singleline(&mut picker.save_name_draft)
                                         .desired_width(240.0)
                                         .hint_text("scene.mog"),
                                 );
+                                if picker.focus_save_name_pending {
+                                    save_resp.request_focus();
+                                    // Select the basename (everything before the last
+                                    // '.') so a single keystroke replaces just the
+                                    // user-supplied name and leaves the extension in
+                                    // place. Falls back to selecting the whole field
+                                    // when the draft has no extension.
+                                    let select_end_chars = picker
+                                        .save_name_draft
+                                        .rfind('.')
+                                        .map(|byte_idx| {
+                                            picker.save_name_draft[..byte_idx]
+                                                .chars()
+                                                .count()
+                                        })
+                                        .unwrap_or_else(|| {
+                                            picker.save_name_draft.chars().count()
+                                        });
+                                    use egui::text::{CCursor, CCursorRange};
+                                    let mut st = egui::TextEdit::load_state(
+                                        ui.ctx(),
+                                        save_resp.id,
+                                    )
+                                    .unwrap_or_default();
+                                    st.cursor.set_char_range(Some(CCursorRange::two(
+                                        CCursor::new(0),
+                                        CCursor::new(select_end_chars),
+                                    )));
+                                    st.store(ui.ctx(), save_resp.id);
+                                    picker.focus_save_name_pending = false;
+                                }
                             } else {
                                 let n = picker.selected.len();
                                 let label = if n == 0 {
@@ -474,6 +590,17 @@ impl MogenStudioApp {
         // Apply navigation + selection deltas before deciding whether to
         // close, so a same-frame double-click into a folder doesn't try
         // to confirm with the folder as the chosen file.
+        if let Some(name) = new_folder_create {
+            self.picker.as_mut().unwrap().create_folder(&name);
+            self.prewarm_picker_thumbs();
+            return;
+        }
+        if new_folder_cancel {
+            let p = self.picker.as_mut().unwrap();
+            p.new_folder_draft = None;
+            p.error = None;
+            return;
+        }
         if nav_up {
             self.picker.as_mut().unwrap().navigate_up();
             self.prewarm_picker_thumbs();

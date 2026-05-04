@@ -416,6 +416,8 @@ subjects. The user message will be a single short phrase like these.
 
 ### Prompt: \"a simple wooden stool\"
 ### Output:
+meta (name = \"wooden_stool\", description = \"a simple four-legged wooden stool\", tags = [\"furniture\", \"stool\", \"wood\"])
+
 material \"wood\" (color=[0.55, 0.35, 0.18], roughness=0.8)
 
 scene {
@@ -437,6 +439,8 @@ scene {
 
 ### Prompt: \"a snowman\"
 ### Output:
+meta (name = \"snowman\", description = \"a three-tier snowman with coal eyes and a carrot nose\", tags = [\"character\", \"snowman\", \"winter\"])
+
 material \"snow\"   (color=[0.95, 0.96, 0.98], roughness=0.9)
 material \"coal\"   (color=[0.08, 0.08, 0.08], roughness=0.5)
 material \"carrot\" (color=[0.95, 0.45, 0.1],  roughness=0.7)
@@ -458,6 +462,8 @@ scene {
 
 ### Prompt: \"a spinning ceiling fan\"
 ### Output:
+meta (name = \"ceiling_fan\", description = \"a four-blade ceiling fan with a spinning rotor\", tags = [\"appliance\", \"fan\", \"animated\"])
+
 material \"metal\" (color=[0.7, 0.7, 0.72], metallic=0.9, roughness=0.3)
 material \"wood\"  (color=[0.5, 0.32, 0.18], roughness=0.75)
 
@@ -479,6 +485,8 @@ spin \"fan_spin\" (target=\"blades\", axis=[0, 1, 0], rpm=90)
 
 ### Prompt: \"a hollow crate with a swinging lid\"
 ### Output:
+meta (name = \"crate_with_lid\", description = \"a hollow wooden crate with a hinged swinging lid\", tags = [\"prop\", \"crate\", \"animated\"])
+
 material \"wood\" (color=[0.45, 0.28, 0.15], roughness=0.8)
 
 scene {
@@ -499,6 +507,8 @@ open_close \"lid_swing\" (target=\"lid_pivot\", angle=85, seconds=0.8)
 
 ### Prompt: \"a stone archway\"
 ### Output:
+meta (name = \"stone_archway\", description = \"a freestanding stone archway with two posts and a lintel\", tags = [\"architecture\", \"archway\", \"stone\"])
+
 material \"stone\" (color=[0.55, 0.52, 0.48], roughness=0.9)
 
 scene {
@@ -511,6 +521,8 @@ scene {
 
 ### Prompt: \"a potted fern\"
 ### Output:
+meta (name = \"potted_fern\", description = \"a potted fern with curved fronds in a terracotta pot\", tags = [\"plant\", \"fern\", \"foliage\"])
+
 material \"pot\"  (color=[0.55, 0.32, 0.22], roughness=0.85)
 material \"leaf\" (color=[0.2, 0.55, 0.22],  roughness=0.6, double_sided=1)
 
@@ -528,6 +540,8 @@ scene {
 
 ### Prompt: \"a person walking\"
 ### Output:
+meta (name = \"person_walking\", description = \"a rigged humanoid figure in a walk cycle\", tags = [\"character\", \"humanoid\", \"animated\"])
+
 material \"skin\"  (color=[0.85, 0.65, 0.55], roughness=0.7)
 material \"cloth\" (color=[0.22, 0.38, 0.62], roughness=0.85)
 material \"hair\"  (color=[0.20, 0.15, 0.10], roughness=0.9)
@@ -561,6 +575,8 @@ clip \"walk\" (seconds=1.0) {
 
 ### Prompt: \"a crouching tiger\"
 ### Output:
+meta (name = \"crouching_tiger\", description = \"a crouching tiger with a long tail and four legs\", tags = [\"creature\", \"tiger\", \"animal\"])
+
 material \"tiger_fur\" (color=[0.85, 0.45, 0.15], roughness=0.85)
 
 scene {
@@ -589,6 +605,8 @@ scene {
 
 ### Prompt: \"a knight in armor\"
 ### Output:
+meta (name = \"knight_in_armor\", description = \"a humanoid knight wearing a steel helmet, chestplate, and carrying a sword\", tags = [\"character\", \"knight\", \"armor\"])
+
 material \"skin\"  (color=[0.85, 0.65, 0.55], roughness=0.7)
 material \"cloth\" (color=[0.18, 0.20, 0.25], roughness=0.85)
 material \"hair\"  (color=[0.45, 0.30, 0.18], roughness=0.9)
@@ -617,6 +635,8 @@ scene {
 
 ### Prompt: \"a small wooden cart\"
 ### Output:
+meta (name = \"wooden_cart\", description = \"a small four-wheeled wooden cart with metal axles\", tags = [\"vehicle\", \"cart\", \"wood\"])
+
 material \"metal\"  (color=[0.65, 0.65, 0.68], metallic=0.85, roughness=0.4)
 material \"wood\"   (color=[0.5, 0.32, 0.18], roughness=0.85)
 material \"rubber\" (color=[0.08, 0.08, 0.08], roughness=0.9)
@@ -636,6 +656,8 @@ scene {
 
 ### Prompt: \"a young oak tree\"
 ### Output:
+meta (name = \"young_oak_tree\", description = \"a young oak tree with recursive branches and alpha-masked leaf cards\", tags = [\"plant\", \"tree\", \"oak\", \"foliage\"])
+
 material \"oak_bark\" (color=[0.36, 0.25, 0.15], roughness=0.95)
 material \"oak_leaf\" (
   color=[0.20, 0.50, 0.22], roughness=0.65,
@@ -687,5 +709,14 @@ Before you emit, silently verify:
     when boxes merely *touch* at perpendicular seams. Use `wall \
     (holes=[[cx,cy,w,h], …])` for walls with doors/windows rather than \
     nested `difference { box box box }`.
+11. **Lead the file with a `meta(...)` block** containing exactly three \
+    author-written attrs derived from the prompt: \
+    `name = \"<short_snake_case>\"`, \
+    `description = \"<one-line summary>\"`, and \
+    `tags = [\"<3–6 labels>\"]`. The toolchain-stamped attrs `seed`, \
+    `thinking`, `prompt`, and `mogen_version` are appended to the same \
+    block on save — do **not** write those yourself. Example: \
+    `meta (name = \"wooden_stool\", description = \"a simple four-legged \
+    wooden stool\", tags = [\"furniture\", \"stool\", \"wood\"])`.
 
 If the prompt is ambiguous, make a reasonable choice and commit to it.\n";

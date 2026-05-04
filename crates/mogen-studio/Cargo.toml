@@ -57,3 +57,8 @@ rfd = "0.15"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 arboard = { version = "3", default-features = false }
 sentry = { version = "0.34", default-features = false, features = ["backtrace", "contexts", "debug-images", "panic", "reqwest", "rustls"] }
+# Loopback OAuth: a one-shot HTTP listener catches GitHub's redirect and a
+# system-default browser opens the auth URL. tiny_http is small + sync;
+# webbrowser is a tiny shim around xdg-open / open / start.
+tiny_http = "0.12"
+webbrowser = "1"

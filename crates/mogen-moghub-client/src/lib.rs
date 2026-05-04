@@ -31,7 +31,7 @@ pub use error::MoghubError;
 /// Default base URL — points at production. Can be overridden per-call
 /// via [`MoghubClient::with_base_url`] or via `MOGHUB_URL` for the
 /// `from_env` constructor.
-pub const DEFAULT_BASE_URL: &str = "https://moghub.app";
+pub const DEFAULT_BASE_URL: &str = "https://moghub.org";
 
 const USER_AGENT_VALUE: &str = concat!("mogen-moghub-client/", env!("CARGO_PKG_VERSION"));
 

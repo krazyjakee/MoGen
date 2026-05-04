@@ -575,6 +575,52 @@ mod tests {
     }
 
     #[test]
+    fn output_contract_requires_meta_name_description_tags() {
+        // The LLM only fills `meta(name, description, tags)` if the contract
+        // asks for it explicitly and points at the auto-stamped attrs as
+        // off-limits. If this rule disappears, generated files lose their
+        // human-readable identity and MoGHub publish forms come up blank.
+        let s = system_instruction(&StdlibIndex::default());
+        assert!(
+            s.contains("Lead the file with a `meta(...)` block"),
+            "output contract missing meta-block lead-in rule"
+        );
+        assert!(s.contains("`name = "), "meta rule missing name");
+        assert!(s.contains("`description = "), "meta rule missing description");
+        assert!(s.contains("`tags = "), "meta rule missing tags");
+        // The full set of toolchain-stamped attrs must be called out so the
+        // LLM doesn't invent a seed (would overwrite ours) or stamp a stale
+        // mogen_version. All four belong to the toolchain.
+        for attr in ["`seed`", "`thinking`", "`prompt`", "`mogen_version`"] {
+            assert!(
+                s.contains(attr),
+                "meta rule must list {attr} as toolchain-stamped"
+            );
+        }
+        assert!(
+            s.contains("toolchain-stamped"),
+            "meta rule should split author-written vs toolchain-stamped attrs"
+        );
+    }
+
+    #[test]
+    fn fewshots_demonstrate_meta_block() {
+        // Fewshots are the strongest format driver — without a concrete
+        // example of the meta block, the LLM tends to skip it even when the
+        // contract requires it. Every fewshot now leads with one.
+        let s = system_instruction(&StdlibIndex::default());
+        let count = s.matches("meta (name = ").count();
+        assert!(
+            count >= 11,
+            "expected every fewshot to lead with a meta(name=...) block, got {count}"
+        );
+        // Spot-check a couple of representative subjects so a missing one
+        // surfaces with a useful diff.
+        assert!(s.contains("meta (name = \"wooden_stool\""));
+        assert!(s.contains("meta (name = \"young_oak_tree\""));
+    }
+
+    #[test]
     fn crate_fewshot_uses_hinge_group_not_mesh_center() {
         // Regression: the earlier fewshot attached `open_close` to the lid
         // mesh directly, which rotates about its centre. The canonical pattern
