@@ -19,6 +19,7 @@ pub(super) fn classify(err: &ProviderError) -> LlmErrorInfo {
             ),
             class: LlmErrorClass::MissingKey,
             retryable: false,
+            action: None,
         },
         ProviderError::Offline(s) => LlmErrorInfo {
             headline: "You appear to be offline".into(),
@@ -28,6 +29,7 @@ pub(super) fn classify(err: &ProviderError) -> LlmErrorInfo {
             ),
             class: LlmErrorClass::Network,
             retryable: true,
+            action: None,
         },
         ProviderError::Timeout(s) => LlmErrorInfo {
             headline: "The connection timed out".into(),
@@ -37,6 +39,7 @@ pub(super) fn classify(err: &ProviderError) -> LlmErrorInfo {
             ),
             class: LlmErrorClass::Network,
             retryable: true,
+            action: None,
         },
         ProviderError::Tls(s) => LlmErrorInfo {
             headline: "Secure connection failed".into(),
@@ -46,12 +49,14 @@ pub(super) fn classify(err: &ProviderError) -> LlmErrorInfo {
             ),
             class: LlmErrorClass::Network,
             retryable: true,
+            action: None,
         },
         ProviderError::Transport(s) => LlmErrorInfo {
             headline: "Network error".into(),
             detail: format!("{s}. Check your connection and try again."),
             class: LlmErrorClass::Network,
             retryable: true,
+            action: None,
         },
         ProviderError::Api { status, message } => classify_api(*status, message),
         ProviderError::EmptyResponse => LlmErrorInfo {
@@ -62,6 +67,7 @@ pub(super) fn classify(err: &ProviderError) -> LlmErrorInfo {
                     .into(),
             class: LlmErrorClass::ContentBlocked,
             retryable: true,
+            action: None,
         },
         ProviderError::BudgetExceeded { used, budget } => LlmErrorInfo {
             headline: "Token budget exceeded".into(),
@@ -71,6 +77,7 @@ pub(super) fn classify(err: &ProviderError) -> LlmErrorInfo {
             ),
             class: LlmErrorClass::BadRequest,
             retryable: false,
+            action: None,
         },
         ProviderError::InvalidResponse(msg) => {
             // The recitation / safety string detection is Gemini-flavoured but
@@ -89,6 +96,7 @@ pub(super) fn classify(err: &ProviderError) -> LlmErrorInfo {
                             .into(),
                     class: LlmErrorClass::ContentBlocked,
                     retryable: true,
+                    action: None,
                 }
             } else if is_safety {
                 LlmErrorInfo {
@@ -96,6 +104,7 @@ pub(super) fn classify(err: &ProviderError) -> LlmErrorInfo {
                     detail: msg.clone(),
                     class: LlmErrorClass::ContentBlocked,
                     retryable: false,
+                    action: None,
                 }
             } else {
                 LlmErrorInfo {
@@ -103,6 +112,7 @@ pub(super) fn classify(err: &ProviderError) -> LlmErrorInfo {
                     detail: msg.clone(),
                     class: LlmErrorClass::Other,
                     retryable: true,
+                    action: None,
                 }
             }
         }
@@ -111,6 +121,7 @@ pub(super) fn classify(err: &ProviderError) -> LlmErrorInfo {
             detail: format!("{feature} is not available on {provider}."),
             class: LlmErrorClass::BadRequest,
             retryable: false,
+            action: None,
         },
         ProviderError::OAuth(msg) => LlmErrorInfo {
             headline: "Google sign-in error".into(),
@@ -120,6 +131,7 @@ pub(super) fn classify(err: &ProviderError) -> LlmErrorInfo {
             ),
             class: LlmErrorClass::InvalidKey,
             retryable: false,
+            action: None,
         },
     }
 }
@@ -132,6 +144,7 @@ fn classify_api(status: u16, message: &str) -> LlmErrorInfo {
             detail: format!("API rejected the request: {message}"),
             class: LlmErrorClass::BadRequest,
             retryable: false,
+            action: None,
         },
         401 | 403 if msg_lower.contains("api key") || msg_lower.contains("authentication") => {
             LlmErrorInfo {
@@ -142,6 +155,7 @@ fn classify_api(status: u16, message: &str) -> LlmErrorInfo {
                         .into(),
                 class: LlmErrorClass::InvalidKey,
                 retryable: false,
+                action: None,
             }
         }
         403 if msg_lower.contains("quota") => LlmErrorInfo {
@@ -152,12 +166,14 @@ fn classify_api(status: u16, message: &str) -> LlmErrorInfo {
                     .into(),
             class: LlmErrorClass::QuotaExceeded,
             retryable: false,
+            action: None,
         },
         403 => LlmErrorInfo {
             headline: "Request forbidden".into(),
             detail: format!("API returned 403: {message}"),
             class: LlmErrorClass::InvalidKey,
             retryable: false,
+            action: None,
         },
         404 => LlmErrorInfo {
             headline: "Model not found".into(),
@@ -167,6 +183,7 @@ fn classify_api(status: u16, message: &str) -> LlmErrorInfo {
             ),
             class: LlmErrorClass::BadRequest,
             retryable: false,
+            action: None,
         },
         429 => LlmErrorInfo {
             headline: "Rate limited".into(),
@@ -176,18 +193,21 @@ fn classify_api(status: u16, message: &str) -> LlmErrorInfo {
                     .into(),
             class: LlmErrorClass::RateLimited,
             retryable: true,
+            action: None,
         },
         s if (500..600).contains(&s) => LlmErrorInfo {
             headline: "Provider server error".into(),
             detail: format!("({s}) {message}. This is usually transient — try again."),
             class: LlmErrorClass::ServerError,
             retryable: true,
+            action: None,
         },
         s => LlmErrorInfo {
             headline: format!("API error {s}"),
             detail: message.to_string(),
             class: LlmErrorClass::Other,
             retryable: true,
+            action: None,
         },
     }
 }

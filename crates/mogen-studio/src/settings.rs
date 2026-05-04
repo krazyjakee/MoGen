@@ -122,6 +122,67 @@ impl Default for ProviderSlot {
     }
 }
 
+/// Image-generation provider preference. Surfaced in Preferences → LLM so
+/// the user can choose between Gemini (API key or Antigravity OAuth) and
+/// Z.ai (`glm-image`) without touching any credential's storage.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum ImageProvider {
+    /// Prefer Antigravity OAuth when a bundle is on disk; fall back to the
+    /// Gemini API key. Mirrors the CLI's default resolver.
+    Auto,
+    /// Force the Gemini API key, even if an Antigravity bundle exists.
+    ApiKey,
+    /// Force the Antigravity OAuth bundle.
+    Antigravity,
+    /// Force Z.ai's `glm-image` endpoint. Reads the key from
+    /// [`Settings::zai_api_key`], falling back to the `ZAI_API_KEY` env
+    /// var when the settings field is empty.
+    ZAI,
+}
+
+pub const IMAGE_PROVIDERS: [ImageProvider; 4] = [
+    ImageProvider::Auto,
+    ImageProvider::ApiKey,
+    ImageProvider::Antigravity,
+    ImageProvider::ZAI,
+];
+
+impl Default for ImageProvider {
+    fn default() -> Self {
+        ImageProvider::Auto
+    }
+}
+
+impl ImageProvider {
+    pub fn label(self) -> &'static str {
+        match self {
+            ImageProvider::Auto => "Auto (Antigravity OAuth, fall back to API key)",
+            ImageProvider::ApiKey => "Gemini API key",
+            ImageProvider::Antigravity => "Antigravity OAuth",
+            ImageProvider::ZAI => "Z.ai (glm-image)",
+        }
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            ImageProvider::Auto => "auto",
+            ImageProvider::ApiKey => "apikey",
+            ImageProvider::Antigravity => "antigravity",
+            ImageProvider::ZAI => "zai",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "" | "auto" | "default" => Some(Self::Auto),
+            "apikey" | "api_key" | "api-key" | "key" => Some(Self::ApiKey),
+            "antigravity" | "oauth" => Some(Self::Antigravity),
+            "zai" | "z.ai" | "z-ai" | "glm" | "glm-image" => Some(Self::ZAI),
+            _ => None,
+        }
+    }
+}
+
 use crate::preview_shader::{
     parse_preview_shader, preview_shader_key, PreviewShader, DEFAULT_PREVIEW_SHADER,
 };
@@ -155,6 +216,11 @@ pub struct Settings {
     /// against MoGHub. Keyring storage is on the deferred list.
     #[serde(default)]
     pub moghub_session: String,
+    /// Z.ai (`glm-image`) API key. Used by the textures pipeline only when
+    /// `image_provider == ImageProvider::ZAI`. Falls back to the
+    /// `ZAI_API_KEY` env var when this field is empty.
+    #[serde(default)]
+    pub zai_api_key: String,
     /// Persisted as a lowercase label (`low` | `medium` | `high` | `xhigh`) so
     /// new `ThinkingLevel` variants can be added without a migration. Empty /
     /// unknown falls back to the library default at read time.
@@ -361,9 +427,19 @@ pub struct Settings {
     /// prompt asks the user, then latches `Some(true)` (allow) or
     /// `Some(false)` (decline). The `MOGEN_DISABLE_TELEMETRY` and
     /// `DO_NOT_TRACK` env vars short-circuit to disabled regardless of the
-    /// saved value, so users can opt out without touching this file.
+    /// saved value, so users can opt out before touching this file.
     #[serde(default)]
     pub crash_reports_enabled: Option<bool>,
+
+    /// Image-generation provider preference. `"auto"` (or empty) prefers an
+    /// Antigravity OAuth bundle when one is present, falls back to the
+    /// Gemini API key. `"antigravity"` forces the OAuth bundle (errors if
+    /// none stored). `"apikey"` forces the API key (errors if blank). Lets
+    /// users sidestep the Antigravity image surface when it 404s on a model
+    /// — falling back to the public `generativelanguage` API key path —
+    /// without re-authenticating.
+    #[serde(default)]
+    pub image_provider: String,
 }
 
 /// Default viewer background. Independent of the UI theme so the model's
@@ -411,6 +487,18 @@ impl Settings {
         if s.provider_slot.trim().is_empty() {
             if let Some(slot) = ProviderSlot::parse(&s.provider) {
                 s.provider_slot = slot.key().to_string();
+            }
+        }
+        // First-time onboarding: when no slot has ever been picked, prefer the
+        // OAuth slot if a Google token bundle already exists on disk. Users
+        // who ran `mogen auth login` shouldn't have to also manually flip the
+        // provider dropdown — picking the OAuth slot makes both the text-LLM
+        // and image-gen paths route through their paid Antigravity plan.
+        if s.provider_slot.trim().is_empty() {
+            if let Some(path) = mogen_llm::token_store_path() {
+                if matches!(mogen_llm::load_bundle(&path), Ok(Some(_))) {
+                    s.provider_slot = ProviderSlot::GeminiOAuth.key().to_string();
+                }
             }
         }
         s
@@ -489,6 +577,17 @@ impl Settings {
 
     pub fn gemini_api_key(&self) -> Option<&str> {
         let k = self.gemini_api_key.trim();
+        if k.is_empty() {
+            None
+        } else {
+            Some(k)
+        }
+    }
+
+    /// Persisted Z.ai API key. `None` when the field is blank — callers
+    /// should fall back to the `ZAI_API_KEY` env var before failing.
+    pub fn zai_api_key(&self) -> Option<&str> {
+        let k = self.zai_api_key.trim();
         if k.is_empty() {
             None
         } else {
@@ -697,6 +796,18 @@ impl Settings {
     pub fn set_provider_slot(&mut self, slot: ProviderSlot) {
         self.provider_slot = slot.key().to_string();
         self.provider.clear();
+    }
+
+    /// Currently chosen image-generation provider. `Auto` is the default —
+    /// prefers Antigravity OAuth when a bundle is on disk, falls back to
+    /// the Gemini API key.
+    pub fn image_provider(&self) -> ImageProvider {
+        ImageProvider::parse(&self.image_provider).unwrap_or_default()
+    }
+
+    /// Persist a fresh image-provider preference.
+    pub fn set_image_provider(&mut self, p: ImageProvider) {
+        self.image_provider = p.key().to_string();
     }
 
     /// Persisted viewport background as raw `[r, g, b]`, falling back to

@@ -221,6 +221,11 @@ pub struct MogenStudioApp {
     /// finish the browser flow. Polled every frame; the result is folded into
     /// `oauth_status_message` and the saved bundle.
     oauth_login_rx: Option<Receiver<Result<mogen_llm::OAuthBundle, mogen_llm::OAuthError>>>,
+    /// Which OAuth provider config the in-flight login is for. Pinned when
+    /// `start_oauth_login` spawns the worker so `poll_oauth_login` knows
+    /// which token file (`google_auth.json` vs `antigravity_auth.json`) to
+    /// write the resulting bundle to. `None` when no login is in flight.
+    oauth_login_provider: Option<&'static mogen_llm::google_oauth::ProviderConfig>,
     /// Last-known short status line for the Gemini OAuth section in
     /// Preferences. Replaces the inline lookup so the UI can flash messages
     /// like "logged in as …" or "login failed: …" between flow attempts
@@ -470,6 +475,7 @@ impl MogenStudioApp {
             build_rx: None,
             build_stage: Arc::new(Mutex::new(String::new())),
             oauth_login_rx: None,
+            oauth_login_provider: None,
             oauth_status_message: None,
             viewer,
             system_instruction_cache: None,

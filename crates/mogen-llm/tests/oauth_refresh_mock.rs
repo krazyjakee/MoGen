@@ -24,6 +24,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use mogen_llm::google_oauth::token::refresh_against;
+use mogen_llm::google_oauth::GEMINI_CLI_CONFIG;
 use mogen_llm::{OAuthBundle, OAuthError};
 
 struct TokenServer {
@@ -93,7 +94,8 @@ fn test_refresh_against_200_response_updates_access_token_and_expiry() {
     let now: u64 = 1_700_000_000;
 
     // Act
-    refresh_against(&http, &mut bundle, now, &server.base).expect("refresh ok");
+    refresh_against(&http, &mut bundle, now, &server.base, &GEMINI_CLI_CONFIG)
+        .expect("refresh ok");
 
     // Assert: bundle mutated in place — new access token, server-rotated
     // refresh token, expiry computed as now + expires_in, scope echoed,
@@ -131,7 +133,7 @@ fn test_refresh_against_200_response_keeps_existing_refresh_token_when_omitted()
     let http = reqwest::blocking::Client::new();
     let mut bundle = fixture("1//KEEP");
 
-    refresh_against(&http, &mut bundle, 1_700_000_000, &server.base)
+    refresh_against(&http, &mut bundle, 1_700_000_000, &server.base, &GEMINI_CLI_CONFIG)
         .expect("refresh ok");
 
     assert_eq!(bundle.access_token, "ya29.NEW");
@@ -150,7 +152,7 @@ fn test_refresh_against_invalid_grant_response_maps_to_revoked() {
     let mut bundle = fixture("1//REVOKED");
 
     // Act
-    let err = refresh_against(&http, &mut bundle, 1_700_000_000, &server.base)
+    let err = refresh_against(&http, &mut bundle, 1_700_000_000, &server.base, &GEMINI_CLI_CONFIG)
         .expect_err("revoked refresh must fail");
 
     // Assert: maps to OAuthError::Revoked so the CLI surfaces "run mogen
@@ -170,7 +172,7 @@ fn test_refresh_against_other_4xx_response_propagates_status_and_message() {
     let http = reqwest::blocking::Client::new();
     let mut bundle = fixture("1//RT");
 
-    let err = refresh_against(&http, &mut bundle, 0, &server.base)
+    let err = refresh_against(&http, &mut bundle, 0, &server.base, &GEMINI_CLI_CONFIG)
         .expect_err("4xx must error");
 
     match err {

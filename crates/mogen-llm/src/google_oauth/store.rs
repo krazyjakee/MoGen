@@ -16,9 +16,13 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use super::client::ProviderConfig;
 use super::token::OAuthBundle;
 use super::OAuthError;
 
+/// Legacy default — the gemini-cli provider's filename. Kept as `pub const`
+/// because callers still reference it from CLI surfacing code; new code
+/// should prefer `config.token_filename` from the [`ProviderConfig`].
 pub const TOKEN_STORE_FILENAME: &str = "google_auth.json";
 const SCHEMA_VERSION: u32 = 1;
 
@@ -34,38 +38,57 @@ struct StoredBundle {
     bundle: OAuthBundle,
 }
 
-/// Resolve the on-disk token path for **reads**. Walks
-/// `~/.mogen/` → `~/.cache/mogen/` → `%LOCALAPPDATA%\mogen\` and returns
-/// the first existing file, falling back to the canonical
-/// `~/.mogen/google_auth.json` if nothing is on disk yet. Returns `None`
-/// only when no candidate directory is configured.
+/// Resolve the on-disk token path for **reads**, defaulting to the
+/// gemini-cli provider's `google_auth.json`. New code should prefer
+/// [`token_store_path_for`] with an explicit [`ProviderConfig`].
 pub fn token_store_path() -> Option<PathBuf> {
+    token_store_path_for(&super::client::GEMINI_CLI_CONFIG)
+}
+
+/// Resolve the read path for `config`'s token file. Walks `~/.mogen/` →
+/// `~/.cache/mogen/` → `%LOCALAPPDATA%\mogen\` and returns the first
+/// existing file, falling back to the canonical write target if nothing
+/// is on disk yet.
+pub fn token_store_path_for(config: &ProviderConfig) -> Option<PathBuf> {
     super::client::resolve_user_path(
-        TOKEN_STORE_FILENAME,
-        "MOGEN_TOKEN_STORE",
+        config.token_filename,
+        config.token_store_env_override,
         super::client::PathMode::Read,
     )
 }
 
-/// Resolve the on-disk token path for **writes**. Always returns the
-/// canonical `~/.mogen/google_auth.json` (or
-/// `%LOCALAPPDATA%\mogen\google_auth.json` when no `HOME`/`USERPROFILE`),
-/// ignoring any legacy `~/.cache/mogen/` token file. New logins should
-/// always land in `~/.mogen/` so the legacy paths slowly drain as users
-/// re-auth.
+/// Resolve the on-disk token path for **writes**, defaulting to the
+/// gemini-cli provider's canonical `~/.mogen/google_auth.json`.
 pub fn token_store_write_path() -> Option<PathBuf> {
+    token_store_write_path_for(&super::client::GEMINI_CLI_CONFIG)
+}
+
+/// Resolve the canonical write path for `config`'s token file
+/// (`~/.mogen/<filename>` or `%LOCALAPPDATA%\mogen\<filename>` when no
+/// `HOME`/`USERPROFILE`), ignoring any legacy `~/.cache/mogen/` file.
+pub fn token_store_write_path_for(config: &ProviderConfig) -> Option<PathBuf> {
     super::client::resolve_user_path(
-        TOKEN_STORE_FILENAME,
-        "MOGEN_TOKEN_STORE",
+        config.token_filename,
+        config.token_store_env_override,
         super::client::PathMode::Write,
     )
 }
 
 /// Every existing `google_auth.json` across the canonical and legacy
-/// locations. Used by `mogen auth logout` to remove all of them so a
-/// half-cleaned legacy file can't silently re-authenticate the user.
+/// locations. Defaults to the gemini-cli provider; use
+/// [`all_existing_token_paths_for`] for the antigravity bundle.
 pub fn all_existing_token_paths() -> Vec<PathBuf> {
-    super::client::all_existing_user_paths(TOKEN_STORE_FILENAME, "MOGEN_TOKEN_STORE")
+    all_existing_token_paths_for(&super::client::GEMINI_CLI_CONFIG)
+}
+
+/// Every existing on-disk path for `config.token_filename`. Used by
+/// `mogen auth logout` to remove all copies so a half-cleaned legacy file
+/// can't silently re-authenticate the user.
+pub fn all_existing_token_paths_for(config: &ProviderConfig) -> Vec<PathBuf> {
+    super::client::all_existing_user_paths(
+        config.token_filename,
+        config.token_store_env_override,
+    )
 }
 
 /// Load a previously-saved bundle. Returns `Ok(None)` when the file does

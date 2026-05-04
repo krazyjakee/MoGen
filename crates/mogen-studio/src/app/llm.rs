@@ -102,6 +102,20 @@ impl MogenStudioApp {
         self.start_llm_textures_inner(ctx, None);
     }
 
+    /// "New textures" banner button lands here. Forces a full regenerate by
+    /// flipping `texture_cfg.force=true` on the active file before kicking
+    /// off the same pipeline `start_llm_textures` uses, then clears the
+    /// banner the button was rendered on so its message doesn't outlive the
+    /// click. The cfg flip is persistent — the panel checkbox follows.
+    pub(super) fn start_llm_textures_force(&mut self, ctx: egui::Context) {
+        {
+            let f = self.active_mut();
+            f.texture_cfg.force = true;
+            f.llm_error = None;
+        }
+        self.start_llm_textures_inner(ctx, None);
+    }
+
     /// Right-click → Regenerate on a single texture preview lands here. The
     /// pipeline runs with `force=true` (overridden inside `run_llm_textures`)
     /// and a one-element material filter, so only that material's slots are
@@ -139,13 +153,16 @@ impl MogenStudioApp {
         };
         // Texture generation is Gemini-only (no other backend has an image
         // synthesis API in mogen-llm), so this path bypasses the active
-        // provider and reads `GEMINI_API_KEY` directly.
-        let api_key = match self.resolve_gemini_api_key() {
-            Some(k) => k,
+        // provider and reads either a stored OAuth bundle (preferred —
+        // unlocks `gemini-3-pro-image-preview` on a paid plan) or
+        // `GEMINI_API_KEY` directly.
+        let cred = match self.resolve_gemini_credential() {
+            Some(c) => c,
             None => {
                 self.active_mut().status =
-                    "texture generation requires a Gemini API key — set one in \
-                     Options… or export GEMINI_API_KEY"
+                    "texture generation requires Gemini credentials — run \
+                     `mogen auth login`, set a key in Options…, or export \
+                     GEMINI_API_KEY"
                         .into();
                 return;
             }
@@ -188,7 +205,7 @@ impl MogenStudioApp {
 
         let worker_tx = tx.clone();
         std::thread::spawn(move || {
-            let outcome = run_llm_textures(src, path, api_key, cfg, material_filter, worker_tx);
+            let outcome = run_llm_textures(src, path, cred, cfg, material_filter, worker_tx);
             let _ = tx.send(LlmMessage::Done(outcome));
             ctx.request_repaint();
         });
@@ -461,18 +478,75 @@ impl MogenStudioApp {
         self.resolve_credential().map(|_| ())
     }
 
-    /// Provider-agnostic Gemini key resolution for paths that hard-require
-    /// Gemini regardless of the active provider — currently just texture
-    /// image generation. Mirrors [`Self::resolve_api_key`] but always reads
-    /// the persisted `gemini_api_key` and the `GEMINI_API_KEY` env var.
-    pub(super) fn resolve_gemini_api_key(&self) -> Option<String> {
-        if let Some(k) = self.settings.gemini_api_key() {
-            return Some(k.to_string());
+    /// Provider-agnostic Gemini credential resolution for paths that
+    /// hard-require Gemini regardless of the active text-LLM provider —
+    /// currently just texture image generation.
+    ///
+    /// Precedence is steered by the user's `image_provider` preference
+    /// (Preferences → LLM):
+    /// - `Auto` (default): stored Antigravity OAuth bundle → persisted
+    ///   `gemini_api_key` → `GEMINI_API_KEY` env → stored gemini-cli OAuth
+    ///   bundle (kept last so the UI can surface a clear "wrong client"
+    ///   error in `textures_run.rs`).
+    /// - `Antigravity`: only the stored Antigravity OAuth bundle is
+    ///   considered. Returns `None` when no bundle is on disk.
+    /// - `ApiKey`: only the Gemini API key (settings or env) is considered.
+    /// - `ZAI`: only the Z.ai key (settings or env) is considered. The
+    ///   textures pipeline branches on [`Credential::Zai`] in
+    ///   `textures_run.rs` and routes through [`mogen_llm::ImageClient::Zai`].
+    pub(super) fn resolve_gemini_credential(&self) -> Option<Credential> {
+        use crate::settings::ImageProvider;
+        use mogen_llm::google_oauth::{ANTIGRAVITY_CONFIG, GEMINI_CLI_CONFIG};
+
+        let pref = self.settings.image_provider();
+
+        if matches!(pref, ImageProvider::ZAI) {
+            if let Some(k) = self.settings.zai_api_key() {
+                return Some(Credential::Zai(k.to_string()));
+            }
+            if let Some(k) = std::env::var("ZAI_API_KEY")
+                .ok()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+            {
+                return Some(Credential::Zai(k));
+            }
+            return None;
         }
-        std::env::var("GEMINI_API_KEY")
-            .ok()
-            .map(|v| v.trim().to_string())
-            .filter(|v| !v.is_empty())
+
+        if matches!(pref, ImageProvider::Auto | ImageProvider::Antigravity) {
+            if let Some(path) = mogen_llm::token_store_path_for(&ANTIGRAVITY_CONFIG) {
+                if let Ok(Some(bundle)) = mogen_llm::load_bundle(&path) {
+                    return Some(Credential::AntigravityOAuth(bundle));
+                }
+            }
+            if matches!(pref, ImageProvider::Antigravity) {
+                return None;
+            }
+        }
+
+        if matches!(pref, ImageProvider::Auto | ImageProvider::ApiKey) {
+            if let Some(k) = self.settings.gemini_api_key() {
+                return Some(Credential::ApiKey(k.to_string()));
+            }
+            if let Some(k) = std::env::var("GEMINI_API_KEY")
+                .ok()
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+            {
+                return Some(Credential::ApiKey(k));
+            }
+            if matches!(pref, ImageProvider::ApiKey) {
+                return None;
+            }
+        }
+
+        if let Some(path) = mogen_llm::token_store_path_for(&GEMINI_CLI_CONFIG) {
+            if let Ok(Some(bundle)) = mogen_llm::load_bundle(&path) {
+                return Some(Credential::GeminiOAuth(bundle));
+            }
+        }
+        None
     }
 
     /// Build (or reuse) the LLM system instruction. It pulls in the full
