@@ -52,6 +52,9 @@ enum ProviderArg {
     /// Local `claude` CLI (Claude Code subscription). Auth is handled by
     /// the user's `claude /login`; no API key flag is required.
     ClaudeCode,
+    /// Fireworks AI's OpenAI-compatible Chat Completions surface. Default
+    /// model is the Fire Pass `kimi-k2p6` router; set `FIREWORKS_API_KEY`.
+    Fireworks,
 }
 
 impl From<ProviderArg> for Provider {
@@ -62,6 +65,7 @@ impl From<ProviderArg> for Provider {
             ProviderArg::Anthropic => Provider::Anthropic,
             ProviderArg::Ollama => Provider::Ollama,
             ProviderArg::ClaudeCode => Provider::ClaudeCode,
+            ProviderArg::Fireworks => Provider::Fireworks,
         }
     }
 }

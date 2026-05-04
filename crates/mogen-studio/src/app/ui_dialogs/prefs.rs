@@ -83,6 +83,11 @@ fn model_presets(slot: ProviderSlot) -> &'static [&'static str] {
             "haiku",
             "opus",
         ],
+        ProviderSlot::Fireworks => &[
+            "accounts/fireworks/routers/kimi-k2p6",
+            "accounts/fireworks/routers/kimi-k2p6-turbo",
+            "accounts/fireworks/routers/kimi-k2p5-turbo",
+        ],
     }
 }
 
@@ -143,6 +148,8 @@ impl MogenStudioApp {
                             self.settings.claude_code_path.trim().to_string();
                         self.settings.zai_api_key =
                             self.settings.zai_api_key.trim().to_string();
+                        self.settings.fireworks_api_key =
+                            self.settings.fireworks_api_key.trim().to_string();
                         match self.settings.save() {
                             Ok(()) => {
                                 let active = self.settings.provider();
@@ -295,6 +302,7 @@ impl MogenStudioApp {
                         Provider::OpenAI => "OpenAI API key",
                         Provider::Anthropic => "Anthropic API key",
                         Provider::Ollama => "Ollama API key (optional)",
+                        Provider::Fireworks => "Fireworks API key",
                         Provider::ClaudeCode => unreachable!(),
                     };
                     ui.heading(key_heading);
@@ -315,6 +323,12 @@ impl MogenStudioApp {
                             "Optional bearer token for an Ollama endpoint behind an \
                              authenticating proxy. Leave blank for a local install."
                         }
+                        Provider::Fireworks => {
+                            "Used by Generate / Modify / Animate / Ask. Default model is the \
+                             Fire Pass `kimi-k2p6` router (zero per-token cost on Kimi K2 \
+                             for personal agentic-coding use). Stored in your user config \
+                             directory and persists between sessions."
+                        }
                         Provider::ClaudeCode => unreachable!(),
                     });
                     ui.add_space(6.0);
@@ -326,6 +340,7 @@ impl MogenStudioApp {
                         Provider::OpenAI => &mut self.settings.openai_api_key,
                         Provider::Anthropic => &mut self.settings.anthropic_api_key,
                         Provider::Ollama => &mut self.settings.ollama_api_key,
+                        Provider::Fireworks => &mut self.settings.fireworks_api_key,
                         Provider::ClaudeCode => unreachable!(),
                     };
                     crate::app::text_menu::text_edit_with_menu(
