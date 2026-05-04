@@ -55,6 +55,10 @@ pub enum ProviderSlot {
     Anthropic,
     Ollama,
     ClaudeCode,
+    /// Fireworks AI's OpenAI-compatible Chat Completions surface. Default
+    /// model is the Fire Pass `kimi-k2p6` router; users supply their
+    /// `fw_…` API key from `https://fireworks.ai/account/api-keys`.
+    Fireworks,
 }
 
 impl ProviderSlot {
@@ -66,6 +70,7 @@ impl ProviderSlot {
             ProviderSlot::Anthropic => "anthropic",
             ProviderSlot::Ollama => "ollama",
             ProviderSlot::ClaudeCode => "claude-code",
+            ProviderSlot::Fireworks => "fireworks",
         }
     }
 
@@ -77,6 +82,7 @@ impl ProviderSlot {
             ProviderSlot::Anthropic => "Anthropic",
             ProviderSlot::Ollama => "Ollama (local)",
             ProviderSlot::ClaudeCode => "Claude Code (subscription)",
+            ProviderSlot::Fireworks => "Fireworks (Fire Pass)",
         }
     }
 
@@ -92,6 +98,7 @@ impl ProviderSlot {
             "anthropic" | "claude" => Some(Self::Anthropic),
             "ollama" | "local" => Some(Self::Ollama),
             "claude-code" | "claude_code" | "claudecode" | "cc" => Some(Self::ClaudeCode),
+            "fireworks" | "fireworks-ai" | "firepass" | "kimi" => Some(Self::Fireworks),
             _ => None,
         }
     }
@@ -106,6 +113,7 @@ impl ProviderSlot {
             ProviderSlot::Anthropic => Provider::Anthropic,
             ProviderSlot::Ollama => Provider::Ollama,
             ProviderSlot::ClaudeCode => Provider::ClaudeCode,
+            ProviderSlot::Fireworks => Provider::Fireworks,
         }
     }
 
@@ -363,6 +371,22 @@ pub struct Settings {
     /// `PATH` (e.g. a `~/.local/bin/claude` they haven't shimmed in yet).
     #[serde(default)]
     pub claude_code_path: String,
+
+    /// API key for Fireworks AI. Stored as a plain string so switching to
+    /// Fireworks in the provider dropdown doesn't require re-pasting the
+    /// `fw_…` token. Empty → fall back to the `FIREWORKS_API_KEY` env var.
+    #[serde(default)]
+    pub fireworks_api_key: String,
+
+    /// Fireworks thinking-model override. Empty → [`mogen_llm::fireworks::DEFAULT_MODEL`]
+    /// (the `kimi-k2p6` Fire Pass router).
+    #[serde(default)]
+    pub fireworks_model: String,
+
+    /// Fireworks fast-model override. Empty → [`mogen_llm::fireworks::DEFAULT_FAST_MODEL`]
+    /// (the `kimi-k2p6-turbo` Fire Pass router).
+    #[serde(default)]
+    pub fireworks_fast_model: String,
 
     /// Persisted 3D viewport background colour, as `[r, g, b]` 0..=255. `None`
     /// falls back to [`DEFAULT_VIEWER_BG_RGB`] — a neutral charcoal that
@@ -679,6 +703,7 @@ impl Settings {
             ProviderSlot::Anthropic => self.anthropic_api_key.as_str(),
             ProviderSlot::Ollama => self.ollama_api_key.as_str(),
             ProviderSlot::ClaudeCode => "",
+            ProviderSlot::Fireworks => self.fireworks_api_key.as_str(),
         };
         let trimmed = raw.trim();
         if trimmed.is_empty() {
@@ -752,6 +777,7 @@ impl Settings {
             Provider::OpenAI => &self.openai_model,
             Provider::Anthropic => &self.anthropic_model,
             Provider::Ollama => &self.ollama_model,
+            Provider::Fireworks => &self.fireworks_model,
             _ => "",
         }
     }
@@ -763,6 +789,7 @@ impl Settings {
             Provider::OpenAI => &self.openai_fast_model,
             Provider::Anthropic => &self.anthropic_fast_model,
             Provider::Ollama => &self.ollama_fast_model,
+            Provider::Fireworks => &self.fireworks_fast_model,
             _ => "",
         }
     }
@@ -775,6 +802,7 @@ impl Settings {
             Provider::OpenAI => Some(&mut self.openai_model),
             Provider::Anthropic => Some(&mut self.anthropic_model),
             Provider::Ollama => Some(&mut self.ollama_model),
+            Provider::Fireworks => Some(&mut self.fireworks_model),
             _ => None,
         }
     }
@@ -786,6 +814,7 @@ impl Settings {
             Provider::OpenAI => Some(&mut self.openai_fast_model),
             Provider::Anthropic => Some(&mut self.anthropic_fast_model),
             Provider::Ollama => Some(&mut self.ollama_fast_model),
+            Provider::Fireworks => Some(&mut self.fireworks_fast_model),
             _ => None,
         }
     }
@@ -959,13 +988,14 @@ pub const THINKING_LEVELS: [ThinkingLevel; 4] = [
 /// Gemini auth modes are listed up front because Gemini is the historical
 /// default and the only image-capable backend; the OAuth slot is the path
 /// users with paid Antigravity plans will reach for.
-pub const PROVIDER_SLOTS: [ProviderSlot; 6] = [
+pub const PROVIDER_SLOTS: [ProviderSlot; 7] = [
     ProviderSlot::GeminiApiKey,
     ProviderSlot::GeminiOAuth,
     ProviderSlot::OpenAI,
     ProviderSlot::Anthropic,
     ProviderSlot::Ollama,
     ProviderSlot::ClaudeCode,
+    ProviderSlot::Fireworks,
 ];
 
 fn settings_path() -> Option<PathBuf> {

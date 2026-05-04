@@ -11,6 +11,7 @@ use std::fmt;
 
 use crate::anthropic::{AnthropicClient, AnthropicError};
 use crate::claude_code::{ClaudeCodeClient, ClaudeCodeError};
+use crate::fireworks::{FireworksClient, FireworksError};
 use crate::gemini::{GeminiClient, GeminiError};
 use crate::google_oauth::OAuthBundle;
 use crate::ollama::{OllamaClient, OllamaError};
@@ -50,6 +51,10 @@ pub enum Provider {
     /// installed Claude Code login (Pro/Max subscription or API key managed
     /// by `claude`), so no API key is collected here.
     ClaudeCode,
+    /// Fireworks AI's OpenAI-compatible Chat Completions surface. Default
+    /// model is the Fire Pass `kimi-k2p6` router which bills the Kimi K2
+    /// family at zero per-token cost for personal agentic-coding use.
+    Fireworks,
 }
 
 impl Provider {
@@ -62,6 +67,7 @@ impl Provider {
             Provider::Anthropic => "anthropic",
             Provider::Ollama => "ollama",
             Provider::ClaudeCode => "claude-code",
+            Provider::Fireworks => "fireworks",
         }
     }
 
@@ -73,6 +79,7 @@ impl Provider {
             Provider::Anthropic => "Anthropic",
             Provider::Ollama => "Ollama (local)",
             Provider::ClaudeCode => "Claude Code (subscription)",
+            Provider::Fireworks => "Fireworks (Fire Pass)",
         }
     }
 
@@ -86,6 +93,7 @@ impl Provider {
             Provider::Anthropic => "Anthropic",
             Provider::Ollama => "Ollama",
             Provider::ClaudeCode => "Claude Code",
+            Provider::Fireworks => "Fireworks",
         }
     }
 
@@ -99,6 +107,7 @@ impl Provider {
             "anthropic" | "claude" => Some(Self::Anthropic),
             "ollama" | "local" => Some(Self::Ollama),
             "claude-code" | "claude_code" | "claudecode" | "cc" => Some(Self::ClaudeCode),
+            "fireworks" | "fireworks-ai" | "firepass" | "kimi" => Some(Self::Fireworks),
             _ => None,
         }
     }
@@ -115,6 +124,7 @@ impl Provider {
             Provider::Anthropic => "ANTHROPIC_API_KEY",
             Provider::Ollama => "OLLAMA_API_KEY",
             Provider::ClaudeCode => "",
+            Provider::Fireworks => "FIREWORKS_API_KEY",
         }
     }
 
@@ -127,6 +137,7 @@ impl Provider {
             Provider::Anthropic => crate::anthropic::DEFAULT_MODEL,
             Provider::Ollama => crate::ollama::DEFAULT_MODEL,
             Provider::ClaudeCode => crate::claude_code::DEFAULT_MODEL,
+            Provider::Fireworks => crate::fireworks::DEFAULT_MODEL,
         }
     }
 
@@ -139,6 +150,7 @@ impl Provider {
             Provider::Anthropic => crate::anthropic::DEFAULT_FAST_MODEL,
             Provider::Ollama => crate::ollama::DEFAULT_MODEL,
             Provider::ClaudeCode => crate::claude_code::DEFAULT_FAST_MODEL,
+            Provider::Fireworks => crate::fireworks::DEFAULT_FAST_MODEL,
         }
     }
 
@@ -280,6 +292,19 @@ impl From<OllamaError> for ProviderError {
     }
 }
 
+impl From<FireworksError> for ProviderError {
+    fn from(e: FireworksError) -> Self {
+        match e {
+            FireworksError::MissingApiKey => Self::MissingApiKey { var: "FIREWORKS_API_KEY" },
+            FireworksError::Transport(err) => classify_reqwest(&err),
+            FireworksError::Api { status, message } => Self::Api { status, message },
+            FireworksError::EmptyResponse => Self::EmptyResponse,
+            FireworksError::BudgetExceeded { used, budget } => Self::BudgetExceeded { used, budget },
+            FireworksError::InvalidResponse(s) => Self::InvalidResponse(s),
+        }
+    }
+}
+
 impl From<ClaudeCodeError> for ProviderError {
     fn from(e: ClaudeCodeError) -> Self {
         match e {
@@ -375,6 +400,7 @@ pub enum LlmClient {
     Anthropic(AnthropicClient),
     Ollama(OllamaClient),
     ClaudeCode(ClaudeCodeClient),
+    Fireworks(FireworksClient),
 }
 
 impl LlmClient {
@@ -389,6 +415,7 @@ impl LlmClient {
             Provider::Anthropic => LlmClient::Anthropic(AnthropicClient::new(api_key)),
             Provider::Ollama => LlmClient::Ollama(OllamaClient::new(api_key)),
             Provider::ClaudeCode => LlmClient::ClaudeCode(ClaudeCodeClient::new()),
+            Provider::Fireworks => LlmClient::Fireworks(FireworksClient::new(api_key)),
         }
     }
 
@@ -441,6 +468,9 @@ impl LlmClient {
             }
             Provider::Ollama => LlmClient::Ollama(OllamaClient::with_base_url(api_key, base_url)),
             Provider::ClaudeCode => LlmClient::ClaudeCode(ClaudeCodeClient::with_path(base_url)),
+            Provider::Fireworks => {
+                LlmClient::Fireworks(FireworksClient::with_base_url(api_key, base_url))
+            }
         }
     }
 
@@ -452,6 +482,7 @@ impl LlmClient {
             LlmClient::Anthropic(_) => Provider::Anthropic,
             LlmClient::Ollama(_) => Provider::Ollama,
             LlmClient::ClaudeCode(_) => Provider::ClaudeCode,
+            LlmClient::Fireworks(_) => Provider::Fireworks,
         }
     }
 
@@ -484,6 +515,7 @@ impl LlmClient {
             LlmClient::Anthropic(c) => c.generate(cfg).map_err(Into::into),
             LlmClient::Ollama(c) => c.generate(cfg).map_err(Into::into),
             LlmClient::ClaudeCode(c) => c.generate(cfg).map_err(Into::into),
+            LlmClient::Fireworks(c) => c.generate(cfg).map_err(Into::into),
         }
     }
 }
@@ -500,6 +532,7 @@ mod tests {
             Provider::Anthropic,
             Provider::Ollama,
             Provider::ClaudeCode,
+            Provider::Fireworks,
         ] {
             assert_eq!(Provider::parse(p.key()), Some(p));
         }
@@ -513,6 +546,8 @@ mod tests {
         assert_eq!(Provider::parse("local"), Some(Provider::Ollama));
         assert_eq!(Provider::parse("CLAUDE_CODE"), Some(Provider::ClaudeCode));
         assert_eq!(Provider::parse("cc"), Some(Provider::ClaudeCode));
+        assert_eq!(Provider::parse("FirePass"), Some(Provider::Fireworks));
+        assert_eq!(Provider::parse("kimi"), Some(Provider::Fireworks));
         assert_eq!(Provider::parse("wat"), None);
     }
 

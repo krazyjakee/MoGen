@@ -22,6 +22,7 @@
 pub mod anthropic;
 pub mod cache;
 pub mod claude_code;
+pub mod fireworks;
 pub mod gemini;
 pub mod google_oauth;
 pub mod image;
@@ -55,6 +56,7 @@ pub use provider::{GoogleCredential, LlmClient, Provider, ProviderError};
 pub use repair::{
     generate_with_repair, repair_message, validate_text, GenerateOutcome, RepairConfig,
 };
+pub use fireworks::{FireworksClient, FireworksError};
 pub use textures::parse_prompt_header;
 pub use zai::{ZaiClient, ZaiError};
 pub use types::{
