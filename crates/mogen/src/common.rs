@@ -6,9 +6,9 @@ use anyhow::{bail, Context, Result};
 use mogen_core::{Diagnostic, Severity};
 use mogen_llm::google_oauth::{ANTIGRAVITY_CONFIG, GEMINI_CLI_CONFIG};
 use mogen_llm::{
-    cacheable_block, default_cache_path, inline_block, load_bundle, resolve_or_create_cache,
-    system_instruction, token_store_path, token_store_path_for, GenerateConfig, GoogleCredential,
-    LlmClient, Provider, StdlibIndex, DEFAULT_TTL_SECONDS,
+    cacheable_block, default_cache_path, inline_block, load_bundle, read_api_key,
+    resolve_or_create_cache, system_instruction, token_store_path, token_store_path_for,
+    GenerateConfig, GoogleCredential, LlmClient, Provider, StdlibIndex, DEFAULT_TTL_SECONDS,
 };
 
 /// Group error diagnostics by category (derived from the code prefix) so the
@@ -48,10 +48,11 @@ pub(crate) fn diag_category(code: &str) -> &'static str {
     }
 }
 
-/// Resolve the API key for `provider`. Precedence: explicit `--api-key` flag,
-/// then the provider's environment variable ([`Provider::env_var`]). Ollama
-/// is allowed to start with a blank key — most local installs don't require
-/// auth.
+/// Resolve the API key for `provider`. Precedence: explicit `--api-key`
+/// flag → provider env var ([`Provider::env_var`]) →
+/// `~/.mogen/settings.json` (shared with Studio). Ollama and Claude Code
+/// are allowed to start with a blank key — most local installs don't
+/// require auth.
 pub(crate) fn resolve_api_key(provider: Provider, flag: Option<String>) -> Result<String> {
     if let Some(k) = flag {
         if k.trim().is_empty() {
@@ -60,10 +61,11 @@ pub(crate) fn resolve_api_key(provider: Provider, flag: Option<String>) -> Resul
         return Ok(k);
     }
     if provider.is_keyless() {
-        // Ollama (local) and Claude Code (subscription via `claude` CLI) are
-        // keyless by default — fall through with empty string so the client
-        // constructs without auth. An env var is still consulted for users
-        // running Ollama behind an authenticating reverse proxy.
+        // Ollama (local) and Claude Code (subscription via `claude` CLI)
+        // are keyless by default — fall through with empty string so the
+        // client constructs without auth. An env var or settings entry is
+        // still consulted for users running Ollama behind an
+        // authenticating reverse proxy.
         let var = provider.env_var();
         if !var.is_empty() {
             let from_env = std::env::var(var).unwrap_or_default();
@@ -71,14 +73,20 @@ pub(crate) fn resolve_api_key(provider: Provider, flag: Option<String>) -> Resul
                 return Ok(from_env);
             }
         }
+        if let Some(k) = read_api_key(provider) {
+            return Ok(k);
+        }
         return Ok(String::new());
     }
     let var = provider.env_var();
     let from_env = std::env::var(var).unwrap_or_default();
-    if from_env.trim().is_empty() {
-        bail!("missing {var} (set env var or pass --api-key)");
+    if !from_env.trim().is_empty() {
+        return Ok(from_env);
     }
-    Ok(from_env)
+    if let Some(k) = read_api_key(provider) {
+        return Ok(k);
+    }
+    bail!("missing {var} (set env var, pass --api-key, or store it in ~/.mogen/settings.json)");
 }
 
 /// Resolve the model id for the call. Falls back to the provider-specific
@@ -110,6 +118,9 @@ pub(crate) fn resolve_gemini_credential(flag: Option<String>) -> Result<GoogleCr
     if !from_env.trim().is_empty() {
         return Ok(GoogleCredential::ApiKey(from_env));
     }
+    if let Some(k) = read_api_key(Provider::Gemini) {
+        return Ok(GoogleCredential::ApiKey(k));
+    }
     if let Some(path) = token_store_path() {
         match load_bundle(&path) {
             Ok(Some(bundle)) => return Ok(GoogleCredential::OAuth(bundle)),
@@ -123,7 +134,7 @@ pub(crate) fn resolve_gemini_credential(flag: Option<String>) -> Result<GoogleCr
         }
     }
     bail!(
-        "missing GEMINI_API_KEY (set env var, pass --api-key, or run 'mogen auth login')"
+        "missing GEMINI_API_KEY (set env var, pass --api-key, store it in ~/.mogen/settings.json, or run 'mogen auth login')"
     );
 }
 
@@ -151,6 +162,9 @@ pub(crate) fn resolve_gemini_image_credential(
     let from_env = std::env::var("GEMINI_API_KEY").unwrap_or_default();
     if !from_env.trim().is_empty() {
         return Ok(GoogleCredential::ApiKey(from_env));
+    }
+    if let Some(k) = read_api_key(Provider::Gemini) {
+        return Ok(GoogleCredential::ApiKey(k));
     }
     if let Some(path) = token_store_path_for(&ANTIGRAVITY_CONFIG) {
         match load_bundle(&path) {

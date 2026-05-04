@@ -27,6 +27,10 @@ pub enum ProviderSlot {
     /// model is the Fire Pass `kimi-k2p6` router; users supply their
     /// `fw_…` API key from `https://fireworks.ai/account/api-keys`.
     Fireworks,
+    /// Z.ai (Zhipu) GLM family. OpenAI-compatible Chat Completions; default
+    /// model is `glm-5.1`. The same API key drives the `glm-image` texture
+    /// path — see [`ImageProvider::ZAI`].
+    Zai,
 }
 
 impl ProviderSlot {
@@ -39,6 +43,7 @@ impl ProviderSlot {
             ProviderSlot::Ollama => "ollama",
             ProviderSlot::ClaudeCode => "claude-code",
             ProviderSlot::Fireworks => "fireworks",
+            ProviderSlot::Zai => "zai",
         }
     }
 
@@ -50,7 +55,8 @@ impl ProviderSlot {
             ProviderSlot::Anthropic => "Anthropic",
             ProviderSlot::Ollama => "Ollama (local)",
             ProviderSlot::ClaudeCode => "Claude Code (subscription)",
-            ProviderSlot::Fireworks => "Fireworks (Fire Pass)",
+            ProviderSlot::Fireworks => "Fireworks AI Firepass",
+            ProviderSlot::Zai => "Z.ai (GLM)",
         }
     }
 
@@ -67,6 +73,7 @@ impl ProviderSlot {
             "ollama" | "local" => Some(Self::Ollama),
             "claude-code" | "claude_code" | "claudecode" | "cc" => Some(Self::ClaudeCode),
             "fireworks" | "fireworks-ai" | "firepass" | "kimi" => Some(Self::Fireworks),
+            "zai" | "z-ai" | "z.ai" | "zhipu" | "glm" => Some(Self::Zai),
             _ => None,
         }
     }
@@ -82,6 +89,7 @@ impl ProviderSlot {
             ProviderSlot::Ollama => Provider::Ollama,
             ProviderSlot::ClaudeCode => Provider::ClaudeCode,
             ProviderSlot::Fireworks => Provider::Fireworks,
+            ProviderSlot::Zai => Provider::Zai,
         }
     }
 
@@ -342,6 +350,16 @@ pub struct Settings {
     #[serde(default)]
     pub fireworks_fast_model: String,
 
+    /// Z.ai (chat) thinking-model override. Empty → [`mogen_llm::zai_chat::DEFAULT_MODEL`]
+    /// (`glm-5.1`). Note: the existing [`Self::zai_api_key`] doubles as the
+    /// chat key — Z.ai issues one key per account that covers both surfaces.
+    #[serde(default)]
+    pub zai_chat_model: String,
+
+    /// Z.ai fast-model override. Empty → [`mogen_llm::zai_chat::DEFAULT_FAST_MODEL`].
+    #[serde(default)]
+    pub zai_chat_fast_model: String,
+
     /// Persisted 3D viewport background colour, as `[r, g, b]` 0..=255. `None`
     /// falls back to [`DEFAULT_VIEWER_BG_RGB`] — a neutral charcoal that
     /// matches the look of every major DCC app. Stored as bytes so the JSON
@@ -446,11 +464,31 @@ impl Settings {
     pub const MAX_RECENT: usize = 12;
 
     pub fn load() -> Self {
-        let Some(path) = settings_path() else {
+        // Read mode walks legacy locations first, so existing installs
+        // (Studio's old `dirs::config_dir()/mogen/settings.json` plus
+        // earlier `~/.cache/mogen/` users) load on first launch after
+        // the move. `Settings::save` then rewrites to `~/.mogen/`.
+        let Some(path) = settings_path(mogen_llm::PathMode::Read) else {
             return Self::default();
         };
-        let Ok(bytes) = fs::read(&path) else {
-            return Self::default();
+        let bytes_result = fs::read(&path);
+        let bytes = match bytes_result {
+            Ok(b) => b,
+            Err(_) => {
+                // `mogen_llm::settings_store_path(Read)` falls through
+                // to the canonical `~/.mogen/` write target when no
+                // legacy file exists. If reading that came up empty,
+                // try the explicit pre-move Studio path too — covers
+                // setups where `MOGEN_CACHE_DIR` is set (which makes
+                // the read helper skip the `dirs::config_dir()` slot).
+                let Some(legacy) = legacy_settings_path() else {
+                    return Self::default();
+                };
+                let Ok(b) = fs::read(&legacy) else {
+                    return Self::default();
+                };
+                b
+            }
         };
         let mut s: Self = serde_json::from_slice(&bytes).unwrap_or_default();
         // Pre-`ProviderSlot` settings only stored `provider`; copy it over so
@@ -477,7 +515,11 @@ impl Settings {
     }
 
     pub fn save(&self) -> Result<(), String> {
-        let path = settings_path().ok_or_else(|| "no config directory available".to_string())?;
+        // Always write to the canonical `~/.mogen/settings.json` so
+        // the CLI (which does the same path resolution) can read keys
+        // entered in Studio.
+        let path = settings_path(mogen_llm::PathMode::Write)
+            .ok_or_else(|| "no config directory available".to_string())?;
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
         }
@@ -591,6 +633,7 @@ impl Settings {
             ProviderSlot::Ollama => self.ollama_api_key.as_str(),
             ProviderSlot::ClaudeCode => "",
             ProviderSlot::Fireworks => self.fireworks_api_key.as_str(),
+            ProviderSlot::Zai => self.zai_api_key.as_str(),
         };
         let trimmed = raw.trim();
         if trimmed.is_empty() {
@@ -665,6 +708,7 @@ impl Settings {
             Provider::Anthropic => &self.anthropic_model,
             Provider::Ollama => &self.ollama_model,
             Provider::Fireworks => &self.fireworks_model,
+            Provider::Zai => &self.zai_chat_model,
             _ => "",
         }
     }
@@ -677,6 +721,7 @@ impl Settings {
             Provider::Anthropic => &self.anthropic_fast_model,
             Provider::Ollama => &self.ollama_fast_model,
             Provider::Fireworks => &self.fireworks_fast_model,
+            Provider::Zai => &self.zai_chat_fast_model,
             _ => "",
         }
     }
@@ -690,6 +735,7 @@ impl Settings {
             Provider::Anthropic => Some(&mut self.anthropic_model),
             Provider::Ollama => Some(&mut self.ollama_model),
             Provider::Fireworks => Some(&mut self.fireworks_model),
+            Provider::Zai => Some(&mut self.zai_chat_model),
             _ => None,
         }
     }
@@ -702,6 +748,7 @@ impl Settings {
             Provider::Anthropic => Some(&mut self.anthropic_fast_model),
             Provider::Ollama => Some(&mut self.ollama_fast_model),
             Provider::Fireworks => Some(&mut self.fireworks_fast_model),
+            Provider::Zai => Some(&mut self.zai_chat_fast_model),
             _ => None,
         }
     }
@@ -875,7 +922,7 @@ pub const THINKING_LEVELS: [ThinkingLevel; 4] = [
 /// Gemini auth modes are listed up front because Gemini is the historical
 /// default and the only image-capable backend; the OAuth slot is the path
 /// users with paid Antigravity plans will reach for.
-pub const PROVIDER_SLOTS: [ProviderSlot; 7] = [
+pub const PROVIDER_SLOTS: [ProviderSlot; 8] = [
     ProviderSlot::GeminiApiKey,
     ProviderSlot::GeminiOAuth,
     ProviderSlot::OpenAI,
@@ -883,8 +930,33 @@ pub const PROVIDER_SLOTS: [ProviderSlot; 7] = [
     ProviderSlot::Ollama,
     ProviderSlot::ClaudeCode,
     ProviderSlot::Fireworks,
+    ProviderSlot::Zai,
 ];
 
-fn settings_path() -> Option<PathBuf> {
+/// Canonical settings path: `~/.mogen/settings.json`. Shared with the
+/// CLI so a key entered in Studio's Preferences also satisfies
+/// `mogen generate` etc. without requiring an env var.
+///
+/// `mode` follows [`mogen_llm::PathMode`]:
+///   - `Read` walks legacy locations (old `dirs::config_dir()/mogen/`,
+///     `~/.cache/mogen/`, `%LOCALAPPDATA%\mogen\`) before falling back
+///     to the canonical target. Lets existing installs keep working
+///     after the move.
+///   - `Write` always returns the canonical `~/.mogen/` target so new
+///     saves migrate forward automatically.
+fn settings_path(mode: mogen_llm::PathMode) -> Option<PathBuf> {
+    if let Some(p) = mogen_llm::settings_store_path(mode) {
+        return Some(p);
+    }
+    // Last-ditch: the legacy `dirs::config_dir()` location. Reached
+    // only when neither HOME/USERPROFILE nor LOCALAPPDATA are set,
+    // which effectively never happens.
+    dirs::config_dir().map(|d| d.join("mogen").join("settings.json"))
+}
+
+/// Legacy `dirs::config_dir()/mogen/settings.json` location. Probed
+/// during [`Settings::load`] so Studio installs that pre-date the move
+/// to `~/.mogen/` keep their saved keys/preferences on first launch.
+fn legacy_settings_path() -> Option<PathBuf> {
     dirs::config_dir().map(|d| d.join("mogen").join("settings.json"))
 }

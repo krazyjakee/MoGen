@@ -38,7 +38,7 @@ const PREFS_TABS: [PrefsTab; 3] = [PrefsTab::Llm, PrefsTab::Appearance, PrefsTab
 /// every user will want. The Gemini slots split: API-key uses the public
 /// `*-latest` aliases, OAuth pins to concrete preview tags because
 /// `cloudcode-pa.googleapis.com/v1internal` 404s on the latest aliases.
-fn model_presets(slot: ProviderSlot) -> &'static [&'static str] {
+pub(super) fn model_presets(slot: ProviderSlot) -> &'static [&'static str] {
     match slot {
         ProviderSlot::GeminiApiKey => &[
             "gemini-pro-latest",
@@ -87,6 +87,12 @@ fn model_presets(slot: ProviderSlot) -> &'static [&'static str] {
             "accounts/fireworks/routers/kimi-k2p6",
             "accounts/fireworks/routers/kimi-k2p6-turbo",
             "accounts/fireworks/routers/kimi-k2p5-turbo",
+        ],
+        ProviderSlot::Zai => &[
+            "glm-5.1",
+            "glm-4.6",
+            "glm-4.5-air",
+            "glm-4.5-flash",
         ],
     }
 }
@@ -302,7 +308,8 @@ impl MogenStudioApp {
                         Provider::OpenAI => "OpenAI API key",
                         Provider::Anthropic => "Anthropic API key",
                         Provider::Ollama => "Ollama API key (optional)",
-                        Provider::Fireworks => "Fireworks API key",
+                        Provider::Fireworks => "Fireworks AI Firepass API key",
+                        Provider::Zai => "Z.ai API key",
                         Provider::ClaudeCode => unreachable!(),
                     };
                     ui.heading(key_heading);
@@ -329,6 +336,12 @@ impl MogenStudioApp {
                              for personal agentic-coding use). Stored in your user config \
                              directory and persists between sessions."
                         }
+                        Provider::Zai => {
+                            "Used by Generate / Modify / Animate / Ask. Default model is \
+                             `glm-5.1` (Z.ai's GLM family via the OpenAI-compatible chat API). \
+                             The same key drives the `glm-image` texture path when you set \
+                             Image provider → Z.ai. Stored in your user config directory."
+                        }
                         Provider::ClaudeCode => unreachable!(),
                     });
                     ui.add_space(6.0);
@@ -341,6 +354,7 @@ impl MogenStudioApp {
                         Provider::Anthropic => &mut self.settings.anthropic_api_key,
                         Provider::Ollama => &mut self.settings.ollama_api_key,
                         Provider::Fireworks => &mut self.settings.fireworks_api_key,
+                        Provider::Zai => &mut self.settings.zai_api_key,
                         Provider::ClaudeCode => unreachable!(),
                     };
                     crate::app::text_menu::text_edit_with_menu(
