@@ -119,14 +119,14 @@ pub(in crate::app) fn run_llm(
             .unwrap_or_else(pick_default_seed)
     });
 
-    // For edit-an-existing-file kinds, keep the original `// prompt: …` header
+    // For edit-an-existing-file kinds, keep the original `meta(prompt=…)` value
     // so the provenance line isn't overwritten with the modify/animate text.
     let header_prompt = match kind {
         LlmKind::Generate | LlmKind::Textures => {
-            // When an image was attached, annotate the seed header so the
-            // `// prompt:` line records *why* the file looks the way it does
-            // (otherwise an image-only generate writes an empty `prompt:` line,
-            // which is misleading).
+            // When an image was attached, annotate the prompt so the stamped
+            // `meta(prompt=…)` records *why* the file looks the way it does
+            // (otherwise an image-only generate writes an empty prompt, which
+            // is misleading).
             if image.is_some() {
                 let trimmed = prompt.trim();
                 if trimmed.is_empty() {
@@ -188,7 +188,7 @@ pub(in crate::app) fn run_llm(
                 Make the smallest edit that satisfies the request. Do not rename, reorder, \
                 reformat, or restyle parts the modification does not touch.\n\n\
                 Reply with ONLY the full modified DSL — no commentary, no markdown fences. \
-                Do not include the `// mogen-generate` header comments; the caller re-adds them.\n\n\
+                Do not write a `meta(...)` block; the caller stamps it after generation.\n\n\
                 Existing file:\n\n{existing}",
                 mod_prompt = prompt.trim(),
                 existing = existing.as_deref().unwrap_or("").trim_end(),
@@ -264,7 +264,7 @@ pub(in crate::app) fn run_llm(
             - New `joint`, `clip`, `skeleton`, and template names must not collide with \
               existing ones — pick a fresh unique name.\n\n\
             Reply with ONLY the full updated DSL — no commentary, no markdown fences. Do \
-            not include the `// mogen-generate` header comments; the caller re-adds them.\n\n\
+            not write a `meta(...)` block; the caller stamps it after generation.\n\n\
             Existing file:\n\n{existing}",
             anim_prompt = prompt.trim(),
             existing = existing.as_deref().unwrap_or("").trim_end(),
@@ -333,6 +333,8 @@ pub(in crate::app) fn run_llm(
                 &header_prompt,
                 Some(run_cfg.thinking),
             );
+            let wrapped =
+                mogen_dsl::stamp_mogen_version(&wrapped, env!("CARGO_PKG_VERSION"));
             LlmOutcome {
                 dsl: wrapped,
                 diagnostics: outcome.diagnostics,

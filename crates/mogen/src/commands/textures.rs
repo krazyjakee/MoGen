@@ -125,6 +125,7 @@ pub(crate) fn textures_cmd(args: mogen_llm::textures::TexturesArgs) -> Result<()
         if edits.len() == 1 { "" } else { "s" }
     ));
     let new_src = mogen_llm::textures::splice_textures(&src, &edits)?;
+    let new_src = mogen_dsl::stamp_mogen_version(&new_src, env!("CARGO_PKG_VERSION"));
 
     let dsl_out = args.out.clone().unwrap_or_else(|| args.input.clone());
     ensure_parent_dir(&dsl_out)?;

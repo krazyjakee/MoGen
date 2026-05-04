@@ -36,7 +36,8 @@ use crate::preview_shader::PreviewShader;
 use renderer::Renderer;
 use state::{
     aspect_for, begin_gizmo_drag, commit_gizmo_drag, gizmo_handles_supported, node_path,
-    replace_selection, resolve_node_path, toggle_selection, update_gizmo_drag, ViewerState,
+    replace_selection, replace_selection_cycling, resolve_node_path, toggle_selection,
+    update_gizmo_drag, ViewerState,
 };
 
 pub struct Viewer {
@@ -70,6 +71,10 @@ impl Viewer {
         st.selected = new_selected;
         st.selected_paths = new_paths;
         st.gizmo_drag = None;
+        // NodeIds may have been renumbered by the recompile, so the
+        // recorded leaf in `pick_cycle` no longer refers to a stable
+        // node. Reset the cycle so the next click starts fresh.
+        st.pick_cycle = None;
 
         let prev_active: Vec<String> = match &st.scene {
             Some(prev) => prev
@@ -144,6 +149,7 @@ impl Viewer {
         st.selected.clear();
         st.selected_paths.clear();
         st.gizmo_drag = None;
+        st.pick_cycle = None;
     }
 
     /// Replace the selection with a single node (or clear it). Equivalent
@@ -159,6 +165,7 @@ impl Viewer {
             }
         }
         st.gizmo_drag = None;
+        st.pick_cycle = None;
     }
 
     /// Most-recently-selected node — the one the gizmo, inspector, and
@@ -628,6 +635,10 @@ impl Viewer {
                 // from the stale (pre-edit) scene without the preview —
                 // exactly the snap-back the previous fix attempts chased.
                 st.gizmo_drag = None;
+                // A drag commit reshapes the scene; the recorded leaf NodeId
+                // could land on a different node after the recompile, so the
+                // next click should restart the drill at depth 0.
+                st.pick_cycle = None;
                 needs_repaint = true;
             }
 
@@ -646,13 +657,20 @@ impl Viewer {
                     );
                     let additive = shift_held || cmd_held;
                     match (additive, hit) {
-                        // Plain click on a node → replace; on empty space → clear.
+                        // Plain click on a node → Figma-style drill-down.
+                        // First click selects the editable wrapper / outer
+                        // group (whatever `redirect_pick` returns). A
+                        // second click at the same screen point on the
+                        // same hit advances one ancestor closer to the
+                        // leaf, until the leaf is reached or the cycle
+                        // bumps into an imported subtree boundary.
                         (false, Some(id)) => {
-                            replace_selection(&mut st, Some(id));
+                            replace_selection_cycling(&mut st, id, cursor);
                             needs_repaint = true;
                         }
                         (false, None) => {
                             replace_selection(&mut st, None);
+                            st.pick_cycle = None;
                         }
                         // Shift/cmd-click on a node → toggle membership. Empty
                         // space with a modifier is intentionally a no-op:
@@ -662,6 +680,7 @@ impl Viewer {
                         // like a bug.
                         (true, Some(id)) => {
                             toggle_selection(&mut st, id);
+                            st.pick_cycle = None;
                             needs_repaint = true;
                         }
                         (true, None) => {}
@@ -680,6 +699,7 @@ impl Viewer {
                 && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
             {
                 replace_selection(&mut st, None);
+                st.pick_cycle = None;
                 needs_repaint = true;
             }
 

@@ -118,6 +118,7 @@ fn build_list(val_pair: Pair<Rule>) -> Result<Value> {
         Vec3([f32; 3]),
         Pair([f32; 2]),
         Quad([f32; 4]),
+        Str(String),
     }
 
     let mut items: Vec<Item> = Vec::new();
@@ -128,6 +129,7 @@ fn build_list(val_pair: Pair<Rule>) -> Result<Value> {
         let inner = it.into_inner().next().unwrap();
         match inner.as_rule() {
             Rule::expr => items.push(Item::Expr(build_expr(inner)?)),
+            Rule::string => items.push(Item::Str(unquote(inner.as_str()))),
             Rule::vec3 => {
                 let exprs: Vec<Expr> = inner
                     .into_inner()
@@ -190,6 +192,12 @@ fn build_list(val_pair: Pair<Rule>) -> Result<Value> {
     let has_vec3 = items.iter().any(|i| matches!(i, Item::Vec3(_)));
     let has_pair = items.iter().any(|i| matches!(i, Item::Pair(_)));
     let has_quad = items.iter().any(|i| matches!(i, Item::Quad(_)));
+    let has_str = items.iter().any(|i| matches!(i, Item::Str(_)));
+    if has_str && (has_expr || has_vec3 || has_pair || has_quad) {
+        return Err(anyhow!(
+            "list items must be all strings or all numeric — mixing is not allowed"
+        ));
+    }
     if (has_vec3 || has_pair || has_quad) && has_expr {
         return Err(anyhow!(
             "list items must be all scalars or all nested sublists — not mixed"
@@ -199,6 +207,18 @@ fn build_list(val_pair: Pair<Rule>) -> Result<Value> {
     if nested_kinds > 1 {
         return Err(anyhow!(
             "list items must all be the same arity — mixing 2/3/4-element sublists is not allowed"
+        ));
+    }
+
+    if has_str {
+        return Ok(Value::ListString(
+            items
+                .into_iter()
+                .map(|i| match i {
+                    Item::Str(s) => s,
+                    _ => unreachable!(),
+                })
+                .collect(),
         ));
     }
 

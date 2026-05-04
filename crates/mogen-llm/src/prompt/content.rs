@@ -117,6 +117,11 @@ A `.mog` file is a sequence of nodes. Each node is:
 
 - Values: numbers, vec3 `[x,y,z]`, strings, idents, simple arithmetic with \
   `$param` references inside `module` bodies. Comments start with `//`.
+- Optional top-of-file metadata: `meta (name=\"…\", version=\"1.0\", \
+  description=\"…\", tags=[\"a\",\"b\"])`. Place it once, before any \
+  `material`/`scene`. Do NOT write `mogen_version=` yourself — the toolchain \
+  stamps it on every save. Omit the whole block when you have nothing \
+  meaningful to record.
 - `pos`, `rot` (Euler XYZ degrees), `scale`, `mat`, `role`, `tags` are \
   accepted on any geometry/group node.
 - Placement shortcuts — use these instead of hand-computing `pos`: \
@@ -323,6 +328,7 @@ explicitly asks for an abstract block.";
 pub(super) const KINDS_REFERENCE: &str = "\
 | kind | required attrs | notable attrs |
 |------|----------------|----------------|
+| `meta` | — | optional top-of-file metadata: `name`, `version`, `description`, `tags=[\"…\"]`. Toolchain stamps `mogen_version=` automatically; never write it yourself. |
 | `scene` | — | (container) |
 | `group` | — | `pos`, `rot`, `scale`, `mat`, `role`, `tags` |
 | `solid` | — | `mat`, `cleanup=\"coplanar\"\\|\"none\"` (default `none`); same-material leaf children merged at export |

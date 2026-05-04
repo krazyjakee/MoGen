@@ -1,5 +1,8 @@
-// mogen-generate seed=1776953281316799934
-// prompt: wooden storage crate
+
+meta (
+  seed = "1776953281316799934",
+  prompt = "wooden storage crate",
+)
 
 material "wood" (color=[0.45, 0.32, 0.22], roughness=0.9)
 material "wood_dark" (color=[0.35, 0.25, 0.15], roughness=0.8)

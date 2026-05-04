@@ -1,6 +1,9 @@
-// mogen-generate seed=1777232626221469463
-// mogen-generate thinking=high
-// prompt: The desert scorpion hunches low with a menacing, prehistoric silhouette, its segmented carapace rendered in weathered, matte chitin the color of sun-bleached ochre and dusty amber. This ancient predator features oversized, scarred pincers and a high-arched tail ending in a translucent stinger that glints like polished obsidian against the shifting, arid sands.
+
+meta (
+  seed = "1777232626221469463",
+  thinking = "high",
+  prompt = "The desert scorpion hunches low with a menacing, prehistoric silhouette, its segmented carapace rendered in weathered, matte chitin the color of sun-bleached ochre and dusty amber. This ancient predator features oversized, scarred pincers and a high-arched tail ending in a translucent stinger that glints like polished obsidian against the shifting, arid sands.",
+)
 
 lod_scale (value=0.75)
 

@@ -45,16 +45,17 @@ impl MogenStudioApp {
                 );
                 ui.add_space(8.0);
                 ui.label(
-                    "Generate, Modify, Animate, and Textures need an LLM. Gemini is \
-                     the recommended starting point (the only backend that can also \
-                     generate textures), so paste a Google AI Studio key below — or \
-                     skip and pick a different provider (OpenAI, Anthropic, Ollama, \
-                     Claude Code) later in Edit → Preferences. The rest of the app — \
-                     editor, viewer, build — works without any key.",
+                    "Generate, Modify, Animate, and Textures need an LLM. MoGen \
+                     supports Gemini, OpenAI, Anthropic, Ollama, and Claude Code — \
+                     pick whichever you have a key for in Edit → Preferences. \
+                     Gemini is a good starting point because it's also the backend \
+                     used for texture image generation, so you can paste a Google \
+                     AI Studio key below to get going quickly. The rest of the app \
+                     — editor, viewer, build — works without any key.",
                 );
 
                 ui.add_space(12.0);
-                ui.heading("1. Get a key");
+                ui.heading("1. Get a Gemini key (optional)");
                 ui.horizontal(|ui| {
                     ui.label("Open");
                     ui.hyperlink_to("Google AI Studio", GEMINI_API_KEY_URL);
@@ -145,7 +146,7 @@ impl MogenStudioApp {
         if let Err(e) = self.settings.save() {
             self.active_mut().status = format!("onboarding: save failed: {e}");
         } else if do_save && !self.settings.gemini_api_key.is_empty() {
-            self.active_mut().status = "onboarding: Gemini API key saved".into();
+            self.active_mut().status = "onboarding: API key saved".into();
         }
 
         self.onboarding_api_key_draft.clear();

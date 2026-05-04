@@ -6,6 +6,7 @@ pub mod graph;
 pub mod light;
 pub mod material;
 pub mod mesh;
+pub mod meta;
 pub mod skin;
 pub mod transform;
 
@@ -14,6 +15,7 @@ pub use anim::{Clip, Interpolation, Joint, JointKind, Track, TrackProperty};
 pub use connector::Connector;
 pub use diagnostic::{has_errors, Diagnostic, Severity, Span};
 pub use graph::{AttachBinding, ConformBinding, NodeId, SceneGraph, SceneNode};
+pub use meta::Meta;
 pub use light::{Light, LightKind};
 pub use material::{AlphaMode, Material, MaterialId, TextureRef, UvMode};
 pub use mesh::Mesh;

@@ -1,5 +1,8 @@
-// mogen-generate seed=1776951857766439313
-// prompt: a gothic church with high detail
+
+meta (
+  seed = "1776951857766439313",
+  prompt = "a gothic church with high detail",
+)
 
 material "stone" (color=[0.55, 0.53, 0.50], roughness=0.9)
 material "roof"  (color=[0.15, 0.20, 0.18], roughness=0.8)

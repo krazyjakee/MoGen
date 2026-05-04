@@ -1,6 +1,11 @@
-// mogen-generate seed=1777210527637284168
-// mogen-generate thinking=high
-// prompt: A simple four-legged chair.
+
+meta (
+  name = "chair",
+  version = "1.0",
+  mogen_version = "0.1.1",
+  description = "A simple four-legged dining chair.",
+  tags = ["furniture", "chair", "wood"], seed = "1777210527637284168", thinking = "high", prompt = "A simple four-legged chair."
+)
 
 material "wood" (color=[0.55, 0.35, 0.18], roughness=0.8)
 

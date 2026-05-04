@@ -1,6 +1,9 @@
-// mogen-generate seed=1777326657016268863
-// mogen-generate thinking=high
-// prompt: A futuristic skyscraper rises as a slender, twisting spire of iridescent polycarbonate and matte white ceramic, boasting a sleek, aerodynamic silhouette that tapers into a delicate needle-point. Its surface is characterized by deep, vertical grooves of brushed copper and recessed panels of translucent azure glass, lending the massive structure an ethereal and weightless character.
+
+meta (
+  seed = "1777326657016268863",
+  thinking = "high",
+  prompt = "A futuristic skyscraper rises as a slender, twisting spire of iridescent polycarbonate and matte white ceramic, boasting a sleek, aerodynamic silhouette that tapers into a delicate needle-point. Its surface is characterized by deep, vertical grooves of brushed copper and recessed panels of translucent azure glass, lending the massive structure an ethereal and weightless character.",
+)
 
 material "ceramic" (color=[0.95, 0.95, 0.95], roughness=0.9, base_color_texture="textures/needle_tower/ceramic_albedo.png", normal_texture="textures/needle_tower/ceramic_normal.png", metallic_roughness_texture="textures/needle_tower/ceramic_metallicRoughness.png", occlusion_texture="textures/needle_tower/ceramic_ao.png")
 material "polycarbonate" (color=[0.85, 0.90, 0.95], metallic=0.4, roughness=0.2, base_color_texture="textures/needle_tower/polycarbonate_albedo.png", normal_texture="textures/needle_tower/polycarbonate_normal.png", metallic_roughness_texture="textures/needle_tower/polycarbonate_metallicRoughness.png", occlusion_texture="textures/needle_tower/polycarbonate_ao.png")

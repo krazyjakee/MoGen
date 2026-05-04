@@ -8,6 +8,7 @@ use mogen_dsl::ast::Value;
 pub const KNOWN_KINDS: &[&str] = &[
     "scene", "group", "solid", "material", "connector", "attach", "conform", "mirror", "array",
     "stack", "grid",
+    "meta",
     "box", "plane", "quad", "cylinder", "cone", "sphere", "capsule", "torus",
     "prism", "pyramid", "disc", "icosphere", "rounded_box",
     "wedge", "frustum", "tube", "hemisphere", "half_cylinder", "torus_arc", "ellipsoid",
@@ -81,13 +82,17 @@ pub fn common_attrs_for_kind(kind: &str) -> &'static [&'static str] {
         "material" | "connector" | "attach"
         | "joint" | "clip" | "track"
         | "spin" | "open_close" | "wave" | "flap" | "idle"
-        | "lod_scale" => &[],
+        | "lod_scale" | "meta" => &[],
         _ => GEOMETRY_COMMON_ATTRS,
     }
 }
 
 pub fn attrs_for_kind(kind: &str) -> &'static [&'static str] {
     match kind {
+        "meta" => &[
+            "name", "version", "mogen_version", "description", "tags",
+            "seed", "thinking", "prompt",
+        ],
         "box" | "plane" | "quad" | "prism" => &["size"],
         "slab" | "post" | "panel" => &["size"],
         "wall" => &["size", "holes"],
@@ -178,6 +183,14 @@ pub fn attrs_for_kind(kind: &str) -> &'static [&'static str] {
 
 pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
     let t = match (kind, attr) {
+        ("meta", "name")
+        | ("meta", "version")
+        | ("meta", "mogen_version")
+        | ("meta", "description")
+        | ("meta", "seed")
+        | ("meta", "thinking")
+        | ("meta", "prompt") => "string",
+        ("meta", "tags") => "list of string",
         (_, "pos") | (_, "rot") => "vec3",
         (_, "scale") => "number or vec3",
         // Per-axis shortcuts and placement helpers are allowed everywhere.
@@ -391,6 +404,8 @@ pub(super) fn value_matches(v: &Value, expected: &str) -> bool {
         (Value::String(_), "string") => true,
         (Value::Ident(_), "string") => true,
         (Value::List(_) | Value::ListExpr(_) | Value::ListVec3(_) | Value::ListPair(_) | Value::ListQuad(_), "list") => true,
+        (Value::ListString(_), "list of string") => true,
+        (Value::String(_) | Value::Ident(_), "list of string") => true,
         // Deferred expressions: accept as their natural type; evaluation errors
         // (unbound params, etc.) are reported during module expansion.
         (Value::Expr(_), "number") => true,
@@ -415,6 +430,7 @@ pub(super) fn value_kind(v: &Value) -> &'static str {
         Value::ListVec3(_) => "list of vec3",
         Value::ListPair(_) => "list of pair",
         Value::ListQuad(_) => "list of quad",
+        Value::ListString(_) => "list of string",
     }
 }
 

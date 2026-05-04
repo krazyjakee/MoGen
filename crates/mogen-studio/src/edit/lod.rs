@@ -44,9 +44,45 @@ pub fn set_lod_scale(src: &str, scale: f32) -> String {
     if is_default {
         return src.to_string();
     }
-    let insert_at = skip_leading_comments_and_blanks(src);
+    let insert_at = skip_leading_header(src);
     let payload = format!("lod_scale (value={})\n\n", format_scale(scale));
     splice(src, insert_at..insert_at, &payload)
+}
+
+/// Skip past leading comments + blank lines and any top-level `meta(...)`
+/// block so a freshly-inserted directive lands *after* the meta header rather
+/// than ahead of it.
+fn skip_leading_header(src: &str) -> usize {
+    let mut i = skip_leading_comments_and_blanks(src);
+    let bytes = src.as_bytes();
+    if src[i..].starts_with("meta")
+        && bytes
+            .get(i + 4)
+            .map(|c| !is_ident_byte(*c))
+            .unwrap_or(true)
+    {
+        // Skip the kind ident + any whitespace before the `(`.
+        let mut j = i + 4;
+        while j < bytes.len() && (bytes[j] == b' ' || bytes[j] == b'\t') {
+            j += 1;
+        }
+        if j < bytes.len() && bytes[j] == b'(' {
+            if let Some(close) = match_closing_paren(src, j, src.len()) {
+                let mut k = close + 1;
+                while k < bytes.len() && (bytes[k] == b' ' || bytes[k] == b'\t') {
+                    k += 1;
+                }
+                if k < bytes.len() && bytes[k] == b'\n' {
+                    k += 1;
+                }
+                while k < bytes.len() && (bytes[k] == b' ' || bytes[k] == b'\t' || bytes[k] == b'\n' || bytes[k] == b'\r') {
+                    k += 1;
+                }
+                i = k;
+            }
+        }
+    }
+    i
 }
 
 fn format_scale(scale: f32) -> String {
@@ -155,11 +191,15 @@ mod tests {
     }
 
     #[test]
-    fn set_lod_scale_keeps_seed_header_at_top() {
-        let src = "// mogen-generate seed=42\nscene {\n  box \"b\" (size=1)\n}\n";
+    fn set_lod_scale_keeps_meta_header_at_top() {
+        let src = "meta (seed = \"42\")\n\nscene {\n  box \"b\" (size=1)\n}\n";
         let out = set_lod_scale(src, 1.5);
-        assert!(out.starts_with("// mogen-generate seed=42\n"), "header demoted: {out}");
-        assert!(out.contains("\nlod_scale (value=1.5)\n\nscene {"), "lod_scale missing: {out}");
+        assert!(out.starts_with("meta (seed = \"42\")"), "header demoted: {out}");
+        assert!(out.contains("lod_scale (value=1.5)"), "lod_scale missing: {out}");
+        let meta_pos = out.find("meta (").unwrap();
+        let lod_pos = out.find("lod_scale").unwrap();
+        let scene_pos = out.find("scene {").unwrap();
+        assert!(meta_pos < lod_pos && lod_pos < scene_pos);
     }
 
     #[test]

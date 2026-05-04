@@ -148,9 +148,9 @@ enum Cmd {
         temperature: Option<f32>,
         /// Cap on server-side reasoning. Maps to Gemini's `thinkingBudget`,
         /// Anthropic's `thinking.budget_tokens`, and OpenAI's
-        /// `reasoning.effort`. Ignored by Ollama. Falls back to the
-        /// `// mogen-generate thinking=…` header (modify/animate/repair only)
-        /// and then to `high`.
+        /// `reasoning.effort`. Ignored by Ollama. Falls back to the file's
+        /// `meta(thinking=…)` attribute (modify/animate/repair only) and
+        /// then to `high`.
         #[arg(long, value_enum)]
         thinking: Option<ThinkingArg>,
     },

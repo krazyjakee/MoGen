@@ -16,7 +16,14 @@ impl MogenStudioApp {
         let generating = self.files[i].llm_in_flight.is_some();
         if generating {
             self.autocomplete.close();
+            // External rewrite incoming — extras would land on stale text.
+            self.clear_multi_caret();
         }
+
+        // External source mutations (gizmo, inspector, undo, LLM apply) can
+        // shrink the buffer out from under any multi-cursor extras the user
+        // has built up. Drop any range that no longer fits before reading.
+        self.prune_invalid_extras();
 
         // Find bar (Ctrl+F). Painted above the editor's ScrollArea so the
         // controls stay anchored while the source scrolls beneath. The bar
@@ -45,6 +52,15 @@ impl MogenStudioApp {
         // select next occurrence). Pure-text edits + cursor restore, so they
         // run alongside indent before the TextEdit paints.
         if self.handle_line_op_keys(ui, editor_id) {
+            changed = true;
+        }
+
+        // Multi-cursor fan-out: if the user has built up extra carets via
+        // Cmd+D, intercept text-affecting events here so they apply to every
+        // selection. Runs after line ops so Cmd+L / Cmd+/ etc. still claim
+        // their shortcuts before we look at the input queue. Skipped while
+        // the LLM owns the buffer.
+        if !generating && self.handle_multi_caret_events(ui, editor_id) {
             changed = true;
         }
 
@@ -216,6 +232,11 @@ impl MogenStudioApp {
                         self.paint_find_overlays(ui, &output);
                         self.drive_find_scroll(ui, editor_id, &output);
                     }
+
+                    // Multi-cursor extras paint over the same galley as the
+                    // primary selection so the user sees one unified set of
+                    // highlights — matching VS Code's visual treatment.
+                    self.paint_multi_caret_overlays(ui, &output);
 
                     textedit_output = Some(output);
                 });

@@ -1,6 +1,9 @@
-// mogen-generate seed=1776975026356710483
-// mogen-generate thinking=high
-// prompt: A SWAT TEAM  operative composed of a rounded-box torso layered with an array of rectangular equipment pouches and mirrored capsule-shaped limb guards. The head features a hemispherical ballistic helmet with a translucent dark-grey polycarbonate visor, finished in high-roughness matte black PBR materials. A carbine, assembled from booleaned box and cylinder primitives, is integrated into a hierarchy of cylindrical limbs in a tactical stance.
+
+meta (
+  seed = "1776975026356710483",
+  thinking = "high",
+  prompt = "A SWAT TEAM  operative composed of a rounded-box torso layered with an array of rectangular equipment pouches and mirrored capsule-shaped limb guards. The head features a hemispherical ballistic helmet with a translucent dark-grey polycarbonate visor, finished in high-roughness matte black PBR materials. A carbine, assembled from booleaned box and cylinder primitives, is integrated into a hierarchy of cylindrical limbs in a tactical stance.",
+)
 
 material "armor" (color=[0.08, 0.08, 0.08], roughness=0.95)
 material "suit"  (color=[0.12, 0.12, 0.12], roughness=0.85)

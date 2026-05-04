@@ -8,7 +8,7 @@ use glam::Mat4;
 use glam::{Quat, Vec3};
 
 use crate::{
-    Clip, Connector, Joint, Light, Material, MaterialId, Mesh, Skin, SkinId, Span, Transform,
+    Clip, Connector, Joint, Light, Material, MaterialId, Mesh, Meta, Skin, SkinId, Span, Transform,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -213,6 +213,11 @@ pub struct SceneGraph {
     /// sources that contain no `use` calls.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub use_parents: HashMap<u32, Option<u32>>,
+    /// Optional file-level metadata extracted from the top-level `meta(...)`
+    /// node. `None` when the source omitted the block. Populated by
+    /// [`mogen_dsl::lower`] before validation runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub meta: Option<Meta>,
 }
 
 impl SceneGraph {

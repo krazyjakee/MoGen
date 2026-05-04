@@ -144,7 +144,9 @@ impl MogenStudioApp {
             Some(k) => k,
             None => {
                 self.active_mut().status =
-                    "no Gemini API key — set one in Options… or export GEMINI_API_KEY".into();
+                    "texture generation requires a Gemini API key — set one in \
+                     Options… or export GEMINI_API_KEY"
+                        .into();
                 return;
             }
         };
@@ -157,7 +159,7 @@ impl MogenStudioApp {
             Some(m) if m.len() == 1 => {
                 format!("regenerating textures for \"{}\"…", m[0])
             }
-            _ => "generating textures with Gemini Image…".to_string(),
+            _ => "generating textures…".to_string(),
         };
         af.llm_progress = Some(LlmProgress::Status(banner.clone()));
         af.llm_started_at = Some(Instant::now());

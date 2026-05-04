@@ -1,6 +1,9 @@
-// mogen-generate seed=1777396758778793987
-// mogen-generate thinking=high
-// prompt: a hiker
+
+meta (
+  seed = "1777396758778793987",
+  thinking = "high",
+  prompt = "a hiker",
+)
 
 material "skin"        (color=[0.85, 0.65, 0.55], roughness=0.7)
 material "cloth"       (color=[0.55, 0.60, 0.45], roughness=0.85)

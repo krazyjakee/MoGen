@@ -72,7 +72,7 @@ impl ThinkingLevel {
     }
 
     /// Canonical lowercase key; round-trips through [`Self::parse`]. Used
-    /// when writing the `// mogen-generate thinking=…` DSL header.
+    /// when writing the file's `meta(thinking=…)` attribute.
     pub fn key(self) -> &'static str {
         match self {
             ThinkingLevel::Low => "low",

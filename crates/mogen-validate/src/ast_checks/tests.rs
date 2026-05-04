@@ -111,6 +111,110 @@ mod import_validator_tests {
     }
 }
 
+mod meta_block_tests {
+    use super::super::*;
+    use mogen_core::{Diagnostic, Severity};
+
+    fn diags_for(src: &str) -> Vec<Diagnostic> {
+        let ast = mogen_dsl::parse(src).expect("parse");
+        validate_ast(&ast)
+    }
+
+    #[test]
+    fn well_formed_meta_passes() {
+        let src = r#"
+            meta (
+              name = "chair",
+              version = "1.0",
+              mogen_version = ""#.to_string()
+            + env!("CARGO_PKG_VERSION")
+            + r#"",
+              description = "a chair",
+              tags = ["furniture", "wood"],
+            )
+            scene { box "b" (size=[1,1,1]) }
+        "#;
+        let diags = diags_for(&src);
+        assert!(
+            diags.iter().all(|d| d.severity != Severity::Error),
+            "well-formed meta should produce no errors, got {diags:?}"
+        );
+        // And no version-mismatch warning when mogen_version matches.
+        assert!(!diags.iter().any(|d| d.code == "W0107"), "got {diags:?}");
+    }
+
+    #[test]
+    fn meta_unknown_attr_warns() {
+        let src = r#"meta (foo="bar") scene {}"#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "W0102" && d.message.contains("\"foo\"")),
+            "unknown meta attr should warn W0102, got {diags:?}"
+        );
+    }
+
+    #[test]
+    fn meta_with_body_block_errors() {
+        // The grammar lets any node have a body block; the validator must
+        // reject it on `meta` since the metadata is attribute-only.
+        let src = r#"meta { box "b" (size=[1,1,1]) } scene {}"#;
+        let diags = diags_for(src);
+        assert!(diags.iter().any(|d| d.code == "E0310"), "got {diags:?}");
+    }
+
+    #[test]
+    fn meta_with_quoted_name_errors() {
+        let src = r#"meta "x" (version="1") scene {}"#;
+        let diags = diags_for(src);
+        assert!(diags.iter().any(|d| d.code == "E0311"), "got {diags:?}");
+    }
+
+    #[test]
+    fn duplicate_meta_errors() {
+        let src = r#"meta (name="a") meta (name="b") scene {}"#;
+        let diags = diags_for(src);
+        assert!(diags.iter().any(|d| d.code == "E0312"), "got {diags:?}");
+    }
+
+    #[test]
+    fn nested_meta_errors() {
+        let src = r#"scene { meta (name="x") box "b" (size=[1,1,1]) }"#;
+        let diags = diags_for(src);
+        assert!(diags.iter().any(|d| d.code == "E0313"), "got {diags:?}");
+    }
+
+    #[test]
+    fn version_mismatch_warns() {
+        let src = r#"meta (mogen_version = "0.0.0-other") scene {}"#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "W0107"),
+            "stale mogen_version should warn W0107, got {diags:?}"
+        );
+    }
+
+    #[test]
+    fn missing_meta_is_silent() {
+        // Optional metadata: no warning for files that omit the block entirely.
+        let diags = diags_for(r#"scene { box "b" (size=[1,1,1]) }"#);
+        assert!(
+            !diags.iter().any(|d| d.code == "W0107"),
+            "missing meta should not warn, got {diags:?}"
+        );
+    }
+
+    #[test]
+    fn tags_must_be_string_list() {
+        // Numeric items in tags should fail the list-of-string type check.
+        let src = r#"meta (tags=[1,2,3]) scene {}"#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "E0103"),
+            "numeric tags list should error E0103, got {diags:?}"
+        );
+    }
+}
+
 mod common_attr_scope_tests {
     use super::super::*;
     use mogen_core::{Diagnostic, Severity};

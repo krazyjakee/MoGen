@@ -16,7 +16,7 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use mogen_core::Diagnostic;
-use mogen_dsl::ast::Node;
+use mogen_dsl::ast::{Node, Value};
 
 pub use schema::{
     attrs_for_kind, common_attrs_for_kind, DECAL_COMMON_ATTRS, GEOMETRY_COMMON_ATTRS, KNOWN_KINDS,
@@ -53,10 +53,83 @@ pub fn validate_ast_with_source(ast: &[Node], base_dir: Option<&Path>) -> Vec<Di
         ImportResolution::Resolved => false,
         ImportResolution::Skipped => has_imports,
     };
+    check_meta_blocks(ast, &mut diags);
     for n in ast {
         walk(n, &materials, &modules, suppress_unknown_module, &mut diags);
     }
     diags
+}
+
+/// Validate position and uniqueness of `meta(...)` blocks. The body and attr
+/// checks live in the regular `walk` pass; this pre-pass handles the rules
+/// that can't be expressed locally.
+fn check_meta_blocks(ast: &[Node], diags: &mut Vec<Diagnostic>) {
+    let top_level: Vec<&Node> = ast.iter().filter(|n| n.kind == "meta").collect();
+    if top_level.len() > 1 {
+        for n in top_level.iter().skip(1) {
+            diags.push(
+                Diagnostic::error(
+                    "E0312",
+                    "duplicate `meta` block — only one is allowed per file",
+                )
+                .with_span(n.span),
+            );
+        }
+    }
+    if let Some(meta) = top_level.first() {
+        check_meta_version(meta, diags);
+    }
+    // Reject `meta` nested inside any block.
+    for n in ast {
+        for c in &n.children {
+            scan_nested_meta(c, diags);
+        }
+    }
+}
+
+fn scan_nested_meta(n: &Node, diags: &mut Vec<Diagnostic>) {
+    if n.kind == "meta" {
+        diags.push(
+            Diagnostic::error(
+                "E0313",
+                "`meta` is only allowed at the top level of a file",
+            )
+            .with_span(n.span),
+        );
+    }
+    for c in &n.children {
+        scan_nested_meta(c, diags);
+    }
+}
+
+/// Warn (not error) when the file's `mogen_version` differs from the version
+/// of the toolchain running the validator. Old files keep building; the
+/// warning nudges authors to refresh.
+fn check_meta_version(meta: &Node, diags: &mut Vec<Diagnostic>) {
+    let current = env!("CARGO_PKG_VERSION");
+    let stamped = meta.attrs.iter().find_map(|(k, v)| {
+        if k != "mogen_version" {
+            return None;
+        }
+        match v {
+            Value::String(s) | Value::Ident(s) => Some(s.as_str()),
+            _ => None,
+        }
+    });
+    if let Some(v) = stamped {
+        if v != current {
+            diags.push(
+                Diagnostic::warning(
+                    "W0107",
+                    format!(
+                        "`meta.mogen_version = \"{v}\"` does not match the running mogen \
+                         toolchain (\"{current}\"); the file will be re-stamped on next save"
+                    ),
+                )
+                .with_span(meta.span),
+            );
+        }
+    }
 }
 
 fn walk(
@@ -110,6 +183,27 @@ fn walk(
                     .with_span(n.span),
                 );
             }
+        }
+        "meta" => {
+            if n.name.is_some() {
+                diags.push(
+                    Diagnostic::error(
+                        "E0311",
+                        "`meta` does not take a quoted name — use `meta (name=\"...\")` instead",
+                    )
+                    .with_span(n.span),
+                );
+            }
+            if !n.children.is_empty() {
+                diags.push(
+                    Diagnostic::error(
+                        "E0310",
+                        "`meta` does not accept a body block — use `meta (...)` only",
+                    )
+                    .with_span(n.span),
+                );
+            }
+            check_attrs(n, materials, diags);
         }
         "import" => {
             if n.name.is_none() {

@@ -32,8 +32,8 @@ pub(crate) struct RepairArgs {
     pub cached_content: Option<String>,
     pub no_cache: bool,
     pub temperature: Option<f32>,
-    /// CLI override; `None` falls through to the file's `// mogen-generate
-    /// thinking=…` header, then the library default.
+    /// CLI override; `None` falls through to the file's
+    /// `meta(thinking=…)` attribute, then the library default.
     pub thinking: Option<ThinkingLevel>,
 }
 
@@ -147,6 +147,7 @@ pub(crate) fn repair(args: RepairArgs) -> Result<()> {
     };
 
     let wrapped = embed_seed_header(&outcome.dsl, seed, &header_prompt, Some(effective_thinking));
+    let wrapped = mogen_dsl::stamp_mogen_version(&wrapped, env!("CARGO_PKG_VERSION"));
 
     if !outcome.is_ok() {
         pb.abandon_with_message(format!(

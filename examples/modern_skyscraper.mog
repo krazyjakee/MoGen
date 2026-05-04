@@ -1,6 +1,9 @@
-// mogen-generate seed=1777326640335895818
-// mogen-generate thinking=high
-// prompt: modern skyscraper
+
+meta (
+  seed = "1777326640335895818",
+  thinking = "high",
+  prompt = "modern skyscraper",
+)
 
 material "glass" (color=[0.85, 0.90, 0.95], roughness=0.05, transmission=0.3, base_color_texture="textures/modern_skyscraper/glass_albedo.png", normal_texture="textures/modern_skyscraper/glass_normal.png", metallic_roughness_texture="textures/modern_skyscraper/glass_metallicRoughness.png", occlusion_texture="textures/modern_skyscraper/glass_ao.png")
 material "steel" (color=[0.20, 0.22, 0.25], metallic=0.9, roughness=0.2, base_color_texture="textures/modern_skyscraper/steel_albedo.png", normal_texture="textures/modern_skyscraper/steel_normal.png", metallic_roughness_texture="textures/modern_skyscraper/steel_metallicRoughness.png", occlusion_texture="textures/modern_skyscraper/steel_ao.png")

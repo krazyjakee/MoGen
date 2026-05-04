@@ -388,9 +388,9 @@ impl MogenStudioApp {
                 ui.add_space(12.0);
                 ui.heading("Thinking budget");
                 ui.label(
-                    "Cap on the model's hidden reasoning tokens per call (Gemini, OpenAI \
-                     reasoning models). Higher = better DSL on hard prompts but slower and \
-                     more expensive. Ignored by providers that don't expose a budget.",
+                    "Cap on the model's hidden reasoning tokens per call. Higher = \
+                     better DSL on hard prompts but slower and more expensive. \
+                     Ignored by providers / models that don't expose a budget.",
                 );
                 ui.add_space(6.0);
                 let current = self.settings.thinking_level();

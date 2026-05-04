@@ -31,8 +31,8 @@ pub(crate) struct ModifyArgs {
     pub cached_content: Option<String>,
     pub no_cache: bool,
     pub temperature: Option<f32>,
-    /// CLI override; `None` falls through to the file's `// mogen-generate
-    /// thinking=…` header, then the library default.
+    /// CLI override; `None` falls through to the file's
+    /// `meta(thinking=…)` attribute, then the library default.
     pub thinking: Option<ThinkingLevel>,
 }
 
@@ -51,8 +51,8 @@ pub(crate) fn modify(args: ModifyArgs) -> Result<()> {
         .or_else(|| parse_thinking_header(&existing))
         .unwrap_or(ThinkingLevel::High);
 
-    // Preserve the original `// prompt: …` header from the existing file so
-    // edits don't clobber the provenance line with the modify instruction.
+    // Preserve the original `meta(prompt=…)` from the existing file so edits
+    // don't clobber the provenance line with the modify instruction.
     let header_prompt = parse_prompt_header(&existing).unwrap_or_else(|| args.prompt.clone());
 
     // Resolve output paths up front so we can create their parent directories
@@ -105,7 +105,7 @@ parent=`/`child=`, `joint pivot=`, animation `target=`, and any `socket`/\
 `plug` that pointed at a removed connector.\n\n\
 Reply with ONLY the full modified DSL — no commentary, no markdown fences, \
 no diff markers. Emit the entire file, not just the changed region. Do not \
-include the `// mogen-generate` header comments; the caller re-adds them.\n\n\
+write a `meta(...)` block; the caller stamps it after generation.\n\n\
 Existing file:\n\n{existing}",
         existing = existing.trim_end(),
         mod_prompt = args.prompt.trim(),
@@ -149,6 +149,7 @@ Existing file:\n\n{existing}",
     };
 
     let wrapped = embed_seed_header(&outcome.dsl, seed, &header_prompt, Some(effective_thinking));
+    let wrapped = mogen_dsl::stamp_mogen_version(&wrapped, env!("CARGO_PKG_VERSION"));
 
     if !outcome.is_ok() {
         pb.abandon_with_message(format!(

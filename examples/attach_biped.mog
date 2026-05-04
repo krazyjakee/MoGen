@@ -1,6 +1,9 @@
-// mogen-generate seed=1776903446478943000
-// mogen-generate thinking=high
-// prompt: add a face
+
+meta (
+  seed = "1776903446478943000",
+  thinking = "high",
+  prompt = "add a face",
+)
 
 material "skin"  (color=[0.90, 0.75, 0.62], roughness=0.7, base_color_texture="textures/skin_albedo.png", normal_texture="textures/skin_normal.png", metallic_roughness_texture="textures/skin_metallicRoughness.png", occlusion_texture="textures/skin_ao.png")
 material "cloth" (color=[0.25, 0.35, 0.60], roughness=0.9, base_color_texture="textures/cloth_albedo.png", normal_texture="textures/cloth_normal.png", metallic_roughness_texture="textures/cloth_metallicRoughness.png", occlusion_texture="textures/cloth_ao.png")

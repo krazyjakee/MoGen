@@ -1,6 +1,9 @@
-// mogen-generate seed=1777210708197092759
-// mogen-generate thinking=medium
-// prompt: A detailed royal medieval sword commands presence with an elongated, tapered silhouette and a hilt of burnished gold that radiates the solemn authority of a High Middle Ages coronation. The blade glimmers with the smoky, rippling patterns of Damascus steel, while the heavy disc pommel is inlaid with deep crimson rubies and navy enamel that catch the flickering torchlight of a stone throne room.
+
+meta (
+  seed = "1777210708197092759",
+  thinking = "medium",
+  prompt = "A detailed royal medieval sword commands presence with an elongated, tapered silhouette and a hilt of burnished gold that radiates the solemn authority of a High Middle Ages coronation. The blade glimmers with the smoky, rippling patterns of Damascus steel, while the heavy disc pommel is inlaid with deep crimson rubies and navy enamel that catch the flickering torchlight of a stone throne room.",
+)
 
 material "damascus_steel" (color=[0.35, 0.35, 0.38], metallic=1.0, roughness=0.3)
 material "gold"           (color=[0.85, 0.65, 0.15], metallic=1.0, roughness=0.2)

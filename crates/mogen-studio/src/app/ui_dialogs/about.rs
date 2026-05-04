@@ -25,7 +25,7 @@ impl MogenStudioApp {
                 ui.label(
                     "Desktop frontend for the MoGen pipeline — compiles \
                      declarative .mog scenes into glTF 2.0 .glb assets, with \
-                     a live 3D preview and Gemini-driven generate / modify / \
+                     a live 3D preview and LLM-driven generate / modify / \
                      animate / texture flows.",
                 );
                 ui.add_space(10.0);

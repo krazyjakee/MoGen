@@ -102,6 +102,7 @@ pub(crate) fn generate(args: GenerateArgs) -> Result<()> {
     };
 
     let wrapped = embed_seed_header(&outcome.dsl, seed, &args.prompt, Some(effective_thinking));
+    let wrapped = mogen_dsl::stamp_mogen_version(&wrapped, env!("CARGO_PKG_VERSION"));
 
     if !outcome.is_ok() {
         pb.abandon_with_message(format!(

@@ -1,6 +1,9 @@
-// mogen-generate seed=1777238846576117514
-// mogen-generate thinking=high
-// prompt: broken window
+
+meta (
+  seed = "1777238846576117514",
+  thinking = "high",
+  prompt = "broken window",
+)
 
 material "wood_frame" (color=[0.85, 0.82, 0.78], roughness=0.9)
 material "glass" (color=[0.88, 0.92, 0.95], transmission=0.95, roughness=0.02)

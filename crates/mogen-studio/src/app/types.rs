@@ -28,6 +28,30 @@ pub(super) const UNDO_STACK_CAP: usize = 200;
 /// that an inspector DragValue burst is one undoable unit.
 pub(super) const UNDO_COALESCE_WINDOW: Duration = Duration::from_millis(500);
 
+/// A single text range used by the multi-caret machinery. Char-indexed so
+/// it composes with egui's `CCursor` API directly.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct CaretRange {
+    pub(super) lo: usize,
+    pub(super) hi: usize,
+}
+
+impl CaretRange {
+    pub(super) fn new(lo: usize, hi: usize) -> Self {
+        debug_assert!(lo <= hi);
+        Self { lo, hi }
+    }
+    pub(super) fn caret(at: usize) -> Self {
+        Self { lo: at, hi: at }
+    }
+    pub(super) fn is_caret(&self) -> bool {
+        self.lo == self.hi
+    }
+    pub(super) fn len(&self) -> usize {
+        self.hi - self.lo
+    }
+}
+
 /// One reversible source-text edit on a single tab. `before` / `after` are
 /// full snapshots — apply just writes one of them back to `FileState.source`
 /// and triggers the same recompile path a normal edit takes.
@@ -536,10 +560,10 @@ impl Default for TextureUiConfig {
 }
 
 /// One image attached to a Generate prompt (image-to-3D). The `path` is kept
-/// only for display in the dialog and the `// prompt:` header; the bytes are
-/// what flow to Gemini as `inline_data`. `thumbnail` is loaded once when the
-/// user picks the file so the dialog can render a preview without re-decoding
-/// every frame; it is dropped before the worker thread starts.
+/// only for display in the dialog and the `meta(prompt=…)` stamp; the bytes
+/// are what flow to Gemini as `inline_data`. `thumbnail` is loaded once when
+/// the user picks the file so the dialog can render a preview without
+/// re-decoding every frame; it is dropped before the worker thread starts.
 #[derive(Clone)]
 pub(super) struct GenImageInput {
     pub(super) path: PathBuf,
@@ -743,6 +767,13 @@ pub(super) struct FileState {
     /// selection changes so clicking a leg in 3D jumps the editor caret.
     pub(super) pending_caret: Option<usize>,
 
+    /// VS Code–style additional selections layered on top of the TextEdit's
+    /// own primary cursor. Cmd+D pushes the prior primary range here and
+    /// advances the primary to the next occurrence; subsequent typing /
+    /// deletion is fan-out across every range. Char indices into `source`,
+    /// always sorted low → high (`lo <= hi`); `lo == hi` is a bare caret.
+    pub(super) extra_carets: Vec<CaretRange>,
+
     /// Per-tab undo / redo stack covering programmatic source mutations
     /// (gizmo drags, inspector transform writes). The code editor's TextEdit
     /// keeps its own native history for typed source edits and is NOT pushed
@@ -783,6 +814,7 @@ impl FileState {
             last_edit_at: None,
             needs_compile: false,
             pending_caret: None,
+            extra_carets: Vec::new(),
             undo: UndoStack::default(),
             status: "new scene".into(),
         }
@@ -825,6 +857,7 @@ impl FileState {
             last_edit_at: None,
             needs_compile: false,
             pending_caret: None,
+            extra_carets: Vec::new(),
             undo: UndoStack::default(),
             status,
         }

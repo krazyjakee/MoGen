@@ -1,6 +1,9 @@
-// mogen-generate seed=1777171693478907000
-// mogen-generate thinking=high
-// prompt: A high detail dutch windmill rises with a sturdy, octagonal silhouette of weathered red brick and dark thatch, its massive timber sails casting long shadows across a misty 17th-century polder. The structure exudes a rustic, industrious mood through its moss-edged masonry, salt-bleached wood grain, and heavy cream-colored canvas stretched over intricate lattice arms.
+
+meta (
+  seed = "1777171693478907000",
+  thinking = "high",
+  prompt = "A high detail dutch windmill rises with a sturdy, octagonal silhouette of weathered red brick and dark thatch, its massive timber sails casting long shadows across a misty 17th-century polder. The structure exudes a rustic, industrious mood through its moss-edged masonry, salt-bleached wood grain, and heavy cream-colored canvas stretched over intricate lattice arms.",
+)
 
 material "brick" (color=[0.55, 0.28, 0.22], roughness=0.9, uv_mode="tile", uv_scale=[0.4, 0.4], base_color_texture="textures/windmill/brick_albedo.png", normal_texture="textures/windmill/brick_normal.png", metallic_roughness_texture="textures/windmill/brick_metallicRoughness.png", occlusion_texture="textures/windmill/brick_ao.png")
 material "thatch" (color=[0.22, 0.18, 0.14], roughness=0.95, base_color_texture="textures/windmill/thatch_albedo.png", normal_texture="textures/windmill/thatch_normal.png", metallic_roughness_texture="textures/windmill/thatch_metallicRoughness.png", occlusion_texture="textures/windmill/thatch_ao.png", uv_scale=[0.3, 0.3])

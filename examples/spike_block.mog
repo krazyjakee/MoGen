@@ -1,5 +1,8 @@
-// mogen-generate seed=1776943179019951452
-// prompt: make the center cube yellow
+
+meta (
+  seed = "1776943179019951452",
+  prompt = "make the center cube yellow",
+)
 
 material "spike_mat" (color=[0.8, 0.8, 0.8], metallic=0.8, roughness=0.2)
 material "yellow" (color=[1.0, 0.9, 0.1], roughness=0.5)

@@ -189,7 +189,7 @@ pub(in crate::app) fn run_llm_textures(
 
     match splice_textures(&src, &edits) {
         Ok(new_src) => LlmOutcome {
-            dsl: new_src,
+            dsl: mogen_dsl::stamp_mogen_version(&new_src, env!("CARGO_PKG_VERSION")),
             diagnostics: Vec::new(),
             usage: Usage::default(),
             calls: edits.len() as u32,
