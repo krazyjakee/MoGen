@@ -21,13 +21,6 @@
 .env.*
 !.env.example
 
-# OAuth client secrets — must NOT be checked in. Use oauth_client.example.json
-# as the template and place the populated copy at ~/.cache/mogen/oauth_client.json
-# (or wherever MOGEN_OAUTH_CLIENT points). See README "Sign in with a paid
-# Gemini account" for setup.
-oauth_client.json
-**/oauth_client.json
-
 # Logs
 *.log
 

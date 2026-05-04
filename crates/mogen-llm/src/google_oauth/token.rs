@@ -100,10 +100,9 @@ pub fn refresh_against(
     now_unix: u64,
     token_url: &str,
 ) -> Result<(), OAuthError> {
-    let secrets = client::load_client_secrets()?;
     let form = [
-        ("client_id", secrets.client_id.as_str()),
-        ("client_secret", secrets.client_secret.as_str()),
+        ("client_id", client::CLIENT_ID),
+        ("client_secret", client::CLIENT_SECRET),
         ("refresh_token", bundle.refresh_token.as_str()),
         ("grant_type", "refresh_token"),
     ];

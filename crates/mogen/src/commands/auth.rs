@@ -1,18 +1,15 @@
 //! `mogen auth` — Google OAuth login/status/logout.
 //!
-//! Targets a Google OAuth desktop client (see
-//! [`mogen_llm::google_oauth::client`]) so a paid Pro account holder can use
-//! `mogen generate` against `gemini-3-pro-preview` without a billing-enabled
-//! API key. The bearer token authenticates against
+//! Targets Google's public Gemini CLI OAuth desktop client (baked into
+//! [`mogen_llm::google_oauth::client`]) so a paid Pro account holder can
+//! use `mogen generate` against `gemini-3-pro-preview` without a
+//! billing-enabled API key. The bearer token authenticates against
 //! `cloudcode-pa.googleapis.com/v1internal:generateContent` — a separate
-//! surface from the public `generativelanguage.googleapis.com` API-key path.
+//! surface from the public `generativelanguage.googleapis.com` API-key
+//! path.
 //!
-//! Setup: zero by default. `mogen` ships with the same public Gemini CLI
-//! OAuth client the official Google Gemini CLI uses, so `mogen auth login`
-//! works out of the box. Power users can drop a populated `oauth_client.json`
-//! in `~/.mogen/` (or set `MOGEN_OAUTH_CLIENT`) to point `mogen` at a
-//! different OAuth client (e.g. Antigravity, or a custom Cloud Console
-//! desktop client).
+//! Zero setup: `mogen auth login` works out of the box. The login flow
+//! writes `~/.mogen/google_auth.json`; `logout` deletes it.
 
 use std::time::Duration;
 
@@ -232,11 +229,6 @@ fn login_anyhow(err: OAuthError) -> anyhow::Error {
         OAuthError::MissingProject => Some(
             "no Google Cloud project came back from loadCodeAssist — your \
              account may not be enrolled. Set GEMINI_API_KEY as a fallback",
-        ),
-        OAuthError::MissingClientSecrets { .. } => Some(
-            "your `oauth_client.json` override is unreadable; either fix the \
-             file or remove it to fall back to the bundled Gemini CLI client \
-             (see README \"Sign in with a paid Gemini account\")",
         ),
         _ => None,
     };

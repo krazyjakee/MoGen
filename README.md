@@ -187,29 +187,6 @@ OAuth-mode requests go to `cloudcode-pa.googleapis.com/v1internal:generateConten
 on the user's own Cloud project (discovered via `loadCodeAssist`); the public
 `generativelanguage.googleapis.com` API is not used in this mode.
 
-**Bring your own OAuth client (optional).** Power users can override the
-bundled credentials by dropping a populated `oauth_client.json` somewhere in
-the resolution chain:
-
-1. `$MOGEN_OAUTH_CLIENT` (full path to the JSON file)
-2. `$MOGEN_CACHE_DIR/oauth_client.json`
-3. `~/.mogen/oauth_client.json` (e.g. `C:\Users\<you>\.mogen\oauth_client.json`)
-4. `~/.cache/mogen/oauth_client.json` (legacy)
-5. `%LOCALAPPDATA%\mogen\oauth_client.json` (legacy, Windows)
-
-```json
-{
-  "client_id": "1234567890-xxxxx.apps.googleusercontent.com",
-  "client_secret": "GOCSPX-xxxxx"
-}
-```
-
-The redirect URI registered for that client must be
-`http://localhost:51121/oauth-callback`, and the client must allow the three
-scopes `cloud-platform`, `userinfo.email`, `userinfo.profile`. A file present
-but containing the `REPLACE_ME` placeholders from `oauth_client.example.json`
-is treated as "no override" and the bundled defaults are used.
-
 **Caveats.** The bundled OAuth client is Google's published Gemini CLI client.
 It's stable but Google could rotate it; keep `GEMINI_API_KEY` available as a
 fallback. Image generation (`mogen textures`) defaults to API-key only — pass

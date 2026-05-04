@@ -12,38 +12,19 @@
 //! 2. 4xx with `error=invalid_grant` → mapped to `OAuthError::Revoked` so
 //!    the CLI surfaces a "credentials revoked, run `mogen auth login
 //!    --force`" message.
+//!
+//! `refresh_against` uses the bundled
+//! `google_oauth::client::CLIENT_ID`/`CLIENT_SECRET` constants directly, so
+//! tests don't need to stage an override file or touch env vars — the mock
+//! server doesn't validate form-field values, only that the right keys are
+//! present.
 
 use std::io::Read as _;
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 use mogen_llm::google_oauth::token::refresh_against;
 use mogen_llm::{OAuthBundle, OAuthError};
-
-/// `refresh_against` reads OAuth client secrets from a JSON file at the
-/// path resolved from `MOGEN_OAUTH_CLIENT`. Tests don't ship one, so we
-/// write a throwaway file once per test binary and point the env var at it.
-/// The mock `tiny_http` server doesn't validate the form fields, so the
-/// values themselves are irrelevant — only their *presence* matters.
-fn ensure_oauth_client_env() -> &'static PathBuf {
-    static SETUP: OnceLock<PathBuf> = OnceLock::new();
-    SETUP.get_or_init(|| {
-        let dir = std::env::temp_dir().join(format!(
-            "mogen-test-oauth-{}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&dir).expect("create temp dir for oauth_client.json");
-        let path = dir.join("oauth_client.json");
-        std::fs::write(
-            &path,
-            r#"{"client_id":"test-client-id","client_secret":"test-secret"}"#,
-        )
-        .expect("write oauth_client.json fixture");
-        std::env::set_var("MOGEN_OAUTH_CLIENT", &path);
-        path
-    })
-}
 
 struct TokenServer {
     base: String,
@@ -99,7 +80,6 @@ fn fixture(refresh_token: &str) -> OAuthBundle {
 fn test_refresh_against_200_response_updates_access_token_and_expiry() {
     // Arrange: server returns a fresh access token + 3600s lifetime + a
     // rotated refresh token + scope echo.
-    ensure_oauth_client_env();
     let body = r#"{
         "access_token": "ya29.NEW",
         "refresh_token": "1//ROTATED",
@@ -142,7 +122,6 @@ fn test_refresh_against_200_response_updates_access_token_and_expiry() {
 fn test_refresh_against_200_response_keeps_existing_refresh_token_when_omitted() {
     // Some 200 responses do not rotate the refresh token. The bundle's
     // existing `refresh_token` must survive the refresh.
-    ensure_oauth_client_env();
     let body = r#"{
         "access_token": "ya29.NEW",
         "expires_in": 3600,
@@ -162,7 +141,6 @@ fn test_refresh_against_200_response_keeps_existing_refresh_token_when_omitted()
 #[test]
 fn test_refresh_against_invalid_grant_response_maps_to_revoked() {
     // Arrange: server returns the canonical revoked-credential body.
-    ensure_oauth_client_env();
     let body = r#"{
         "error": "invalid_grant",
         "error_description": "Token has been expired or revoked."
@@ -187,7 +165,6 @@ fn test_refresh_against_other_4xx_response_propagates_status_and_message() {
     // Arrange: a non-`invalid_grant` 4xx (e.g. quota exhaustion or rate
     // limit) must propagate as TokenExchange so the CLI shows the upstream
     // status + message instead of misleadingly claiming "revoked".
-    ensure_oauth_client_env();
     let body = r#"{"error":"rate_limit_exceeded","error_description":"slow down"}"#;
     let server = TokenServer::start(429, body);
     let http = reqwest::blocking::Client::new();
