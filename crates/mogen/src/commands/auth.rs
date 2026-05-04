@@ -7,18 +7,19 @@
 //! `cloudcode-pa.googleapis.com/v1internal:generateContent` — a separate
 //! surface from the public `generativelanguage.googleapis.com` API-key path.
 //!
-//! Setup: `mogen` reads its OAuth client_id / client_secret from a JSON file
-//! at runtime (see `oauth_client.example.json` and the README's "Sign in with
-//! a paid Gemini account" section). The credentials are deliberately not
-//! shipped with `mogen` — users supply their own (Antigravity desktop client
-//! values, or a custom Google Cloud Console desktop OAuth client).
+//! Setup: zero by default. `mogen` ships with the same public Gemini CLI
+//! OAuth client the official Google Gemini CLI uses, so `mogen auth login`
+//! works out of the box. Power users can drop a populated `oauth_client.json`
+//! in `~/.mogen/` (or set `MOGEN_OAUTH_CLIENT`) to point `mogen` at a
+//! different OAuth client (e.g. Antigravity, or a custom Cloud Console
+//! desktop client).
 
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use mogen_llm::{
-    delete_bundle, load_bundle, run_login_flow, save_bundle, token_store_path, LoginOptions,
-    OAuthError,
+    all_existing_token_paths, delete_bundle, load_bundle, run_login_flow, save_bundle,
+    token_store_path, token_store_write_path, LoginOptions, OAuthError,
 };
 
 /// Subcommand surface mirrored from `clap` in `main.rs`.
@@ -45,12 +46,18 @@ pub(crate) fn dispatch(cmd: AuthCmd) -> Result<()> {
 }
 
 fn login(force: bool, no_browser: bool, timeout_secs: u64) -> Result<()> {
-    let path = token_store_path()
+    // Read path may surface an existing token at a legacy location
+    // (`~/.cache/mogen/`); the write path is always the canonical
+    // `~/.mogen/google_auth.json`. New logins always land canonical so
+    // legacy files quietly become orphans and get cleaned up by logout.
+    let read_path = token_store_path()
         .context("cannot determine token store location (set MOGEN_CACHE_DIR)")?;
+    let write_path = token_store_write_path()
+        .context("cannot determine token store write location (set MOGEN_CACHE_DIR)")?;
 
     if !force {
-        if let Some(existing) = load_bundle(&path)
-            .with_context(|| format!("reading {}", path.display()))?
+        if let Some(existing) = load_bundle(&read_path)
+            .with_context(|| format!("reading {}", read_path.display()))?
         {
             let who = existing
                 .email
@@ -69,7 +76,7 @@ fn login(force: bool, no_browser: bool, timeout_secs: u64) -> Result<()> {
 
     eprintln!(
         "mogen auth: opening Google sign-in. If sign-in fails, set \
-         GEMINI_API_KEY instead, or check oauth_client.json (see README)."
+         GEMINI_API_KEY as a fallback (see README)."
     );
 
     let opts = LoginOptions {
@@ -89,8 +96,15 @@ fn login(force: bool, no_browser: bool, timeout_secs: u64) -> Result<()> {
         );
     }
 
-    save_bundle(&path, &outcome.bundle)
-        .with_context(|| format!("saving {}", path.display()))?;
+    save_bundle(&write_path, &outcome.bundle)
+        .with_context(|| format!("saving {}", write_path.display()))?;
+
+    // If we saved to the canonical path but the user had a legacy token
+    // at a different path, clean that up so future reads don't accidentally
+    // surface stale credentials from `~/.cache/mogen/` or `%LOCALAPPDATA%`.
+    if read_path != write_path && read_path.exists() {
+        let _ = delete_bundle(&read_path);
+    }
 
     let who = outcome
         .bundle
@@ -104,7 +118,7 @@ fn login(force: bool, no_browser: bool, timeout_secs: u64) -> Result<()> {
         .unwrap_or("(no project)");
     println!(
         "Logged in as {who}. Project: {proj}. Token stored at {}.",
-        path.display()
+        write_path.display()
     );
     Ok(())
 }
@@ -171,15 +185,33 @@ fn status(verbose: bool) -> Result<()> {
 }
 
 fn logout() -> Result<()> {
-    let path = match token_store_path() {
-        Some(p) => p,
-        None => {
-            println!("No token store configured; nothing to remove.");
-            return Ok(());
+    // Walk every path the resolver knows about so logout cleans up
+    // canonical (`~/.mogen/`) AND legacy (`~/.cache/mogen/`,
+    // `%LOCALAPPDATA%\mogen\`) tokens — otherwise a stale legacy file
+    // would still authenticate after a "logout".
+    let paths = all_existing_token_paths();
+    if paths.is_empty() {
+        println!("Not logged in; nothing to remove.");
+        return Ok(());
+    }
+    let mut first_err: Option<anyhow::Error> = None;
+    for path in &paths {
+        match delete_bundle(path) {
+            Ok(()) => println!("Removed {}.", path.display()),
+            Err(err) => {
+                let wrapped = anyhow::Error::new(err)
+                    .context(format!("removing {}", path.display()));
+                if first_err.is_none() {
+                    first_err = Some(wrapped);
+                } else {
+                    eprintln!("warning: failed to remove {}", path.display());
+                }
+            }
         }
-    };
-    delete_bundle(&path).with_context(|| format!("removing {}", path.display()))?;
-    println!("Removed {} (if it existed).", path.display());
+    }
+    if let Some(err) = first_err {
+        return Err(err);
+    }
     Ok(())
 }
 
@@ -202,9 +234,9 @@ fn login_anyhow(err: OAuthError) -> anyhow::Error {
              account may not be enrolled. Set GEMINI_API_KEY as a fallback",
         ),
         OAuthError::MissingClientSecrets { .. } => Some(
-            "create oauth_client.json with your Google OAuth desktop client \
-             credentials (see oauth_client.example.json and the README \
-             \"Sign in with a paid Gemini account\" section)",
+            "your `oauth_client.json` override is unreadable; either fix the \
+             file or remove it to fall back to the bundled Gemini CLI client \
+             (see README \"Sign in with a paid Gemini account\")",
         ),
         _ => None,
     };

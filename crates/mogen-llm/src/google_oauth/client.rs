@@ -1,10 +1,17 @@
 //! OAuth client configuration.
 //!
-//! The Google OAuth `client_id` / `client_secret` are **not** baked into the
-//! source tree — they're loaded from a small JSON file at runtime. This keeps
-//! third-party-extracted Antigravity credentials out of the repo (and out of
-//! GitHub's secret-scanning grasp) while still letting users wire `mogen` up
-//! to any Google OAuth client they like.
+//! `mogen` ships with default OAuth credentials that point at Google's
+//! published Gemini CLI desktop client (the same `client_id` /
+//! `client_secret` baked into <https://github.com/google-gemini/gemini-cli>
+//! and other open-source plugins like
+//! <https://github.com/jenslys/opencode-gemini-auth>). Out of the box,
+//! `mogen auth login` works with no setup: the user clicks through the
+//! standard Google consent screen and we get a token back.
+//!
+//! Users who want to point `mogen` at their own OAuth client (custom
+//! Cloud Console desktop client, the Antigravity client, etc.) can drop a
+//! populated `oauth_client.json` somewhere in the resolution chain below
+//! and that file overrides the compiled-in defaults.
 //!
 //! Path resolution (first hit wins):
 //!
@@ -23,9 +30,6 @@
 //!
 //! Everything else (scopes, redirect URI, endpoint hosts, telemetry headers)
 //! is non-secret and stays as `pub const` below.
-//!
-//! See `oauth_client.example.json` and the README's "Sign in with a paid
-//! Gemini account" section for setup instructions.
 
 use std::path::PathBuf;
 
@@ -33,13 +37,25 @@ use serde::Deserialize;
 
 use super::OAuthError;
 
-/// Whitespace-separated OAuth scope list. Same order as Antigravity requests
-/// so the consent screen looks identical.
+/// Whitespace-separated OAuth scope list. Matches Google's Gemini CLI
+/// (the default client we ship): three scopes, no telemetry/experiments.
+/// If a user supplies their own OAuth client via `oauth_client.json`,
+/// the consent screen will still ask for these three scopes — register
+/// them when creating the client.
 pub const SCOPES: &str = "https://www.googleapis.com/auth/cloud-platform \
                           https://www.googleapis.com/auth/userinfo.email \
-                          https://www.googleapis.com/auth/userinfo.profile \
-                          https://www.googleapis.com/auth/cclog \
-                          https://www.googleapis.com/auth/experimentsandconfigs";
+                          https://www.googleapis.com/auth/userinfo.profile";
+
+/// Default `client_id` — Google's published Gemini CLI desktop client.
+/// Same value baked into <https://github.com/google-gemini/gemini-cli>.
+/// Overridden by a populated `oauth_client.json` if one is present.
+pub const DEFAULT_CLIENT_ID: &str =
+    "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com";
+
+/// Default `client_secret` paired with [`DEFAULT_CLIENT_ID`]. Public
+/// (Google's open-source Gemini CLI ships it in plain text); not a real
+/// secret in the security sense, just paired identifier material.
+pub const DEFAULT_CLIENT_SECRET: &str = "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";
 
 /// Loopback redirect URI port. Fixed by Google's OAuth client registration —
 /// you cannot pick another port.
@@ -99,23 +115,90 @@ pub struct ClientSecrets {
     pub client_secret: String,
 }
 
+/// Whether [`resolve_user_path`] is being asked for a path to *read* an
+/// existing file (try legacy locations) or to *write* a new file (always
+/// use the canonical `~/.mogen/` location, regardless of what's on disk).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PathMode {
+    Read,
+    Write,
+}
+
 /// Resolve the JSON path used by [`load_client_secrets`]. Mirrors
 /// [`super::store::token_store_path`] but for the client-secrets file.
 pub fn client_secrets_path() -> Option<PathBuf> {
-    resolve_user_path(CLIENT_SECRETS_FILENAME, "MOGEN_OAUTH_CLIENT")
+    resolve_user_path(CLIENT_SECRETS_FILENAME, "MOGEN_OAUTH_CLIENT", PathMode::Read)
 }
 
-/// Walk the standard `mogen`-owned directory chain, returning the first
-/// candidate path for `filename`. Used for both the OAuth client secrets
-/// file and the token store so they end up next to each other in
-/// `~/.mogen/`.
+/// Walk all candidate `mogen`-owned directories, returning every existing
+/// `filename` location. Used by `mogen auth logout` to clean up legacy
+/// installs that wrote tokens to `~/.cache/mogen/` or `%LOCALAPPDATA%`
+/// before the move to `~/.mogen/`.
+pub fn all_existing_user_paths(filename: &str, file_override_var: &str) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    if let Ok(p) = std::env::var(file_override_var) {
+        if !p.trim().is_empty() {
+            let path = PathBuf::from(p);
+            if path.exists() {
+                out.push(path);
+            }
+        }
+    }
+    if let Ok(dir) = std::env::var("MOGEN_CACHE_DIR") {
+        if !dir.trim().is_empty() {
+            let path = PathBuf::from(dir).join(filename);
+            if path.exists() && !out.contains(&path) {
+                out.push(path);
+            }
+        }
+    }
+    let home_candidate = std::env::var("HOME")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .or_else(|| {
+            std::env::var("USERPROFILE")
+                .ok()
+                .filter(|v| !v.trim().is_empty())
+        });
+    if let Some(home) = home_candidate.as_deref() {
+        for dir in [".mogen", ".cache/mogen"] {
+            let mut p = PathBuf::from(home);
+            for seg in dir.split('/') {
+                p.push(seg);
+            }
+            p.push(filename);
+            if p.exists() && !out.contains(&p) {
+                out.push(p);
+            }
+        }
+    }
+    if let Ok(localapp) = std::env::var("LOCALAPPDATA") {
+        if !localapp.trim().is_empty() {
+            let p = PathBuf::from(localapp).join("mogen").join(filename);
+            if p.exists() && !out.contains(&p) {
+                out.push(p);
+            }
+        }
+    }
+    out
+}
+
+/// Resolve a `mogen`-owned file path. In [`PathMode::Read`] mode, prefers
+/// the canonical `~/.mogen/{filename}` but falls back to legacy
+/// `~/.cache/mogen/` and `%LOCALAPPDATA%\mogen\` if the canonical file
+/// doesn't exist yet (lets existing installs keep working after the move
+/// to `~/.mogen/`). In [`PathMode::Write`] mode, skips the existence
+/// checks and goes straight to the canonical target so new logins always
+/// land in `~/.mogen/`.
 ///
 /// `file_override_var` (e.g. `MOGEN_OAUTH_CLIENT`) supplies an absolute
-/// path override; `MOGEN_CACHE_DIR` overrides the directory. Otherwise the
-/// chain is `~/.mogen/`, then `~/.cache/mogen/` and `%LOCALAPPDATA%\mogen\`
-/// as legacy fallbacks (so existing installs keep working after the move
-/// to `~/.mogen/`).
-pub fn resolve_user_path(filename: &str, file_override_var: &str) -> Option<PathBuf> {
+/// path override; `MOGEN_CACHE_DIR` overrides the directory. Both are
+/// honoured in either mode.
+pub fn resolve_user_path(
+    filename: &str,
+    file_override_var: &str,
+    mode: PathMode,
+) -> Option<PathBuf> {
     if let Ok(p) = std::env::var(file_override_var) {
         if !p.trim().is_empty() {
             return Some(PathBuf::from(p));
@@ -134,26 +217,28 @@ pub fn resolve_user_path(filename: &str, file_override_var: &str) -> Option<Path
                 .ok()
                 .filter(|v| !v.trim().is_empty())
         });
-    if let Some(home) = home_candidate.as_deref() {
-        let dotdir = PathBuf::from(home).join(".mogen").join(filename);
-        if dotdir.exists() {
-            return Some(dotdir);
-        }
-        let legacy = PathBuf::from(home).join(".cache").join("mogen").join(filename);
-        if legacy.exists() {
-            return Some(legacy);
-        }
-    }
-    if let Ok(localapp) = std::env::var("LOCALAPPDATA") {
-        if !localapp.trim().is_empty() {
-            let legacy = PathBuf::from(localapp).join("mogen").join(filename);
+    if mode == PathMode::Read {
+        if let Some(home) = home_candidate.as_deref() {
+            let dotdir = PathBuf::from(home).join(".mogen").join(filename);
+            if dotdir.exists() {
+                return Some(dotdir);
+            }
+            let legacy = PathBuf::from(home).join(".cache").join("mogen").join(filename);
             if legacy.exists() {
                 return Some(legacy);
             }
         }
+        if let Ok(localapp) = std::env::var("LOCALAPPDATA") {
+            if !localapp.trim().is_empty() {
+                let legacy = PathBuf::from(localapp).join("mogen").join(filename);
+                if legacy.exists() {
+                    return Some(legacy);
+                }
+            }
+        }
     }
-    // Nothing on disk yet — return the canonical write target so callers
-    // that *create* the file (token-store save) land in `~/.mogen/`.
+    // Canonical write target (also the read-mode fallback when nothing is
+    // on disk yet): `~/.mogen/{filename}`.
     if let Some(home) = home_candidate {
         return Some(PathBuf::from(home).join(".mogen").join(filename));
     }
@@ -165,31 +250,52 @@ pub fn resolve_user_path(filename: &str, file_override_var: &str) -> Option<Path
     None
 }
 
-/// Read and parse the client secrets JSON. Re-reads on every call — the file
-/// is small and the call sites (login, refresh, code exchange) run at most
-/// hourly. Errors are surfaced as [`OAuthError::MissingClientSecrets`] with
-/// enough detail for the CLI / Studio to point users at the README.
+/// Resolve the OAuth client credentials. Tries the user-supplied
+/// `oauth_client.json` first (path resolution above); when no usable file
+/// is present, falls back to the compiled-in [`DEFAULT_CLIENT_ID`] /
+/// [`DEFAULT_CLIENT_SECRET`] (Google's public Gemini CLI client).
+///
+/// "Usable" means: file exists, parses as JSON, and both fields are
+/// non-empty and not still set to the `REPLACE_ME` placeholders shipped
+/// in `oauth_client.example.json`. A file that exists but parses badly
+/// (or has the wrong type) errors hard so the user notices — silently
+/// dropping back to defaults would mask their override attempt.
 pub fn load_client_secrets() -> Result<ClientSecrets, OAuthError> {
-    let path = client_secrets_path().ok_or_else(|| OAuthError::MissingClientSecrets {
-        path: None,
-        reason: "no MOGEN_OAUTH_CLIENT, MOGEN_CACHE_DIR, HOME, LOCALAPPDATA, or \
-                USERPROFILE set; cannot locate oauth_client.json"
-            .into(),
-    })?;
-    let bytes = std::fs::read(&path).map_err(|e| OAuthError::MissingClientSecrets {
-        path: Some(path.clone()),
-        reason: format!("read failed: {e}"),
-    })?;
-    let parsed: ClientSecrets =
-        serde_json::from_slice(&bytes).map_err(|e| OAuthError::MissingClientSecrets {
-            path: Some(path.clone()),
-            reason: format!("invalid JSON: {e}"),
-        })?;
-    if parsed.client_id.trim().is_empty() || parsed.client_secret.trim().is_empty() {
-        return Err(OAuthError::MissingClientSecrets {
-            path: Some(path),
-            reason: "client_id or client_secret is empty".into(),
-        });
+    if let Some(path) = client_secrets_path() {
+        match std::fs::read(&path) {
+            Ok(bytes) => {
+                let parsed: ClientSecrets = serde_json::from_slice(&bytes).map_err(|e| {
+                    OAuthError::MissingClientSecrets {
+                        path: Some(path.clone()),
+                        reason: format!("invalid JSON: {e}"),
+                    }
+                })?;
+                let id = parsed.client_id.trim();
+                let secret = parsed.client_secret.trim();
+                if !id.is_empty()
+                    && !secret.is_empty()
+                    && !id.contains("REPLACE_ME")
+                    && !secret.contains("REPLACE_ME")
+                {
+                    return Ok(parsed);
+                }
+                // File is a placeholder copy of `oauth_client.example.json`;
+                // fall through to compiled-in defaults so the user still gets
+                // a working login flow.
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                // No override file — fall through to defaults.
+            }
+            Err(err) => {
+                return Err(OAuthError::MissingClientSecrets {
+                    path: Some(path),
+                    reason: format!("read failed: {err}"),
+                });
+            }
+        }
     }
-    Ok(parsed)
+    Ok(ClientSecrets {
+        client_id: DEFAULT_CLIENT_ID.to_string(),
+        client_secret: DEFAULT_CLIENT_SECRET.to_string(),
+    })
 }
