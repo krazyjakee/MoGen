@@ -112,6 +112,15 @@ pub(super) fn classify(err: &ProviderError) -> LlmErrorInfo {
             class: LlmErrorClass::BadRequest,
             retryable: false,
         },
+        ProviderError::OAuth(msg) => LlmErrorInfo {
+            headline: "Google sign-in error".into(),
+            detail: format!(
+                "{msg}. Run `mogen auth login` from a terminal, then retry. Setting \
+                 GEMINI_API_KEY also bypasses OAuth."
+            ),
+            class: LlmErrorClass::InvalidKey,
+            retryable: false,
+        },
     }
 }
 

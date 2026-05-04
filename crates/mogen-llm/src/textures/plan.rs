@@ -81,6 +81,12 @@ pub struct TexturesArgs {
     pub dry_run: bool,
     pub no_build: bool,
     pub api_key: Option<String>,
+    /// Probe the unverified Cloud Code Assist `v1internal` image surface when
+    /// only OAuth credentials are available. When `false` (default), the CLI
+    /// errors out before any HTTP call so OAuth users get a clear message
+    /// pointing at `GEMINI_API_KEY`. When `true`, [`crate::image`]'s OAuth
+    /// branch is exercised and any upstream error surfaces verbatim.
+    pub allow_oauth_image: bool,
     /// Disable every derived PBR map. Albedo still gets generated.
     pub no_pbr: bool,
     pub no_normal: bool,
@@ -107,6 +113,7 @@ impl TexturesArgs {
             dry_run: false,
             no_build: false,
             api_key: None,
+            allow_oauth_image: false,
             no_pbr: false,
             no_normal: false,
             no_metallic_roughness: false,

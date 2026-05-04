@@ -13,7 +13,7 @@ use super::types::{
     EnhanceInFlight, EnhanceTarget, LlmEvent, LlmEventTone, LlmKind, LlmMessage, LlmOutcome,
     LlmProgress, LLM_EVENT_CAP,
 };
-use super::util::{run_llm, run_llm_textures, run_prompt_enhance, LlmRunConfig};
+use super::util::{run_llm, run_llm_textures, run_prompt_enhance, Credential, LlmRunConfig};
 use super::MogenStudioApp;
 
 impl MogenStudioApp {
@@ -279,13 +279,14 @@ impl MogenStudioApp {
             return;
         }
         let provider = self.settings.provider();
-        let api_key = match self.resolve_api_key() {
-            Some(k) => k,
+        let credential = match self.resolve_credential() {
+            Some(c) => c,
             None => {
                 self.enhance_error = Some((
                     target,
                     format!(
-                        "no {} API key — set one in Edit → Preferences…",
+                        "no {} credential — set an API key in Edit → Preferences… \
+                         (Gemini also accepts `mogen auth login`)",
                         provider.label(),
                     ),
                 ));
@@ -314,7 +315,7 @@ impl MogenStudioApp {
                 target,
                 payload,
                 provider,
-                api_key,
+                credential,
                 model,
                 claude_code_path,
             );
@@ -414,30 +415,48 @@ impl MogenStudioApp {
         f.status = "llm: cancelled (background call may still finish but result is dropped)".into();
     }
 
-    /// Prefer a key saved in Options for the active provider; fall back to the
-    /// matching environment variable so existing shell-exported setups keep
-    /// working. For keyless providers (Ollama, Claude Code), returns
-    /// `Some(String::new())` even when neither setting nor env var is set so
-    /// callers can construct a keyless `LlmClient`.
-    pub(super) fn resolve_api_key(&self) -> Option<String> {
-        let provider = self.settings.provider();
+    /// Resolve the credential for the active provider slot. The slot dictates
+    /// which path is taken — there's no fallback between API-key and OAuth
+    /// auth for Gemini, picking the slot in Preferences is the explicit
+    /// choice.
+    ///
+    /// - `GeminiOAuth`: load the bundle from `google_auth.json`. No key
+    ///   fallback even when one is saved.
+    /// - `GeminiApiKey`: settings key → `GEMINI_API_KEY` env. No OAuth
+    ///   fallback — the user picked API-key on purpose.
+    /// - Other providers: settings key → env var → keyless empty key.
+    pub(super) fn resolve_credential(&self) -> Option<Credential> {
+        let slot = self.settings.provider_slot();
+        if slot.is_gemini_oauth() {
+            let path = mogen_llm::token_store_path()?;
+            let bundle = mogen_llm::load_bundle(&path).ok().flatten()?;
+            return Some(Credential::GeminiOAuth(bundle));
+        }
+        let provider = slot.to_provider();
         if let Some(k) = self.settings.provider_api_key() {
-            return Some(k.to_string());
+            return Some(Credential::ApiKey(k.to_string()));
         }
         let env_var = provider.env_var();
         if !env_var.is_empty() {
-            let env_key = std::env::var(env_var)
+            if let Some(k) = std::env::var(env_var)
                 .ok()
                 .map(|v| v.trim().to_string())
-                .filter(|v| !v.is_empty());
-            if env_key.is_some() {
-                return env_key;
+                .filter(|v| !v.is_empty())
+            {
+                return Some(Credential::ApiKey(k));
             }
         }
         if provider.is_keyless() {
-            return Some(String::new());
+            return Some(Credential::ApiKey(String::new()));
         }
         None
+    }
+
+    /// Back-compat shim that mirrors the old API-key surface for UI gating
+    /// (`has_key`-style booleans). Returns `Some(())` whenever a usable
+    /// credential exists — including a stored OAuth bundle for Gemini.
+    pub(super) fn resolve_api_key(&self) -> Option<()> {
+        self.resolve_credential().map(|_| ())
     }
 
     /// Provider-agnostic Gemini key resolution for paths that hard-require
@@ -491,15 +510,24 @@ impl MogenStudioApp {
         existing: Option<String>,
         image: Option<crate::app::types::GenImageInput>,
     ) {
-        let provider = self.settings.provider();
-        let api_key = match self.resolve_api_key() {
-            Some(k) => k,
+        let slot = self.settings.provider_slot();
+        let provider = slot.to_provider();
+        let credential = match self.resolve_credential() {
+            Some(c) => c,
             None => {
-                self.active_mut().status = format!(
-                    "no {} API key — set one in Options… or export {}",
-                    provider.label(),
-                    provider.env_var(),
-                );
+                self.active_mut().status = if slot.is_gemini_oauth() {
+                    "no Gemini OAuth token — sign in with Google in Edit → Preferences… \
+                     (or switch to \"Gemini (API key)\")".to_string()
+                } else if matches!(provider, mogen_llm::Provider::Gemini) {
+                    "no Gemini API key — set GEMINI_API_KEY, paste a key in Edit → \
+                     Preferences…, or switch to \"Gemini (Google OAuth)\"".to_string()
+                } else {
+                    format!(
+                        "no {} API key — set one in Options… or export {}",
+                        provider.label(),
+                        provider.env_var(),
+                    )
+                };
                 return;
             }
         };
@@ -576,7 +604,7 @@ impl MogenStudioApp {
                 existing,
                 provider,
                 llm_image,
-                api_key,
+                credential,
                 run_cfg,
                 sys_instr,
                 worker_tx,

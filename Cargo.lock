@@ -2415,11 +2415,15 @@ dependencies = [
  "mogen-core",
  "mogen-dsl",
  "mogen-validate",
+ "rand 0.8.6",
  "reqwest",
  "serde",
  "serde_json",
+ "sha2",
+ "tempfile",
  "thiserror 1.0.69",
  "tiny_http",
+ "webbrowser",
 ]
 
 [[package]]

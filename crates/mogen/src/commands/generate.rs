@@ -8,8 +8,8 @@ use mogen_llm::{
 
 use crate::commands::build::build;
 use crate::common::{
-    attach_system_instruction, build_client, ensure_parent_dir, format_cached_tokens,
-    pick_default_seed, resolve_api_key, resolve_model, summarize_repair_errors,
+    attach_system_instruction, build_llm_client, ensure_parent_dir, format_cached_tokens,
+    pick_default_seed, resolve_model, summarize_repair_errors,
 };
 use crate::spinner::{Spinner, LLM_FLAVORS};
 
@@ -46,7 +46,7 @@ pub(crate) fn generate(args: GenerateArgs) -> Result<()> {
         Some(
             args.dsl_out
                 .clone()
-                .unwrap_or_else(|| resolved_out.as_ref().unwrap().with_extension("mg")),
+                .unwrap_or_else(|| resolved_out.as_ref().unwrap().with_extension("mog")),
         )
     };
     if let Some(p) = resolved_out.as_deref() {
@@ -56,8 +56,7 @@ pub(crate) fn generate(args: GenerateArgs) -> Result<()> {
         ensure_parent_dir(p)?;
     }
 
-    let api_key = resolve_api_key(args.provider, args.api_key)?;
-    let client = build_client(args.provider, api_key);
+    let client = build_llm_client(args.provider, args.api_key)?;
     let model = resolve_model(args.provider, args.model);
 
     let seed = args.seed.unwrap_or_else(pick_default_seed);

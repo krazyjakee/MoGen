@@ -5,6 +5,91 @@ use mogen_llm::gemini::{DEFAULT_MODEL, DEFAULT_TEMPERATURE};
 use mogen_llm::{Provider, ThinkingLevel};
 use serde::{Deserialize, Serialize};
 
+/// Studio-side provider selection. Wraps [`Provider`] but splits Gemini into
+/// two slots so the user can explicitly pick API-key or OAuth auth from the
+/// Preferences dropdown. `mogen-llm` itself stays unaware — every slot maps
+/// to a single underlying [`Provider`] via [`Self::to_provider`].
+///
+/// API-key vs OAuth was previously a fallback inside `resolve_credential`
+/// (try saved key → env var → stored OAuth bundle). Users who want the OAuth
+/// path while a key is also set had no way to express that. The slot makes
+/// the choice explicit: GeminiApiKey forces the public-API path, GeminiOAuth
+/// forces Cloud Code Assist.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ProviderSlot {
+    GeminiApiKey,
+    GeminiOAuth,
+    OpenAI,
+    Anthropic,
+    Ollama,
+    ClaudeCode,
+}
+
+impl ProviderSlot {
+    pub fn key(self) -> &'static str {
+        match self {
+            ProviderSlot::GeminiApiKey => "gemini-apikey",
+            ProviderSlot::GeminiOAuth => "gemini-oauth",
+            ProviderSlot::OpenAI => "openai",
+            ProviderSlot::Anthropic => "anthropic",
+            ProviderSlot::Ollama => "ollama",
+            ProviderSlot::ClaudeCode => "claude-code",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ProviderSlot::GeminiApiKey => "Gemini (API key)",
+            ProviderSlot::GeminiOAuth => "Gemini (Google OAuth)",
+            ProviderSlot::OpenAI => "OpenAI",
+            ProviderSlot::Anthropic => "Anthropic",
+            ProviderSlot::Ollama => "Ollama (local)",
+            ProviderSlot::ClaudeCode => "Claude Code (subscription)",
+        }
+    }
+
+    /// Parse a persisted slot key. Accepts the explicit slot keys as well as
+    /// the legacy `Provider::key` strings — `"gemini"` from a pre-OAuth-slot
+    /// settings file maps to `GeminiApiKey`.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "gemini-apikey" | "gemini_api_key" | "gemini-key" => Some(Self::GeminiApiKey),
+            "gemini-oauth" | "gemini_oauth" | "gemini-google" => Some(Self::GeminiOAuth),
+            "gemini" | "google" => Some(Self::GeminiApiKey),
+            "openai" | "gpt" | "chatgpt" => Some(Self::OpenAI),
+            "anthropic" | "claude" => Some(Self::Anthropic),
+            "ollama" | "local" => Some(Self::Ollama),
+            "claude-code" | "claude_code" | "claudecode" | "cc" => Some(Self::ClaudeCode),
+            _ => None,
+        }
+    }
+
+    /// The wire-level provider this slot speaks to. Both Gemini slots collapse
+    /// to [`Provider::Gemini`]; `mogen-llm` doesn't model the auth split — the
+    /// Studio's `resolve_credential` picks API-key vs OAuth from the slot.
+    pub fn to_provider(self) -> Provider {
+        match self {
+            ProviderSlot::GeminiApiKey | ProviderSlot::GeminiOAuth => Provider::Gemini,
+            ProviderSlot::OpenAI => Provider::OpenAI,
+            ProviderSlot::Anthropic => Provider::Anthropic,
+            ProviderSlot::Ollama => Provider::Ollama,
+            ProviderSlot::ClaudeCode => Provider::ClaudeCode,
+        }
+    }
+
+    /// True when this slot demands a Google OAuth bundle and must not fall
+    /// back to API-key auth even when a key is configured.
+    pub fn is_gemini_oauth(self) -> bool {
+        matches!(self, ProviderSlot::GeminiOAuth)
+    }
+}
+
+impl Default for ProviderSlot {
+    fn default() -> Self {
+        ProviderSlot::GeminiApiKey
+    }
+}
+
 use crate::preview_shader::{
     parse_preview_shader, preview_shader_key, PreviewShader, DEFAULT_PREVIEW_SHADER,
 };
@@ -127,12 +212,19 @@ pub struct Settings {
     #[serde(default)]
     pub onboarded: bool,
 
-    /// Selected LLM provider, persisted as a lowercase [`Provider::key`]
-    /// (`"gemini"`, `"openai"`, `"anthropic"`, `"ollama"`). Empty / unknown
-    /// falls back to [`Provider::default`] at read time so adding new
-    /// providers later doesn't invalidate old settings files.
+    /// Legacy LLM-provider field. Kept as a serde field so old settings files
+    /// (pre-`ProviderSlot`) still deserialise; on first read after upgrade the
+    /// migration in [`Settings::load`] copies the value into `provider_slot`.
+    /// New writes leave this empty — `provider_slot` is the source of truth.
     #[serde(default)]
     pub provider: String,
+
+    /// Selected provider slot, persisted as [`ProviderSlot::key`]. Splits
+    /// Gemini into `gemini-apikey` and `gemini-oauth` so users can pick the
+    /// auth mode explicitly. Empty falls back to the legacy `provider` field
+    /// at load time, then to [`ProviderSlot::default`].
+    #[serde(default)]
+    pub provider_slot: String,
 
     /// API key for the OpenAI provider. Stored alongside the Gemini key so
     /// switching providers in Options doesn't require re-pasting credentials.
@@ -233,6 +325,16 @@ pub struct Settings {
 /// Blender / Maya / Modo defaults.
 pub const DEFAULT_VIEWER_BG_RGB: [u8; 3] = [54, 58, 64];
 
+/// Default thinking model when the active slot is `GeminiOAuth` and no
+/// override is set. The public-API `gemini-pro-latest` alias 404s on
+/// `cloudcode-pa.googleapis.com/v1internal` — pick a concrete preview tag
+/// known to work on the Antigravity OAuth surface.
+pub const DEFAULT_OAUTH_GEMINI_MODEL: &str = "gemini-3.1-pro-preview";
+
+/// Default fast model for the `GeminiOAuth` slot. Matches the cloudcode-pa
+/// surface; `gemini-flash-latest` is a public-API alias and 404s on OAuth.
+pub const DEFAULT_OAUTH_GEMINI_FAST_MODEL: &str = "gemini-3-flash-preview";
+
 /// Factory default for the viewport repaint cap. Picked to match the most
 /// common display refresh rate while keeping battery / thermals reasonable
 /// during long animation playback. Users can raise the cap or pick
@@ -250,7 +352,16 @@ impl Settings {
         let Ok(bytes) = fs::read(&path) else {
             return Self::default();
         };
-        serde_json::from_slice(&bytes).unwrap_or_default()
+        let mut s: Self = serde_json::from_slice(&bytes).unwrap_or_default();
+        // Pre-`ProviderSlot` settings only stored `provider`; copy it over so
+        // the rest of the app reads the slot field uniformly. Migration is a
+        // one-shot — once `provider_slot` is non-empty, `provider` is ignored.
+        if s.provider_slot.trim().is_empty() {
+            if let Some(slot) = ProviderSlot::parse(&s.provider) {
+                s.provider_slot = slot.key().to_string();
+            }
+        }
+        s
     }
 
     pub fn save(&self) -> Result<(), String> {
@@ -328,26 +439,34 @@ impl Settings {
         self.seed_override
     }
 
-    /// Resolve the persisted provider key to a [`Provider`], falling back to
-    /// [`Provider::default`] when the field is empty or unknown. Stable
-    /// across upgrades — old settings files (pre-multi-provider) read as the
-    /// default Gemini.
-    pub fn provider(&self) -> Provider {
-        Provider::parse(&self.provider).unwrap_or_default()
+    /// Resolve the persisted slot key to a [`ProviderSlot`], falling back to
+    /// [`ProviderSlot::default`] (GeminiApiKey) when the field is empty or
+    /// unknown. Migration from the legacy `provider` field happens in
+    /// [`Self::load`].
+    pub fn provider_slot(&self) -> ProviderSlot {
+        ProviderSlot::parse(&self.provider_slot).unwrap_or_default()
     }
 
-    /// API key for the currently-selected provider. Returns `None` for an
-    /// empty value (including for Ollama — callers that need a keyless
-    /// Ollama client construct one directly with an empty string).
-    /// Claude Code is keyless (auth lives in the user's `claude` install)
-    /// and always returns `None` here.
+    /// Wire-level [`Provider`] for the active slot. Used by every callsite
+    /// that talks to `mogen-llm` (which doesn't model the API-key vs OAuth
+    /// split — that's a Studio-side credential decision).
+    pub fn provider(&self) -> Provider {
+        self.provider_slot().to_provider()
+    }
+
+    /// API key for the currently-selected provider, or `None` when no key is
+    /// applicable. The Gemini OAuth slot returns `None` even if the user has
+    /// a Gemini API key saved — picking the OAuth slot is an explicit "use
+    /// the OAuth bundle" instruction, not a fallback. Other slots fall
+    /// through to their per-provider key field.
     pub fn provider_api_key(&self) -> Option<&str> {
-        let raw = match self.provider() {
-            Provider::Gemini => self.gemini_api_key.as_str(),
-            Provider::OpenAI => self.openai_api_key.as_str(),
-            Provider::Anthropic => self.anthropic_api_key.as_str(),
-            Provider::Ollama => self.ollama_api_key.as_str(),
-            Provider::ClaudeCode => "",
+        let raw = match self.provider_slot() {
+            ProviderSlot::GeminiApiKey => self.gemini_api_key.as_str(),
+            ProviderSlot::GeminiOAuth => return None,
+            ProviderSlot::OpenAI => self.openai_api_key.as_str(),
+            ProviderSlot::Anthropic => self.anthropic_api_key.as_str(),
+            ProviderSlot::Ollama => self.ollama_api_key.as_str(),
+            ProviderSlot::ClaudeCode => "",
         };
         let trimmed = raw.trim();
         if trimmed.is_empty() {
@@ -370,24 +489,35 @@ impl Settings {
 
     /// Heavy / "thinking" model id for the active provider. Reads the
     /// per-provider override; falls back to [`Provider::default_model`]
-    /// when the override is empty.
+    /// when the override is empty. The Gemini OAuth slot uses a different
+    /// default — the public-API `gemini-pro-latest` alias does not resolve
+    /// on `cloudcode-pa.googleapis.com/v1internal`, so OAuth pins to a
+    /// concrete preview tag.
     pub fn provider_model(&self) -> String {
-        let provider = self.provider();
+        let slot = self.provider_slot();
+        let provider = slot.to_provider();
         let override_str = self.thinking_model_field(provider).trim();
-        if override_str.is_empty() {
-            provider.default_model().to_string()
-        } else {
-            override_str.to_string()
+        if !override_str.is_empty() {
+            return override_str.to_string();
         }
+        if slot.is_gemini_oauth() {
+            return DEFAULT_OAUTH_GEMINI_MODEL.to_string();
+        }
+        provider.default_model().to_string()
     }
 
     /// Fast / cheap model id for the active provider. Symmetric with
-    /// [`Self::provider_model`].
+    /// [`Self::provider_model`] — OAuth pins fast to `gemini-2.5-flash`
+    /// for the same `latest`-alias reason.
     pub fn provider_fast_model(&self) -> String {
-        let provider = self.provider();
+        let slot = self.provider_slot();
+        let provider = slot.to_provider();
         let override_str = self.fast_model_field(provider).trim();
         if !override_str.is_empty() {
             return override_str.to_string();
+        }
+        if slot.is_gemini_oauth() {
+            return DEFAULT_OAUTH_GEMINI_FAST_MODEL.to_string();
         }
         // Ollama is the only provider whose library default for fast == thinking,
         // so let the user's thinking override apply to fast too when fast is blank.
@@ -448,9 +578,12 @@ impl Settings {
         }
     }
 
-    /// Persist a fresh provider selection.
-    pub fn set_provider(&mut self, p: Provider) {
-        self.provider = p.key().to_string();
+    /// Persist a fresh provider selection by slot. Clears the legacy
+    /// `provider` string so a downgrade to a pre-slot binary doesn't read a
+    /// stale value.
+    pub fn set_provider_slot(&mut self, slot: ProviderSlot) {
+        self.provider_slot = slot.key().to_string();
+        self.provider.clear();
     }
 
     /// Persisted viewport background as raw `[r, g, b]`, falling back to
@@ -598,14 +731,17 @@ pub const THINKING_LEVELS: [ThinkingLevel; 4] = [
     ThinkingLevel::XHigh,
 ];
 
-/// Order in which providers appear in the Options dropdown. Gemini is first
-/// because it's the historical default and the only image-capable backend.
-pub const PROVIDERS: [Provider; 5] = [
-    Provider::Gemini,
-    Provider::OpenAI,
-    Provider::Anthropic,
-    Provider::Ollama,
-    Provider::ClaudeCode,
+/// Order in which provider slots appear in the Options dropdown. Both
+/// Gemini auth modes are listed up front because Gemini is the historical
+/// default and the only image-capable backend; the OAuth slot is the path
+/// users with paid Antigravity plans will reach for.
+pub const PROVIDER_SLOTS: [ProviderSlot; 6] = [
+    ProviderSlot::GeminiApiKey,
+    ProviderSlot::GeminiOAuth,
+    ProviderSlot::OpenAI,
+    ProviderSlot::Anthropic,
+    ProviderSlot::Ollama,
+    ProviderSlot::ClaudeCode,
 ];
 
 fn settings_path() -> Option<PathBuf> {

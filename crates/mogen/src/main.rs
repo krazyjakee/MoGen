@@ -10,6 +10,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use mogen_llm::{Provider, ThinkingLevel, DEFAULT_IMAGE_MODEL};
 
 use commands::animate::{animate, AnimateArgs};
+use commands::auth::{dispatch as auth_dispatch, AuthCmd};
 use commands::bench::bench;
 use commands::build::build;
 use commands::generate::{generate, GenerateArgs};
@@ -72,8 +73,70 @@ struct Cli {
     cmd: Cmd,
 }
 
+/// CLI-facing mirror of [`AuthCmd`]. Keeps `clap::Subcommand` out of the
+/// command module proper.
+#[derive(Subcommand)]
+enum AuthArg {
+    /// Sign in with Google (Antigravity OAuth client) and store a token at
+    /// `$MOGEN_CACHE_DIR/google_auth.json`. Subsequent `mogen generate` /
+    /// `modify` / `animate` / `repair` calls will use this token whenever
+    /// `GEMINI_API_KEY` is unset, routing requests through Cloud Code Assist
+    /// (`v1internal:generateContent`) on the user's paid Pro plan.
+    ///
+    /// Note: this uses Antigravity's public OAuth client_id/secret. Google
+    /// could revoke them at any time — set `GEMINI_API_KEY` as a fallback.
+    Login {
+        /// Re-authenticate even if a valid token is already stored.
+        #[arg(long)]
+        force: bool,
+        /// Don't open the system browser. Print the authorize URL instead so
+        /// you can open it on another machine (useful over SSH).
+        #[arg(long)]
+        no_browser: bool,
+        /// How long to wait (seconds) for the OAuth callback before giving up.
+        #[arg(long, default_value_t = 300)]
+        timeout: u64,
+    },
+    /// Print whether the user is logged in, the email + project the token
+    /// resolves to, and the access-token's remaining lifetime. Exits 0 when
+    /// logged in (even if the access token is expired — refresh happens on
+    /// next call), 1 when not logged in.
+    Status {
+        /// Also print the on-disk token-store path, OAuth scopes, the chosen
+        /// `cloudcode-pa` endpoint, and a note when `GEMINI_API_KEY` shadows
+        /// the OAuth credentials.
+        #[arg(long)]
+        verbose: bool,
+    },
+    /// Delete the stored `google_auth.json`. Idempotent — does not call the
+    /// Google revoke endpoint, so the refresh token remains valid server-side
+    /// until the user revokes consent at <https://myaccount.google.com>.
+    Logout,
+}
+
+impl From<AuthArg> for AuthCmd {
+    fn from(a: AuthArg) -> Self {
+        match a {
+            AuthArg::Login { force, no_browser, timeout } => AuthCmd::Login {
+                force,
+                no_browser,
+                timeout_secs: timeout,
+            },
+            AuthArg::Status { verbose } => AuthCmd::Status { verbose },
+            AuthArg::Logout => AuthCmd::Logout,
+        }
+    }
+}
+
 #[derive(Subcommand)]
 enum Cmd {
+    /// Manage Google OAuth credentials (Antigravity client) for the Cloud
+    /// Code Assist surface. Lets a paid Gemini Pro account use `mogen
+    /// generate` against `gemini-3-pro-preview` without an API key.
+    Auth {
+        #[command(subcommand)]
+        cmd: AuthArg,
+    },
     /// Compile a DSL file to GLB.
     Build {
         input: PathBuf,
@@ -357,6 +420,12 @@ enum Cmd {
         /// Override GEMINI_API_KEY.
         #[arg(long)]
         api_key: Option<String>,
+        /// Probe the unverified Cloud Code Assist `v1internal` image surface
+        /// when only OAuth credentials are available. Off by default — OAuth
+        /// users see a clear error pointing at `GEMINI_API_KEY` instead.
+        /// Use this to experiment when no API key is configured.
+        #[arg(long)]
+        allow_oauth_image: bool,
         /// Skip every derived PBR map (normal / metallic-roughness / AO).
         /// Albedo is still generated.
         #[arg(long)]
@@ -425,6 +494,7 @@ enum Cmd {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.cmd {
+        Cmd::Auth { cmd } => auth_dispatch(cmd.into()),
         Cmd::Build { input, out } => {
             let out = out.unwrap_or_else(|| input.with_extension("glb"));
             build(input, out)
@@ -574,6 +644,7 @@ fn main() -> ExitCode {
             dry_run,
             no_build,
             api_key,
+            allow_oauth_image,
             no_pbr,
             no_normal,
             no_metallic_roughness,
@@ -591,6 +662,7 @@ fn main() -> ExitCode {
             dry_run,
             no_build,
             api_key,
+            allow_oauth_image,
             no_pbr,
             no_normal,
             no_metallic_roughness,

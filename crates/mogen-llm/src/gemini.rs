@@ -3,7 +3,15 @@
 //! SDK crates lag the spec; we need `cachedContents` and structured errors.
 //! Blocking HTTP keeps the `mogen` binary synchronous — one request per repair
 //! iteration is not worth a tokio runtime.
+//!
+//! Authentication is dual-mode: either a public-API key (legacy / free-tier
+//! Studio path) or an OAuth bundle (Antigravity Pro plan via the Cloud Code
+//! Assist `v1internal` surface). The mode is picked at construction time and
+//! drives URL/body/header shape inside [`Self::generate`] — see
+//! [`crate::google_oauth`] for the bundle layout, refresh logic, and the
+//! cloudcode envelope helpers.
 
+use std::sync::Mutex;
 use std::time::Duration;
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
@@ -17,6 +25,8 @@ pub use crate::types::{
     GenerateConfig, GenerateResponse, ImageInput, Role, ThinkingLevel, Turn, Usage,
     DEFAULT_TEMPERATURE,
 };
+
+use crate::google_oauth::{self, OAuthBundle};
 
 /// Default model for `mogen generate`. Alias auto-rolls to the newest Pro tier.
 pub const DEFAULT_MODEL: &str = "gemini-pro-latest";
@@ -42,6 +52,29 @@ pub enum GeminiError {
     BudgetExceeded { used: u32, budget: u32 },
     #[error("invalid response: {0}")]
     InvalidResponse(String),
+    /// OAuth-side failure: refresh failed, project id missing, token store
+    /// invalid. Carries the [`OAuthError`] message verbatim.
+    #[error("oauth error: {0}")]
+    OAuth(String),
+    /// Surfaces in OAuth mode when a caller asks for `cachedContents`. The
+    /// `v1internal` surface does not expose that resource family — the
+    /// caller should fall back to inline system-instruction.
+    #[error("cachedContents is not available over the Antigravity OAuth surface; falling back to inline")]
+    CacheUnavailableOverOAuth,
+    /// Surfaces in OAuth mode when a caller asks for image generation
+    /// without opting in via `allow_oauth_image`. Image gen on
+    /// `v1internal` is not verified, so callers must explicitly probe.
+    #[error("image generation over OAuth is unverified — set --allow-oauth-image to probe, or set GEMINI_API_KEY")]
+    ImageOverOAuthUnverified,
+}
+
+/// Authentication mode. `ApiKey` uses the public `generativelanguage`
+/// surface; `OAuth` swaps the URL/body/headers to the Cloud Code Assist
+/// `v1internal` shape. The `Mutex` lets the auto-refresh logic mutate the
+/// bundle through `&self`-borrowing methods.
+pub enum GeminiAuth {
+    ApiKey(String),
+    OAuth(Mutex<OAuthBundle>),
 }
 
 /// Handle returned after creating a `cachedContents` resource. The resource
@@ -57,26 +90,55 @@ pub struct CachedContent {
 
 pub struct GeminiClient {
     http: reqwest::blocking::Client,
-    api_key: String,
+    auth: GeminiAuth,
     base_url: String,
 }
 
 impl GeminiClient {
+    /// API-key client targeting the public `generativelanguage` surface.
     pub fn new(api_key: impl Into<String>) -> Self {
         Self::with_base_url(api_key, DEFAULT_BASE_URL)
     }
 
     pub fn with_base_url(api_key: impl Into<String>, base_url: impl Into<String>) -> Self {
-        // `gemini-pro-latest` with a large system instruction or thinking
-        // enabled can easily push past a couple of minutes end-to-end. The
-        // short connect_timeout fails fast when the user is offline so they
-        // don't sit through the 600s overall budget.
-        let http = reqwest::blocking::Client::builder()
-            .connect_timeout(Duration::from_secs(10))
-            .timeout(Duration::from_secs(600))
-            .build()
-            .expect("reqwest client");
-        Self { http, api_key: api_key.into(), base_url: base_url.into() }
+        let http = build_http();
+        Self {
+            http,
+            auth: GeminiAuth::ApiKey(api_key.into()),
+            base_url: base_url.into(),
+        }
+    }
+
+    /// OAuth-mode client targeting the Cloud Code Assist `v1internal`
+    /// surface. The bundle's `endpoint_base` is used as the base URL —
+    /// fall back to prod when the bundle was written by a path that didn't
+    /// run discovery yet (legacy tokens).
+    pub fn from_oauth(bundle: OAuthBundle) -> Self {
+        let base_url = bundle
+            .endpoint_base
+            .clone()
+            .unwrap_or_else(|| google_oauth::client::ENDPOINT_PROD.to_string());
+        let http = build_http();
+        Self {
+            http,
+            auth: GeminiAuth::OAuth(Mutex::new(bundle)),
+            base_url,
+        }
+    }
+
+    /// Inject a custom base URL for OAuth-mode tests. The mock server
+    /// stands in for `cloudcode-pa.googleapis.com` so the URL/body/header
+    /// shape can be verified without hitting Google.
+    pub fn from_oauth_with_base_url(
+        bundle: OAuthBundle,
+        base_url: impl Into<String>,
+    ) -> Self {
+        let http = build_http();
+        Self {
+            http,
+            auth: GeminiAuth::OAuth(Mutex::new(bundle)),
+            base_url: base_url.into(),
+        }
     }
 
     pub fn from_env() -> Result<Self, GeminiError> {
@@ -91,34 +153,154 @@ impl GeminiClient {
         &self.http
     }
 
-    pub(crate) fn api_key(&self) -> &str {
-        &self.api_key
-    }
-
     pub(crate) fn base_url(&self) -> &str {
         &self.base_url
     }
 
-    pub fn generate(&self, cfg: &GenerateConfig) -> Result<GenerateResponse, GeminiError> {
-        let model = if cfg.model.is_empty() { DEFAULT_MODEL } else { cfg.model.as_str() };
-        let url = format!(
-            "{}/models/{}:generateContent?key={}",
-            self.base_url, model, self.api_key
-        );
+    pub(crate) fn auth(&self) -> &GeminiAuth {
+        &self.auth
+    }
 
-        let body = build_request(cfg);
+    /// True when this client authenticates via OAuth.
+    pub fn is_oauth(&self) -> bool {
+        matches!(self.auth, GeminiAuth::OAuth(_))
+    }
 
-        let resp = self.http.post(&url).json(&body).send()?;
+    /// Snapshot of the OAuth bundle (cloned, so it's safe to inspect across
+    /// refresh boundaries). Returns `None` for API-key clients.
+    pub fn oauth_snapshot(&self) -> Option<OAuthBundle> {
+        match &self.auth {
+            GeminiAuth::OAuth(mu) => mu.lock().ok().map(|b| b.clone()),
+            GeminiAuth::ApiKey(_) => None,
+        }
+    }
+
+    /// Currently bound project id (OAuth only).
+    pub(crate) fn oauth_project_id(&self) -> Option<String> {
+        match &self.auth {
+            GeminiAuth::OAuth(mu) => mu.lock().ok().and_then(|b| b.project_id.clone()),
+            GeminiAuth::ApiKey(_) => None,
+        }
+    }
+
+    /// Cloud Code Assist POST with auto-refresh + one 401 retry.
+    /// Returns response body bytes on 2xx; `Api` on any non-success
+    /// (including the post-refresh retry's failure).
+    pub(crate) fn oauth_post_with_retry(
+        &self,
+        cloudcode_url: &str,
+        body: &serde_json::Value,
+    ) -> Result<Vec<u8>, GeminiError> {
+        let mu = match &self.auth {
+            GeminiAuth::OAuth(mu) => mu,
+            GeminiAuth::ApiKey(_) => {
+                return Err(GeminiError::OAuth(
+                    "oauth_post_with_retry called on API-key client".into(),
+                ));
+            }
+        };
+
+        // Eager refresh if we're inside the expiry buffer.
+        {
+            let mut bundle = mu.lock().expect("oauth bundle mutex poisoned");
+            google_oauth::refresh_if_needed(&self.http, &mut bundle, now_unix())
+                .map_err(|e| GeminiError::OAuth(e.to_string()))?;
+        }
+        let token = mu.lock().expect("poison").access_token.clone();
+
+        let resp = google_oauth::cloudcode::apply_headers(
+            self.http.post(cloudcode_url).json(body),
+            &token,
+        )
+        .send()?;
         let status = resp.status();
-        let bytes = resp.bytes()?;
 
-        if !status.is_success() {
-            let message = parse_error_message(&bytes);
-            return Err(GeminiError::Api { status: status.as_u16(), message });
+        if status.as_u16() == 401 {
+            // Refresh + retry once. If the refresh itself fails (e.g.
+            // refresh token revoked), surface that — the user has to
+            // re-login. If the retry also 401s, it's not a token issue;
+            // propagate the API error.
+            {
+                let mut bundle = mu.lock().expect("poison");
+                google_oauth::refresh_now(&self.http, &mut bundle, now_unix())
+                    .map_err(|e| GeminiError::OAuth(e.to_string()))?;
+            }
+            let token2 = mu.lock().expect("poison").access_token.clone();
+            let resp2 = google_oauth::cloudcode::apply_headers(
+                self.http.post(cloudcode_url).json(body),
+                &token2,
+            )
+            .send()?;
+            let status2 = resp2.status();
+            let bytes2 = resp2.bytes()?;
+            if !status2.is_success() {
+                return Err(GeminiError::Api {
+                    status: status2.as_u16(),
+                    message: parse_error_message(&bytes2),
+                });
+            }
+            return Ok(bytes2.to_vec());
         }
 
-        let parsed: RawGenerateResponse = serde_json::from_slice(&bytes)
-            .map_err(|e| GeminiError::InvalidResponse(e.to_string()))?;
+        let bytes = resp.bytes()?;
+        if !status.is_success() {
+            return Err(GeminiError::Api {
+                status: status.as_u16(),
+                message: parse_error_message(&bytes),
+            });
+        }
+        Ok(bytes.to_vec())
+    }
+
+    pub fn generate(&self, cfg: &GenerateConfig) -> Result<GenerateResponse, GeminiError> {
+        let model = if cfg.model.is_empty() {
+            DEFAULT_MODEL
+        } else {
+            cfg.model.as_str()
+        };
+
+        let inner = build_request(cfg);
+
+        let parsed: RawGenerateResponse = match &self.auth {
+            GeminiAuth::ApiKey(key) => {
+                let url = format!(
+                    "{}/models/{}:generateContent?key={}",
+                    self.base_url, model, key
+                );
+                let resp = self.http.post(&url).json(&inner).send()?;
+                let status = resp.status();
+                let bytes = resp.bytes()?;
+                if !status.is_success() {
+                    return Err(GeminiError::Api {
+                        status: status.as_u16(),
+                        message: parse_error_message(&bytes),
+                    });
+                }
+                serde_json::from_slice(&bytes)
+                    .map_err(|e| GeminiError::InvalidResponse(e.to_string()))?
+            }
+            GeminiAuth::OAuth(_) => {
+                let project = self
+                    .oauth_project_id()
+                    .ok_or_else(|| GeminiError::OAuth("missing project id in token bundle".into()))?;
+                // Cloud Code Assist takes BARE model names ("gemini-3-pro-preview"),
+                // never "models/...". `wrap_body` strips the prefix defensively
+                // but pass it bare here too so the URL/body shape matches what
+                // the Antigravity desktop client sends.
+                let url = google_oauth::cloudcode::generate_content_url(&self.base_url);
+                let body = google_oauth::cloudcode::wrap_body(&project, model, inner);
+                let bytes = self.oauth_post_with_retry(&url, &body)?;
+
+                // Cloud Code Assist wraps the response in `{ response: {...} }`.
+                let envelope: RawGenerateEnvelope = serde_json::from_slice(&bytes)
+                    .map_err(|e| GeminiError::InvalidResponse(e.to_string()))?;
+                envelope
+                    .response
+                    .ok_or_else(|| GeminiError::InvalidResponse(
+                        "v1internal response missing `response` field".into(),
+                    ))?
+            }
+        };
 
         let text = parsed
             .candidates
@@ -151,24 +333,24 @@ impl GeminiClient {
 
     /// Create a `cachedContents` resource holding `system_instruction`. The
     /// returned resource name can then be passed via
-    /// [`GenerateConfig::cached_content`] so subsequent `generateContent`
-    /// calls skip re-uploading the instruction — Gemini bills cached input
-    /// tokens at a reduced rate.
+    /// [`GenerateConfig::cached_content`] on subsequent `generateContent`
+    /// calls so Gemini bills cached input tokens at a reduced rate.
     ///
-    /// `ttl_seconds` is the requested server-side lifetime. Gemini enforces a
-    /// minimum token count on cached content (model-dependent); if the
-    /// instruction is below that threshold this call returns `Api` with the
-    /// server's explanation and the caller should fall back to inline.
+    /// In OAuth mode this returns [`GeminiError::CacheUnavailableOverOAuth`]
+    /// — `v1internal` does not expose `cachedContents`, so the caller falls
+    /// back to inline system-instruction (the existing fallback path).
     pub fn create_cached_content(
         &self,
         model: &str,
         system_instruction: &str,
         ttl_seconds: u64,
     ) -> Result<CachedContent, GeminiError> {
-        let url = format!("{}/cachedContents?key={}", self.base_url, self.api_key);
-        // Gemini currently requires at least one `contents` entry even for
-        // system-instruction-only caches; a minimal placeholder user turn is
-        // accepted and does not materially affect the cache's usefulness.
+        let key = match &self.auth {
+            GeminiAuth::ApiKey(k) => k,
+            GeminiAuth::OAuth(_) => return Err(GeminiError::CacheUnavailableOverOAuth),
+        };
+
+        let url = format!("{}/cachedContents?key={}", self.base_url, key);
         let body = serde_json::json!({
             "model": format!("models/{}", model.strip_prefix("models/").unwrap_or(model)),
             "contents": [ { "role": "user", "parts": [{ "text": "." }] } ],
@@ -192,13 +374,7 @@ impl GeminiClient {
             .name
             .ok_or_else(|| GeminiError::InvalidResponse("cachedContents: missing name".into()))?;
 
-        // Compute expiry client-side from the requested TTL — the small clock
-        // skew is acceptable for a local cache and avoids adding an RFC 3339
-        // parser for `expireTime`.
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
+        let now = now_unix();
 
         Ok(CachedContent {
             name,
@@ -206,6 +382,26 @@ impl GeminiClient {
             token_count: parsed.usage_metadata.and_then(|u| u.total_token_count),
         })
     }
+}
+
+fn build_http() -> reqwest::blocking::Client {
+    // `gemini-pro-latest` with a large system instruction or thinking
+    // enabled can easily push past a couple of minutes end-to-end. The
+    // short connect_timeout fails fast when the user is offline so they
+    // don't sit through the 600s overall budget.
+    reqwest::blocking::Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(600))
+        .build()
+        .expect("reqwest client")
+}
+
+fn now_unix() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 // -- request/response wire types ---------------------------------------------
@@ -332,12 +528,22 @@ struct RawGenerateResponse {
     usage_metadata: Option<RawUsageMetadata>,
 }
 
+/// Cloud Code Assist `:generateContent` wraps the public API's response
+/// under a top-level `response` key. API-key callers parse
+/// `RawGenerateResponse` directly; OAuth callers go through this envelope
+/// first and unwrap.
+#[derive(Debug, Deserialize)]
+struct RawGenerateEnvelope {
+    #[serde(default)]
+    response: Option<RawGenerateResponse>,
+}
+
 #[derive(Debug, Deserialize)]
 struct RawCandidate {
     content: RawContent,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 struct RawContent {
     #[serde(default)]
     parts: Vec<RawPart>,
@@ -542,5 +748,47 @@ mod tests {
     #[test]
     fn parse_error_falls_back_to_raw_body() {
         assert_eq!(parse_error_message(b"oh no"), "oh no");
+    }
+
+    #[test]
+    fn from_oauth_uses_bundle_endpoint_base() {
+        let bundle = OAuthBundle {
+            access_token: "a".into(),
+            refresh_token: "r".into(),
+            access_expires_at_unix: u64::MAX,
+            obtained_at_unix: 0,
+            email: None,
+            project_id: Some("proj".into()),
+            managed_project_id: None,
+            endpoint_base: Some("https://daily-cloudcode-pa.sandbox.googleapis.com".into()),
+            scope: None,
+        };
+        let client = GeminiClient::from_oauth(bundle);
+        assert!(client.is_oauth());
+        assert_eq!(
+            client.base_url(),
+            "https://daily-cloudcode-pa.sandbox.googleapis.com"
+        );
+        assert_eq!(client.oauth_project_id().as_deref(), Some("proj"));
+    }
+
+    #[test]
+    fn create_cached_content_unavailable_in_oauth_mode() {
+        let bundle = OAuthBundle {
+            access_token: "a".into(),
+            refresh_token: "r".into(),
+            access_expires_at_unix: u64::MAX,
+            obtained_at_unix: 0,
+            email: None,
+            project_id: Some("proj".into()),
+            managed_project_id: None,
+            endpoint_base: None,
+            scope: None,
+        };
+        let client = GeminiClient::from_oauth(bundle);
+        let err = client
+            .create_cached_content("gemini-pro-latest", "be helpful", 60)
+            .expect_err("OAuth path must reject cachedContents");
+        assert!(matches!(err, GeminiError::CacheUnavailableOverOAuth));
     }
 }

@@ -1,0 +1,5 @@
+{
+  "_comment": "Copy this file to ~/.cache/mogen/oauth_client.json (or %LOCALAPPDATA%\\mogen\\oauth_client.json on Windows) and fill in your Google OAuth desktop client credentials. Do NOT commit the populated copy — it contains secrets. See README.md \"Sign in with a paid Gemini account\" for setup details.",
+  "client_id": "REPLACE_ME.apps.googleusercontent.com",
+  "client_secret": "REPLACE_ME"
+}

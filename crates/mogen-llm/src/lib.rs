@@ -23,6 +23,7 @@ pub mod anthropic;
 pub mod cache;
 pub mod claude_code;
 pub mod gemini;
+pub mod google_oauth;
 pub mod image;
 pub mod imports;
 pub mod ollama;
@@ -35,13 +36,17 @@ pub mod textures;
 pub mod types;
 
 pub use cache::{default_cache_path, resolve_or_create as resolve_or_create_cache, DEFAULT_TTL_SECONDS};
-pub use gemini::{CachedContent, GeminiClient, GeminiError};
+pub use gemini::{CachedContent, GeminiAuth, GeminiClient, GeminiError};
+pub use google_oauth::{
+    delete_bundle, load_bundle, run_login_flow, save_bundle, token_store_path, LoginOptions,
+    LoginOutcome, OAuthBundle, OAuthError, TOKEN_STORE_FILENAME,
+};
 pub use image::{GeneratedImage, DEFAULT_IMAGE_MODEL};
 pub use imports::{
     format_import_aabb_preamble, format_imports_preserve_block, summarize_imports, ImportSummary,
 };
 pub use prompt::{cacheable_block, inline_block, system_instruction, StdlibIndex};
-pub use provider::{LlmClient, Provider, ProviderError};
+pub use provider::{GoogleCredential, LlmClient, Provider, ProviderError};
 pub use repair::{
     generate_with_repair, repair_message, validate_text, GenerateOutcome, RepairConfig,
 };

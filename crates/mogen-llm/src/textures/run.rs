@@ -240,7 +240,13 @@ fn process_material(
         match &p.action {
             PlanAction::Generate => {
                 emit(TextureStage::Generating);
-                let bytes = resolve_albedo_bytes(client, model, p, args.texture_size)?;
+                let bytes = resolve_albedo_bytes(
+                    client,
+                    model,
+                    p,
+                    args.texture_size,
+                    args.allow_oauth_image,
+                )?;
                 // Mask-mode materials want a foliage cutout: chroma-key
                 // the pure-black backdrop into alpha=0 so the leaf
                 // silhouette becomes the visible shape on the leaf_card.
@@ -373,6 +379,7 @@ fn resolve_albedo_bytes(
     model: &str,
     plan: &Plan,
     max_side: u32,
+    allow_oauth: bool,
 ) -> Result<Vec<u8>> {
     let client = client.ok_or_else(|| {
         anyhow!("no GeminiClient available for material {}", plan.material)
@@ -380,12 +387,13 @@ fn resolve_albedo_bytes(
     // Fresh per-material random seed so repeated runs over the same prompt
     // don't keep landing on the same Gemini sample.
     let seed = Some(random_seed());
-    let img = generate_with_recitation_retry(
+    let img = generate_with_recitation_retry_oauth(
         client,
         model,
         &plan.prompt,
         RECITATION_RETRIES,
         seed,
+        allow_oauth,
     )
     .map_err(|e: GeminiError| anyhow!("gemini image: {e}"))?;
     resize_and_recompress_albedo(&img.png_bytes, max_side)
@@ -508,10 +516,27 @@ pub fn generate_with_recitation_retry(
     max_retries: u32,
     seed: Option<u64>,
 ) -> Result<GeneratedImage, GeminiError> {
+    generate_with_recitation_retry_oauth(client, model, base_prompt, max_retries, seed, false)
+}
+
+/// Same as [`generate_with_recitation_retry`] but with explicit control over
+/// the OAuth image-generation policy. Threads through the
+/// [`crate::image::GeminiClient::generate_image_with_oauth_policy`] gate so
+/// the textures CLI's `--allow-oauth-image` flag actually reaches the HTTP
+/// call; otherwise OAuth users would get a clean
+/// [`GeminiError::ImageOverOAuthUnverified`] from the very first attempt.
+pub fn generate_with_recitation_retry_oauth(
+    client: &GeminiClient,
+    model: &str,
+    base_prompt: &str,
+    max_retries: u32,
+    seed: Option<u64>,
+    allow_oauth: bool,
+) -> Result<GeneratedImage, GeminiError> {
     let mut attempt: u32 = 0;
     loop {
         let prompt = build_attempt_prompt(base_prompt, attempt);
-        match client.generate_image(model, &prompt, seed) {
+        match client.generate_image_with_oauth_policy(model, &prompt, seed, allow_oauth) {
             Ok(img) => return Ok(img),
             Err(GeminiError::InvalidResponse(msg))
                 if msg.contains("IMAGE_RECITATION") && attempt < max_retries =>
