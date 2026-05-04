@@ -9,13 +9,15 @@ members = [
     "crates/mogen-export",
     "crates/mogen-llm",
     "crates/mogen",
+    "crates/mogen-moghub-client",
+    "crates/mogen-registry",
     "crates/mogen-studio",
     "crates/mogen-update",
     "crates/mogen-wasm",
 ]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 
 [workspace.dependencies]
@@ -46,4 +48,6 @@ mogen-validate = { path = "crates/mogen-validate", default-features = false }
 mogen-anim = { path = "crates/mogen-anim" }
 mogen-export = { path = "crates/mogen-export", default-features = false }
 mogen-llm = { path = "crates/mogen-llm" }
+mogen-moghub-client = { path = "crates/mogen-moghub-client" }
+mogen-registry = { path = "crates/mogen-registry" }
 mogen-update = { path = "crates/mogen-update" }

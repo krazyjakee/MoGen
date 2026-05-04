@@ -183,5 +183,5 @@ Existing file:\n\n{existing}",
     fs::write(&dsl_path, &wrapped)
         .with_context(|| format!("writing {}", dsl_path.display()))?;
 
-    build(dsl_path, out_path)
+    build(dsl_path, out_path, false, false)
 }

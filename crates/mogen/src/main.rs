@@ -15,6 +15,7 @@ use commands::build::build;
 use commands::generate::{generate, GenerateArgs};
 use commands::inspect::{check, dump_scene, inspect, parse_cmd};
 use commands::modify::{modify, ModifyArgs};
+use commands::relock::relock;
 use commands::repair::{repair, RepairArgs};
 use commands::textures::textures_cmd;
 use commands::update::{update, UpdateArgs};
@@ -80,7 +81,19 @@ enum Cmd {
         /// Output GLB path. Defaults to `<input>.glb` alongside the DSL file.
         #[arg(short, long)]
         out: Option<PathBuf>,
+        /// Refuse to fetch missing registry refs. Build succeeds only if
+        /// every `use "@user/slug"` is already pinned in `mog.lock` and
+        /// its source is in the cache. Use in CI.
+        #[arg(long)]
+        frozen: bool,
+        /// Refuse any network call. Builds against the existing cache +
+        /// lockfile only; errors with the missing pin if not satisfied.
+        #[arg(long)]
+        offline: bool,
     },
+    /// Re-resolve every `use "@user/slug[@v]"` registry ref to its current
+    /// latest version and rewrite `mog.lock`.
+    Relock { input: PathBuf },
     /// Parse a DSL file and print the AST.
     Parse { input: PathBuf },
     /// Validate a DSL file (semantic + reference checks). Exit non-zero on any error.
@@ -425,10 +438,16 @@ enum Cmd {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.cmd {
-        Cmd::Build { input, out } => {
+        Cmd::Build {
+            input,
+            out,
+            frozen,
+            offline,
+        } => {
             let out = out.unwrap_or_else(|| input.with_extension("glb"));
-            build(input, out)
+            build(input, out, frozen, offline)
         }
+        Cmd::Relock { input } => relock(input),
         Cmd::Parse { input } => parse_cmd(input),
         Cmd::Check { input, json } => check(input, json),
         Cmd::DumpScene { input, json } => dump_scene(input, json),

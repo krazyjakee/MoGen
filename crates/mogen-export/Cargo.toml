@@ -10,9 +10,13 @@ default = ["textures", "merge"]
 # feature stubs `pack_textures` to return an empty texture table — useful for
 # wasm where there is no filesystem and no parallel/zopfli toolchain.
 textures = ["dep:image", "dep:oxipng"]
-# Sibling-mesh merge depends on `mogen-geom`'s CSG path. Disable for builds
-# (e.g. wasm) that cannot link the manifold C++ library.
-merge = ["mogen-geom/csg"]
+# Sibling-mesh merge module. The merge pass calls into `mogen-geom`'s CSG
+# `union_many`; whichever crate enables the `csg` (desktop) or
+# `unstable-wasm-uu` (wasm) flavor of `mogen-geom` is responsible for
+# providing the actual backend. With this feature on but no CSG flavor
+# selected anywhere in the workspace, calling `union_many` would hit the
+# `csg_stub` panic.
+merge = []
 
 [dependencies]
 mogen-core = { workspace = true }

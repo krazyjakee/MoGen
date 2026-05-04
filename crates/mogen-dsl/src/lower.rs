@@ -22,7 +22,10 @@ use mogen_core::{subtree_local_aabb, NodeId, SceneGraph};
 use crate::ast::Node;
 use crate::attach::resolve_attaches;
 use crate::conform::resolve_conforms;
-use crate::module::{collect_modules, expand_modules, resolve_imports};
+use crate::module::{
+    collect_modules, expand_modules, resolve_imports_with_loader,
+    resolve_registry_uses_with_loader, FsLoader, Loader,
+};
 use crate::skin_lower::{bind_meshes, lower_skeleton};
 
 use anim::{is_anim_decl, lower_animations};
@@ -116,9 +119,26 @@ pub fn lower(ast: &[Node]) -> Result<SceneGraph> {
 /// Like `lower`, but also sets the source directory used by the `mesh`
 /// primitive to resolve relative `src=` paths. Pass the directory of the
 /// `.mog` source — typically `path.parent()` for the file the user passed
-/// to `mogen build`.
+/// to `mogen build`. Imports are resolved through an [`FsLoader`].
 pub fn lower_with_source(ast: &[Node], source_dir: Option<&Path>) -> Result<SceneGraph> {
-    let _src = SourceDirGuard::set(source_dir.map(|p| p.to_path_buf()));
+    let mut loader = FsLoader::new();
+    lower_with_loader(ast, source_dir, &mut loader)
+}
+
+/// Like [`lower_with_source`] but with a caller-supplied [`Loader`]. Used by
+/// `mogen-wasm` (in-memory file map + JS fetch callback) and by the MoGHub
+/// upload validator (registry-backed); desktop callers should prefer
+/// [`lower_with_source`].
+///
+/// `base_dir` still drives the `mesh` primitive's `src=` resolution and the
+/// initial relative-path base for FS-style imports; loaders that ignore
+/// disk paths can pass `None`.
+pub fn lower_with_loader(
+    ast: &[Node],
+    base_dir: Option<&Path>,
+    loader: &mut dyn Loader,
+) -> Result<SceneGraph> {
+    let _src = SourceDirGuard::set(base_dir.map(|p| p.to_path_buf()));
     let _coll = ColliderRequestsGuard::fresh();
     // Top-level `lod_scale (value=N)` multiplies primitive default segment/
     // ring counts. Stash on a thread-local before lowering so `primitive_mesh`
@@ -132,7 +152,12 @@ pub fn lower_with_source(ast: &[Node], source_dir: Option<&Path>) -> Result<Scen
     // < imports < user, so a user module shadows an imported one and an
     // imported module shadows a stdlib one.
     let mut reg = crate::stdlib::stdlib_registry().clone();
-    let imported_decls = resolve_imports(ast, source_dir)?;
+    let mut imported_decls = resolve_imports_with_loader(ast, base_dir, loader)?;
+    // Cross-author registry refs (`use "@user/slug[@v]"`) flow through
+    // `Loader::load_registry`. Walking them as a separate pass keeps
+    // local-only callers (mogen-validate, the wasm playground, plain
+    // `mogen check`) from triggering registry resolution.
+    imported_decls.extend(resolve_registry_uses_with_loader(ast, loader)?);
     let imported_reg = collect_modules(&imported_decls)?;
     reg.extend_overlay(imported_reg);
     let user = collect_modules(ast)?;

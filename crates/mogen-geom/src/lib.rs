@@ -1,8 +1,8 @@
 pub mod cleanup;
 pub mod conform;
-#[cfg(feature = "csg")]
+#[cfg(any(feature = "csg", feature = "unstable-wasm-uu"))]
 pub mod csg;
-#[cfg(feature = "csg")]
+#[cfg(any(feature = "csg", feature = "unstable-wasm-uu"))]
 pub mod csg_smooth;
 pub mod primitives;
 pub mod surface_query;
@@ -15,9 +15,9 @@ pub use conform::{
     build_path_frames, conform_mesh, conform_patch, subdivide_along_axis, Axis, AxisMap,
     ConformParams, PatchParams, PathFrame,
 };
-#[cfg(feature = "csg")]
+#[cfg(any(feature = "csg", feature = "unstable-wasm-uu"))]
 pub use csg::{difference, difference_many, intersect, intersect_many, union, union_many};
-#[cfg(feature = "csg")]
+#[cfg(any(feature = "csg", feature = "unstable-wasm-uu"))]
 pub use csg_smooth::union_smooth;
 pub use surface_query::{SurfaceIndex, SurfacePoint};
 pub use primitives::{
@@ -29,12 +29,11 @@ pub use primitives::{
 };
 pub use xform::transform_mesh;
 
-// CSG stubs — kept on the public surface even with the `csg` feature off so
+// CSG stubs — kept on the public surface even with both CSG features off so
 // that downstream crates (mogen-dsl, mogen-export::merge) compile unchanged.
-// Callers in builds without `csg` MUST avoid invoking these; for the wasm
-// crate that means rejecting `union`/`difference`/`intersect` AST nodes
-// before lowering. Reaching a stub is a programmer error, hence the panic.
-#[cfg(not(feature = "csg"))]
+// Reaching a stub at runtime is a programmer error: builds either enable
+// `csg` (desktop) or `unstable-wasm-uu` (wasm).
+#[cfg(not(any(feature = "csg", feature = "unstable-wasm-uu")))]
 mod csg_stub {
     use mogen_core::Mesh;
 
@@ -64,7 +63,7 @@ mod csg_stub {
         unsupported()
     }
 }
-#[cfg(not(feature = "csg"))]
+#[cfg(not(any(feature = "csg", feature = "unstable-wasm-uu")))]
 pub use csg_stub::{
     difference, difference_many, intersect, intersect_many, union, union_many, union_smooth,
 };

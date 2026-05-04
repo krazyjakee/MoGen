@@ -26,11 +26,15 @@ pub fn render_human(filename: &str, source: &str, diags: &[Diagnostic]) {
 }
 
 /// One JSON object per diagnostic, each on its own line.
+///
+/// `filename` is the fallback used when a diagnostic doesn't carry its own
+/// `file` field — preserves single-file CLI behaviour while letting the
+/// multi-file wasm editor route per-file diagnostics to the right tab.
 pub fn render_json(filename: &str, diags: &[Diagnostic]) -> String {
     let mut out = String::new();
     for d in diags {
         let obj = serde_json::json!({
-            "file": filename,
+            "file": d.file.as_deref().unwrap_or(filename),
             "severity": d.severity,
             "code": d.code,
             "message": d.message,
