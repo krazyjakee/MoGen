@@ -12,9 +12,19 @@ use std::fmt;
 use crate::anthropic::{AnthropicClient, AnthropicError};
 use crate::claude_code::{ClaudeCodeClient, ClaudeCodeError};
 use crate::gemini::{GeminiClient, GeminiError};
+use crate::google_oauth::OAuthBundle;
 use crate::ollama::{OllamaClient, OllamaError};
 use crate::openai::{OpenAIClient, OpenAIError};
 use crate::types::{GenerateConfig, GenerateResponse};
+
+/// How the user's Google credential is supplied. Surfaced in the CLI's
+/// credential resolver — flag/env API-key beats stored OAuth, so users can
+/// always force the public-API path even when an OAuth token is on disk.
+#[derive(Debug, Clone)]
+pub enum GoogleCredential {
+    ApiKey(String),
+    OAuth(OAuthBundle),
+}
 
 /// Closed set of LLM backends the CLI / Studio can talk to. Persisted as a
 /// lowercase label (see [`Provider::key`]) so adding new variants doesn't
@@ -192,6 +202,11 @@ pub enum ProviderError {
     InvalidResponse(String),
     #[error("provider {provider} does not support {feature}")]
     Unsupported { provider: Provider, feature: &'static str },
+    /// OAuth subsystem failure (refresh failed, project missing, store
+    /// corrupted). The body carries the [`crate::google_oauth::OAuthError`]
+    /// message verbatim so the CLI can show the actionable hint.
+    #[error("OAuth error: {0}")]
+    OAuth(String),
 }
 
 impl From<GeminiError> for ProviderError {
@@ -203,6 +218,19 @@ impl From<GeminiError> for ProviderError {
             GeminiError::EmptyResponse => Self::EmptyResponse,
             GeminiError::BudgetExceeded { used, budget } => Self::BudgetExceeded { used, budget },
             GeminiError::InvalidResponse(s) => Self::InvalidResponse(s),
+            GeminiError::OAuth(s) => Self::OAuth(s),
+            // The cache-unavailable case is an *expected* signal in OAuth
+            // mode: the resolver swallows it and falls back to inline.
+            // Surface it as InvalidResponse so a stray bubble-up still
+            // reads sensibly in user logs.
+            GeminiError::CacheUnavailableOverOAuth => Self::Unsupported {
+                provider: Provider::Gemini,
+                feature: "cachedContents over OAuth",
+            },
+            GeminiError::ImageOverOAuthUnverified => Self::Unsupported {
+                provider: Provider::Gemini,
+                feature: "image generation over OAuth",
+            },
         }
     }
 }
@@ -354,6 +382,19 @@ impl LlmClient {
             Provider::Anthropic => LlmClient::Anthropic(AnthropicClient::new(api_key)),
             Provider::Ollama => LlmClient::Ollama(OllamaClient::new(api_key)),
             Provider::ClaudeCode => LlmClient::ClaudeCode(ClaudeCodeClient::new()),
+        }
+    }
+
+    /// Construct a Gemini client from a resolved [`GoogleCredential`]. The
+    /// `mogen` CLI resolver picks the right variant from
+    /// flag → env → on-disk OAuth before calling this. API-key callers
+    /// continue to use [`Self::new`] / [`Self::from_env`].
+    pub fn gemini_from_credential(credential: GoogleCredential) -> Self {
+        match credential {
+            GoogleCredential::ApiKey(key) => LlmClient::Gemini(GeminiClient::new(key)),
+            GoogleCredential::OAuth(bundle) => {
+                LlmClient::Gemini(GeminiClient::from_oauth(bundle))
+            }
         }
     }
 

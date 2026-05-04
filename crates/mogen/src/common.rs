@@ -5,8 +5,9 @@ use std::path::Path;
 use anyhow::{bail, Context, Result};
 use mogen_core::{Diagnostic, Severity};
 use mogen_llm::{
-    cacheable_block, default_cache_path, inline_block, resolve_or_create_cache,
-    system_instruction, GenerateConfig, LlmClient, Provider, StdlibIndex, DEFAULT_TTL_SECONDS,
+    cacheable_block, default_cache_path, inline_block, load_bundle, resolve_or_create_cache,
+    system_instruction, token_store_path, GenerateConfig, GoogleCredential, LlmClient, Provider,
+    StdlibIndex, DEFAULT_TTL_SECONDS,
 };
 
 /// Group error diagnostics by category (derived from the code prefix) so the
@@ -89,6 +90,52 @@ pub(crate) fn resolve_model(provider: Provider, flag: Option<String>) -> String 
 /// Construct the right [`LlmClient`] for `provider` with `api_key`.
 pub(crate) fn build_client(provider: Provider, api_key: String) -> LlmClient {
     LlmClient::new(provider, api_key)
+}
+
+/// Resolve the Google credential for Gemini calls. Precedence:
+/// `--api-key` flag → `GEMINI_API_KEY` env → on-disk OAuth bundle → error.
+///
+/// API-key beats stored OAuth deliberately so users can always force the
+/// public-API path when both are configured (`mogen auth status` flags this
+/// shadowing).
+pub(crate) fn resolve_gemini_credential(flag: Option<String>) -> Result<GoogleCredential> {
+    if let Some(k) = flag {
+        if k.trim().is_empty() {
+            bail!("--api-key is empty");
+        }
+        return Ok(GoogleCredential::ApiKey(k));
+    }
+    let from_env = std::env::var("GEMINI_API_KEY").unwrap_or_default();
+    if !from_env.trim().is_empty() {
+        return Ok(GoogleCredential::ApiKey(from_env));
+    }
+    if let Some(path) = token_store_path() {
+        match load_bundle(&path) {
+            Ok(Some(bundle)) => return Ok(GoogleCredential::OAuth(bundle)),
+            Ok(None) => {}
+            Err(e) => {
+                eprintln!(
+                    "mogen: stored OAuth credentials at {} unreadable ({e}); ignoring",
+                    path.display()
+                );
+            }
+        }
+    }
+    bail!(
+        "missing GEMINI_API_KEY (set env var, pass --api-key, or run 'mogen auth login')"
+    );
+}
+
+/// Build a Gemini-aware [`LlmClient`]. For Gemini, threads `flag → env →
+/// stored OAuth` through [`resolve_gemini_credential`]; for non-Gemini
+/// providers this is identical to [`build_client`] over [`resolve_api_key`].
+pub(crate) fn build_llm_client(provider: Provider, flag: Option<String>) -> Result<LlmClient> {
+    if matches!(provider, Provider::Gemini) {
+        let cred = resolve_gemini_credential(flag)?;
+        return Ok(LlmClient::gemini_from_credential(cred));
+    }
+    let key = resolve_api_key(provider, flag)?;
+    Ok(build_client(provider, key))
 }
 
 /// Create the parent directory for `path` if it doesn't already exist. Called

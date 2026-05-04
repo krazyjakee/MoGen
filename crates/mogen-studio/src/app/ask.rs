@@ -95,11 +95,12 @@ impl MogenStudioApp {
             return;
         }
         let provider = self.settings.provider();
-        let api_key = match self.resolve_api_key() {
-            Some(k) => k,
+        let credential = match self.resolve_credential() {
+            Some(c) => c,
             None => {
                 self.ask_answer = Some(Err(format!(
-                    "no {} API key — set one in Edit → Preferences…",
+                    "no {} credential — set an API key in Edit → Preferences… \
+                     (Gemini also accepts `mogen auth login`)",
                     provider.label(),
                 )));
                 return;
@@ -124,7 +125,7 @@ impl MogenStudioApp {
                 code,
                 context_label,
                 provider,
-                api_key,
+                credential,
                 model,
                 sys_instr,
                 claude_code_path,
@@ -162,12 +163,12 @@ fn run_ask_question(
     code: String,
     context_label: String,
     provider: Provider,
-    api_key: String,
+    credential: super::util::Credential,
     model: String,
     sys_instr: Arc<String>,
     claude_code_path: String,
 ) -> Result<String, String> {
-    let client = super::util::build_provider_client(provider, api_key, &claude_code_path);
+    let client = super::util::build_provider_client(provider, credential, &claude_code_path);
 
     // Tag the code so the model knows whether it's looking at a snippet or
     // the whole file. The "do not rewrite" guidance keeps replies pedagogical

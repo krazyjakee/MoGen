@@ -5,8 +5,9 @@ use std::sync::Arc;
 use mogen_llm::{
     cacheable_block, default_cache_path, embed_seed_header, format_imports_preserve_block,
     generate_with_repair, inline_block, parse_prompt_header, parse_seed_header, repair_message,
-    resolve_or_create_cache, summarize_imports, validate_text, GenerateConfig, ImageInput,
-    LlmClient, Provider, RepairConfig, StdlibIndex, ThinkingLevel, Usage, DEFAULT_TTL_SECONDS,
+    resolve_or_create_cache, summarize_imports, validate_text, GenerateConfig, GoogleCredential,
+    ImageInput, LlmClient, OAuthBundle, Provider, RepairConfig, StdlibIndex, ThinkingLevel, Usage,
+    DEFAULT_TTL_SECONDS,
 };
 
 use crate::app::error_class::classify;
@@ -78,18 +79,46 @@ fn attach_system_instruction(
     cfg.system_instruction = Some((**sys_instr).clone());
 }
 
+/// Resolved credential for one LLM call. Carries either an API key (any
+/// provider) or a Google OAuth bundle (Gemini-only). Construction stays in
+/// `app/llm.rs::resolve_credential`; the worker threads consume the enum and
+/// hand it to [`build_provider_client`].
+#[derive(Clone)]
+pub(in crate::app) enum Credential {
+    ApiKey(String),
+    GeminiOAuth(OAuthBundle),
+}
+
+impl Credential {
+    /// Convenience for callers that previously took a bare `String` —
+    /// returns the API key if this is an [`ApiKey`](Self::ApiKey), else
+    /// empty. OAuth callers must branch on the enum directly.
+    pub(in crate::app) fn api_key_or_empty(&self) -> String {
+        match self {
+            Credential::ApiKey(k) => k.clone(),
+            Credential::GeminiOAuth(_) => String::new(),
+        }
+    }
+}
+
 /// Construct an [`LlmClient`] honoring Studio-only settings that don't fit
-/// the bare `LlmClient::new(provider, api_key)` signature. Today that's just
-/// the Claude Code binary path.
+/// the bare `LlmClient::new(provider, api_key)` signature. Claude Code
+/// reroutes through `with_base_url` to honour the binary-path setting; a
+/// Gemini OAuth credential routes through `gemini_from_credential` so the
+/// resulting client speaks Cloud Code Assist instead of the public API.
 pub(in crate::app) fn build_provider_client(
     provider: Provider,
-    api_key: String,
+    credential: Credential,
     claude_code_path: &str,
 ) -> LlmClient {
-    if matches!(provider, Provider::ClaudeCode) {
-        LlmClient::with_base_url(provider, api_key, claude_code_path)
-    } else {
-        LlmClient::new(provider, api_key)
+    match (provider, credential) {
+        (Provider::Gemini, Credential::GeminiOAuth(bundle)) => {
+            LlmClient::gemini_from_credential(GoogleCredential::OAuth(bundle))
+        }
+        (Provider::ClaudeCode, cred) => {
+            LlmClient::with_base_url(provider, cred.api_key_or_empty(), claude_code_path)
+        }
+        (provider, cred) => LlmClient::new(provider, cred.api_key_or_empty()),
     }
 }
 
@@ -99,7 +128,7 @@ pub(in crate::app) fn run_llm(
     existing: Option<String>,
     provider: Provider,
     image: Option<ImageInput>,
-    api_key: String,
+    credential: Credential,
     run_cfg: LlmRunConfig,
     sys_instr: Arc<String>,
     tx: Sender<LlmMessage>,
@@ -111,7 +140,7 @@ pub(in crate::app) fn run_llm(
         let _ = tx.send(LlmMessage::Progress(p));
     };
 
-    let client = build_provider_client(provider, api_key, &run_cfg.claude_code_path);
+    let client = build_provider_client(provider, credential, &run_cfg.claude_code_path);
     let seed = run_cfg.seed_override.unwrap_or_else(|| {
         existing
             .as_deref()

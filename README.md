@@ -158,6 +158,65 @@ it leaves geometry, materials, and hierarchy untouched. There are a few more
 developer-facing subcommands (`parse`, `dump-scene`, `bench`) — run `mogen --help`
 for the full list.
 
+### Sign in with a paid Gemini account (Antigravity OAuth)
+
+Free-tier `GEMINI_API_KEY`s are locked out of `gemini-3-pro-preview` and other
+Pro tiers (the API returns `limit=0` 429s). If you have a paid Pro plan via
+**Antigravity**, you can sign in with Google instead.
+
+OAuth requires a Google OAuth desktop client. `mogen` reads the credentials
+from a JSON file at runtime — they are deliberately **not** committed to this
+repo. Create `oauth_client.json` with your `client_id` / `client_secret`:
+
+```json
+{
+  "client_id": "1234567890-xxxxx.apps.googleusercontent.com",
+  "client_secret": "GOCSPX-xxxxx"
+}
+```
+
+Path resolution (first hit wins):
+
+1. `$MOGEN_OAUTH_CLIENT` (full path to the JSON file)
+2. `$MOGEN_CACHE_DIR/oauth_client.json`
+3. `~/.cache/mogen/oauth_client.json`
+4. `%LOCALAPPDATA%\mogen\oauth_client.json` (Windows)
+
+See `oauth_client.example.json` for a template. The Antigravity desktop client
+that ships with the official Antigravity install is one valid source for
+`client_id` / `client_secret`; you can also create your own desktop OAuth
+client in Google Cloud Console with the redirect URI
+`http://localhost:51121/oauth-callback`.
+
+Then sign in:
+
+```
+mogen auth login            # browser-based Google sign-in
+mogen auth status           # show email + project + token expiry
+mogen auth logout           # delete the local token
+mogen generate "a chair"    # uses OAuth automatically when GEMINI_API_KEY is unset
+```
+
+Credential precedence on `generate`/`modify`/`animate`/`repair`/`bench` is
+`--api-key` flag > `GEMINI_API_KEY` env > stored OAuth token > error. Setting
+the env var temporarily (or passing `--api-key`) shadows the OAuth token —
+`mogen auth status --verbose` flags this when it happens. Tokens live at
+`$MOGEN_CACHE_DIR/google_auth.json` (defaulting to `~/.cache/mogen/` on Unix
+or `%LOCALAPPDATA%\mogen\` on Windows) with mode `0600` on Unix.
+
+OAuth-mode requests go to `cloudcode-pa.googleapis.com/v1internal:generateContent`
+on the user's own Cloud project (discovered via `loadCodeAssist`); the public
+`generativelanguage.googleapis.com` API is not used in this mode.
+
+**Caveat:** if you reuse Antigravity's OAuth client, those credentials are
+extracted from a third-party desktop binary and Google can revoke them at any
+time. Keep `GEMINI_API_KEY` available as a fallback, or register your own
+desktop client. Image generation (`mogen textures`) defaults to API-key only
+— pass `--allow-oauth-image` if you want to probe the Cloud Code Assist
+surface for image generation (unverified there). The `cachedContents`
+system-instruction cache is also disabled in OAuth mode (the surface doesn't
+expose it); the system instruction is sent inline instead.
+
 ## Contributing
 
 Issues and PRs welcome. Good first targets:

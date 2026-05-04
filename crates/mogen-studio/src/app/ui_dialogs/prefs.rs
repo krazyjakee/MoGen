@@ -3,8 +3,8 @@ use mogen_llm::Provider;
 
 use crate::app::MogenStudioApp;
 use crate::settings::{
-    thinking_level_key, thinking_level_label, DEFAULT_MAX_REPAIR_ITERS, PROVIDERS,
-    THINKING_LEVELS,
+    thinking_level_key, thinking_level_label, ProviderSlot, DEFAULT_MAX_REPAIR_ITERS,
+    DEFAULT_OAUTH_GEMINI_FAST_MODEL, DEFAULT_OAUTH_GEMINI_MODEL, PROVIDER_SLOTS, THINKING_LEVELS,
 };
 use crate::theme::{apply_theme, theme_label, Theme, THEMES};
 
@@ -31,19 +31,27 @@ impl PrefsTab {
 
 const PREFS_TABS: [PrefsTab; 3] = [PrefsTab::Llm, PrefsTab::Appearance, PrefsTab::Privacy];
 
-/// Models surfaced in the Preferences dropdown for each provider. Free-form
+/// Models surfaced in the Preferences dropdown for each slot. Free-form
 /// text still wins if a user types one in, but these cover the tiers almost
-/// every user will want and give pricing expectations a named anchor.
-fn model_presets(provider: Provider) -> &'static [&'static str] {
-    match provider {
-        Provider::Gemini => &[
+/// every user will want. The Gemini slots split: API-key uses the public
+/// `*-latest` aliases, OAuth pins to concrete preview tags because
+/// `cloudcode-pa.googleapis.com/v1internal` 404s on the latest aliases.
+fn model_presets(slot: ProviderSlot) -> &'static [&'static str] {
+    match slot {
+        ProviderSlot::GeminiApiKey => &[
             "gemini-pro-latest",
             "gemini-flash-latest",
             "gemini-2.5-pro",
             "gemini-2.5-flash",
             "gemini-2.5-flash-lite",
         ],
-        Provider::OpenAI => &[
+        ProviderSlot::GeminiOAuth => &[
+            "gemini-3.1-pro-preview",
+            "gemini-3-flash-preview",
+            "gemini-2.5-pro",
+            "gemini-2.5-flash",
+        ],
+        ProviderSlot::OpenAI => &[
             "gpt-5",
             "gpt-5-mini",
             "gpt-5-nano",
@@ -52,13 +60,13 @@ fn model_presets(provider: Provider) -> &'static [&'static str] {
             "o4-mini",
             "o3",
         ],
-        Provider::Anthropic => &[
+        ProviderSlot::Anthropic => &[
             "claude-opus-4-7",
             "claude-sonnet-4-6",
             "claude-sonnet-4-5",
             "claude-haiku-4-5",
         ],
-        Provider::Ollama => &[
+        ProviderSlot::Ollama => &[
             "llama3.3",
             "llama3.2",
             "qwen3",
@@ -68,7 +76,7 @@ fn model_presets(provider: Provider) -> &'static [&'static str] {
             "phi4",
             "gemma3",
         ],
-        Provider::ClaudeCode => &[
+        ProviderSlot::ClaudeCode => &[
             "sonnet",
             "haiku",
             "opus",
@@ -166,24 +174,25 @@ impl MogenStudioApp {
                      of this setting (no other backend has an image API).",
                 );
                 ui.add_space(6.0);
-                let current_provider = self.settings.provider();
+                let current_slot = self.settings.provider_slot();
                 egui::ComboBox::from_id_salt("opts_provider")
-                    .selected_text(current_provider.label())
+                    .selected_text(current_slot.label())
                     .show_ui(ui, |ui| {
-                        for p in PROVIDERS {
-                            let selected = p == current_provider;
+                        for slot in PROVIDER_SLOTS {
+                            let selected = slot == current_slot;
                             if ui
-                                .selectable_label(selected, p.label())
+                                .selectable_label(selected, slot.label())
                                 .clicked()
                                 && !selected
                             {
-                                self.settings.set_provider(p);
+                                self.settings.set_provider_slot(slot);
                             }
                         }
                     });
 
                 ui.add_space(12.0);
-                let active_provider = self.settings.provider();
+                let active_slot = self.settings.provider_slot();
+                let active_provider = active_slot.to_provider();
                 if matches!(active_provider, Provider::ClaudeCode) {
                     // Claude Code authenticates through the user's local
                     // `claude` CLI install — no key to paste here. We only
@@ -205,6 +214,12 @@ impl MogenStudioApp {
                             .hint_text("claude")
                             .desired_width(f32::INFINITY),
                     );
+                } else if active_slot.is_gemini_oauth() {
+                    // OAuth-only Gemini slot: hide the key field entirely and
+                    // surface the Sign-in flow + status. The saved Gemini API
+                    // key (if any) is preserved on the side — switching back
+                    // to the API-key slot brings it back into view.
+                    self.prefs_gemini_oauth_section(ui);
                 } else {
                     let key_heading = match active_provider {
                         Provider::Gemini => "Gemini API key",
@@ -287,6 +302,7 @@ impl MogenStudioApp {
                             ),
                         );
                     }
+
                 }
 
                 // --- Models (provider-aware: presets and target fields swap
@@ -302,13 +318,16 @@ impl MogenStudioApp {
                         "Thinking model runs the heavy DSL paths (generate / modify / \
                          animate). Fast model runs cheap rewrites like the Prompt \
                          Enhancer. Showing presets for {}.",
-                        active_provider.label(),
+                        active_slot.label(),
                     ));
                     ui.add_space(6.0);
 
-                    let thinking_default = active_provider.default_model();
-                    let fast_default = active_provider.default_fast_model();
-                    let presets = model_presets(active_provider);
+                    let (thinking_default, fast_default) = if active_slot.is_gemini_oauth() {
+                        (DEFAULT_OAUTH_GEMINI_MODEL, DEFAULT_OAUTH_GEMINI_FAST_MODEL)
+                    } else {
+                        (active_provider.default_model(), active_provider.default_fast_model())
+                    };
+                    let presets = model_presets(active_slot);
 
                     // --- thinking model picker ---
                     ui.label("Thinking model").on_hover_text(
@@ -511,6 +530,66 @@ impl MogenStudioApp {
                             }
                         });
                     });
+    }
+
+    /// Gemini OAuth section. Shown when the active slot is `GeminiOAuth` —
+    /// the only path that talks to `cloudcode-pa.googleapis.com/v1internal`.
+    /// Mirrors the CLI's `mogen auth login` — same loopback browser flow,
+    /// same `google_auth.json` token store, so signing in here also
+    /// authenticates the CLI (and vice versa).
+    fn prefs_gemini_oauth_section(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Sign in with Google (paid Gemini Pro plan)");
+        ui.label(
+            "Routes Gemini calls through the Antigravity OAuth client so \
+             gemini-3-pro-preview / gemini-3.1-pro-preview work on a paid \
+             Pro plan without an API key. Switch back to \"Gemini (API key)\" \
+             above to use the public API instead.",
+        );
+        ui.add_space(6.0);
+
+        let stored = self.oauth_stored_status();
+        if let Some(line) = &stored {
+            ui.label(line);
+        } else {
+            ui.label("Not signed in.");
+        }
+
+        if let Some(msg) = self.oauth_status_message.clone() {
+            ui.add_space(4.0);
+            ui.colored_label(egui::Color32::from_rgb(150, 180, 230), msg);
+        }
+
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            let in_flight = self.oauth_login_in_flight();
+            let login_label = if in_flight {
+                "Signing in… (check browser)"
+            } else if stored.is_some() {
+                "Re-authenticate with Google"
+            } else {
+                "Sign in with Google"
+            };
+            let login_btn = ui.add_enabled(
+                !in_flight,
+                egui::Button::new(login_label),
+            );
+            if login_btn.clicked() {
+                let ctx = ui.ctx().clone();
+                self.start_oauth_login(ctx);
+            }
+            if stored.is_some() {
+                if ui
+                    .add_enabled(!in_flight, egui::Button::new("Sign out"))
+                    .on_hover_text(
+                        "Delete the local OAuth token. Gemini calls will fall \
+                         back to the API key (if set).",
+                    )
+                    .clicked()
+                {
+                    self.start_oauth_logout();
+                }
+            }
+        });
     }
 
     fn prefs_tab_appearance(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {

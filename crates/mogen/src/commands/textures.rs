@@ -2,12 +2,12 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::Instant;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use mogen_llm::gemini::GeminiClient;
-use mogen_llm::Provider;
+use mogen_llm::GoogleCredential;
 
 use crate::commands::build::build;
-use crate::common::{ensure_parent_dir, resolve_api_key};
+use crate::common::{ensure_parent_dir, resolve_gemini_credential};
 use crate::format::format_duration;
 use crate::spinner::Spinner;
 
@@ -69,11 +69,28 @@ pub(crate) fn textures_cmd(args: mogen_llm::textures::TexturesArgs) -> Result<()
     // Image generation only ships against Gemini today — non-Gemini providers
     // would need a separate image endpoint that doesn't exist in OpenAI's
     // chat-completions or Anthropic's messages APIs (and Ollama has no
-    // image-out path at all). Always read GEMINI_API_KEY here regardless of
-    // any `--provider` selection on the parent command.
+    // image-out path at all). Always read the Gemini credential here
+    // regardless of any `--provider` selection on the parent command.
+    //
+    // OAuth credentials are accepted but image generation against the
+    // Cloud Code Assist `v1internal` surface is unverified — gate it behind
+    // `--allow-oauth-image` so the default path errors clearly instead of
+    // silently producing whatever upstream decides to return.
     let client = if to_gen > 0 {
-        let api_key = resolve_api_key(Provider::Gemini, args.api_key.clone())?;
-        Some(GeminiClient::new(api_key))
+        let cred = resolve_gemini_credential(args.api_key.clone())?;
+        match cred {
+            GoogleCredential::ApiKey(k) => Some(GeminiClient::new(k)),
+            GoogleCredential::OAuth(bundle) => {
+                if !args.allow_oauth_image {
+                    bail!(
+                        "image generation over OAuth is unverified — set GEMINI_API_KEY \
+                         (or pass --api-key), or re-run with --allow-oauth-image to probe \
+                         the Cloud Code Assist surface"
+                    );
+                }
+                Some(GeminiClient::from_oauth(bundle))
+            }
+        }
     } else {
         None
     };

@@ -67,6 +67,7 @@ pub(in crate::app) fn run_llm_textures(
         dry_run: false,
         no_build: true,
         api_key: Some(api_key.clone()),
+        allow_oauth_image: false,
         no_pbr: false,
         no_normal: cfg.no_normal,
         no_metallic_roughness: cfg.no_metallic_roughness,

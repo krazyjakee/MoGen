@@ -4,11 +4,11 @@ use std::path::PathBuf;
 use anyhow::{bail, Context, Result};
 use mogen_llm::{
     cacheable_block, default_cache_path, generate_with_repair, inline_block,
-    resolve_or_create_cache, system_instruction, GenerateConfig, LlmClient, Provider,
-    RepairConfig, StdlibIndex, ThinkingLevel, DEFAULT_TTL_SECONDS,
+    resolve_or_create_cache, system_instruction, GenerateConfig, Provider, RepairConfig,
+    StdlibIndex, ThinkingLevel, DEFAULT_TTL_SECONDS,
 };
 
-use crate::common::{resolve_api_key, resolve_model};
+use crate::common::{build_llm_client, resolve_model};
 
 pub(crate) fn bench(
     prompts_path: PathBuf,
@@ -20,8 +20,7 @@ pub(crate) fn bench(
     no_cache: bool,
     thinking: ThinkingLevel,
 ) -> Result<()> {
-    let api_key = resolve_api_key(provider, api_key)?;
-    let client = LlmClient::new(provider, api_key);
+    let client = build_llm_client(provider, api_key)?;
     let model = resolve_model(provider, model);
 
     let content = fs::read_to_string(&prompts_path)
