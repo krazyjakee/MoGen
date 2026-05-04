@@ -5,12 +5,12 @@ edition.workspace = true
 
 [features]
 default = ["csg"]
-# Pass-through to `mogen-geom/csg`. Default ON so the host build behaves as
-# before; the wasm crate sets `default-features = false` to drop the manifold
-# C++ dependency. With csg off, `lower_csg` will still compile but invoking
-# it at runtime hits a panic stub — wasm callers must reject CSG AST nodes
-# before lowering.
+# Desktop CSG. Pass-through to `mogen-geom/csg`.
 csg = ["mogen-geom/csg"]
+# Wasm CSG. Pass-through to `mogen-geom/unstable-wasm-uu`. Mutually
+# exclusive with `csg` on a given build target — they each select a
+# different cmake configuration of the same Manifold C++ library.
+unstable-wasm-uu = ["mogen-geom/unstable-wasm-uu"]
 
 [dependencies]
 mogen-core = { workspace = true }

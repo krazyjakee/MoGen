@@ -63,6 +63,46 @@ The release binary is at `target/release/mogen`. The `./scripts/run-mogen.sh` wr
 
 Drop `chair.glb` into Godot, Blender, three.js, or anything else that reads glTF 2.0.
 
+## Web preview
+
+The browser preview (`crates/mogen-wasm` + `web/`) runs the same parse → lower
+→ export pipeline the desktop CLI uses, and renders the resulting GLB with
+three.js. CSG (`union`/`difference`/`intersect`) and sibling-mesh merge work
+on the wasm build via [`manifold-csg`'s `unstable-wasm-uu` feature][m-csg-wasm],
+which cross-compiles the same Manifold C++ kernel used on desktop through
+[`wasm-cxx-shim`][shim].
+
+Building the wasm crate needs LLVM 20+ on the host:
+
+- macOS: `brew install llvm` (then prepend `$(brew --prefix llvm)/bin` to PATH)
+- Debian/Ubuntu: `apt install clang-20 lld-20 libc++-20-dev libc++abi-20-dev`
+  (often via [apt.llvm.org][apt-llvm] on older distros)
+- Other prefixes: set `WASM_CXX_SHIM_LLVM_BIN_DIR=/path/to/llvm/bin`
+
+```sh
+rustup target add wasm32-unknown-unknown
+cargo install wasm-pack    # if you don't have it yet
+wasm-pack build crates/mogen-wasm --target web \
+  --out-dir ../../web/wasm --out-name mogen_wasm --release
+(cd web && npm install && npm run dev)
+```
+
+The first wasm-pack invocation clones Manifold + Clipper2 + wasm-cxx-shim
+and runs three cmake cross-compiles; subsequent builds use the cached
+artifacts. `./site/build.sh` automates the full playground bundle (wasm-pack
++ Vite) for the gh-pages deploy.
+
+Currently disabled in the browser: texture packing (no fs / no oxipng cross-
+compile), the LLM `generate`/`modify`/`animate` flows (server-only), and
+top-level `use "file.mog"` imports (no fs). The `unstable-wasm-uu` build is
+compiled `-fno-exceptions`, so an STL throw (e.g. `bad_alloc` on extreme
+inputs) becomes an unrecoverable wasm trap — the preview tab can recover by
+reloading.
+
+[m-csg-wasm]: https://github.com/zmerlynn/manifold-csg#browser-without-emscripten-wasm32-unknown-unknown
+[shim]: https://github.com/zmerlynn/wasm-cxx-shim
+[apt-llvm]: https://apt.llvm.org/
+
 ## MoGen Studio
 
 A minimal desktop GUI ships alongside the CLI — **MoGen Studio** combines the DSL

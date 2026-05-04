@@ -71,10 +71,14 @@ mogen-dsl  ──parse──►  AST  ──validate_ast──►  lower  ──
   `Diagnostic` values; `render_human` uses `codespan-reporting`, `render_json` emits the
   line-delimited format the LLM repair loop consumes.
 - **mogen-geom** — primitives (`box`, `cylinder`, `cone`, `sphere`, `capsule`, `torus`,
-  `prism`, `pyramid`, `disc`, `icosphere`, `rounded_box`, `plane`, `quad`), CSG via `csgrs`
+  `prism`, `pyramid`, `disc`, `icosphere`, `rounded_box`, `plane`, `quad`), CSG via the
+  `manifold-csg` crate (zmerlynn) wrapping Google's Manifold C++ library
   (`union`/`difference`/`intersect` with many-arg variants), mesh transforms, and cleanup
   (vertex welding, degenerate-tri cull, normal recomputation). CSG ops call `clean_csg_output`
-  to give the exporter a watertight mesh.
+  to give the exporter a watertight mesh. Two mutually-exclusive Cargo features select the
+  Manifold build flavour: `csg` (default — native cmake build, used by all desktop crates)
+  and `unstable-wasm-uu` (cross-compile to `wasm32-unknown-unknown` via `wasm-cxx-shim`,
+  used by `mogen-wasm`; requires LLVM 20+ on the build host — see README).
 - **mogen-anim** — procedural animation templates (`spin`, `open_close`, `wave`, `flap`,
   `idle`) that build `Clip`s. v1 emits glTF node-transform tracks only; skinning lives in
   `mogen-core::Skin` + exporter and is driven by the same joint nodes.

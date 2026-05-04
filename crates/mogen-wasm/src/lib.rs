@@ -2,14 +2,35 @@
 //!
 //! Exposes a single `compile(source)` entry point that runs the full
 //! parse → validate → lower → validate → export chain in the browser and
-//! returns either GLB bytes or a JSON diagnostics array. The `mogen-export`
-//! `merge` and `textures` features and the `mogen-geom` `csg` feature are
-//! all disabled here (see the dependency tree in `Cargo.toml`) — none of the
-//! C++/threading toolchains they need are available on
-//! `wasm32-unknown-unknown`. CSG ops are caught up-front by walking the AST
-//! and flagged as a clear diagnostic instead of reaching a panic stub.
+//! returns either GLB bytes or a JSON diagnostics array.
+//!
+//! ## Feature parity with desktop
+//!
+//! CSG (`union`/`difference`/`intersect`) and sibling-mesh merge are
+//! supported here via `manifold-csg`'s `unstable-wasm-uu` feature, which
+//! cross-compiles the same Manifold C++ library used on desktop through
+//! `wasm-cxx-shim`. Output is byte-identical to the desktop build for the
+//! same input — no BSP-vs-Manifold divergence. Build host requires LLVM
+//! 20+ (see workspace README for setup).
+//!
+//! ## Still disabled
+//!
+//! - **Textures**: `mogen-export`'s `textures` feature pulls in `image` and
+//!   `oxipng` (libdeflate-sys), which don't cross-compile to wasm32. The
+//!   GLB ships with PBR factors only — no embedded baseColor / normal /
+//!   metallic-roughness images.
+//! - **`mogen-llm`**: not linked into the wasm crate. Generation / repair
+//!   loops stay on the desktop CLI.
+//! - **External `use "file.mog"`**: no `std::fs`, so top-level imports of
+//!   on-disk DSL files don't resolve.
+//!
+//! ## Caveats inherited from `unstable-wasm-uu`
+//!
+//! Compiled `-fno-exceptions`: implicit STL throws (e.g. `bad_alloc` on
+//! out-of-memory) become unrecoverable wasm traps rather than panics the
+//! JS host can catch. The browser tab can recover by reloading.
 
-use mogen_core::{Diagnostic, Severity, Span};
+use mogen_core::{Diagnostic, Severity};
 use mogen_export::{build_glb_with_options, ExportOptions};
 use mogen_validate::{render_json, validate_ast, validate_graph};
 use wasm_bindgen::prelude::*;
@@ -66,17 +87,6 @@ pub fn compile(source: &str) -> CompileOutcome {
         }
     };
 
-    // CSG check — the wasm build can't link the manifold C++ library, so we
-    // intercept these node kinds before lowering would invoke a panic stub.
-    if let Some(span) = find_csg_node(&ast) {
-        let mut diag = Diagnostic::error(
-            "EWASM01",
-            "CSG operations (`union` / `difference` / `intersect`) are not supported in the web build. Use the desktop `mogen` CLI for CSG.".to_string(),
-        );
-        diag.span = Some(span);
-        return fail("parse", vec![diag]);
-    }
-
     // AST validation.
     let mut diags = validate_ast(&ast);
     if diags.iter().any(|d| matches!(d.severity, Severity::Error)) {
@@ -98,12 +108,11 @@ pub fn compile(source: &str) -> CompileOutcome {
         return fail("validate_graph", diags);
     }
 
-    // Export. Disable both options the wasm build can't honour: textures
-    // (no fs to read source PNGs) and merge (no CSG to back the union).
+    // Export. Textures still off (no fs, no oxipng); CSG-backed merge is on.
     let opts = ExportOptions {
         include_animations: true,
         include_textures: false,
-        merge_sibling_meshes: false,
+        merge_sibling_meshes: true,
     };
     match build_glb_with_options(&scene, &opts, |_| {}) {
         Ok(bytes) => CompileOutcome {
@@ -124,22 +133,4 @@ fn fail(stage: &'static str, diags: Vec<Diagnostic>) -> CompileOutcome {
         diagnostics: render_json("scene.mog", &diags),
         stage,
     }
-}
-
-/// Walk the AST looking for a CSG node. Returns the span of the first one,
-/// for the diagnostic. Recurses into children since CSG can be nested under
-/// `group`/`scene`/etc. Modules (`use`) are not expanded yet at this point;
-/// users would only hit a stdlib CSG op via expansion which is rare and
-/// would surface as a panic at lower time — acceptable given how unusual
-/// that path is.
-fn find_csg_node(nodes: &[mogen_dsl::Node]) -> Option<Span> {
-    for n in nodes {
-        if matches!(n.kind.as_str(), "union" | "difference" | "intersect") {
-            return Some(n.span);
-        }
-        if let Some(s) = find_csg_node(&n.children) {
-            return Some(s);
-        }
-    }
-    None
 }

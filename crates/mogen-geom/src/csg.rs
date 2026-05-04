@@ -1,5 +1,9 @@
 //! Boolean CSG over triangle meshes — backed by Google's Manifold library
-//! via the `manifold3d` Rust bindings.
+//! via the `manifold-csg` Rust bindings (zmerlynn/manifold-csg). The
+//! `manifold-csg` crate is shared between the desktop build (CMake-built
+//! Manifold linked natively) and the wasm build (same Manifold sources
+//! cross-compiled via `wasm-cxx-shim` for `wasm32-unknown-unknown`); see
+//! the workspace README for the LLVM 20+ host requirement on the wasm leg.
 //!
 //! Manifold guarantees watertight output for any pair of valid manifold
 //! inputs (including curved-vs-curved cases that the previous BSP/csg.js
@@ -36,7 +40,7 @@
 //! the caller's primitive and panic with the offending status — silent
 //! fallback would mask geometry corruption.
 
-use manifold3d::Manifold;
+use manifold_csg::Manifold;
 
 use mogen_core::Mesh;
 
