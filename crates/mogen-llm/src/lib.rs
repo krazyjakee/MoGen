@@ -34,9 +34,11 @@ pub mod pbr_maps;
 pub mod prompt;
 pub mod provider;
 pub mod repair;
+pub mod settings_store;
 pub mod textures;
 pub mod types;
 pub mod zai;
+pub mod zai_chat;
 
 pub use cache::{default_cache_path, resolve_or_create as resolve_or_create_cache, DEFAULT_TTL_SECONDS};
 pub use gemini::{CachedContent, GeminiAuth, GeminiClient, GeminiError};
@@ -46,6 +48,7 @@ pub use google_oauth::{
     token_store_write_path_for, LoginOptions, LoginOutcome, OAuthBundle, OAuthError,
     TOKEN_STORE_FILENAME,
 };
+pub use google_oauth::client::{resolve_user_path, PathMode};
 pub use image::{GeneratedImage, DEFAULT_IMAGE_MODEL};
 pub use image_client::{ImageClient, ImageError};
 pub use imports::{
@@ -56,9 +59,11 @@ pub use provider::{GoogleCredential, LlmClient, Provider, ProviderError};
 pub use repair::{
     generate_with_repair, repair_message, validate_text, GenerateOutcome, RepairConfig,
 };
+pub use settings_store::{load_api_keys, read_api_key, settings_path as settings_store_path, ApiKeys};
 pub use fireworks::{FireworksClient, FireworksError};
 pub use textures::parse_prompt_header;
 pub use zai::{ZaiClient, ZaiError};
+pub use zai_chat::{ZaiChatClient, ZaiChatError};
 pub use types::{
     GenerateConfig, GenerateResponse, ImageInput, Role, ThinkingLevel, Turn, Usage,
     DEFAULT_TEMPERATURE,

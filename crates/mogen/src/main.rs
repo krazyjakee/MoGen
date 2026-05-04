@@ -55,6 +55,9 @@ enum ProviderArg {
     /// Fireworks AI's OpenAI-compatible Chat Completions surface. Default
     /// model is the Fire Pass `kimi-k2p6` router; set `FIREWORKS_API_KEY`.
     Fireworks,
+    /// Z.ai (Zhipu) GLM family via the OpenAI-compatible chat endpoint.
+    /// Default model is `glm-5.1`; set `ZAI_API_KEY`.
+    Zai,
 }
 
 impl From<ProviderArg> for Provider {
@@ -66,6 +69,7 @@ impl From<ProviderArg> for Provider {
             ProviderArg::Ollama => Provider::Ollama,
             ProviderArg::ClaudeCode => Provider::ClaudeCode,
             ProviderArg::Fireworks => Provider::Fireworks,
+            ProviderArg::Zai => Provider::Zai,
         }
     }
 }
