@@ -27,6 +27,11 @@ jobs:
   build:
     name: build site
     runs-on: ubuntu-latest
+    env:
+      # Pinned LLVM bin dir for manifold-csg-sys's build.rs to skip the
+      # find_llvm() detection ladder. apt.llvm.org's debian packages install
+      # the toolchain here, which is what wasm-cxx-shim probes for.
+      WASM_CXX_SHIM_LLVM_BIN_DIR: /usr/lib/llvm-20/bin
     steps:
       - uses: actions/checkout@v4
 
@@ -39,6 +44,17 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
+
+      # LLVM 20 + libc++/libc++abi + lld are required by manifold-csg's
+      # `unstable-wasm-uu` feature (cross-compiles Manifold C++ for
+      # wasm32-unknown-unknown via wasm-cxx-shim). Default ubuntu-latest
+      # ships clang-18, which the shim doesn't support.
+      - name: Install LLVM 20 + libc++ + lld
+        run: |
+          wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
+          echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-20 main" | sudo tee /etc/apt/sources.list.d/llvm.list
+          sudo apt-get update
+          sudo apt-get install -y clang-20 lld-20 libc++-20-dev libc++abi-20-dev
 
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
