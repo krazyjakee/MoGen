@@ -35,7 +35,8 @@ use thiserror::Error;
 
 pub use flow::{run_login_flow, LoginOptions, LoginOutcome};
 pub use store::{
-    delete_bundle, load_bundle, save_bundle, token_store_path, TOKEN_STORE_FILENAME,
+    all_existing_token_paths, delete_bundle, load_bundle, save_bundle, token_store_path,
+    token_store_write_path, TOKEN_STORE_FILENAME,
 };
 pub use token::{refresh_if_needed, refresh_now, OAuthBundle};
 

@@ -34,15 +34,38 @@ struct StoredBundle {
     bundle: OAuthBundle,
 }
 
-/// Resolve the on-disk token path. Returns `None` only when no candidate
-/// directory is configured (no `MOGEN_CACHE_DIR`, no `HOME`/`USERPROFILE`,
-/// no `LOCALAPPDATA`) — the CLI surfaces it as a clear error.
-///
-/// Read paths walk `~/.mogen/` → `~/.cache/mogen/` → `%LOCALAPPDATA%\mogen\`
-/// so existing installs keep finding their old `google_auth.json` while
-/// new logins land in `~/.mogen/`.
+/// Resolve the on-disk token path for **reads**. Walks
+/// `~/.mogen/` → `~/.cache/mogen/` → `%LOCALAPPDATA%\mogen\` and returns
+/// the first existing file, falling back to the canonical
+/// `~/.mogen/google_auth.json` if nothing is on disk yet. Returns `None`
+/// only when no candidate directory is configured.
 pub fn token_store_path() -> Option<PathBuf> {
-    super::client::resolve_user_path(TOKEN_STORE_FILENAME, "MOGEN_TOKEN_STORE")
+    super::client::resolve_user_path(
+        TOKEN_STORE_FILENAME,
+        "MOGEN_TOKEN_STORE",
+        super::client::PathMode::Read,
+    )
+}
+
+/// Resolve the on-disk token path for **writes**. Always returns the
+/// canonical `~/.mogen/google_auth.json` (or
+/// `%LOCALAPPDATA%\mogen\google_auth.json` when no `HOME`/`USERPROFILE`),
+/// ignoring any legacy `~/.cache/mogen/` token file. New logins should
+/// always land in `~/.mogen/` so the legacy paths slowly drain as users
+/// re-auth.
+pub fn token_store_write_path() -> Option<PathBuf> {
+    super::client::resolve_user_path(
+        TOKEN_STORE_FILENAME,
+        "MOGEN_TOKEN_STORE",
+        super::client::PathMode::Write,
+    )
+}
+
+/// Every existing `google_auth.json` across the canonical and legacy
+/// locations. Used by `mogen auth logout` to remove all of them so a
+/// half-cleaned legacy file can't silently re-authenticate the user.
+pub fn all_existing_token_paths() -> Vec<PathBuf> {
+    super::client::all_existing_user_paths(TOKEN_STORE_FILENAME, "MOGEN_TOKEN_STORE")
 }
 
 /// Load a previously-saved bundle. Returns `Ok(None)` when the file does

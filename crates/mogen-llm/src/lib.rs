@@ -38,8 +38,9 @@ pub mod types;
 pub use cache::{default_cache_path, resolve_or_create as resolve_or_create_cache, DEFAULT_TTL_SECONDS};
 pub use gemini::{CachedContent, GeminiAuth, GeminiClient, GeminiError};
 pub use google_oauth::{
-    delete_bundle, load_bundle, run_login_flow, save_bundle, token_store_path, LoginOptions,
-    LoginOutcome, OAuthBundle, OAuthError, TOKEN_STORE_FILENAME,
+    all_existing_token_paths, delete_bundle, load_bundle, run_login_flow, save_bundle,
+    token_store_path, token_store_write_path, LoginOptions, LoginOutcome, OAuthBundle, OAuthError,
+    TOKEN_STORE_FILENAME,
 };
 pub use image::{GeneratedImage, DEFAULT_IMAGE_MODEL};
 pub use imports::{
