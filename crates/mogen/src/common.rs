@@ -4,10 +4,11 @@ use std::path::Path;
 
 use anyhow::{bail, Context, Result};
 use mogen_core::{Diagnostic, Severity};
+use mogen_llm::google_oauth::{ANTIGRAVITY_CONFIG, GEMINI_CLI_CONFIG};
 use mogen_llm::{
     cacheable_block, default_cache_path, inline_block, load_bundle, resolve_or_create_cache,
-    system_instruction, token_store_path, GenerateConfig, GoogleCredential, LlmClient, Provider,
-    StdlibIndex, DEFAULT_TTL_SECONDS,
+    system_instruction, token_store_path, token_store_path_for, GenerateConfig, GoogleCredential,
+    LlmClient, Provider, StdlibIndex, DEFAULT_TTL_SECONDS,
 };
 
 /// Group error diagnostics by category (derived from the code prefix) so the
@@ -123,6 +124,63 @@ pub(crate) fn resolve_gemini_credential(flag: Option<String>) -> Result<GoogleCr
     }
     bail!(
         "missing GEMINI_API_KEY (set env var, pass --api-key, or run 'mogen auth login')"
+    );
+}
+
+/// Resolve a Google credential suitable for **image generation** (the
+/// nano-banana / `gemini-3-pro-image` surface).
+///
+/// Precedence: `--api-key` flag → `GEMINI_API_KEY` env → on-disk
+/// **Antigravity** OAuth bundle → error.
+///
+/// The plain `mogen auth login` (gemini-cli) bundle is intentionally *not*
+/// accepted here — that OAuth client is rejected by the image surface with
+/// a 403 "caller does not have permission". Instead, when only the
+/// gemini-cli bundle is present we surface a clear "run `mogen auth login
+/// --antigravity`" error so the user can authorise the image-capable
+/// client without losing their existing text-gen login.
+pub(crate) fn resolve_gemini_image_credential(
+    flag: Option<String>,
+) -> Result<GoogleCredential> {
+    if let Some(k) = flag {
+        if k.trim().is_empty() {
+            bail!("--api-key is empty");
+        }
+        return Ok(GoogleCredential::ApiKey(k));
+    }
+    let from_env = std::env::var("GEMINI_API_KEY").unwrap_or_default();
+    if !from_env.trim().is_empty() {
+        return Ok(GoogleCredential::ApiKey(from_env));
+    }
+    if let Some(path) = token_store_path_for(&ANTIGRAVITY_CONFIG) {
+        match load_bundle(&path) {
+            Ok(Some(bundle)) => {
+                return Ok(GoogleCredential::AntigravityOAuth(bundle));
+            }
+            Ok(None) => {}
+            Err(e) => {
+                eprintln!(
+                    "mogen: stored Antigravity OAuth credentials at {} unreadable ({e}); ignoring",
+                    path.display()
+                );
+            }
+        }
+    }
+    let has_gemini_cli = token_store_path_for(&GEMINI_CLI_CONFIG)
+        .and_then(|p| load_bundle(&p).ok().flatten())
+        .is_some();
+    if has_gemini_cli {
+        bail!(
+            "image generation requires the Antigravity OAuth client. \
+             Your current `mogen auth login` bundle uses the gemini-cli \
+             client, which the image surface rejects with 403. \
+             Run `mogen auth login --antigravity` (or set GEMINI_API_KEY) \
+             and try again."
+        );
+    }
+    bail!(
+        "missing GEMINI_API_KEY (set env var, pass --api-key, or run \
+         `mogen auth login --antigravity` for image generation over OAuth)"
     );
 }
 

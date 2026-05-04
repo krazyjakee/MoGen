@@ -200,6 +200,23 @@ pub(super) struct LlmErrorInfo {
     /// `false` for missing/invalid key, `true` for rate-limit / transient
     /// network. Drives whether the Retry button is enabled.
     pub(super) retryable: bool,
+    /// Optional alternate action surfaced as a button in the error banner.
+    /// Set on the textures "Nothing to generate" path so the banner can offer
+    /// a one-click force-regenerate ("New textures") instead of just a Retry
+    /// that would re-hit the same no-op early return.
+    pub(super) action: Option<LlmExtraAction>,
+}
+
+/// Alternate, class-specific action exposed in the error banner alongside
+/// Retry. One enum point so the banner UI stays declarative and future
+/// classes (e.g. "Refresh OAuth", "Re-validate DSL") can extend it without
+/// adding more booleans.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum LlmExtraAction {
+    /// Re-run textures with `force=true` so existing PNGs / spliced attrs
+    /// are regenerated from scratch. Surfaced when the last run found
+    /// nothing to do.
+    ForceRegenerateTextures,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

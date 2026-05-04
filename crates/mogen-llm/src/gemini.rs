@@ -26,7 +26,7 @@ pub use crate::types::{
     DEFAULT_TEMPERATURE,
 };
 
-use crate::google_oauth::{self, OAuthBundle};
+use crate::google_oauth::{self, OAuthBundle, ProviderConfig};
 
 /// Default model for `mogen generate`. Alias auto-rolls to the newest Pro tier.
 pub const DEFAULT_MODEL: &str = "gemini-pro-latest";
@@ -61,20 +61,19 @@ pub enum GeminiError {
     /// caller should fall back to inline system-instruction.
     #[error("cachedContents is not available over the Antigravity OAuth surface; falling back to inline")]
     CacheUnavailableOverOAuth,
-    /// Surfaces in OAuth mode when a caller asks for image generation
-    /// without opting in via `allow_oauth_image`. Image gen on
-    /// `v1internal` is not verified, so callers must explicitly probe.
-    #[error("image generation over OAuth is unverified — set --allow-oauth-image to probe, or set GEMINI_API_KEY")]
-    ImageOverOAuthUnverified,
 }
 
 /// Authentication mode. `ApiKey` uses the public `generativelanguage`
-/// surface; `OAuth` swaps the URL/body/headers to the Cloud Code Assist
-/// `v1internal` shape. The `Mutex` lets the auto-refresh logic mutate the
-/// bundle through `&self`-borrowing methods.
+/// surface; the OAuth variants swap to the Cloud Code Assist `v1internal`
+/// shape — `OAuth` is the gemini-cli client (text gen), `AntigravityOAuth`
+/// is the Antigravity desktop client (required for image gen). Both
+/// surface types accept either OAuth client for text gen, but the image
+/// surface 403s the gemini-cli client. The `Mutex` lets the auto-refresh
+/// logic mutate the bundle through `&self`-borrowing methods.
 pub enum GeminiAuth {
     ApiKey(String),
     OAuth(Mutex<OAuthBundle>),
+    AntigravityOAuth(Mutex<OAuthBundle>),
 }
 
 /// Handle returned after creating a `cachedContents` resource. The resource
@@ -92,6 +91,16 @@ pub struct GeminiClient {
     http: reqwest::blocking::Client,
     auth: GeminiAuth,
     base_url: String,
+    /// Lazily-filled list of `(model_id, in_catalog)` tuples used to drive
+    /// image-gen retry logic. The flag distinguishes catalog hits (retry
+    /// 404 with backoff — transient capacity) from static-list fallbacks
+    /// (walk past 404 immediately — model isn't routed for this bundle).
+    /// Filled on first image-gen call via `:fetchAvailableModels` (mirrors
+    /// McKrei's `opencode-antigravity-nano-banana` runtime detection);
+    /// falls back to the static [`google_oauth::client::ANTIGRAVITY_IMAGE_MODELS`]
+    /// list with all entries flagged `false` if the probe itself errors.
+    /// `None` = "not yet probed".
+    image_model_catalog: Mutex<Option<Vec<(String, bool)>>>,
 }
 
 impl GeminiClient {
@@ -106,13 +115,17 @@ impl GeminiClient {
             http,
             auth: GeminiAuth::ApiKey(api_key.into()),
             base_url: base_url.into(),
+            image_model_catalog: Mutex::new(None),
         }
     }
 
     /// OAuth-mode client targeting the Cloud Code Assist `v1internal`
-    /// surface. The bundle's `endpoint_base` is used as the base URL —
-    /// fall back to prod when the bundle was written by a path that didn't
-    /// run discovery yet (legacy tokens).
+    /// surface using the **gemini-cli** OAuth client. The bundle's
+    /// `endpoint_base` is used as the base URL — fall back to prod when
+    /// the bundle was written by a path that didn't run discovery yet
+    /// (legacy tokens). For image generation use
+    /// [`Self::from_antigravity_oauth`] instead — the image surface 403s
+    /// the gemini-cli client.
     pub fn from_oauth(bundle: OAuthBundle) -> Self {
         let base_url = bundle
             .endpoint_base
@@ -123,12 +136,31 @@ impl GeminiClient {
             http,
             auth: GeminiAuth::OAuth(Mutex::new(bundle)),
             base_url,
+            image_model_catalog: Mutex::new(None),
+        }
+    }
+
+    /// OAuth-mode client using the **Antigravity** OAuth client. Required
+    /// for image generation (textures); also works for text gen when a
+    /// caller wants a single bundle for both surfaces.
+    pub fn from_antigravity_oauth(bundle: OAuthBundle) -> Self {
+        let base_url = bundle
+            .endpoint_base
+            .clone()
+            .unwrap_or_else(|| google_oauth::client::ENDPOINT_PROD.to_string());
+        let http = build_http();
+        Self {
+            http,
+            auth: GeminiAuth::AntigravityOAuth(Mutex::new(bundle)),
+            base_url,
+            image_model_catalog: Mutex::new(None),
         }
     }
 
     /// Inject a custom base URL for OAuth-mode tests. The mock server
     /// stands in for `cloudcode-pa.googleapis.com` so the URL/body/header
-    /// shape can be verified without hitting Google.
+    /// shape can be verified without hitting Google. Defaults to the
+    /// gemini-cli OAuth variant.
     pub fn from_oauth_with_base_url(
         bundle: OAuthBundle,
         base_url: impl Into<String>,
@@ -138,6 +170,21 @@ impl GeminiClient {
             http,
             auth: GeminiAuth::OAuth(Mutex::new(bundle)),
             base_url: base_url.into(),
+            image_model_catalog: Mutex::new(None),
+        }
+    }
+
+    /// Inject a custom base URL for Antigravity-OAuth-mode tests.
+    pub fn from_antigravity_oauth_with_base_url(
+        bundle: OAuthBundle,
+        base_url: impl Into<String>,
+    ) -> Self {
+        let http = build_http();
+        Self {
+            http,
+            auth: GeminiAuth::AntigravityOAuth(Mutex::new(bundle)),
+            base_url: base_url.into(),
+            image_model_catalog: Mutex::new(None),
         }
     }
 
@@ -161,16 +208,27 @@ impl GeminiClient {
         &self.auth
     }
 
-    /// True when this client authenticates via OAuth.
+    /// True when this client authenticates via either OAuth provider.
     pub fn is_oauth(&self) -> bool {
-        matches!(self.auth, GeminiAuth::OAuth(_))
+        matches!(
+            self.auth,
+            GeminiAuth::OAuth(_) | GeminiAuth::AntigravityOAuth(_)
+        )
+    }
+
+    /// True specifically when this client uses the Antigravity OAuth
+    /// client (the only one accepted by the image surface).
+    pub fn is_antigravity_oauth(&self) -> bool {
+        matches!(self.auth, GeminiAuth::AntigravityOAuth(_))
     }
 
     /// Snapshot of the OAuth bundle (cloned, so it's safe to inspect across
     /// refresh boundaries). Returns `None` for API-key clients.
     pub fn oauth_snapshot(&self) -> Option<OAuthBundle> {
         match &self.auth {
-            GeminiAuth::OAuth(mu) => mu.lock().ok().map(|b| b.clone()),
+            GeminiAuth::OAuth(mu) | GeminiAuth::AntigravityOAuth(mu) => {
+                mu.lock().ok().map(|b| b.clone())
+            }
             GeminiAuth::ApiKey(_) => None,
         }
     }
@@ -178,41 +236,167 @@ impl GeminiClient {
     /// Currently bound project id (OAuth only).
     pub(crate) fn oauth_project_id(&self) -> Option<String> {
         match &self.auth {
-            GeminiAuth::OAuth(mu) => mu.lock().ok().and_then(|b| b.project_id.clone()),
+            GeminiAuth::OAuth(mu) | GeminiAuth::AntigravityOAuth(mu) => {
+                mu.lock().ok().and_then(|b| b.project_id.clone())
+            }
+            GeminiAuth::ApiKey(_) => None,
+        }
+    }
+
+    /// Pick the matching `(bundle mutex, ProviderConfig)` pair for the
+    /// active OAuth variant — `None` for API-key clients. Used by
+    /// [`Self::oauth_post_inner`] to refresh against the right token
+    /// endpoint with the right `client_id`/`client_secret`.
+    fn oauth_state(&self) -> Option<(&Mutex<OAuthBundle>, &'static ProviderConfig)> {
+        match &self.auth {
+            GeminiAuth::OAuth(mu) => Some((mu, &google_oauth::GEMINI_CLI_CONFIG)),
+            GeminiAuth::AntigravityOAuth(mu) => Some((mu, &google_oauth::ANTIGRAVITY_CONFIG)),
             GeminiAuth::ApiKey(_) => None,
         }
     }
 
     /// Cloud Code Assist POST with auto-refresh + one 401 retry.
     /// Returns response body bytes on 2xx; `Api` on any non-success
-    /// (including the post-refresh retry's failure).
+    /// (including the post-refresh retry's failure). Uses the text-surface
+    /// header set (gemini-cli UA).
     pub(crate) fn oauth_post_with_retry(
         &self,
         cloudcode_url: &str,
         body: &serde_json::Value,
     ) -> Result<Vec<u8>, GeminiError> {
-        let mu = match &self.auth {
-            GeminiAuth::OAuth(mu) => mu,
-            GeminiAuth::ApiKey(_) => {
-                return Err(GeminiError::OAuth(
-                    "oauth_post_with_retry called on API-key client".into(),
-                ));
+        self.oauth_post_inner(
+            cloudcode_url,
+            body,
+            google_oauth::cloudcode::apply_headers,
+        )
+    }
+
+    /// Same as [`oauth_post_with_retry`] but applies the image-surface
+    /// headers (Antigravity UA, `Accept: text/event-stream`, JSON
+    /// `Client-Metadata` with `ideType: "ANTIGRAVITY"`). The image host on
+    /// `daily-cloudcode-pa.googleapis.com` 404s with the text-surface header
+    /// set, so the image path needs its own applier.
+    pub(crate) fn oauth_post_image_with_retry(
+        &self,
+        cloudcode_url: &str,
+        body: &serde_json::Value,
+    ) -> Result<Vec<u8>, GeminiError> {
+        self.oauth_post_inner(
+            cloudcode_url,
+            body,
+            google_oauth::cloudcode::apply_image_headers,
+        )
+    }
+
+    /// Lazily fill and return the image-model candidate list for this
+    /// client, paired with an `in_catalog` flag.
+    ///
+    /// Calls `:fetchAvailableModels` on `endpoint_base` once per client,
+    /// then unions catalog hits (flagged `true`) with the static
+    /// [`ANTIGRAVITY_IMAGE_MODELS`][m] preference list (catalog-misses
+    /// flagged `false`). Catalog hits come first so callers retry
+    /// transient failures on known-good names before paying 404 walks
+    /// for fallbacks.
+    ///
+    /// The flag drives the caller's 404 retry policy: in-catalog 404 is
+    /// treated as transient capacity (backoff retry); not-in-catalog 404
+    /// is treated as "model not available for this bundle" (walk
+    /// immediately, no backoff).
+    ///
+    /// On any probe failure (network, 404, parse), every entry falls
+    /// back to flagged `false` — we have no signal which names route, so
+    /// each gets a fast 404-walk policy.
+    ///
+    /// [m]: crate::google_oauth::client::ANTIGRAVITY_IMAGE_MODELS
+    pub(crate) fn ensure_image_catalog(
+        &self,
+        project: &str,
+        endpoint_base: &str,
+    ) -> Result<Vec<(String, bool)>, GeminiError> {
+        {
+            let lock = self
+                .image_model_catalog
+                .lock()
+                .expect("image_model_catalog mutex poisoned");
+            if let Some(cached) = lock.as_ref() {
+                return Ok(cached.clone());
             }
+        }
+
+        let url = google_oauth::cloudcode::fetch_available_models_url(endpoint_base);
+        let body = google_oauth::cloudcode::fetch_available_models_body(project);
+        let result = self.oauth_post_inner(
+            &url,
+            &body,
+            google_oauth::cloudcode::apply_image_headers,
+        );
+
+        let static_list: Vec<&'static str> =
+            google_oauth::client::ANTIGRAVITY_IMAGE_MODELS.to_vec();
+
+        let live: Vec<String> = match result.as_ref() {
+            Ok(bytes) => google_oauth::cloudcode::parse_available_image_models(bytes),
+            Err(_) => Vec::new(),
         };
+
+        // Union: catalog entries first (in_catalog=true), then static-list
+        // entries not already in the catalog (in_catalog=false). The
+        // caller retries in-catalog 404s with backoff and walks past
+        // not-in-catalog 404s immediately.
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut combined: Vec<(String, bool)> = Vec::new();
+        for n in &live {
+            if seen.insert(n.clone()) {
+                combined.push((n.clone(), true));
+            }
+        }
+        for n in &static_list {
+            if seen.insert(n.to_string()) {
+                combined.push((n.to_string(), false));
+            }
+        }
+
+        if std::env::var("MOGEN_DEBUG_HTTP").ok().as_deref() == Some("1") {
+            eprintln!(
+                "[mogen image catalog] endpoint={} project={} live={:?} candidates={:?}",
+                endpoint_base, project, live, combined
+            );
+        }
+
+        let mut lock = self
+            .image_model_catalog
+            .lock()
+            .expect("image_model_catalog mutex poisoned");
+        *lock = Some(combined.clone());
+        Ok(combined)
+    }
+
+    /// Shared retry/refresh body for both the text and image OAuth POST
+    /// paths. Parameterised on a header applier so each surface can pin
+    /// its own UA / `X-Goog-Api-Client` / `Accept` set without duplicating
+    /// the auth state machine.
+    fn oauth_post_inner(
+        &self,
+        cloudcode_url: &str,
+        body: &serde_json::Value,
+        apply: fn(
+            reqwest::blocking::RequestBuilder,
+            &str,
+        ) -> reqwest::blocking::RequestBuilder,
+    ) -> Result<Vec<u8>, GeminiError> {
+        let (mu, config) = self.oauth_state().ok_or_else(|| {
+            GeminiError::OAuth("oauth_post_with_retry called on API-key client".into())
+        })?;
 
         // Eager refresh if we're inside the expiry buffer.
         {
             let mut bundle = mu.lock().expect("oauth bundle mutex poisoned");
-            google_oauth::refresh_if_needed(&self.http, &mut bundle, now_unix())
+            google_oauth::refresh_if_needed(&self.http, &mut bundle, now_unix(), config)
                 .map_err(|e| GeminiError::OAuth(e.to_string()))?;
         }
         let token = mu.lock().expect("poison").access_token.clone();
 
-        let resp = google_oauth::cloudcode::apply_headers(
-            self.http.post(cloudcode_url).json(body),
-            &token,
-        )
-        .send()?;
+        let resp = apply(self.http.post(cloudcode_url).json(body), &token).send()?;
         let status = resp.status();
 
         if status.as_u16() == 401 {
@@ -222,15 +406,11 @@ impl GeminiClient {
             // propagate the API error.
             {
                 let mut bundle = mu.lock().expect("poison");
-                google_oauth::refresh_now(&self.http, &mut bundle, now_unix())
+                google_oauth::refresh_now(&self.http, &mut bundle, now_unix(), config)
                     .map_err(|e| GeminiError::OAuth(e.to_string()))?;
             }
             let token2 = mu.lock().expect("poison").access_token.clone();
-            let resp2 = google_oauth::cloudcode::apply_headers(
-                self.http.post(cloudcode_url).json(body),
-                &token2,
-            )
-            .send()?;
+            let resp2 = apply(self.http.post(cloudcode_url).json(body), &token2).send()?;
             let status2 = resp2.status();
             let bytes2 = resp2.bytes()?;
             if !status2.is_success() {
@@ -279,7 +459,7 @@ impl GeminiClient {
                 serde_json::from_slice(&bytes)
                     .map_err(|e| GeminiError::InvalidResponse(e.to_string()))?
             }
-            GeminiAuth::OAuth(_) => {
+            GeminiAuth::OAuth(_) | GeminiAuth::AntigravityOAuth(_) => {
                 let project = self
                     .oauth_project_id()
                     .ok_or_else(|| GeminiError::OAuth("missing project id in token bundle".into()))?;
@@ -347,7 +527,9 @@ impl GeminiClient {
     ) -> Result<CachedContent, GeminiError> {
         let key = match &self.auth {
             GeminiAuth::ApiKey(k) => k,
-            GeminiAuth::OAuth(_) => return Err(GeminiError::CacheUnavailableOverOAuth),
+            GeminiAuth::OAuth(_) | GeminiAuth::AntigravityOAuth(_) => {
+                return Err(GeminiError::CacheUnavailableOverOAuth)
+            }
         };
 
         let url = format!("{}/cachedContents?key={}", self.base_url, key);

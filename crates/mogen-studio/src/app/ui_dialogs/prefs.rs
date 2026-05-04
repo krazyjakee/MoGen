@@ -1,10 +1,12 @@
 use eframe::egui;
+use mogen_llm::google_oauth::{ProviderConfig, ANTIGRAVITY_CONFIG, GEMINI_CLI_CONFIG};
 use mogen_llm::Provider;
 
 use crate::app::MogenStudioApp;
 use crate::settings::{
-    thinking_level_key, thinking_level_label, ProviderSlot, DEFAULT_MAX_REPAIR_ITERS,
-    DEFAULT_OAUTH_GEMINI_FAST_MODEL, DEFAULT_OAUTH_GEMINI_MODEL, PROVIDER_SLOTS, THINKING_LEVELS,
+    thinking_level_key, thinking_level_label, ImageProvider, ProviderSlot,
+    DEFAULT_MAX_REPAIR_ITERS, DEFAULT_OAUTH_GEMINI_FAST_MODEL, DEFAULT_OAUTH_GEMINI_MODEL,
+    IMAGE_PROVIDERS, PROVIDER_SLOTS, THINKING_LEVELS,
 };
 use crate::theme::{apply_theme, theme_label, Theme, THEMES};
 
@@ -139,6 +141,8 @@ impl MogenStudioApp {
                             self.settings.ollama_base_url.trim().to_string();
                         self.settings.claude_code_path =
                             self.settings.claude_code_path.trim().to_string();
+                        self.settings.zai_api_key =
+                            self.settings.zai_api_key.trim().to_string();
                         match self.settings.save() {
                             Ok(()) => {
                                 let active = self.settings.provider();
@@ -170,8 +174,9 @@ impl MogenStudioApp {
         ui.heading("LLM provider");
                 ui.label(
                     "Backend used for Generate / Modify / Animate / Ask / Prompt \
-                     Enhance. Texture image generation is always Gemini regardless \
-                     of this setting (no other backend has an image API).",
+                     Enhance. Texture image generation has its own provider \
+                     picker below — Gemini (API key or Antigravity OAuth) or \
+                     Z.ai's `glm-image`.",
                 );
                 ui.add_space(6.0);
                 let current_slot = self.settings.provider_slot();
@@ -189,6 +194,70 @@ impl MogenStudioApp {
                             }
                         }
                     });
+
+                ui.add_space(12.0);
+                ui.heading("Image generation provider");
+                ui.label(
+                    "Which surface texture image generation hits. \"Auto\" \
+                     prefers an Antigravity OAuth bundle when one is signed in \
+                     and falls back to a Gemini API key. Force \"Antigravity \
+                     OAuth\" to skip the API-key fallback, or \"Gemini API key\" \
+                     to bypass OAuth — useful when one surface is rate-limited \
+                     (404s / 429s) and you want the other. \"Z.ai (glm-image)\" \
+                     swaps the entire backend to Z.ai's image API — useful when \
+                     Gemini quota is exhausted.",
+                );
+                ui.add_space(6.0);
+                let current_image = self.settings.image_provider();
+                egui::ComboBox::from_id_salt("opts_image_provider")
+                    .selected_text(current_image.label())
+                    .show_ui(ui, |ui| {
+                        for p in IMAGE_PROVIDERS {
+                            let selected = p == current_image;
+                            if ui
+                                .selectable_label(selected, p.label())
+                                .clicked()
+                                && !selected
+                            {
+                                self.settings.set_image_provider(p);
+                            }
+                        }
+                    });
+
+                if current_image == ImageProvider::ZAI {
+                    ui.add_space(8.0);
+                    ui.label("Z.ai API key").on_hover_text(
+                        "Bearer key for `api.z.ai/api/paas/v4/images/generations`. \
+                         Falls back to the ZAI_API_KEY environment variable when \
+                         this field is blank.",
+                    );
+                    let zai_id = egui::Id::new("opts_zai_api_key");
+                    crate::app::text_menu::text_edit_with_menu(
+                        ui,
+                        zai_id,
+                        &mut self.settings.zai_api_key,
+                        |ui, text| {
+                            ui.add(
+                                egui::TextEdit::singleline(text)
+                                    .password(true)
+                                    .hint_text("paste Z.ai key (leave blank to clear)")
+                                    .desired_width(f32::INFINITY)
+                                    .id(zai_id),
+                            )
+                        },
+                    );
+                    if std::env::var("ZAI_API_KEY")
+                        .map(|v| !v.trim().is_empty())
+                        .unwrap_or(false)
+                    {
+                        ui.add_space(4.0);
+                        ui.colored_label(
+                            egui::Color32::from_rgb(150, 180, 230),
+                            "ZAI_API_KEY is also set in your environment — the \
+                             saved key here takes precedence when non-empty.",
+                        );
+                    }
+                }
 
                 ui.add_space(12.0);
                 let active_slot = self.settings.provider_slot();
@@ -533,21 +602,62 @@ impl MogenStudioApp {
     }
 
     /// Gemini OAuth section. Shown when the active slot is `GeminiOAuth` —
-    /// the only path that talks to `cloudcode-pa.googleapis.com/v1internal`.
-    /// Mirrors the CLI's `mogen auth login` — same loopback browser flow,
-    /// same `google_auth.json` token store, so signing in here also
-    /// authenticates the CLI (and vice versa).
+    /// the path that talks to `cloudcode-pa.googleapis.com/v1internal` for
+    /// text generation. Mirrors the CLI's `mogen auth login` — same
+    /// loopback browser flow, same `google_auth.json` token store, so
+    /// signing in here also authenticates the CLI (and vice versa).
+    ///
+    /// Image generation needs a separate OAuth client (Antigravity) — see
+    /// [`prefs_antigravity_oauth_section`](Self::prefs_antigravity_oauth_section).
     fn prefs_gemini_oauth_section(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Sign in with Google (paid Gemini Pro plan)");
+        ui.heading("Sign in with Google (paid Gemini Pro plan, text generation)");
         ui.label(
-            "Routes Gemini calls through the Antigravity OAuth client so \
+            "Routes Gemini text calls through the gemini-cli OAuth client so \
              gemini-3-pro-preview / gemini-3.1-pro-preview work on a paid \
              Pro plan without an API key. Switch back to \"Gemini (API key)\" \
-             above to use the public API instead.",
+             above to use the public API instead. Image generation uses a \
+             separate Antigravity sign-in below.",
         );
         ui.add_space(6.0);
+        self.render_oauth_provider_block(ui, &GEMINI_CLI_CONFIG, "Sign in with Google");
 
-        let stored = self.oauth_stored_status();
+        ui.add_space(14.0);
+        ui.separator();
+        ui.add_space(8.0);
+        self.prefs_antigravity_oauth_section(ui);
+    }
+
+    /// Antigravity OAuth section. Required for texture (nano-banana / Gemini
+    /// 3 Pro Image) generation over OAuth — the gemini-cli client above is
+    /// rejected by the image surface with 403. Stored in a separate token
+    /// file (`antigravity_auth.json`), so logging into one provider does not
+    /// disturb the other.
+    fn prefs_antigravity_oauth_section(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Sign in with Antigravity (image generation)");
+        ui.label(
+            "Authorises the Antigravity OAuth client, which is the only one \
+             accepted by the Gemini image surface (nano-banana / Gemini 3 Pro \
+             Image). Required for `Generate textures` over OAuth; an API key \
+             also works as a fallback.",
+        );
+        ui.add_space(6.0);
+        self.render_oauth_provider_block(
+            ui,
+            &ANTIGRAVITY_CONFIG,
+            "Sign in with Antigravity",
+        );
+    }
+
+    /// Shared body for both OAuth provider sections — status line, in-flight
+    /// status message, Login/Sign out buttons. Splitting the heading and
+    /// description out of the helper keeps each section's wording specific.
+    fn render_oauth_provider_block(
+        &mut self,
+        ui: &mut egui::Ui,
+        config: &'static ProviderConfig,
+        login_button_label: &str,
+    ) {
+        let stored = self.oauth_stored_status_for(config);
         if let Some(line) = &stored {
             ui.label(line);
         } else {
@@ -561,32 +671,30 @@ impl MogenStudioApp {
 
         ui.add_space(6.0);
         ui.horizontal(|ui| {
-            let in_flight = self.oauth_login_in_flight();
-            let login_label = if in_flight {
-                "Signing in… (check browser)"
+            let any_in_flight = self.oauth_login_in_flight();
+            let this_in_flight = self.oauth_login_in_flight_for(config);
+            let login_label = if this_in_flight {
+                "Signing in… (check browser)".to_string()
             } else if stored.is_some() {
-                "Re-authenticate with Google"
+                format!("Re-authenticate ({login_button_label})")
             } else {
-                "Sign in with Google"
+                login_button_label.to_string()
             };
-            let login_btn = ui.add_enabled(
-                !in_flight,
-                egui::Button::new(login_label),
-            );
+            let login_btn =
+                ui.add_enabled(!any_in_flight, egui::Button::new(login_label));
             if login_btn.clicked() {
                 let ctx = ui.ctx().clone();
-                self.start_oauth_login(ctx);
+                self.start_oauth_login_for(ctx, config);
             }
             if stored.is_some() {
                 if ui
-                    .add_enabled(!in_flight, egui::Button::new("Sign out"))
+                    .add_enabled(!any_in_flight, egui::Button::new("Sign out"))
                     .on_hover_text(
-                        "Delete the local OAuth token. Gemini calls will fall \
-                         back to the API key (if set).",
+                        "Delete the local OAuth token for this provider.",
                     )
                     .clicked()
                 {
-                    self.start_oauth_logout();
+                    self.start_oauth_logout_for(config);
                 }
             }
         });

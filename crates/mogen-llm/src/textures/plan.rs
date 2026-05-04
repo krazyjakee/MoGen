@@ -3,9 +3,6 @@ use std::path::{Path, PathBuf};
 use mogen_core::Span;
 use mogen_dsl::ast::{Node, Value};
 
-#[cfg(test)]
-use crate::image::DEFAULT_IMAGE_MODEL;
-
 use super::prompt::{
     build_decal_prompt, build_prompt, collect_decals, collect_material_anatomy, collect_materials,
     is_mask_material,
@@ -76,17 +73,18 @@ pub struct TexturesArgs {
     pub glb: Option<PathBuf>,
     pub textures_dir: PathBuf, // relative to `.mog`
     pub style: String,
-    pub model: String,
+    /// Image-model name. `None` means "pick the default for whatever Gemini
+    /// credential ends up being used" — see [`crate::image::default_image_model_for`].
+    /// `Some(name)` is what the user typed via `--model` and is used verbatim.
+    pub model: Option<String>,
     pub force: bool,
     pub dry_run: bool,
     pub no_build: bool,
     pub api_key: Option<String>,
-    /// Probe the unverified Cloud Code Assist `v1internal` image surface when
-    /// only OAuth credentials are available. When `false` (default), the CLI
-    /// errors out before any HTTP call so OAuth users get a clear message
-    /// pointing at `GEMINI_API_KEY`. When `true`, [`crate::image`]'s OAuth
-    /// branch is exercised and any upstream error surfaces verbatim.
-    pub allow_oauth_image: bool,
+    /// Z.ai (`glm-image`) bearer key. When `Some`, the run dispatches to
+    /// Z.ai's image API instead of Gemini. Falls back to the `ZAI_API_KEY`
+    /// env var when unset; an explicit empty string is treated as unset.
+    pub zai_api_key: Option<String>,
     /// Disable every derived PBR map. Albedo still gets generated.
     pub no_pbr: bool,
     pub no_normal: bool,
@@ -108,12 +106,12 @@ impl TexturesArgs {
             glb: None,
             textures_dir,
             style: "photorealistic".to_string(),
-            model: DEFAULT_IMAGE_MODEL.to_string(),
+            model: None,
             force: false,
             dry_run: false,
             no_build: false,
             api_key: None,
-            allow_oauth_image: false,
+            zai_api_key: None,
             no_pbr: false,
             no_normal: false,
             no_metallic_roughness: false,
@@ -185,7 +183,21 @@ pub fn build_plan(ast: &[Node], args: &TexturesArgs) -> Vec<Plan> {
         // --- albedo slot ---
         let albedo_path = args.textures_dir.join(format!("{stem}{}", SlotKind::Albedo.suffix()));
         let existing_albedo = attr_path(h.node, SlotKind::Albedo.attr());
-        let (albedo_action, albedo_prompt) = if existing_albedo.is_some() && !args.force {
+        // Attr-says-textured but the PNG is missing on disk: treat as
+        // "needs Generate" so a stale `base_color_texture=` left over from
+        // a failed prior run gets healed instead of silently no-op'd. The
+        // existence check is relative to the .mog (same base run_plan
+        // uses for I/O).
+        let attr_albedo_exists_on_disk = existing_albedo
+            .as_deref()
+            .map(|p| base_dir.join(p).is_file())
+            .unwrap_or(false);
+        let albedo_attr_is_stale =
+            existing_albedo.is_some() && !attr_albedo_exists_on_disk;
+        let (albedo_action, albedo_prompt) = if existing_albedo.is_some()
+            && !args.force
+            && !albedo_attr_is_stale
+        {
             (PlanAction::Skip("already has base_color_texture"), String::new())
         } else if !args.force && base_dir.join(&albedo_path).is_file() {
             (PlanAction::UseExisting, String::new())
@@ -219,7 +231,16 @@ pub fn build_plan(ast: &[Node], args: &TexturesArgs) -> Vec<Plan> {
                 continue;
             }
             let rel_path = args.textures_dir.join(format!("{stem}{}", kind.suffix()));
-            let action = if attr_path(h.node, kind.attr()).is_some() && !args.force {
+            // Same stale-attr heal as albedo: if the .mog points at a PNG
+            // that isn't on disk, fall through to Derive so the missing
+            // map gets re-emitted instead of silently skipped.
+            let attr_target = attr_path(h.node, kind.attr());
+            let attr_target_on_disk = attr_target
+                .as_deref()
+                .map(|p| base_dir.join(p).is_file())
+                .unwrap_or(false);
+            let attr_is_stale = attr_target.is_some() && !attr_target_on_disk;
+            let action = if attr_target.is_some() && !args.force && !attr_is_stale {
                 PlanAction::Skip("already present")
             } else if !args.force && base_dir.join(&rel_path).is_file() {
                 PlanAction::UseExisting
@@ -247,7 +268,12 @@ pub fn build_plan(ast: &[Node], args: &TexturesArgs) -> Vec<Plan> {
         let stem = safe_filename_stem(&d.name);
         let rel_path = args.textures_dir.join(format!("{stem}_decal.png"));
         let existing_image = attr_path(d.node, "image");
-        let (action, prompt) = if existing_image.is_some() && !args.force {
+        let existing_on_disk = existing_image
+            .as_deref()
+            .map(|p| base_dir.join(p).is_file())
+            .unwrap_or(false);
+        let stale = existing_image.is_some() && !existing_on_disk;
+        let (action, prompt) = if existing_image.is_some() && !args.force && !stale {
             (PlanAction::Skip("already has image"), String::new())
         } else if !args.force && base_dir.join(&rel_path).is_file() {
             (PlanAction::UseExisting, String::new())
@@ -313,9 +339,17 @@ mod tests {
 
     #[test]
     fn build_plan_skips_already_textured_slots() {
+        // Attr present AND the PNG is on disk at that path → Skip the API.
+        // Plan resolves attr paths against the .mog's parent directory, so
+        // place the PNG there before asserting Skip.
+        let dir = fresh_tempdir("skip-textured");
+        let mog = dir.join("x.mog");
+        std::fs::write(&mog, "").unwrap();
+        std::fs::write(dir.join("existing.png"), b"png").unwrap();
+
         let src = r#"material "a" (color=[1,0,0], base_color_texture="existing.png")"#;
         let ast = parse_or_panic(src);
-        let args = TexturesArgs::with_defaults(PathBuf::from("x.mog"));
+        let args = TexturesArgs::with_defaults(mog);
         let plans = build_plan(&ast, &args);
         // Albedo skipped but captures existing path for derivation.
         let albedo = &plans[0];
@@ -326,6 +360,35 @@ mod tests {
         );
         // Derived slots are still scheduled.
         assert!(matches!(plans[1].action, PlanAction::Derive));
+    }
+
+    #[test]
+    fn build_plan_heals_stale_attr_when_png_missing() {
+        // `base_color_texture=` points at a PNG that doesn't exist on disk
+        // (left over from a failed prior run). Plan should treat this as
+        // "needs Generate" so the next run actually produces the missing
+        // file instead of silently no-op'ing.
+        let dir = fresh_tempdir("heal-stale");
+        let mog = dir.join("x.mog");
+        std::fs::write(&mog, "").unwrap();
+
+        let src = r#"material "a" (color=[1,0,0], base_color_texture="textures/x/a_albedo.png", normal_texture="textures/x/a_normal.png")"#;
+        let ast = parse_or_panic(src);
+        let args = TexturesArgs::with_defaults(mog);
+        let plans = build_plan(&ast, &args);
+        // Albedo: stale attr + no PNG on disk → Generate.
+        assert!(
+            matches!(plans[0].action, PlanAction::Generate),
+            "stale base_color_texture attr should re-Generate, got {:?}",
+            std::mem::discriminant(&plans[0].action),
+        );
+        // Normal slot: stale attr + no PNG → Derive (so it gets re-built
+        // from the freshly-generated albedo).
+        assert!(
+            matches!(plans[1].action, PlanAction::Derive),
+            "stale normal_texture attr should fall through to Derive, got {:?}",
+            std::mem::discriminant(&plans[1].action),
+        );
     }
 
     #[test]
@@ -483,10 +546,19 @@ mod tests {
 
     #[test]
     fn decal_with_existing_image_attr_is_skipped() {
-        // `image="…"` already on the decal: no API call, no splicing.
+        // `image="…"` already on the decal AND the PNG exists on disk: no
+        // API call, no splicing. (If the PNG were missing, plan now heals
+        // by switching to Generate.)
+        let dir = fresh_tempdir("decal-skip");
+        let mog = dir.join("x.mog");
+        std::fs::write(&mog, "").unwrap();
+        let tex_dir = dir.join("textures").join("x");
+        std::fs::create_dir_all(&tex_dir).unwrap();
+        std::fs::write(tex_dir.join("logo_decal.png"), b"png").unwrap();
+
         let src = r#"scene { decal "logo" (image="textures/x/logo_decal.png", size=[0.2,0.1]) }"#;
         let ast = parse_or_panic(src);
-        let args = TexturesArgs::with_defaults(PathBuf::from("x.mog"));
+        let args = TexturesArgs::with_defaults(mog);
         let plans = build_plan(&ast, &args);
         assert_eq!(plans.len(), 1);
         assert!(matches!(plans[0].action, PlanAction::Skip(_)));

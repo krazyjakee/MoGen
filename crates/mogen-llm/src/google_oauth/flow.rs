@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use serde::Deserialize;
 
-use super::client;
+use super::client::{self, ProviderConfig};
 use super::pkce::PkcePair;
 use super::project;
 use super::server;
@@ -46,14 +46,18 @@ pub struct LoginOutcome {
     pub authorize_url: String,
 }
 
-/// Drive the full login flow. Side effects: binds a port, opens a browser
-/// (optional), makes 3 HTTPS calls (token exchange, userinfo,
+/// Drive the full login flow against the supplied provider config (gemini-cli
+/// for text, antigravity for image gen). Side effects: binds a port, opens a
+/// browser (optional), makes 3 HTTPS calls (token exchange, userinfo,
 /// loadCodeAssist). Does *not* persist the bundle — the caller chooses
 /// where to write it.
-pub fn run_login_flow(opts: LoginOptions) -> Result<LoginOutcome, OAuthError> {
+pub fn run_login_flow(
+    opts: LoginOptions,
+    config: &ProviderConfig,
+) -> Result<LoginOutcome, OAuthError> {
     let pkce = PkcePair::generate();
     let server = server::bind()?;
-    let authorize_url = build_authorize_url(&pkce);
+    let authorize_url = build_authorize_url(&pkce, config);
 
     if opts.open_browser {
         if let Err(err) = webbrowser::open(&authorize_url) {
@@ -72,7 +76,7 @@ pub fn run_login_flow(opts: LoginOptions) -> Result<LoginOutcome, OAuthError> {
 
     let http = build_http_client()?;
     let now = now_unix();
-    let token = exchange_code(&http, &cb.code, &pkce.verifier, now)?;
+    let token = exchange_code(&http, &cb.code, &pkce.verifier, now, config)?;
 
     let email = fetch_email(&http, &token.access_token).ok().flatten();
     let discovery = project::discover(&http, &token.access_token)?;
@@ -112,14 +116,14 @@ fn now_unix() -> u64 {
 /// returns a refresh token, and `prompt=consent` to be sure the consent
 /// screen runs even on second logins (otherwise refresh tokens may be
 /// withheld for already-consented apps).
-fn build_authorize_url(pkce: &PkcePair) -> String {
+fn build_authorize_url(pkce: &PkcePair, config: &ProviderConfig) -> String {
     let mut url = String::with_capacity(512);
     url.push_str(client::AUTH_URL);
     url.push('?');
-    append_param(&mut url, "client_id", client::CLIENT_ID, true);
+    append_param(&mut url, "client_id", config.client_id, true);
     append_param(&mut url, "redirect_uri", client::REDIRECT_URI, false);
     append_param(&mut url, "response_type", "code", false);
-    append_param(&mut url, "scope", client::SCOPES, false);
+    append_param(&mut url, "scope", config.scopes, false);
     append_param(&mut url, "code_challenge", &pkce.challenge, false);
     append_param(&mut url, "code_challenge_method", "S256", false);
     append_param(&mut url, "state", &pkce.state, false);
@@ -174,10 +178,11 @@ fn exchange_code(
     code: &str,
     verifier: &str,
     _now_unix: u64,
+    config: &ProviderConfig,
 ) -> Result<TokenExchangeResponse, OAuthError> {
     let form = [
-        ("client_id", client::CLIENT_ID),
-        ("client_secret", client::CLIENT_SECRET),
+        ("client_id", config.client_id),
+        ("client_secret", config.client_secret),
         ("code", code),
         ("code_verifier", verifier),
         ("grant_type", "authorization_code"),
@@ -259,13 +264,18 @@ pub fn exchange_code_against(
 }
 
 #[cfg(test)]
+fn build_authorize_url_for_test(pkce: &PkcePair, config: &ProviderConfig) -> String {
+    build_authorize_url(pkce, config)
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn authorize_url_contains_required_params() {
         let pkce = PkcePair::generate();
-        let url = build_authorize_url(&pkce);
+        let url = build_authorize_url(&pkce, &client::GEMINI_CLI_CONFIG);
         assert!(url.starts_with(client::AUTH_URL));
         // CLIENT_ID is percent-encoded in the URL but contains only
         // unreserved characters (digits + `-` + `.`), so the raw value
@@ -278,6 +288,21 @@ mod tests {
         assert!(url.contains(&format!("code_challenge={}", pkce.challenge)));
         assert!(url.contains(&format!("state={}", pkce.state)));
         assert!(url.contains("access_type=offline"));
+    }
+
+    #[test]
+    fn authorize_url_uses_antigravity_client_when_configured() {
+        let pkce = PkcePair::generate();
+        let url = build_authorize_url_for_test(&pkce, &client::ANTIGRAVITY_CONFIG);
+        assert!(
+            url.contains(&format!("client_id={}", client::ANTIGRAVITY_CLIENT_ID)),
+            "antigravity client_id should appear in url, got: {url}"
+        );
+        // Scope list is space-separated and percent-encoded; spaces become %20.
+        assert!(
+            url.contains("cclog"),
+            "antigravity scopes must include cclog, got: {url}"
+        );
     }
 
     #[test]

@@ -2,13 +2,17 @@ use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 
 use mogen_llm::gemini::GeminiClient;
+use mogen_llm::image::default_image_model_when_oauth;
+use mogen_llm::image_client::ImageClient;
 use mogen_llm::textures::{
     build_plan, default_textures_dir, run_plan, splice_textures, PlanAction, TextureProgress,
     TexturesArgs,
 };
-use mogen_llm::{Usage, DEFAULT_IMAGE_MODEL};
+use mogen_llm::zai::{self, ZaiClient};
+use mogen_llm::Usage;
 
 use crate::app::types::{LlmKind, LlmMessage, LlmOutcome, LlmProgress, TextureUiConfig};
+use crate::app::util::Credential;
 
 /// Run the textures pipeline (image generation + splice) on a background
 /// thread and shape the result into an [`LlmOutcome`] so it rides the same
@@ -21,7 +25,7 @@ use crate::app::types::{LlmKind, LlmMessage, LlmOutcome, LlmProgress, TextureUiC
 pub(in crate::app) fn run_llm_textures(
     src: String,
     mg_path: PathBuf,
-    api_key: String,
+    cred: Credential,
     cfg: TextureUiConfig,
     material_filter: Option<Vec<String>>,
     tx: Sender<LlmMessage>,
@@ -29,7 +33,17 @@ pub(in crate::app) fn run_llm_textures(
     let send_progress = |p: LlmProgress| {
         let _ = tx.send(LlmMessage::Progress(p));
     };
-    let texture_model = DEFAULT_IMAGE_MODEL.to_string();
+    // Per-provider model defaults:
+    //   - Z.ai → `glm-image` (the only image model on that surface)
+    //   - Antigravity OAuth → Cloud Code Assist's `gemini-3.1-flash-image`
+    //   - API key (Gemini) → public-tier `gemini-2.5-flash-image`
+    // The gemini-cli OAuth client is gated out further down — its image
+    // surface returns 403 regardless of model.
+    let texture_model = match &cred {
+        Credential::Zai(_) => zai::DEFAULT_IMAGE_MODEL.to_string(),
+        Credential::AntigravityOAuth(_) => default_image_model_when_oauth(true).to_string(),
+        _ => default_image_model_when_oauth(false).to_string(),
+    };
     let ast = match mogen_dsl::parse(&src) {
         Ok(a) => a,
         Err(e) => {
@@ -46,6 +60,7 @@ pub(in crate::app) fn run_llm_textures(
                     detail: format!("Could not parse the .mog source: {e}"),
                     class: crate::app::types::LlmErrorClass::BadRequest,
                     retryable: false,
+                    action: None,
                 }),
                 kind: LlmKind::Textures,
             };
@@ -62,12 +77,20 @@ pub(in crate::app) fn run_llm_textures(
         out: None,
         glb: None,
         style: cfg.style.clone(),
-        model: texture_model.clone(),
+        model: Some(texture_model.clone()),
         force,
         dry_run: false,
         no_build: true,
-        api_key: Some(api_key.clone()),
-        allow_oauth_image: false,
+        api_key: match &cred {
+            Credential::ApiKey(k) => Some(k.clone()),
+            Credential::Zai(_)
+            | Credential::GeminiOAuth(_)
+            | Credential::AntigravityOAuth(_) => None,
+        },
+        zai_api_key: match &cred {
+            Credential::Zai(k) => Some(k.clone()),
+            _ => None,
+        },
         no_pbr: false,
         no_normal: cfg.no_normal,
         no_metallic_roughness: cfg.no_metallic_roughness,
@@ -102,9 +125,14 @@ pub(in crate::app) fn run_llm_textures(
             retry_prompt: None,
             error: Some(crate::app::types::LlmErrorInfo {
                 headline: "Nothing to generate".into(),
-                detail: "Every material already has a full PBR texture set.".into(),
+                detail: "Every material already has a full PBR texture set. Use \
+                         \"New textures\" to regenerate them all from scratch."
+                    .into(),
                 class: crate::app::types::LlmErrorClass::BadRequest,
                 retryable: false,
+                action: Some(
+                    crate::app::types::LlmExtraAction::ForceRegenerateTextures,
+                ),
             }),
             kind: LlmKind::Textures,
         };
@@ -118,12 +146,49 @@ pub(in crate::app) fn run_llm_textures(
         .filter(|p| matches!(p.action, PlanAction::Generate))
         .count() as u32;
 
-    // Image generation is Gemini-only — `LlmClient::new(provider, …)` doesn't
-    // expose a synthesis API for the other backends. Callers MUST pass the
-    // `GEMINI_API_KEY` here regardless of `settings.provider()` so this path
-    // keeps working even when the user has selected OpenAI/Anthropic/Ollama
-    // for the text DSL.
-    let client = GeminiClient::new(api_key);
+    // The textures pipeline supports two image providers, dispatched through
+    // [`ImageClient`]:
+    //   - Gemini (API key OR Antigravity OAuth) — preserved as the default
+    //     surface; uses `:streamGenerateContent` for nano-banana / Gemini 3
+    //     Pro Image on OAuth, the public `generateContent` surface on key.
+    //   - Z.ai — alternate provider for users whose Gemini quota is
+    //     exhausted or who prefer the `glm-image` model.
+    //
+    // The gemini-cli OAuth bundle is gated out: its image surface returns
+    // 403 regardless of model. We refuse it with a pointed error rather
+    // than letting the user discover it via an upstream "caller does not
+    // have permission" message.
+    let client: ImageClient = match &cred {
+        Credential::ApiKey(k) => ImageClient::Gemini(GeminiClient::new(k.clone())),
+        Credential::AntigravityOAuth(bundle) => {
+            ImageClient::Gemini(GeminiClient::from_antigravity_oauth(bundle.clone()))
+        }
+        Credential::Zai(k) => ImageClient::Zai(ZaiClient::new(k.clone())),
+        Credential::GeminiOAuth(_) => {
+            return LlmOutcome {
+                dsl: src,
+                diagnostics: Vec::new(),
+                usage: Usage::default(),
+                calls: 0,
+                model: texture_model,
+                image_calls: 0,
+                retry_prompt: None,
+                error: Some(crate::app::types::LlmErrorInfo {
+                    headline: "Wrong OAuth client for image generation".into(),
+                    detail: "Texture image generation needs the Antigravity OAuth \
+                             client. The current Google sign-in is the gemini-cli \
+                             client, which the image surface rejects with 403. \
+                             Run `mogen auth login --antigravity` from a terminal, \
+                             or paste a Gemini API key in Edit → Preferences…"
+                        .into(),
+                    class: crate::app::types::LlmErrorClass::BadRequest,
+                    retryable: false,
+                    action: None,
+                }),
+                kind: LlmKind::Textures,
+            };
+        }
+    };
     let base_dir = mg_path
         .parent()
         .map(|p| p.to_path_buf())
@@ -141,7 +206,7 @@ pub(in crate::app) fn run_llm_textures(
 
     let report = run_plan(
         Some(&client),
-        &args.model,
+        &texture_model,
         &args,
         &ast,
         &plans,
@@ -180,6 +245,7 @@ pub(in crate::app) fn run_llm_textures(
             detail,
             class: crate::app::types::LlmErrorClass::Other,
             retryable: true,
+            action: None,
         })
     };
 
@@ -213,6 +279,7 @@ pub(in crate::app) fn run_llm_textures(
                 detail: format!("PNGs were written but rewriting the DSL failed: {e}"),
                 class: crate::app::types::LlmErrorClass::Other,
                 retryable: false,
+                action: None,
             }),
             kind: LlmKind::Textures,
         },

@@ -14,9 +14,10 @@
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
+use mogen_llm::google_oauth::{ProviderConfig, ANTIGRAVITY_CONFIG, GEMINI_CLI_CONFIG};
 use mogen_llm::{
-    all_existing_token_paths, delete_bundle, load_bundle, run_login_flow, save_bundle,
-    token_store_path, token_store_write_path, LoginOptions, OAuthError,
+    all_existing_token_paths_for, delete_bundle, load_bundle, run_login_flow, save_bundle,
+    token_store_path_for, token_store_write_path_for, LoginOptions, OAuthError,
 };
 
 /// Subcommand surface mirrored from `clap` in `main.rs`.
@@ -25,31 +26,56 @@ pub(crate) enum AuthCmd {
         force: bool,
         no_browser: bool,
         timeout_secs: u64,
+        antigravity: bool,
     },
     Status {
         verbose: bool,
+        antigravity: bool,
     },
-    Logout,
+    Logout {
+        antigravity: bool,
+    },
 }
 
 pub(crate) fn dispatch(cmd: AuthCmd) -> Result<()> {
     match cmd {
-        AuthCmd::Login { force, no_browser, timeout_secs } => {
-            login(force, no_browser, timeout_secs)
+        AuthCmd::Login { force, no_browser, timeout_secs, antigravity } => {
+            login(force, no_browser, timeout_secs, pick_config(antigravity))
         }
-        AuthCmd::Status { verbose } => status(verbose),
-        AuthCmd::Logout => logout(),
+        AuthCmd::Status { verbose, antigravity } => status(verbose, pick_config(antigravity)),
+        AuthCmd::Logout { antigravity } => logout(pick_config(antigravity)),
     }
 }
 
-fn login(force: bool, no_browser: bool, timeout_secs: u64) -> Result<()> {
+fn pick_config(antigravity: bool) -> &'static ProviderConfig {
+    if antigravity {
+        &ANTIGRAVITY_CONFIG
+    } else {
+        &GEMINI_CLI_CONFIG
+    }
+}
+
+fn provider_label(config: &ProviderConfig) -> &'static str {
+    if std::ptr::eq(config, &ANTIGRAVITY_CONFIG) {
+        "Antigravity"
+    } else {
+        "gemini-cli"
+    }
+}
+
+fn login(
+    force: bool,
+    no_browser: bool,
+    timeout_secs: u64,
+    config: &'static ProviderConfig,
+) -> Result<()> {
     // Read path may surface an existing token at a legacy location
     // (`~/.cache/mogen/`); the write path is always the canonical
-    // `~/.mogen/google_auth.json`. New logins always land canonical so
-    // legacy files quietly become orphans and get cleaned up by logout.
-    let read_path = token_store_path()
+    // `~/.mogen/<filename>`. New logins always land canonical so legacy
+    // files quietly become orphans and get cleaned up by logout.
+    let read_path = token_store_path_for(config)
         .context("cannot determine token store location (set MOGEN_CACHE_DIR)")?;
-    let write_path = token_store_write_path()
+    let write_path = token_store_write_path_for(config)
         .context("cannot determine token store write location (set MOGEN_CACHE_DIR)")?;
 
     if !force {
@@ -72,8 +98,9 @@ fn login(force: bool, no_browser: bool, timeout_secs: u64) -> Result<()> {
     }
 
     eprintln!(
-        "mogen auth: opening Google sign-in. If sign-in fails, set \
-         GEMINI_API_KEY as a fallback (see README)."
+        "mogen auth ({}): opening Google sign-in. If sign-in fails, set \
+         GEMINI_API_KEY as a fallback (see README).",
+        provider_label(config),
     );
 
     let opts = LoginOptions {
@@ -81,7 +108,7 @@ fn login(force: bool, no_browser: bool, timeout_secs: u64) -> Result<()> {
         timeout: Duration::from_secs(timeout_secs.clamp(10, 3600)),
     };
 
-    let outcome = match run_login_flow(opts) {
+    let outcome = match run_login_flow(opts, config) {
         Ok(o) => o,
         Err(err) => return Err(login_anyhow(err)),
     };
@@ -120,12 +147,19 @@ fn login(force: bool, no_browser: bool, timeout_secs: u64) -> Result<()> {
     Ok(())
 }
 
-fn status(verbose: bool) -> Result<()> {
-    let path = match token_store_path() {
+fn status(verbose: bool, config: &'static ProviderConfig) -> Result<()> {
+    let label = provider_label(config);
+    let login_hint = if std::ptr::eq(config, &ANTIGRAVITY_CONFIG) {
+        "mogen auth login --antigravity"
+    } else {
+        "mogen auth login"
+    };
+    let path = match token_store_path_for(config) {
         Some(p) => p,
         None => {
             println!(
-                "Not logged in (no token store path resolvable; set MOGEN_CACHE_DIR). Run 'mogen auth login'."
+                "Not logged in to {label} (no token store path resolvable; set MOGEN_CACHE_DIR). \
+                 Run '{login_hint}'."
             );
             std::process::exit(1);
         }
@@ -134,7 +168,7 @@ fn status(verbose: bool) -> Result<()> {
     let bundle = match load_bundle(&path) {
         Ok(Some(b)) => b,
         Ok(None) => {
-            println!("Not logged in. Run 'mogen auth login'.");
+            println!("Not logged in to {label}. Run '{login_hint}'.");
             std::process::exit(1);
         }
         Err(err) => {
@@ -148,12 +182,12 @@ fn status(verbose: bool) -> Result<()> {
 
     let line = if bundle.is_access_expired(now) {
         format!(
-            "Logged in as {who}. Project {proj}. Access token expired; will refresh on next call."
+            "Logged in to {label} as {who}. Project {proj}. Access token expired; will refresh on next call."
         )
     } else {
         let remaining = bundle.access_expires_at_unix.saturating_sub(now);
         format!(
-            "Logged in as {who}. Project {proj}. Access token expires in {}.",
+            "Logged in to {label} as {who}. Project {proj}. Access token expires in {}.",
             human_duration(remaining)
         )
     };
@@ -181,14 +215,15 @@ fn status(verbose: bool) -> Result<()> {
     Ok(())
 }
 
-fn logout() -> Result<()> {
+fn logout(config: &'static ProviderConfig) -> Result<()> {
     // Walk every path the resolver knows about so logout cleans up
     // canonical (`~/.mogen/`) AND legacy (`~/.cache/mogen/`,
     // `%LOCALAPPDATA%\mogen\`) tokens — otherwise a stale legacy file
     // would still authenticate after a "logout".
-    let paths = all_existing_token_paths();
+    let label = provider_label(config);
+    let paths = all_existing_token_paths_for(config);
     if paths.is_empty() {
-        println!("Not logged in; nothing to remove.");
+        println!("Not logged in to {label}; nothing to remove.");
         return Ok(());
     }
     let mut first_err: Option<anyhow::Error> = None;

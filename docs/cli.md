@@ -33,7 +33,7 @@ A few flag patterns repeat across every LLM-driven subcommand
 | flag | meaning |
 |---|---|
 | `--api-key <KEY>` | Override `GEMINI_API_KEY` for this invocation. |
-| `--model <NAME>` | Gemini model id. Default `gemini-pro-latest` for text, `gemini-2.5-flash-image` for `textures`. |
+| `--model <NAME>` | Gemini model id. Default `gemini-pro-latest` for text. For `textures`, the default depends on credentials: `gemini-3-pro-image-preview` when authenticated via OAuth (paid plan), otherwise `gemini-2.5-flash-image`. Pass `gemini-3.1-flash-image-preview` (or any other image model) to override. |
 | `--temperature <N>` | Sampling temperature. Library default is `0.3` when omitted. |
 | `--thinking <low\|medium\|high\|xhigh>` | Cap server-side reasoning. `low` = 512 tokens, `medium` = 2048, `high` = 8192 (default), `xhigh` = 24576 (slowest, most careful). |
 | `--budget_tokens <N>` | Abort if total prompt + response token count exceeds this limit. |
@@ -279,7 +279,7 @@ mogen textures <input.mog> [--style "<hint>"] [--texture-size <N>]
 | `--glb` | GLB output path. Defaults to `<input>.glb`. |
 | `--textures-dir` | Where PNGs are written. Defaults to `textures/<mog-stem>/` so sibling assets don't collide on shared material names. |
 | `--style` | Style hint appended to each image prompt. Default `photorealistic`. |
-| `--model` | Gemini image model id. Default `gemini-2.5-flash-image`. |
+| `--model` | Gemini image model id. Default depends on credentials: `gemini-3-pro-image-preview` when authenticated via OAuth, otherwise `gemini-2.5-flash-image`. Pass `gemini-3.1-flash-image-preview` (or any other image model) to override. |
 | `--force` | Regenerate slots whose attr is already declared in the `.mog` or whose PNG already exists at the planned path. |
 | `--dry-run` | Print the plan and skip all API calls and file writes. |
 | `--no-build` | Stop after rewriting the `.mog`; don't run `build`. |

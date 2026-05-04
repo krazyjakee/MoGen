@@ -20,10 +20,21 @@ use crate::types::{GenerateConfig, GenerateResponse};
 /// How the user's Google credential is supplied. Surfaced in the CLI's
 /// credential resolver — flag/env API-key beats stored OAuth, so users can
 /// always force the public-API path even when an OAuth token is on disk.
+///
+/// Two OAuth variants exist because Google gates the image-generation
+/// surface (`:streamGenerateContent` for nano-banana / Gemini 3 Pro Image)
+/// behind the **Antigravity** OAuth client; the gemini-cli OAuth client
+/// gets a 403 there. Text gen accepts either OAuth client.
 #[derive(Debug, Clone)]
 pub enum GoogleCredential {
     ApiKey(String),
+    /// Bundle issued by the gemini-cli OAuth client (`mogen auth login`).
+    /// Drives text generation against `cloudcode-pa.googleapis.com/v1internal`.
     OAuth(OAuthBundle),
+    /// Bundle issued by the Antigravity OAuth client
+    /// (`mogen auth login --antigravity`). Required for image generation;
+    /// also works for text gen.
+    AntigravityOAuth(OAuthBundle),
 }
 
 /// Closed set of LLM backends the CLI / Studio can talk to. Persisted as a
@@ -227,10 +238,6 @@ impl From<GeminiError> for ProviderError {
                 provider: Provider::Gemini,
                 feature: "cachedContents over OAuth",
             },
-            GeminiError::ImageOverOAuthUnverified => Self::Unsupported {
-                provider: Provider::Gemini,
-                feature: "image generation over OAuth",
-            },
         }
     }
 }
@@ -394,6 +401,9 @@ impl LlmClient {
             GoogleCredential::ApiKey(key) => LlmClient::Gemini(GeminiClient::new(key)),
             GoogleCredential::OAuth(bundle) => {
                 LlmClient::Gemini(GeminiClient::from_oauth(bundle))
+            }
+            GoogleCredential::AntigravityOAuth(bundle) => {
+                LlmClient::Gemini(GeminiClient::from_antigravity_oauth(bundle))
             }
         }
     }

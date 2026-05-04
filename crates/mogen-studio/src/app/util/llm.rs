@@ -83,20 +83,42 @@ fn attach_system_instruction(
 /// provider) or a Google OAuth bundle (Gemini-only). Construction stays in
 /// `app/llm.rs::resolve_credential`; the worker threads consume the enum and
 /// hand it to [`build_provider_client`].
+///
+/// There are two flavours of Gemini OAuth, mirroring the two desktop
+/// clients we authenticate as:
+///
+/// - [`GeminiOAuth`](Self::GeminiOAuth) — the gemini-cli client, written
+///   to `~/.mogen/google_auth.json` by `mogen auth login`. Works for text
+///   generation against `cloudcode-pa.googleapis.com/v1internal:generateContent`,
+///   but the image surface (`:streamGenerateContent` for nano-banana /
+///   Gemini 3 Pro Image) rejects it with 403.
+/// - [`AntigravityOAuth`](Self::AntigravityOAuth) — the Antigravity
+///   client, written to `~/.mogen/antigravity_auth.json` by `mogen auth
+///   login --antigravity`. Works for both text and image generation; the
+///   only credential the image surface accepts.
 #[derive(Clone)]
 pub(in crate::app) enum Credential {
     ApiKey(String),
     GeminiOAuth(OAuthBundle),
+    AntigravityOAuth(OAuthBundle),
+    /// Z.ai (`glm-image`) API key. Used only by the textures pipeline —
+    /// Z.ai isn't a text provider, so this never flows through
+    /// [`build_provider_client`].
+    Zai(String),
 }
 
 impl Credential {
     /// Convenience for callers that previously took a bare `String` —
     /// returns the API key if this is an [`ApiKey`](Self::ApiKey), else
-    /// empty. OAuth callers must branch on the enum directly.
+    /// empty. OAuth and Z.ai callers must branch on the enum directly.
+    /// Z.ai keys are intentionally NOT surfaced through this accessor so
+    /// they never accidentally flow into a non-Z.ai provider.
     pub(in crate::app) fn api_key_or_empty(&self) -> String {
         match self {
             Credential::ApiKey(k) => k.clone(),
-            Credential::GeminiOAuth(_) => String::new(),
+            Credential::Zai(_)
+            | Credential::GeminiOAuth(_)
+            | Credential::AntigravityOAuth(_) => String::new(),
         }
     }
 }
@@ -114,6 +136,9 @@ pub(in crate::app) fn build_provider_client(
     match (provider, credential) {
         (Provider::Gemini, Credential::GeminiOAuth(bundle)) => {
             LlmClient::gemini_from_credential(GoogleCredential::OAuth(bundle))
+        }
+        (Provider::Gemini, Credential::AntigravityOAuth(bundle)) => {
+            LlmClient::gemini_from_credential(GoogleCredential::AntigravityOAuth(bundle))
         }
         (Provider::ClaudeCode, cred) => {
             LlmClient::with_base_url(provider, cred.api_key_or_empty(), claude_code_path)

@@ -7,7 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::client;
+use super::client::{self, ProviderConfig};
 use super::OAuthError;
 
 /// Persisted credential bundle.
@@ -73,11 +73,12 @@ pub fn refresh_if_needed(
     http: &reqwest::blocking::Client,
     bundle: &mut OAuthBundle,
     now_unix: u64,
+    config: &ProviderConfig,
 ) -> Result<bool, OAuthError> {
     if !bundle.is_access_expired(now_unix) {
         return Ok(false);
     }
-    refresh_now(http, bundle, now_unix)?;
+    refresh_now(http, bundle, now_unix, config)?;
     Ok(true)
 }
 
@@ -88,8 +89,9 @@ pub fn refresh_now(
     http: &reqwest::blocking::Client,
     bundle: &mut OAuthBundle,
     now_unix: u64,
+    config: &ProviderConfig,
 ) -> Result<(), OAuthError> {
-    refresh_against(http, bundle, now_unix, client::TOKEN_URL)
+    refresh_against(http, bundle, now_unix, client::TOKEN_URL, config)
 }
 
 /// Test seam — same logic as [`refresh_now`] but the token endpoint URL is
@@ -99,10 +101,11 @@ pub fn refresh_against(
     bundle: &mut OAuthBundle,
     now_unix: u64,
     token_url: &str,
+    config: &ProviderConfig,
 ) -> Result<(), OAuthError> {
     let form = [
-        ("client_id", client::CLIENT_ID),
-        ("client_secret", client::CLIENT_SECRET),
+        ("client_id", config.client_id),
+        ("client_secret", config.client_secret),
         ("refresh_token", bundle.refresh_token.as_str()),
         ("grant_type", "refresh_token"),
     ];

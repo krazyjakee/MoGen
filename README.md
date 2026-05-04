@@ -149,11 +149,11 @@ on the user's own Cloud project (discovered via `loadCodeAssist`); the public
 
 **Caveats.** The bundled OAuth client is Google's published Gemini CLI client.
 It's stable but Google could rotate it; keep `GEMINI_API_KEY` available as a
-fallback. Image generation (`mogen textures`) defaults to API-key only — pass
-`--allow-oauth-image` if you want to probe the Cloud Code Assist surface for
-image generation (unverified there). The `cachedContents` system-instruction
-cache is also disabled in OAuth mode (the surface doesn't expose it); the
-system instruction is sent inline instead.
+fallback. Image generation (`mogen textures`) goes through the same OAuth path
+when no API key is present and defaults to `gemini-3-pro-image-preview`; pass
+`--model gemini-3.1-flash-image-preview` (or any other image model) to override.
+The `cachedContents` system-instruction cache is disabled in OAuth mode (the
+surface doesn't expose it); the system instruction is sent inline instead.
 
 ## Contributing
 

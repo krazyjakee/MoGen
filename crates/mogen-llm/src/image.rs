@@ -9,9 +9,39 @@ use serde::Deserialize;
 use crate::gemini::{GeminiAuth, GeminiClient, GeminiError};
 use crate::google_oauth;
 
-/// Default image model. 2.5 Flash Image ("Nano Banana") is the cheapest tier
+/// Default image model for API-key flows. 2.5 Flash Image ("Nano Banana") is
+/// the cheapest tier on the public `generativelanguage.googleapis.com` surface
 /// that honors `responseModalities: ["IMAGE"]` and produces usable PBR albedo.
 pub const DEFAULT_IMAGE_MODEL: &str = "gemini-2.5-flash-image";
+
+/// Default image model when the credential is an Antigravity OAuth bundle.
+/// Image gen goes through Cloud Code Assist's image surface
+/// (`daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent`).
+/// `gemini-3.1-flash-image` is the only ID observed to route reliably for
+/// Antigravity-issued bundles — matches `IMAGE_MODEL_DEFAULT` in McKrei's
+/// `opencode-antigravity-nano-banana`. The `-preview` variants 404 here.
+pub const DEFAULT_OAUTH_IMAGE_MODEL: &str = "gemini-3.1-flash-image";
+
+/// Pick the right image-model default for the credential type. Callers that
+/// expose a `--model` flag should only consult this when the user hasn't
+/// passed an explicit value.
+pub fn default_image_model_for(auth: &GeminiAuth) -> &'static str {
+    match auth {
+        GeminiAuth::OAuth(_) | GeminiAuth::AntigravityOAuth(_) => DEFAULT_OAUTH_IMAGE_MODEL,
+        GeminiAuth::ApiKey(_) => DEFAULT_IMAGE_MODEL,
+    }
+}
+
+/// Same as [`default_image_model_for`] but driven by a boolean — convenient at
+/// call sites that haven't constructed a [`GeminiAuth`] yet (e.g. the CLI/UI
+/// resolves a `GoogleCredential` first and only later builds the client).
+pub fn default_image_model_when_oauth(is_oauth: bool) -> &'static str {
+    if is_oauth {
+        DEFAULT_OAUTH_IMAGE_MODEL
+    } else {
+        DEFAULT_IMAGE_MODEL
+    }
+}
 
 /// Raw PNG bytes returned by the model, ready to write to disk as-is.
 #[derive(Debug, Clone)]
@@ -29,40 +59,20 @@ impl GeminiClient {
     /// caller can drive sampling variation. Gemini doesn't guarantee
     /// determinism, but the field still varies the output for image models.
     ///
-    /// In OAuth mode this returns [`GeminiError::ImageOverOAuthUnverified`]
-    /// because image generation has not been verified against the
-    /// Cloud Code Assist `v1internal` surface — callers must use the opt-in
-    /// [`Self::generate_image_with_oauth_policy`] to probe.
+    /// Both API-key and OAuth credentials are supported. OAuth requests go to
+    /// the Cloud Code Assist `v1internal` surface using the bundle's project
+    /// id; API-key requests go to the public `generativelanguage` surface.
     pub fn generate_image(
         &self,
         model: &str,
         prompt: &str,
         seed: Option<u64>,
     ) -> Result<GeneratedImage, GeminiError> {
-        self.generate_image_with_oauth_policy(model, prompt, seed, false)
-    }
-
-    /// Same as [`Self::generate_image`] but with explicit control over the
-    /// OAuth path. When `allow_oauth=true`, a Cloud Code Assist call is
-    /// attempted using the OAuth bundle's project + bearer token — any
-    /// upstream error surfaces as a normal [`GeminiError::Api`] so the
-    /// caller can decide how to react.
-    pub fn generate_image_with_oauth_policy(
-        &self,
-        model: &str,
-        prompt: &str,
-        seed: Option<u64>,
-        allow_oauth: bool,
-    ) -> Result<GeneratedImage, GeminiError> {
-        let inner = build_image_request(prompt, seed);
-
-        let bytes = match self.auth() {
-            GeminiAuth::ApiKey(_) => {
-                // Build URL with key + same wire shape as the existing path.
-                let key = match self.auth() {
-                    GeminiAuth::ApiKey(k) => k,
-                    _ => unreachable!("matched above"),
-                };
+        let inline = match self.auth() {
+            GeminiAuth::ApiKey(key) => {
+                // Public API speaks `responseModalities: ["IMAGE"]` and returns
+                // a single JSON envelope.
+                let inner = build_image_request(prompt, seed, Some(&["IMAGE"]));
                 let url = format!(
                     "{}/models/{}:generateContent?key={}",
                     self.base_url(),
@@ -76,62 +86,166 @@ impl GeminiClient {
                     let message = crate::gemini::parse_error_message(&bytes);
                     return Err(GeminiError::Api { status: status.as_u16(), message });
                 }
-                bytes.to_vec()
+                pick_inline_image(&bytes)?
             }
             GeminiAuth::OAuth(_) => {
-                if !allow_oauth {
-                    return Err(GeminiError::ImageOverOAuthUnverified);
-                }
+                // The gemini-cli OAuth client gets a 403 from the image
+                // surface regardless of scopes. The user must log in with
+                // the Antigravity client (`mogen auth login --antigravity`)
+                // for image gen, or fall back to an API key.
+                return Err(GeminiError::OAuth(
+                    "image generation is not available with the gemini-cli OAuth client; \
+                     run `mogen auth login --antigravity` to authorize the Antigravity \
+                     OAuth client (required for nano-banana / Gemini 3 Pro Image), or \
+                     set GEMINI_API_KEY for the public-API surface"
+                        .into(),
+                ));
+            }
+            GeminiAuth::AntigravityOAuth(_) => {
+                // Antigravity Cloud Code Assist image surface. Body shape
+                // is the `pi-nano-antigravity-image` envelope:
+                // `imageConfig` + `systemInstruction` + `safetySettings`,
+                // wrapped in a `nano-banana-…` requestId. Headers are the
+                // Antigravity-flavoured set with `Accept: text/event-stream`
+                // for SSE streaming.
+                //
+                // Three layers of resilience, mirroring McKrei's
+                // `opencode-antigravity-nano-banana` reference impl:
+                //   1. **Catalog probe** — `:fetchAvailableModels` tells us
+                //      which IDs are live for this bundle's project. We
+                //      intersect with our static preference list so we
+                //      only try names that exist (no more
+                //      walk-then-404-then-walk). Fills lazily, cached on
+                //      the client across calls.
+                //   2. **Endpoint failover** — `IMAGE_ENDPOINT_FALLOVER`
+                //      walks `daily-cloudcode-pa` → `…sandbox.…` → prod →
+                //      autopush. Different endpoints route to different
+                //      capacity pools; lone-material 404s on the primary
+                //      tend to succeed on the next.
+                //   3. **Unified backoff retry** — 404 / 429 / 503 are all
+                //      treated as transient capacity errors when the
+                //      candidate is in the catalog. Backoff schedule is
+                //      3s / 6s / 12s, matching McKrei's
+                //      `CAPACITY_RETRY_BASE_DELAY_MS * 2^retry`.
+                //
+                // Worst-case wall time on a fully transient outage:
+                // 4 endpoints × 1 catalog model × 4 attempts × 12s max
+                // wait ≈ 130 s before final failure. Happy path is
+                // unchanged at ~3–6 s.
                 let project = self
                     .oauth_project_id()
                     .ok_or_else(|| GeminiError::OAuth("missing project id in token bundle".into()))?;
-                let model_full = if model.starts_with("models/") {
-                    model.to_string()
-                } else {
-                    format!("models/{model}")
+                let inner = build_image_request(prompt, seed, None);
+
+                let candidates: Vec<(String, bool)> =
+                    if model == DEFAULT_OAUTH_IMAGE_MODEL || model.is_empty() {
+                        // No explicit user choice — consult the catalog.
+                        self.ensure_image_catalog(
+                            &project,
+                            google_oauth::client::IMAGE_ENDPOINT,
+                        )?
+                    } else {
+                        // Explicit user choice — trust it as if it were
+                        // catalog-listed (full backoff retry on 404).
+                        vec![(model.to_string(), true)]
+                    };
+
+                const CAPACITY_BACKOFFS_SECS: [u64; 3] = [3, 6, 12];
+                let mut last_err: Option<GeminiError> = None;
+                let mut picked: Option<RawInlineData> = None;
+
+                // Prefer the most actionable error when reporting failure:
+                // a 429 with a quota-reset window is more useful to the
+                // user than a 403 from a sandbox endpoint they can't enable.
+                // Stickier errors (429, 503) win over transient (404) which
+                // win over config (403).
+                let prefer_err = |new: &GeminiError, old: &Option<GeminiError>| -> bool {
+                    let rank = |e: &GeminiError| -> u8 {
+                        match e {
+                            GeminiError::Api { status: 429, .. } => 4,
+                            GeminiError::Api { status: 503, .. } => 3,
+                            GeminiError::Api { status: 404, .. } => 2,
+                            GeminiError::Api { status: 403, .. } => 1,
+                            _ => 0,
+                        }
+                    };
+                    match old {
+                        None => true,
+                        Some(o) => rank(new) >= rank(o),
+                    }
                 };
-                let url = google_oauth::cloudcode::generate_content_url(self.base_url());
-                let body = google_oauth::cloudcode::wrap_body(&project, &model_full, inner);
-                self.oauth_post_with_retry(&url, &body)?
+                'walk_endpoints: for endpoint in
+                    google_oauth::client::IMAGE_ENDPOINT_FALLOVER.iter()
+                {
+                    let url = google_oauth::cloudcode::stream_generate_content_url(endpoint);
+                    for (candidate, in_catalog) in candidates.iter() {
+                        let body = google_oauth::cloudcode::wrap_image_body(
+                            &project,
+                            candidate,
+                            inner.clone(),
+                        );
+                        let mut attempt: usize = 0;
+                        loop {
+                            attempt += 1;
+                            match self.oauth_post_image_with_retry(&url, &body) {
+                                Ok(bytes) => match pick_inline_image_sse(&bytes) {
+                                    Ok(inline) => {
+                                        picked = Some(inline);
+                                        break 'walk_endpoints;
+                                    }
+                                    Err(e) => {
+                                        if prefer_err(&e, &last_err) {
+                                            last_err = Some(e);
+                                        }
+                                        break;
+                                    }
+                                },
+                                // 403: API not enabled on this endpoint's
+                                // upstream project. No retry, no other
+                                // candidate will help — skip the entire
+                                // endpoint and try the next one.
+                                Err(e @ GeminiError::Api { status: 403, .. }) => {
+                                    if prefer_err(&e, &last_err) {
+                                        last_err = Some(e);
+                                    }
+                                    continue 'walk_endpoints;
+                                }
+                                // 404 on a model NOT in the catalog → walk
+                                // immediately, no backoff. The bundle's
+                                // project doesn't route this name; retrying
+                                // is wasted wall time.
+                                Err(e @ GeminiError::Api { status: 404, .. })
+                                    if !in_catalog =>
+                                {
+                                    if prefer_err(&e, &last_err) {
+                                        last_err = Some(e);
+                                    }
+                                    break;
+                                }
+                                Err(e @ GeminiError::Api { status: 404, .. })
+                                | Err(e @ GeminiError::Api { status: 429, .. })
+                                | Err(e @ GeminiError::Api { status: 503, .. }) => {
+                                    if prefer_err(&e, &last_err) {
+                                        last_err = Some(e);
+                                    }
+                                    if attempt > CAPACITY_BACKOFFS_SECS.len() {
+                                        break;
+                                    }
+                                    let wait = CAPACITY_BACKOFFS_SECS
+                                        [(attempt - 1).min(CAPACITY_BACKOFFS_SECS.len() - 1)];
+                                    std::thread::sleep(std::time::Duration::from_secs(wait));
+                                    continue;
+                                }
+                                Err(e) => return Err(e),
+                            }
+                        }
+                    }
+                }
+                match picked {
+                    Some(p) => p,
+                    None => return Err(last_err.unwrap_or(GeminiError::EmptyResponse)),
+                }
             }
-        };
-
-        let parsed: RawImageEnvelope = serde_json::from_slice(&bytes)
-            .map_err(|e| GeminiError::InvalidResponse(e.to_string()))?;
-
-        // OAuth wraps in `{ response: ... }`; API-key returns the response
-        // directly. Pick whichever side decoded.
-        let response = parsed.response.unwrap_or(RawImageResponse {
-            candidates: parsed.candidates,
-        });
-
-        // Gemini omits `content` on candidates that were filtered (safety,
-        // recitation, MAX_TOKENS, …) and emits only `finishReason`. Surface
-        // that reason instead of failing on the missing `content` field, so
-        // the user gets an actionable error rather than a parser hiccup.
-        let finish_reasons: Vec<String> = response
-            .candidates
-            .iter()
-            .filter(|c| c.content.is_none())
-            .filter_map(|c| c.finish_reason.clone())
-            .collect();
-
-        let inline = response
-            .candidates
-            .into_iter()
-            .filter_map(|c| c.content)
-            .flat_map(|c| c.parts.into_iter())
-            .find_map(|p| p.inline_data);
-
-        let inline = match inline {
-            Some(i) => i,
-            None if !finish_reasons.is_empty() => {
-                return Err(GeminiError::InvalidResponse(format!(
-                    "no image returned (finishReason: {})",
-                    finish_reasons.join(", ")
-                )));
-            }
-            None => return Err(GeminiError::EmptyResponse),
         };
 
         if !inline.mime_type.starts_with("image/") {
@@ -149,8 +263,111 @@ impl GeminiClient {
     }
 }
 
-fn build_image_request(prompt: &str, seed: Option<u64>) -> serde_json::Value {
-    let mut gen_cfg = serde_json::json!({ "responseModalities": ["IMAGE"] });
+/// Walk a one-shot JSON response (`{ candidates: [...] }` or
+/// `{ response: { candidates: [...] } }`) and return the first inline
+/// image found, surfacing `finishReason` if every candidate was filtered.
+fn pick_inline_image(bytes: &[u8]) -> Result<RawInlineData, GeminiError> {
+    let parsed: RawImageEnvelope = serde_json::from_slice(bytes)
+        .map_err(|e| GeminiError::InvalidResponse(e.to_string()))?;
+    let response = parsed
+        .response
+        .unwrap_or(RawImageResponse { candidates: parsed.candidates });
+
+    let finish_reasons: Vec<String> = response
+        .candidates
+        .iter()
+        .filter(|c| c.content.is_none())
+        .filter_map(|c| c.finish_reason.clone())
+        .collect();
+
+    let inline = response
+        .candidates
+        .into_iter()
+        .filter_map(|c| c.content)
+        .flat_map(|c| c.parts.into_iter())
+        .find_map(|p| p.inline_data);
+
+    match inline {
+        Some(i) => Ok(i),
+        None if !finish_reasons.is_empty() => Err(GeminiError::InvalidResponse(format!(
+            "no image returned (finishReason: {})",
+            finish_reasons.join(", ")
+        ))),
+        None => Err(GeminiError::EmptyResponse),
+    }
+}
+
+/// Parse a Server-Sent-Events response from `:streamGenerateContent?alt=sse`.
+/// Each non-empty `data: …` line is a JSON chunk in the same `{ response:
+/// { candidates: [...] } }` shape as one-shot OAuth replies. We scan every
+/// chunk because the model emits text and image parts in separate frames —
+/// the image typically arrives last.
+fn pick_inline_image_sse(bytes: &[u8]) -> Result<RawInlineData, GeminiError> {
+    let text = std::str::from_utf8(bytes)
+        .map_err(|e| GeminiError::InvalidResponse(format!("non-utf8 SSE body: {e}")))?;
+
+    if std::env::var("MOGEN_DEBUG_HTTP").ok().as_deref() == Some("1") {
+        // Trim base64 inline_data payloads — full SSE chunks are megabytes
+        // when an image lands. We only need to see error paths.
+        let preview = if text.len() > 4096 { &text[..4096] } else { text };
+        eprintln!("[mogen image SSE] {} bytes, preview:\n{}", text.len(), preview);
+    }
+    let mut last_finish_reasons: Vec<String> = Vec::new();
+    for line in text.lines() {
+        let Some(payload) = line.strip_prefix("data: ") else {
+            continue;
+        };
+        let payload = payload.trim();
+        if payload.is_empty() || payload == "[DONE]" {
+            continue;
+        }
+        let Ok(env) = serde_json::from_str::<RawImageEnvelope>(payload) else {
+            continue;
+        };
+        let response = env
+            .response
+            .unwrap_or(RawImageResponse { candidates: env.candidates });
+        for c in response.candidates {
+            if let Some(reason) = c.finish_reason.clone() {
+                last_finish_reasons.push(reason);
+            }
+            if let Some(content) = c.content {
+                for part in content.parts {
+                    if let Some(inline) = part.inline_data {
+                        if inline.mime_type.starts_with("image/") {
+                            return Ok(inline);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if !last_finish_reasons.is_empty() {
+        return Err(GeminiError::InvalidResponse(format!(
+            "no image returned (finishReason: {})",
+            last_finish_reasons.join(", ")
+        )));
+    }
+    Err(GeminiError::EmptyResponse)
+}
+
+/// Inner request body for image gen. The API-key path needs
+/// `responseModalities` (`["IMAGE"]`) and runs against the public
+/// `generativelanguage.googleapis.com` surface. The OAuth path runs
+/// against Cloud Code Assist's image surface, which rejects
+/// `responseModalities` — `wrap_image_body` strips it and substitutes
+/// `imageConfig` instead. Pass `None` for the OAuth path so we don't
+/// build a key the wrapper will throw away.
+fn build_image_request(
+    prompt: &str,
+    seed: Option<u64>,
+    modalities: Option<&[&str]>,
+) -> serde_json::Value {
+    let mut gen_cfg = serde_json::json!({});
+    if let Some(m) = modalities {
+        gen_cfg["responseModalities"] = serde_json::json!(m);
+    }
     if let Some(s) = seed {
         // Gemini accepts `seed` as an i32 — saturate to the positive range,
         // matching what the text path does in `gemini::build_request`.

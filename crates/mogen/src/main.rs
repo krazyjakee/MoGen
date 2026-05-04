@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use mogen_llm::{Provider, ThinkingLevel, DEFAULT_IMAGE_MODEL};
+use mogen_llm::{Provider, ThinkingLevel};
 
 use commands::animate::{animate, AnimateArgs};
 use commands::auth::{dispatch as auth_dispatch, AuthCmd};
@@ -96,6 +96,12 @@ enum AuthArg {
         /// How long to wait (seconds) for the OAuth callback before giving up.
         #[arg(long, default_value_t = 300)]
         timeout: u64,
+        /// Use the Antigravity OAuth client (required for image generation
+        /// via `mogen textures` over OAuth — the gemini-cli client cannot
+        /// reach the image surface). Stored at `~/.mogen/antigravity_auth.json`,
+        /// side-by-side with the gemini-cli token.
+        #[arg(long)]
+        antigravity: bool,
     },
     /// Print whether the user is logged in, the email + project the token
     /// resolves to, and the access-token's remaining lifetime. Exits 0 when
@@ -107,23 +113,31 @@ enum AuthArg {
         /// the OAuth credentials.
         #[arg(long)]
         verbose: bool,
+        /// Inspect the Antigravity bundle instead of the gemini-cli one.
+        #[arg(long)]
+        antigravity: bool,
     },
-    /// Delete the stored `google_auth.json`. Idempotent — does not call the
+    /// Delete the stored token bundle. Idempotent — does not call the
     /// Google revoke endpoint, so the refresh token remains valid server-side
     /// until the user revokes consent at <https://myaccount.google.com>.
-    Logout,
+    Logout {
+        /// Remove the Antigravity bundle instead of the gemini-cli one.
+        #[arg(long)]
+        antigravity: bool,
+    },
 }
 
 impl From<AuthArg> for AuthCmd {
     fn from(a: AuthArg) -> Self {
         match a {
-            AuthArg::Login { force, no_browser, timeout } => AuthCmd::Login {
+            AuthArg::Login { force, no_browser, timeout, antigravity } => AuthCmd::Login {
                 force,
                 no_browser,
                 timeout_secs: timeout,
+                antigravity,
             },
-            AuthArg::Status { verbose } => AuthCmd::Status { verbose },
-            AuthArg::Logout => AuthCmd::Logout,
+            AuthArg::Status { verbose, antigravity } => AuthCmd::Status { verbose, antigravity },
+            AuthArg::Logout { antigravity } => AuthCmd::Logout { antigravity },
         }
     }
 }
@@ -404,9 +418,12 @@ enum Cmd {
         /// Style hint appended to each image prompt.
         #[arg(long, default_value = "photorealistic")]
         style: String,
-        /// Gemini image model name.
-        #[arg(long, default_value = DEFAULT_IMAGE_MODEL)]
-        model: String,
+        /// Gemini image model name. When omitted, defaults to
+        /// `gemini-3-pro-image-preview` if you're signed in via
+        /// `mogen auth login` (paid Cloud Code Assist surface) and
+        /// `gemini-2.5-flash-image` otherwise (public API key).
+        #[arg(long)]
+        model: Option<String>,
         /// Regenerate slots whose attr is already declared in the .mog or
         /// whose PNG already exists on disk at the planned path.
         #[arg(long)]
@@ -420,12 +437,11 @@ enum Cmd {
         /// Override GEMINI_API_KEY.
         #[arg(long)]
         api_key: Option<String>,
-        /// Probe the unverified Cloud Code Assist `v1internal` image surface
-        /// when only OAuth credentials are available. Off by default — OAuth
-        /// users see a clear error pointing at `GEMINI_API_KEY` instead.
-        /// Use this to experiment when no API key is configured.
+        /// Use Z.ai's `glm-image` endpoint instead of Gemini for albedo
+        /// generation. Pass the bearer key here, or set `ZAI_API_KEY` in
+        /// your environment. Useful when Gemini is rate-limited.
         #[arg(long)]
-        allow_oauth_image: bool,
+        zai_api_key: Option<String>,
         /// Skip every derived PBR map (normal / metallic-roughness / AO).
         /// Albedo is still generated.
         #[arg(long)]
@@ -644,7 +660,7 @@ fn main() -> ExitCode {
             dry_run,
             no_build,
             api_key,
-            allow_oauth_image,
+            zai_api_key,
             no_pbr,
             no_normal,
             no_metallic_roughness,
@@ -662,7 +678,7 @@ fn main() -> ExitCode {
             dry_run,
             no_build,
             api_key,
-            allow_oauth_image,
+            zai_api_key,
             no_pbr,
             no_normal,
             no_metallic_roughness,
