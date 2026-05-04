@@ -122,7 +122,31 @@ pub struct ViewerState {
     /// Lazily created when a capture starts queueing pixels and torn down
     /// once all in-flight encodes have drained at finalisation.
     pub encode_pool: Option<EncodePool>,
+    /// Figma-style click drill-down. Records the cursor and raw leaf hit
+    /// from the previous viewport click so a repeat click on the same
+    /// target can advance the selection one ancestor closer to the leaf.
+    /// Cleared by Esc, modifier-clicks, scene recompiles, gizmo commits —
+    /// anything that would make the recorded NodeId stale.
+    pub pick_cycle: Option<PickCycle>,
 }
+
+/// Per-click cycle state for Figma-style drill-down. `cursor` and `leaf`
+/// must both match the next click for the cycle to advance — different
+/// cursor (>[`PICK_CYCLE_RADIUS_PX`] away) or a different deepest hit
+/// resets the depth to 0.
+#[derive(Clone, Copy, Debug)]
+pub struct PickCycle {
+    pub cursor: egui::Pos2,
+    pub leaf: NodeId,
+    /// 0 = the default `redirect_pick` target (top of the editable chain).
+    /// Each repeat click adds 1, walking one node closer to `leaf`.
+    pub depth: usize,
+}
+
+/// Pixel radius within which a follow-up click counts as "the same click"
+/// for cycle purposes. Slightly forgiving so a hand-held mouse twitch
+/// between clicks doesn't reset the cycle.
+pub(super) const PICK_CYCLE_RADIUS_PX: f32 = 4.0;
 
 /// Snapshot captured at `pointer_down` on a gizmo handle plus the running
 /// delta as the user drags. Applied to the selected node's local transform
@@ -438,6 +462,7 @@ impl Default for ViewerState {
             capture_request: None,
             capture_outcome: None,
             encode_pool: None,
+            pick_cycle: None,
         }
     }
 }
@@ -833,6 +858,15 @@ pub(super) fn replace_selection(st: &mut ViewerState, id: Option<NodeId>) {
     let id = id.and_then(|n| {
         st.scene.as_ref().and_then(|s| redirect_pick(s, n))
     });
+    set_primary_selection_raw(st, id);
+}
+
+/// Set the selection to exactly `id` (or clear when `None`) without any
+/// `redirect_pick` rewriting. Used by the cycling drill-down where the
+/// caller has already computed the precise target — re-running the
+/// redirect would walk the cycle's deeper picks back up to the wrapper /
+/// outer group, defeating the drill.
+fn set_primary_selection_raw(st: &mut ViewerState, id: Option<NodeId>) {
     st.selected.clear();
     st.selected_paths.clear();
     if let Some(n) = id {
@@ -849,6 +883,100 @@ pub(super) fn replace_selection(st: &mut ViewerState, id: Option<NodeId>) {
                 .and_then(|node| node.source_span)
         })
         .map(|span| span.start);
+}
+
+/// Figma-style click drill-down. Replaces the selection with the node
+/// `redirect_pick` would normally pick (the editable wrapper or top-level
+/// group), unless this click targets the same screen point and the same
+/// raw leaf as the previous click — in which case it advances one
+/// ancestor closer to `leaf`. Repeat-clicking eventually lands on `leaf`
+/// itself (or stops one short, when crossing into a node would land on a
+/// span from an imported `.mog` file that the gizmo can't legally edit).
+///
+/// Resets the cycle to depth 0 whenever the cursor or the deepest hit
+/// changes between consecutive clicks. The caller is responsible for
+/// clearing `pick_cycle` on selection changes from other sources (Esc,
+/// shift-click, scene recompile, gizmo commit).
+pub(super) fn replace_selection_cycling(
+    st: &mut ViewerState,
+    leaf: NodeId,
+    cursor: egui::Pos2,
+) {
+    let Some(scene) = st.scene.as_ref().map(Arc::clone) else {
+        replace_selection(st, Some(leaf));
+        st.pick_cycle = None;
+        return;
+    };
+
+    // chain = [leaf, parent, grandparent, …, root]
+    let mut chain: Vec<NodeId> = Vec::new();
+    let mut cur = Some(leaf);
+    while let Some(id) = cur {
+        chain.push(id);
+        cur = scene.nodes.get(id.0 as usize).and_then(|n| n.parent);
+    }
+    if chain.is_empty() {
+        replace_selection(st, Some(leaf));
+        st.pick_cycle = None;
+        return;
+    }
+
+    // Depth-0 selection: whatever `redirect_pick` would return today.
+    // For imports that's the wrapper; for plain user-authored geometry
+    // it's the leaf itself, in which case cycling is a no-op (nothing
+    // deeper to walk to). When `redirect_pick` returns `None` (imported
+    // root with no editable ancestor anywhere) we mirror today's
+    // `replace_selection` and clear the selection — landing on the
+    // un-editable leaf instead would let the user grab a gizmo handle on
+    // a node whose source span lives in another file.
+    let Some(default_id) = redirect_pick(&scene, leaf) else {
+        set_primary_selection_raw(st, None);
+        st.pick_cycle = None;
+        return;
+    };
+    let default_idx = chain.iter().position(|&n| n == default_id).unwrap_or(0);
+
+    let same_target = match st.pick_cycle {
+        Some(pc) => {
+            pc.leaf == leaf
+                && (pc.cursor - cursor).length() <= PICK_CYCLE_RADIUS_PX
+        }
+        None => false,
+    };
+    let prev_depth = st.pick_cycle.map(|pc| pc.depth).unwrap_or(0);
+    let candidate_depth = if same_target { prev_depth + 1 } else { 0 };
+
+    // Editability boundary: stop one short of any node whose source span
+    // lives in an imported file. The depth-0 target is always safe
+    // (`redirect_pick` already enforces that), so the walk-down only
+    // needs to check the nodes strictly between it and the leaf.
+    let max_depth = max_editable_depth(&scene, &chain, default_idx);
+    let depth = candidate_depth.min(max_depth);
+
+    let target_idx = default_idx.saturating_sub(depth);
+    let target = chain[target_idx];
+    set_primary_selection_raw(st, Some(target));
+    st.pick_cycle = Some(PickCycle { cursor, leaf, depth });
+}
+
+/// How many steps from `default_idx` toward the leaf (index 0) we can
+/// take before crossing into a node authored in another file. Caller
+/// uses this to clamp the requested cycle depth.
+fn max_editable_depth(scene: &SceneGraph, chain: &[NodeId], default_idx: usize) -> usize {
+    let mut depth = 0usize;
+    let mut idx = default_idx;
+    while idx > 0 {
+        let next = chain[idx - 1];
+        let Some(node) = scene.nodes.get(next.0 as usize) else {
+            break;
+        };
+        if node.origin.is_some() {
+            break;
+        }
+        depth += 1;
+        idx -= 1;
+    }
+    depth
 }
 
 /// Toggle a node's membership in the selection. Used for shift/cmd-click.

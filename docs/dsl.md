@@ -50,6 +50,44 @@ geometry itself.
 
 ---
 
+## File metadata: `meta`
+
+An optional top-of-file block recording author-facing metadata about the
+asset. Place at most once, before `material` / `scene` / `module`.
+
+```
+meta (
+  name = "wooden_chair",
+  version = "1.2.0",
+  description = "A simple four-legged dining chair.",
+  tags = ["furniture", "chair", "wood"],
+)
+```
+
+| attr | type | source | notes |
+|---|---|---|---|
+| `name` | string | author | human-readable asset name |
+| `version` | string | author | author-controlled (semver-style is conventional but not enforced) |
+| `mogen_version` | string | **toolchain** | auto-stamped from the running mogen version on every save (`mogen generate`/`modify`/`animate`/`repair`/`textures` and Studio Save). Don't write it yourself. |
+| `description` | string | author | one-line summary |
+| `tags` | list of string | author | free-form labels |
+
+The block is purely informational — it's not consumed by the geometry
+pipeline. It survives lowering on `SceneGraph::meta` so tooling (Studio,
+exporters) can read it without re-parsing. Old files without a `meta` block
+keep building; on the next save the toolchain inserts a fresh
+`meta (mogen_version = "...")` line.
+
+Diagnostic codes for `meta`:
+
+- `E0310` — `meta` cannot have a `{ … }` body block.
+- `E0311` — `meta` cannot take a quoted name (`meta "x" (...)`); use `name=` instead.
+- `E0312` — duplicate `meta` block.
+- `E0313` — `meta` only allowed at the top level.
+- `W0107` — file's `mogen_version` doesn't match the running toolchain (will be re-stamped on next save).
+
+---
+
 ## Global settings
 
 Top-level directives that tune the build itself rather than describing

@@ -1,6 +1,9 @@
-// mogen-generate seed=1776960134385703068
-// mogen-generate thinking=high
-// prompt: A bipedal silhouette composed of rounded box and cylinder segments, wearing a distinct hemispherical steel helmet and a matte olive-drab tunic detailed with mirrored rectangular pockets and a vertical array of brass disc buttons. The figure stands in a neutral pose with mirrored capsule limbs ending in rugged, dark leather-textured box boots, emphasizing structural proportions and period-accurate material finishes.
+
+meta (
+  seed = "1776960134385703068",
+  thinking = "high",
+  prompt = "A bipedal silhouette composed of rounded box and cylinder segments, wearing a distinct hemispherical steel helmet and a matte olive-drab tunic detailed with mirrored rectangular pockets and a vertical array of brass disc buttons. The figure stands in a neutral pose with mirrored capsule limbs ending in rugged, dark leather-textured box boots, emphasizing structural proportions and period-accurate material finishes.",
+)
 
 material "steel" (color=[0.75, 0.78, 0.82], metallic=1.0, roughness=0.46, base_color_texture="textures/soldier/steel_albedo.png", normal_texture="textures/soldier/steel_normal.png", metallic_roughness_texture="textures/soldier/steel_metallicRoughness.png", transmission=0, uv_mode="tile", double_sided=1)
 material "olive_drab" (color=[0.32, 0.35, 0.22], roughness=1, base_color_texture="textures/soldier/olive_drab_albedo.png", normal_texture="textures/soldier/olive_drab_normal.png", metallic_roughness_texture="textures/soldier/olive_drab_metallicRoughness.png", metallic=0, uv_mode="tile", uv_scale=[0, 0])

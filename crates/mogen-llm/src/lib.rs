@@ -61,38 +61,42 @@ pub use types::{
 /// pick the per-provider default via [`Provider::default_model`].
 pub const DEFAULT_FAST_MODEL: &str = gemini::DEFAULT_FAST_MODEL;
 
-/// Prepend a seed comment to DSL text so rebuilds are reproducible.
+/// Stamp the LLM generation metadata (seed, optional thinking budget, original
+/// prompt) into the top-level `meta(...)` block so future runs can reproduce
+/// the call without re-supplying flags.
 ///
-/// The seed is written as a DSL line comment; the parser ignores it. When the
-/// user re-runs `mogen generate --seed N` with the same prompt, the same seed
-/// lands in the output header.
-///
-/// When `thinking` is `Some`, a sibling `// mogen-generate thinking=<level>`
-/// line is written alongside the seed so the next LLM call on this file
-/// (CLI or Studio) can pick up the per-file budget without a flag.
+/// Any legacy `// mogen-generate ...` / `// prompt:` comment header from older
+/// MoGen versions is stripped first, so files migrate cleanly on the next
+/// save. The meta block is created if absent; existing attrs (name, version,
+/// tags, etc.) are preserved.
 pub fn embed_seed_header(
     dsl: &str,
     seed: u64,
     prompt: &str,
     thinking: Option<ThinkingLevel>,
 ) -> String {
-    let mut out = String::with_capacity(dsl.len() + 160);
-    out.push_str(&format!("// mogen-generate seed={seed}\n"));
+    let cleaned = mogen_dsl::strip_legacy_seed_comments(dsl);
+    let mut out = mogen_dsl::upsert_meta_attr(&cleaned, "seed", &seed.to_string());
     if let Some(level) = thinking {
-        out.push_str(&format!("// mogen-generate thinking={}\n", level.key()));
+        out = mogen_dsl::upsert_meta_attr(&out, "thinking", level.key());
     }
-    // Collapse the prompt onto a single line; preserve it for reproducibility.
-    let flat = prompt.replace('\n', " ").replace('\r', " ");
-    out.push_str(&format!("// prompt: {}\n", flat.trim()));
-    if !dsl.starts_with('\n') {
-        out.push('\n');
+    let flat = prompt.replace(['\n', '\r'], " ");
+    let trimmed = flat.trim();
+    if !trimmed.is_empty() {
+        out = mogen_dsl::upsert_meta_attr(&out, "prompt", trimmed);
     }
-    out.push_str(dsl);
     out
 }
 
-/// Extract the seed from a DSL header previously written by [`embed_seed_header`].
+/// Extract the seed from a DSL `meta(seed=...)` attribute. Falls back to the
+/// legacy `// mogen-generate seed=…` comment header so files written by older
+/// versions of MoGen keep round-tripping until they're re-saved.
 pub fn parse_seed_header(dsl: &str) -> Option<u64> {
+    if let Some(v) = mogen_dsl::read_meta_attr(dsl, "seed") {
+        if let Ok(n) = v.parse() {
+            return Some(n);
+        }
+    }
     for line in dsl.lines().take(8) {
         let trimmed = line.trim_start();
         if let Some(rest) = trimmed.strip_prefix("// mogen-generate seed=") {
@@ -102,10 +106,15 @@ pub fn parse_seed_header(dsl: &str) -> Option<u64> {
     None
 }
 
-/// Extract the thinking level from a DSL header previously written by
-/// [`embed_seed_header`]. Returns `None` when the line is absent, the value is
-/// malformed, or the file predates the per-file header.
+/// Extract the thinking level from a DSL `meta(thinking=...)` attribute.
+/// Falls back to the legacy `// mogen-generate thinking=…` comment header so
+/// older files keep working.
 pub fn parse_thinking_header(dsl: &str) -> Option<ThinkingLevel> {
+    if let Some(v) = mogen_dsl::read_meta_attr(dsl, "thinking") {
+        if let Some(level) = ThinkingLevel::parse(&v) {
+            return Some(level);
+        }
+    }
     for line in dsl.lines().take(8) {
         let trimmed = line.trim_start();
         if let Some(rest) = trimmed.strip_prefix("// mogen-generate thinking=") {
@@ -124,14 +133,17 @@ mod tests {
         let dsl = "scene { box \"b\" (size=[1,1,1]) }\n";
         let wrapped = embed_seed_header(dsl, 42, "a simple box", None);
         assert_eq!(parse_seed_header(&wrapped), Some(42));
-        assert!(wrapped.contains("// prompt: a simple box"));
+        assert!(wrapped.contains("prompt = \"a simple box\""));
         assert!(wrapped.contains("scene {"));
+        // The new representation lives in the meta block, not a comment.
+        assert!(!wrapped.contains("// mogen-generate"));
+        assert!(!wrapped.contains("// prompt:"));
     }
 
     #[test]
     fn seed_header_ignores_newlines_in_prompt() {
         let wrapped = embed_seed_header("x", 1, "line1\nline2", None);
-        assert!(wrapped.contains("// prompt: line1 line2"));
+        assert!(wrapped.contains("prompt = \"line1 line2\""));
     }
 
     #[test]
@@ -140,10 +152,16 @@ mod tests {
     }
 
     #[test]
+    fn parse_seed_header_reads_legacy_comment() {
+        let src = "// mogen-generate seed=99\nscene {}\n";
+        assert_eq!(parse_seed_header(src), Some(99));
+    }
+
+    #[test]
     fn thinking_header_roundtrip() {
         let dsl = "scene { box \"b\" (size=[1,1,1]) }\n";
         let wrapped = embed_seed_header(dsl, 7, "p", Some(ThinkingLevel::Low));
-        assert!(wrapped.contains("// mogen-generate thinking=low"));
+        assert!(wrapped.contains("thinking = \"low\""));
         assert_eq!(parse_thinking_header(&wrapped), Some(ThinkingLevel::Low));
         // Seed + prompt still round-trip alongside the new line.
         assert_eq!(parse_seed_header(&wrapped), Some(7));
@@ -152,7 +170,7 @@ mod tests {
     #[test]
     fn thinking_header_omitted_when_none() {
         let wrapped = embed_seed_header("scene {}\n", 1, "p", None);
-        assert!(!wrapped.contains("thinking="));
+        assert!(!wrapped.contains("thinking ="));
         assert_eq!(parse_thinking_header(&wrapped), None);
     }
 
@@ -163,5 +181,21 @@ mod tests {
             parse_thinking_header("// mogen-generate thinking=weird\nscene {}\n"),
             None,
         );
+    }
+
+    #[test]
+    fn parse_thinking_header_reads_legacy_comment() {
+        let src = "// mogen-generate thinking=high\nscene {}\n";
+        assert_eq!(parse_thinking_header(src), Some(ThinkingLevel::High));
+    }
+
+    #[test]
+    fn embed_strips_legacy_comments() {
+        let src = "// mogen-generate seed=1\n// mogen-generate thinking=low\n// prompt: old\nscene {}\n";
+        let wrapped = embed_seed_header(src, 2, "new", Some(ThinkingLevel::High));
+        assert!(!wrapped.contains("// mogen-generate"));
+        assert!(!wrapped.contains("// prompt:"));
+        assert_eq!(parse_seed_header(&wrapped), Some(2));
+        assert_eq!(parse_thinking_header(&wrapped), Some(ThinkingLevel::High));
     }
 }

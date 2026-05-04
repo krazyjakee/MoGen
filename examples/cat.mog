@@ -1,6 +1,9 @@
-// mogen-generate seed=1776974214813150285
-// mogen-generate thinking=high
-// prompt: robot cat with wings
+
+meta (
+  seed = "1776974214813150285",
+  thinking = "high",
+  prompt = "robot cat with wings",
+)
 
 material "mat_body"   (color=[0.85, 0.85, 0.88], metallic=0.8, roughness=0.3, base_color_texture="textures/cat/mat_body_albedo.png", normal_texture="textures/cat/mat_body_normal.png", metallic_roughness_texture="textures/cat/mat_body_metallicRoughness.png")
 material "mat_dark"   (color=[0.2, 0.2, 0.22], metallic=0.9, roughness=0.5, base_color_texture="textures/cat/mat_dark_albedo.png", normal_texture="textures/cat/mat_dark_normal.png", metallic_roughness_texture="textures/cat/mat_dark_metallicRoughness.png")

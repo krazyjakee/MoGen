@@ -26,6 +26,7 @@ mod generate;
 mod indent;
 mod line_ops;
 mod llm;
+mod multi_caret;
 mod oauth_ui;
 mod onboarding;
 mod pricing;

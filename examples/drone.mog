@@ -1,5 +1,8 @@
-// mogen-generate seed=1776897266398223000
-// prompt: spin all four rotors at 600 rpm
+
+meta (
+  seed = "1776897266398223000",
+  prompt = "spin all four rotors at 600 rpm",
+)
 
 material "carbon" (color=[0.08, 0.08, 0.10], metallic=0.2, roughness=0.55)
 material "motor"  (color=[0.55, 0.55, 0.60], metallic=0.9, roughness=0.25)

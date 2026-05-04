@@ -43,12 +43,16 @@ A few flag patterns repeat across every LLM-driven subcommand
 | `--seed <U64>` | Seed embedded in the DSL header for reproducibility. Defaults to the seed parsed from an existing `.mog`'s header, or a random one if absent. |
 | `--dry-run` | Skip GLB compilation and disk writes — print the generated/edited DSL only. |
 
-The seed appears at the top of every generated `.mog` as a header comment:
+The seed, the thinking budget, and the original prompt are stamped into the
+top-level `meta(...)` block of every generated `.mog`:
 
 ```mog
-// mogen-generate seed=1777210527637284168
-// mogen-generate thinking=high
-// prompt: A simple four-legged chair.
+meta (
+  mogen_version = "0.1.1",
+  seed = "1777210527637284168",
+  thinking = "high",
+  prompt = "A simple four-legged chair.",
+)
 ```
 
 ---

@@ -1,6 +1,9 @@
-// mogen-generate seed=1777172779106654000
-// mogen-generate thinking=high
-// prompt: A haulage truck stands as a massive, slab-sided behemoth of a near-future industrial wasteland, its towering silhouette dominated by a snub-nosed cab and oversized, chain-wrapped wheels. The chassis is a weathered patchwork of oxidized iron and chipped cobalt paint, marked by deep structural gouges and the iridescent, oily sheen of road grime.
+
+meta (
+  seed = "1777172779106654000",
+  thinking = "high",
+  prompt = "A haulage truck stands as a massive, slab-sided behemoth of a near-future industrial wasteland, its towering silhouette dominated by a snub-nosed cab and oversized, chain-wrapped wheels. The chassis is a weathered patchwork of oxidized iron and chipped cobalt paint, marked by deep structural gouges and the iridescent, oily sheen of road grime.",
+)
 
 material "cobalt_paint" (color=[0.15, 0.25, 0.45], roughness=0.7, metallic=0.4)
 material "oxidized_iron" (color=[0.35, 0.20, 0.15], roughness=0.85, metallic=0.6)

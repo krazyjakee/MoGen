@@ -1,6 +1,9 @@
-// mogen-generate seed=1776951941992984878
-// mogen-generate thinking=high
-// prompt: wooden storage crate
+
+meta (
+  seed = "1776951941992984878",
+  thinking = "high",
+  prompt = "wooden storage crate",
+)
 
 material "wood" (color=[0.45, 0.28, 0.15], roughness=0.8, uv_mode="fit", base_color_texture="textures/wooden_crate/wood_albedo.png", normal_texture="textures/wooden_crate/wood_normal.png", metallic_roughness_texture="textures/wooden_crate/wood_metallicRoughness.png", occlusion_texture="textures/wooden_crate/wood_ao.png")
 

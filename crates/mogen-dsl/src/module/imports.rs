@@ -190,6 +190,13 @@ fn resolve_imports_into(
                     // own setting, and the composing scene's setting governs
                     // anything authored locally.
                 }
+                "meta" => {
+                    // `meta` is per-file provenance (name, version, seed,
+                    // thinking budget, original prompt). It belongs to the
+                    // file that authored it; merging it into the composing
+                    // scene would clobber that scene's own meta. Drop it —
+                    // the importing file keeps its own meta block.
+                }
                 "joint" | "clip" | "track" | "skeleton" | "spin" | "open_close"
                 | "wave" | "flap" | "idle" => {
                     let mut anim = inner_node;

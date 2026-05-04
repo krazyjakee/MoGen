@@ -1,6 +1,8 @@
-// mogen-generate seed=1777326724913034647
-// mogen-generate thinking=high
-// prompt: cute robot cat
+meta (
+  seed = "1777326724913034647",
+  thinking = "high",
+  prompt = "cute robot cat",
+)
 
 material "shell" (color=[0.95, 0.96, 0.98], roughness=0.2, metallic=0.1)
 material "screen" (color=[0.05, 0.05, 0.08], roughness=0.1, metallic=0.8)

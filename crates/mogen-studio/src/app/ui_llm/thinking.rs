@@ -5,8 +5,8 @@ use crate::settings::{thinking_level_label, THINKING_LEVELS};
 
 impl MogenStudioApp {
     /// Small "Thinking (this file): [dropdown]" row. Writing a level splices a
-    /// `// mogen-generate thinking=<level>` header into the .mog on the next
-    /// LLM call, which both the CLI and Studio read back on subsequent runs.
+    /// `meta(thinking=<level>)` attribute into the .mog on the next LLM call,
+    /// which both the CLI and Studio read back on subsequent runs.
     pub(super) fn ui_llm_thinking_override(&mut self, ui: &mut egui::Ui) {
         let current = self.active().thinking_override;
         let global = self.settings.thinking_level();
@@ -18,7 +18,7 @@ impl MogenStudioApp {
             ui.label("Thinking (this file):")
                 .on_hover_text(
                     "Per-file cap on the model's reasoning budget (applies to \
-                     providers that support a thinking budget — Gemini, OpenAI). \
+                     providers / models that support a thinking budget). \
                      Saved into the .mog header so it applies to CLI runs too. \
                      Leave as \"Use global default\" to defer to Options.",
                 );

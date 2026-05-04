@@ -15,7 +15,7 @@ value = { vec3 | list | expr | string | ident }
 
 vec3      = { "[" ~ expr ~ "," ~ expr ~ "," ~ expr ~ "]" }
 list      = { "[" ~ (list_item ~ ("," ~ list_item)*)? ~ ","? ~ "]" }
-list_item = { vec3 | list | expr }
+list_item = { vec3 | list | string | expr }
 
 expr   =  { term ~ (add_op ~ term)* }
 term   =  { factor ~ (mul_op ~ factor)* }

@@ -29,7 +29,8 @@ pub fn collect_modules(ast: &[Node]) -> Result<ModuleRegistry> {
                     );
                 }
                 Value::List(_) | Value::ListExpr(_)
-                | Value::ListVec3(_) | Value::ListPair(_) | Value::ListQuad(_) => {
+                | Value::ListVec3(_) | Value::ListPair(_) | Value::ListQuad(_)
+                | Value::ListString(_) => {
                     bail!(
                         "module parameter `{}` must be a scalar default, not a list",
                         k

@@ -12,8 +12,10 @@
 //!   - Cmd+D             select word under cursor / next occurrence
 //!   - Alt+Up / Alt+Down move line(s) up / down
 //!
-//! Cmd+D is stateless: empty selection picks the word under the caret;
-//! non-empty selection jumps to the next occurrence of the same text.
+//! Cmd+D is multi-step: empty selection picks the word under the caret;
+//! non-empty selection adds the next occurrence to the multi-caret set
+//! (handled by `multi_caret::multi_caret_add_next`) so subsequent typing
+//! fans out across every selection.
 
 use eframe::egui;
 use egui::text::{CCursor, CCursorRange};
@@ -96,7 +98,17 @@ impl MogenStudioApp {
             LineOp::DeleteLine => delete_line(&source, lo, hi),
             LineOp::MoveUp => move_line(&source, lo, hi, /* up */ true),
             LineOp::MoveDown => move_line(&source, lo, hi, /* up */ false),
-            LineOp::SelectNext => select_next(&source, lo, hi),
+            LineOp::SelectNext => {
+                // With a non-empty selection, defer to the multi-caret path so
+                // each press ADDS the next occurrence (VS Code semantics);
+                // the empty-selection case still falls through to `select_next`
+                // below to expand the word under the caret.
+                if hi > lo {
+                    let _ = self.multi_caret_add_next(ctx, editor_id);
+                    return false;
+                }
+                select_next(&source, lo, hi)
+            }
         };
 
         let Some(out) = result else {

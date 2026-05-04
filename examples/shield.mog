@@ -1,7 +1,10 @@
-// mogen-generate seed=1777210848045648837
-// mogen-generate thinking=high
-// prompt: a medieval royal shield displays a tall, convex heater silhouette of hammered steel, its face layered in weathered crimson enamel and edged with intricate, gilded filigree. A proud heraldic lion is embossed in burnished gold across the center, catching the light with a regal, battle-hardened luster that speaks of high-medieval throne rooms and ancient lineage.
 
+
+meta (
+  seed = "1777210848045648837",
+  thinking = "high",
+  prompt = "a medieval royal shield displays a tall, convex heater silhouette of hammered steel, its face layered in weathered crimson enamel and edged with intricate, gilded filigree. A proud heraldic lion is embossed in burnished gold across the center, catching the light with a regal, battle-hardened luster that speaks of high-medieval throne rooms and ancient lineage.",
+)
 
 material "steel" (color=[0.35, 0.35, 0.38], metallic=0.9, roughness=0.6)
 material "crimson" (color=[0.45, 0.08, 0.08], roughness=0.3)

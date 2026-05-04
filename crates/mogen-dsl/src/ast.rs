@@ -47,6 +47,10 @@ pub enum Value {
     /// List of 4-element constant sublists, e.g. `holes=[[0, -0.4, 0.9, 2.0], …]`.
     /// Used by `wall` cutouts: `[x, y, w, h]` in the wall's local frame.
     ListQuad(Vec<[f32; 4]>),
+    /// All-string list, e.g. `tags=["furniture", "chair"]`. Used by the
+    /// top-level `meta(...)` block; mixing strings and numbers in one list
+    /// is rejected at parse time.
+    ListString(Vec<String>),
 }
 
 #[derive(Debug, Clone)]

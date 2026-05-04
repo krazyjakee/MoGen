@@ -400,9 +400,17 @@ fn roughness_word(r: f32) -> &'static str {
     }
 }
 
-/// Parse the first `// prompt: …` line produced by `embed_seed_header`, if
-/// present. Used as subject-context enrichment for per-material prompts.
+/// Read the original natural-language prompt from the file's `meta(prompt=…)`
+/// attribute, falling back to the legacy `// prompt: …` comment header for
+/// files written by older versions of MoGen. Used as subject-context
+/// enrichment for per-material prompts.
 pub fn parse_prompt_header(src: &str) -> Option<String> {
+    if let Some(v) = mogen_dsl::read_meta_attr(src, "prompt") {
+        let trimmed = v.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
     for line in src.lines().take(8) {
         let t = line.trim_start();
         if let Some(rest) = t.strip_prefix("// prompt:") {
@@ -529,7 +537,13 @@ scene { box "b" (size=[1,1,1]) }"#;
     }
 
     #[test]
-    fn parse_prompt_header_reads_first_8_lines() {
+    fn parse_prompt_header_reads_meta() {
+        let src = "meta (prompt = \"a wooden stool\")\nmaterial \"a\" ()\n";
+        assert_eq!(parse_prompt_header(src).as_deref(), Some("a wooden stool"));
+    }
+
+    #[test]
+    fn parse_prompt_header_falls_back_to_legacy_comment() {
         let src = "// mogen-generate seed=1\n// prompt: a wooden stool\nmaterial \"a\" ()\n";
         assert_eq!(parse_prompt_header(src).as_deref(), Some("a wooden stool"));
     }

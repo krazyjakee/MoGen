@@ -263,7 +263,8 @@ fn substitute_value(value: &Value, scope: &Scope) -> Result<Value> {
         | Value::List(_)
         | Value::ListVec3(_)
         | Value::ListPair(_)
-        | Value::ListQuad(_) => Ok(value.clone()),
+        | Value::ListQuad(_)
+        | Value::ListString(_) => Ok(value.clone()),
         Value::Expr(e) => Ok(substitute_expr(e, scope)?),
         Value::Vec3Expr(components) => {
             let resolved: Vec<Value> = components

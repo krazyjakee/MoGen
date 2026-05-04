@@ -27,9 +27,9 @@ impl MogenStudioApp {
         // see the failure before deciding whether to Retry or edit.
         self.ui_llm_error_banner(ui);
 
-        // Per-file thinking-budget override. Written into the `// mogen-generate
-        // thinking=…` header so it sticks across reopens; the CLI honours the
-        // same header. "Use default" falls back to the setting in Options.
+        // Per-file thinking-budget override. Written into `meta(thinking=…)`
+        // so it sticks across reopens; the CLI honours the same attribute.
+        // "Use default" falls back to the setting in Options.
         self.ui_llm_thinking_override(ui);
 
         // Generate lives in the File → New from Prompt modal now; the
@@ -155,9 +155,9 @@ impl MogenStudioApp {
         ui.label("Textures:");
         ui.label(
             egui::RichText::new(
-                "generates a base_color PNG per material using Gemini Image, \
-                 writes to ./textures/ next to the .mog, and splices the \
-                 resulting paths into each material",
+                "generates a base_color PNG per material, writes to ./textures/ \
+                 next to the .mog, and splices the resulting paths into each \
+                 material (uses Gemini Image regardless of the active provider)",
             )
             .weak(),
         );

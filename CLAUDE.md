@@ -38,7 +38,8 @@ cargo test -p mogen-geom csg::tests::difference_basic -- --exact
 ```
 
 `generate`/`modify`/`bench` read `GEMINI_API_KEY` from env (or take `--api-key`). `generate` and
-`modify` embed a `// mogen-generate seed=…` header so rebuilds are reproducible.
+`modify` stamp `meta(seed=…, thinking=…, prompt=…)` into the output `.mog` so rebuilds are
+reproducible and the per-file thinking budget / original prompt round-trip across edits.
 
 ## Architecture
 
@@ -146,6 +147,7 @@ mogen-dsl  ──parse──►  AST  ──validate_ast──►  lower  ──
 - `examples/*.mog` — canonical usage of each feature (hierarchy, materials, array/mirror, CSG,
   modules, connectors/attach, animation, skeletons). `tests/broken/*.mog` covers diagnostic
   snapshots.
+- MoGHub web community. The actual repo lives at `../moghub` (sibling to this checkout); cross-repo work happens there.
 
 ## Agent-Specific Notes
 

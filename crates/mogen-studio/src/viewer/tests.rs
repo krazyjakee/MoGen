@@ -1,10 +1,11 @@
     use super::flatten::{flatten, PaletteSource, FLOATS_PER_VERTEX};
     use super::state::{
         apply_gizmo_drag, commit_gizmo_drag, gizmo_handles_supported, is_import_wrapper,
-        redirect_pick, replace_selection, snap_rotate_delta, snap_scale_factor,
-        snap_translate_delta, toggle_selection, GizmoDrag, PendingEdit, ViewerState,
-        SCALE_SNAP_STEP,
+        redirect_pick, replace_selection, replace_selection_cycling, snap_rotate_delta,
+        snap_scale_factor, snap_translate_delta, toggle_selection, GizmoDrag, PendingEdit,
+        ViewerState, PICK_CYCLE_RADIUS_PX, SCALE_SNAP_STEP,
     };
+    use eframe::egui;
     use glam::{Mat4, Quat, Vec3};
     use mogen_core::{AlphaMode, Material, Mesh, NodeId, SceneGraph, Transform};
     use std::path::{Path, PathBuf};
@@ -810,4 +811,144 @@
         st.scene = Some(Arc::new(scene));
         replace_selection(&mut st, Some(body));
         assert_eq!(st.selected, vec![wrapper]);
+    }
+
+    /// Three-level scene: outer user-authored group containing a `use`
+    /// wrapper of an imported file. Mirrors a real `.mog` whose top
+    /// declares `group "scene" { use "trash_bin" (pos=...) }`.
+    /// Returns `(scene, outer_group, wrapper, imported_body)`.
+    fn scene_with_use_inside_outer_group() -> (SceneGraph, NodeId, NodeId, NodeId) {
+        let mut scene = SceneGraph::new();
+        let outer = scene.add_root("scene", "group", Transform::IDENTITY);
+        let wrapper = scene.add_child(outer, "trash_bin", "group", Transform::IDENTITY);
+        scene.nodes[wrapper.0 as usize].use_id = Some(11);
+        scene.nodes[wrapper.0 as usize].origin = None;
+        let body = scene.add_child(wrapper, "bin_body", "cylinder", Transform::IDENTITY);
+        scene.nodes[body.0 as usize].use_id = Some(11);
+        scene.nodes[body.0 as usize].origin = Some(PathBuf::from("trash_bin.mog"));
+        (scene, outer, wrapper, body)
+    }
+
+    #[test]
+    fn cycling_first_click_matches_today_redirect_pick() {
+        // Depth-0 must reproduce existing behavior so a single click on an
+        // imported leaf still lands on the outermost user-authored group.
+        let (scene, outer, _wrapper, body) = scene_with_use_inside_outer_group();
+        let mut st = ViewerState::default();
+        st.scene = Some(Arc::new(scene));
+        replace_selection_cycling(&mut st, body, egui::pos2(100.0, 100.0));
+        assert_eq!(st.selected, vec![outer]);
+        assert_eq!(st.pick_cycle.map(|c| c.depth), Some(0));
+    }
+
+    #[test]
+    fn cycling_second_click_drills_to_use_wrapper() {
+        // Same screen point, same leaf → walk one ancestor closer to the
+        // leaf. The `use` line wrapper is the next editable target;
+        // crossing further would land on imported geometry.
+        let (scene, _outer, wrapper, body) = scene_with_use_inside_outer_group();
+        let mut st = ViewerState::default();
+        st.scene = Some(Arc::new(scene));
+        let cursor = egui::pos2(100.0, 100.0);
+        replace_selection_cycling(&mut st, body, cursor);
+        replace_selection_cycling(&mut st, body, cursor);
+        assert_eq!(st.selected, vec![wrapper]);
+        assert_eq!(st.pick_cycle.map(|c| c.depth), Some(1));
+    }
+
+    #[test]
+    fn cycling_clamps_at_editability_boundary() {
+        // A third click on the same target must not cross into the
+        // imported body — its source span lives in another file. The
+        // depth saturates one short of the leaf.
+        let (scene, _outer, wrapper, body) = scene_with_use_inside_outer_group();
+        let mut st = ViewerState::default();
+        st.scene = Some(Arc::new(scene));
+        let cursor = egui::pos2(100.0, 100.0);
+        replace_selection_cycling(&mut st, body, cursor);
+        replace_selection_cycling(&mut st, body, cursor);
+        replace_selection_cycling(&mut st, body, cursor);
+        assert_eq!(st.selected, vec![wrapper]);
+        assert_eq!(st.pick_cycle.map(|c| c.depth), Some(1));
+    }
+
+    #[test]
+    fn cycling_resets_when_cursor_moves_past_radius() {
+        // Cursor delta beyond `PICK_CYCLE_RADIUS_PX` is "a different
+        // click", not a repeat — depth resets to 0 even when the leaf
+        // matches.
+        let (scene, outer, _wrapper, body) = scene_with_use_inside_outer_group();
+        let mut st = ViewerState::default();
+        st.scene = Some(Arc::new(scene));
+        replace_selection_cycling(&mut st, body, egui::pos2(100.0, 100.0));
+        let far = egui::pos2(100.0 + PICK_CYCLE_RADIUS_PX + 1.0, 100.0);
+        replace_selection_cycling(&mut st, body, far);
+        assert_eq!(st.selected, vec![outer]);
+        assert_eq!(st.pick_cycle.map(|c| c.depth), Some(0));
+    }
+
+    #[test]
+    fn cycling_preserves_state_when_cursor_drifts_within_radius() {
+        // Tiny cursor drift between clicks (hand jitter, sub-pixel egui
+        // rounding) must not reset the cycle. Anything within the radius
+        // counts as the same click.
+        let (scene, _outer, wrapper, body) = scene_with_use_inside_outer_group();
+        let mut st = ViewerState::default();
+        st.scene = Some(Arc::new(scene));
+        replace_selection_cycling(&mut st, body, egui::pos2(100.0, 100.0));
+        let drifted = egui::pos2(100.0 + PICK_CYCLE_RADIUS_PX - 0.5, 100.0);
+        replace_selection_cycling(&mut st, body, drifted);
+        assert_eq!(st.selected, vec![wrapper]);
+        assert_eq!(st.pick_cycle.map(|c| c.depth), Some(1));
+    }
+
+    #[test]
+    fn cycling_resets_when_leaf_changes() {
+        // Three sibling boxes under one group plus an imported wrapper:
+        // clicking from one leaf to a different leaf restarts the cycle
+        // even at the same screen point.
+        let (mut scene, outer, _wrapper, body) = scene_with_use_inside_outer_group();
+        let other = scene.add_child(outer, "other", "box", Transform::IDENTITY);
+        let mut st = ViewerState::default();
+        st.scene = Some(Arc::new(scene));
+        let cursor = egui::pos2(100.0, 100.0);
+        replace_selection_cycling(&mut st, body, cursor);
+        replace_selection_cycling(&mut st, body, cursor); // depth=1, wrapper
+        replace_selection_cycling(&mut st, other, cursor); // different leaf
+        // `other` has use_id=None → redirect_pick returns it unchanged,
+        // so depth-0 selects the leaf directly.
+        assert_eq!(st.selected, vec![other]);
+        assert_eq!(st.pick_cycle.map(|c| c.depth), Some(0));
+    }
+
+    #[test]
+    fn cycling_clears_selection_when_redirect_finds_no_wrapper() {
+        // Imported root with no editable ancestor: cycling must mirror
+        // `replace_selection`'s clear-on-None behavior so a click never
+        // latches onto a node whose source span lives in another file.
+        let mut scene = SceneGraph::new();
+        let imported = scene.add_root("desk_top", "box", Transform::IDENTITY);
+        scene.nodes[imported.0 as usize].use_id = Some(1);
+        let mut st = ViewerState::default();
+        st.scene = Some(Arc::new(scene));
+        replace_selection_cycling(&mut st, imported, egui::pos2(100.0, 100.0));
+        assert!(st.selected.is_empty());
+        assert!(st.pick_cycle.is_none());
+    }
+
+    #[test]
+    fn cycling_on_plain_user_authored_leaf_is_a_no_op() {
+        // Active-source geometry without any `use` involved: depth-0 is
+        // the leaf itself, and there are no editable ancestors closer
+        // than the leaf. Repeat clicks pin at depth 0.
+        let mut scene = SceneGraph::new();
+        let group = scene.add_root("scene", "group", Transform::IDENTITY);
+        let leaf = scene.add_child(group, "box", "box", Transform::IDENTITY);
+        let mut st = ViewerState::default();
+        st.scene = Some(Arc::new(scene));
+        let cursor = egui::pos2(100.0, 100.0);
+        replace_selection_cycling(&mut st, leaf, cursor);
+        replace_selection_cycling(&mut st, leaf, cursor);
+        assert_eq!(st.selected, vec![leaf]);
+        assert_eq!(st.pick_cycle.map(|c| c.depth), Some(0));
     }

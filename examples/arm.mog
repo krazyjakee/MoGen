@@ -1,5 +1,8 @@
-// mogen-generate seed=1776903121112551000
-// prompt: the hand is not rigged correctly, please fix it.
+
+meta (
+  seed = "1776903121112551000",
+  prompt = "the hand is not rigged correctly, please fix it.",
+)
 
 material "skin_mat" (color=[0.82, 0.64, 0.55], metallic=0.0, roughness=0.7)
 

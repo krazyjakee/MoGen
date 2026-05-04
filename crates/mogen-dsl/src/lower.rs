@@ -141,6 +141,10 @@ pub fn lower_with_source(ast: &[Node], source_dir: Option<&Path>) -> Result<Scen
 
     let mut graph = SceneGraph::new();
     graph.use_parents = use_parents;
+    // Lift the optional top-level `meta(...)` block. Pulled from the
+    // pre-expansion AST so import-introduced nodes can't smuggle a `meta`
+    // block into a downstream file.
+    graph.meta = crate::meta::extract_meta(ast);
 
     // Pass 1: hoist every top-level and scene-level `material` declaration.
     // User materials register first so their MaterialId is lower than any
@@ -154,6 +158,7 @@ pub fn lower_with_source(ast: &[Node], source_dir: Option<&Path>) -> Result<Scen
         match n.kind.as_str() {
             "material" => {} // already handled
             "lod_scale" => {} // build-time setting, consumed above
+            "meta" => {} // already lifted onto graph.meta
             k if is_anim_decl(k) => {} // pass 3
             "skeleton" => {
                 lower_skeleton(n, None, &mut graph)?;

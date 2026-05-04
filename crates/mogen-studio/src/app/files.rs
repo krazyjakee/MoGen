@@ -314,7 +314,13 @@ impl MogenStudioApp {
     /// Extracted from `save_to` so Save All in the quit dialog can save a
     /// specific buffer without having to activate it first.
     pub(super) fn save_index_to(&mut self, i: usize, path: &Path) {
-        let src = self.files[i].source.clone();
+        let src = mogen_dsl::stamp_mogen_version(
+            &self.files[i].source,
+            env!("CARGO_PKG_VERSION"),
+        );
+        // Reflect the stamped version back into the live buffer so the editor,
+        // dirty-tracking, and parser all agree on what's on disk.
+        self.files[i].source = src.clone();
         if let Err(e) = fs::write(path, &src) {
             self.files[i].status = format!("save failed: {e}");
             return;

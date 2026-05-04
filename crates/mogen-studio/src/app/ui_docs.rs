@@ -69,15 +69,25 @@ impl MogenStudioApp {
         let history_depth = self.docs.history.len();
         let current_page_id = self.docs.page_id.clone();
 
+        // Cap the window to the viewport so a wide code block in the
+        // markdown can't grow it past the screen on first open. egui's
+        // Resize widget will otherwise expand to fit content larger than
+        // `default_size`, which is what shipped before.
+        let screen = ctx.screen_rect();
+        let max_w = (screen.width() - 40.0).max(520.0);
+        let max_h = (screen.height() - 40.0).max(360.0);
+
         egui::Window::new("Documentation")
             .id(egui::Id::new("docs_window"))
             .open(&mut open)
             .resizable(true)
             .collapsible(true)
-            .default_width(820.0)
-            .default_height(620.0)
-            .min_width(520.0)
-            .min_height(360.0)
+            .default_width(820.0_f32.min(max_w))
+            .default_height(620.0_f32.min(max_h))
+            .min_width(520.0_f32.min(max_w))
+            .min_height(360.0_f32.min(max_h))
+            .max_width(max_w)
+            .max_height(max_h)
             .show(ctx, |ui| {
                 // Top toolbar — page tabs + Back + outline filter.
                 ui.horizontal(|ui| {
@@ -183,15 +193,21 @@ impl MogenStudioApp {
                     ui.separator();
 
                     // Right pane: rendered markdown.
+                    let body_width = (avail.x - sidebar_width - 12.0).max(0.0);
                     ui.allocate_ui_with_layout(
-                        egui::vec2(avail.x - sidebar_width - 12.0, avail.y),
+                        egui::vec2(body_width, avail.y),
                         egui::Layout::top_down(egui::Align::Min),
                         |ui| {
+                            ui.set_max_width(body_width);
                             ui.label(
                                 egui::RichText::new(page.subtitle).small().weak(),
                             );
                             ui.add_space(4.0);
-                            egui::ScrollArea::vertical()
+                            // `both()` rather than `vertical()` so a long
+                            // no-wrap line in a code fence scrolls
+                            // horizontally inside the pane instead of
+                            // expanding the Resize widget around the window.
+                            egui::ScrollArea::both()
                                 .id_salt(("docs_body_scroll", page.id))
                                 .auto_shrink([false, false])
                                 .show(ui, |ui| {

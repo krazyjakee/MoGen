@@ -630,7 +630,7 @@ fn attr_key_pool(parent_kind: Option<&str>) -> Vec<Candidate> {
         ],
         "decal" => &[
             ("size", "[w, h] (default [0.5, 0.5])"),
-            ("prompt", "image description for Gemini"),
+            ("prompt", "image description for the texture generator"),
             ("image", "path to RGBA PNG (overrides prompt)"),
             ("tint", "[r, g, b] base-color tint"),
             ("roughness", "0..1 (default 0.6)"),
