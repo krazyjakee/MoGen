@@ -139,8 +139,10 @@ Path resolution (first hit wins):
 
 1. `$MOGEN_OAUTH_CLIENT` (full path to the JSON file)
 2. `$MOGEN_CACHE_DIR/oauth_client.json`
-3. `~/.cache/mogen/oauth_client.json`
-4. `%LOCALAPPDATA%\mogen\oauth_client.json` (Windows)
+3. `~/.mogen/oauth_client.json` — primary default, both Unix and Windows
+   (e.g. `C:\Users\<you>\.mogen\oauth_client.json`)
+4. `~/.cache/mogen/oauth_client.json` (legacy, kept for existing installs)
+5. `%LOCALAPPDATA%\mogen\oauth_client.json` (legacy, Windows)
 
 See `oauth_client.example.json` for a template. The Antigravity desktop client
 that ships with the official Antigravity install is one valid source for
@@ -161,8 +163,10 @@ Credential precedence on `generate`/`modify`/`animate`/`repair`/`bench` is
 `--api-key` flag > `GEMINI_API_KEY` env > stored OAuth token > error. Setting
 the env var temporarily (or passing `--api-key`) shadows the OAuth token —
 `mogen auth status --verbose` flags this when it happens. Tokens live at
-`$MOGEN_CACHE_DIR/google_auth.json` (defaulting to `~/.cache/mogen/` on Unix
-or `%LOCALAPPDATA%\mogen\` on Windows) with mode `0600` on Unix.
+`~/.mogen/google_auth.json` (`C:\Users\<you>\.mogen\google_auth.json` on
+Windows) with mode `0600` on Unix. Older installs that wrote to
+`~/.cache/mogen/` or `%LOCALAPPDATA%\mogen\` still work — those paths are
+read as legacy fallbacks.
 
 OAuth-mode requests go to `cloudcode-pa.googleapis.com/v1internal:generateContent`
 on the user's own Cloud project (discovered via `loadCodeAssist`); the public

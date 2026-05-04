@@ -10,9 +10,10 @@
 //!
 //! 1. `$MOGEN_OAUTH_CLIENT` (full path to a JSON file).
 //! 2. `$MOGEN_CACHE_DIR/oauth_client.json`.
-//! 3. `$HOME/.cache/mogen/oauth_client.json`.
-//! 4. `%LOCALAPPDATA%\mogen\oauth_client.json` (Windows fallback).
-//! 5. `%USERPROFILE%\.cache\mogen\oauth_client.json` (Windows secondary).
+//! 3. `$HOME/.mogen/oauth_client.json` (primary default on Unix and Windows).
+//! 4. `%USERPROFILE%\.mogen\oauth_client.json` (Windows when `$HOME` is unset).
+//! 5. `$HOME/.cache/mogen/oauth_client.json` (legacy fallback for older installs).
+//! 6. `%LOCALAPPDATA%\mogen\oauth_client.json` (legacy fallback on Windows).
 //!
 //! File schema (extra fields tolerated):
 //!
@@ -101,43 +102,64 @@ pub struct ClientSecrets {
 /// Resolve the JSON path used by [`load_client_secrets`]. Mirrors
 /// [`super::store::token_store_path`] but for the client-secrets file.
 pub fn client_secrets_path() -> Option<PathBuf> {
-    if let Ok(p) = std::env::var("MOGEN_OAUTH_CLIENT") {
+    resolve_user_path(CLIENT_SECRETS_FILENAME, "MOGEN_OAUTH_CLIENT")
+}
+
+/// Walk the standard `mogen`-owned directory chain, returning the first
+/// candidate path for `filename`. Used for both the OAuth client secrets
+/// file and the token store so they end up next to each other in
+/// `~/.mogen/`.
+///
+/// `file_override_var` (e.g. `MOGEN_OAUTH_CLIENT`) supplies an absolute
+/// path override; `MOGEN_CACHE_DIR` overrides the directory. Otherwise the
+/// chain is `~/.mogen/`, then `~/.cache/mogen/` and `%LOCALAPPDATA%\mogen\`
+/// as legacy fallbacks (so existing installs keep working after the move
+/// to `~/.mogen/`).
+pub fn resolve_user_path(filename: &str, file_override_var: &str) -> Option<PathBuf> {
+    if let Ok(p) = std::env::var(file_override_var) {
         if !p.trim().is_empty() {
             return Some(PathBuf::from(p));
         }
     }
     if let Ok(dir) = std::env::var("MOGEN_CACHE_DIR") {
         if !dir.trim().is_empty() {
-            return Some(PathBuf::from(dir).join(CLIENT_SECRETS_FILENAME));
+            return Some(PathBuf::from(dir).join(filename));
         }
     }
-    if let Ok(home) = std::env::var("HOME") {
-        if !home.trim().is_empty() {
-            return Some(
-                PathBuf::from(home)
-                    .join(".cache")
-                    .join("mogen")
-                    .join(CLIENT_SECRETS_FILENAME),
-            );
+    let home_candidate = std::env::var("HOME")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .or_else(|| {
+            std::env::var("USERPROFILE")
+                .ok()
+                .filter(|v| !v.trim().is_empty())
+        });
+    if let Some(home) = home_candidate.as_deref() {
+        let dotdir = PathBuf::from(home).join(".mogen").join(filename);
+        if dotdir.exists() {
+            return Some(dotdir);
+        }
+        let legacy = PathBuf::from(home).join(".cache").join("mogen").join(filename);
+        if legacy.exists() {
+            return Some(legacy);
         }
     }
     if let Ok(localapp) = std::env::var("LOCALAPPDATA") {
         if !localapp.trim().is_empty() {
-            return Some(
-                PathBuf::from(localapp)
-                    .join("mogen")
-                    .join(CLIENT_SECRETS_FILENAME),
-            );
+            let legacy = PathBuf::from(localapp).join("mogen").join(filename);
+            if legacy.exists() {
+                return Some(legacy);
+            }
         }
     }
-    if let Ok(profile) = std::env::var("USERPROFILE") {
-        if !profile.trim().is_empty() {
-            return Some(
-                PathBuf::from(profile)
-                    .join(".cache")
-                    .join("mogen")
-                    .join(CLIENT_SECRETS_FILENAME),
-            );
+    // Nothing on disk yet — return the canonical write target so callers
+    // that *create* the file (token-store save) land in `~/.mogen/`.
+    if let Some(home) = home_candidate {
+        return Some(PathBuf::from(home).join(".mogen").join(filename));
+    }
+    if let Ok(localapp) = std::env::var("LOCALAPPDATA") {
+        if !localapp.trim().is_empty() {
+            return Some(PathBuf::from(localapp).join("mogen").join(filename));
         }
     }
     None
