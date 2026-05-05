@@ -41,7 +41,7 @@ pub use store::{
     save_bundle, token_store_path, token_store_path_for, token_store_write_path,
     token_store_write_path_for, TOKEN_STORE_FILENAME,
 };
-pub use token::{refresh_if_needed, refresh_now, OAuthBundle};
+pub use token::{refresh_if_needed, refresh_now, OAuthBundle, RefreshUrlOverrideGuard};
 
 /// Unified error type for the OAuth subsystem. CLI maps to exit codes via
 /// matching on the variant; library callers (Studio) use the `Display` impl.

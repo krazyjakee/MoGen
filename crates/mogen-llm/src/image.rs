@@ -428,3 +428,132 @@ struct RawInlineData {
     mime_type: String,
     data: String,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn frame_with_image_part(b64: &str) -> String {
+        // Cloud Code Assist envelopes the public-API response in
+        // `{ response: {...} }`. Match that shape so we exercise the
+        // non-default branch in `pick_inline_image_sse`.
+        format!(
+            "data: {}\n\n",
+            serde_json::json!({
+                "response": {
+                    "candidates": [{
+                        "content": {
+                            "parts": [{
+                                "inlineData": {
+                                    "mimeType": "image/png",
+                                    "data": b64,
+                                }
+                            }]
+                        }
+                    }]
+                }
+            })
+        )
+    }
+
+    #[test]
+    fn test_pick_inline_image_sse_single_frame_returns_inline_data() {
+        // Arrange
+        let body = frame_with_image_part("aGVsbG8=");
+
+        // Act
+        let inline = pick_inline_image_sse(body.as_bytes()).expect("frame parses");
+
+        // Assert
+        assert_eq!(inline.mime_type, "image/png");
+        assert_eq!(inline.data, "aGVsbG8=");
+    }
+
+    #[test]
+    fn test_pick_inline_image_sse_done_sentinel_after_image_returns_inline_data() {
+        // Arrange — `[DONE]` may follow the last data frame; the parser
+        // must not bail before processing the image-bearing chunk.
+        let mut body = frame_with_image_part("Zm9v");
+        body.push_str("data: [DONE]\n\n");
+
+        // Act
+        let inline = pick_inline_image_sse(body.as_bytes()).expect("frame parses");
+
+        // Assert
+        assert_eq!(inline.data, "Zm9v");
+    }
+
+    #[test]
+    fn test_pick_inline_image_sse_malformed_data_line_is_skipped() {
+        // Arrange — a non-JSON `data:` line in front of a valid frame must
+        // be ignored, not surface as an error.
+        let mut body = String::from("data: not-json-at-all\n\n");
+        body.push_str(&frame_with_image_part("YmFy"));
+
+        // Act
+        let inline = pick_inline_image_sse(body.as_bytes()).expect("valid frame still parses");
+
+        // Assert
+        assert_eq!(inline.data, "YmFy");
+    }
+
+    #[test]
+    fn test_pick_inline_image_sse_empty_body_returns_empty_response() {
+        // Arrange
+        let body = b"";
+
+        // Act
+        let err = pick_inline_image_sse(body).expect_err("empty body must error");
+
+        // Assert
+        assert!(
+            matches!(err, GeminiError::EmptyResponse),
+            "expected EmptyResponse, got {err:?}",
+        );
+    }
+
+    #[test]
+    fn test_pick_inline_image_sse_finish_reason_without_image_returns_invalid_response() {
+        // Arrange — model refused / hit a safety filter; finishReason is
+        // populated but no inline image part is emitted.
+        let body = format!(
+            "data: {}\n\n",
+            serde_json::json!({
+                "response": {
+                    "candidates": [{
+                        "finishReason": "IMAGE_RECITATION"
+                    }]
+                }
+            })
+        );
+
+        // Act
+        let err = pick_inline_image_sse(body.as_bytes()).expect_err("must error");
+
+        // Assert — surfaces the reason so the retry layer can match on it.
+        match err {
+            GeminiError::InvalidResponse(msg) => {
+                assert!(
+                    msg.contains("IMAGE_RECITATION"),
+                    "error message must include finishReason, got: {msg}",
+                );
+            }
+            other => panic!("expected InvalidResponse, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_pick_inline_image_sse_non_utf8_body_returns_invalid_response() {
+        // Arrange — corrupt the byte stream so the leading from_utf8 fails.
+        let body = [0xff_u8, 0xfe, 0xfd];
+
+        // Act
+        let err = pick_inline_image_sse(&body).expect_err("non-utf8 must error");
+
+        // Assert
+        assert!(
+            matches!(err, GeminiError::InvalidResponse(_)),
+            "expected InvalidResponse, got {err:?}",
+        );
+    }
+}

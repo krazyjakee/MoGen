@@ -36,6 +36,13 @@ pub const CLIENT_ID: &str =
 /// Public OAuth `client_secret` paired with [`CLIENT_ID`]. Google ships
 /// it in plain text in the open-source Gemini CLI; not a real secret in
 /// the security sense, just paired identifier material.
+///
+/// Per RFC 8252 §8.5 ("Native Apps · Client Authentication"), native
+/// apps are public clients — any embedded `client_secret` cannot be
+/// kept confidential because it ships in the binary. PKCE (S256, set up
+/// in [`super::pkce`]) is the actual code-exchange protection. Same
+/// rationale Google's gemini-cli uses to ship this constant in plain
+/// text.
 pub const CLIENT_SECRET: &str = "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";
 
 /// Antigravity desktop client OAuth values. Image generation on Cloud
@@ -45,6 +52,11 @@ pub const CLIENT_SECRET: &str = "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";
 /// <https://github.com/NoeFabris/opencode-antigravity-auth>.
 pub const ANTIGRAVITY_CLIENT_ID: &str =
     "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com";
+/// Antigravity public-client `client_secret`. Same RFC 8252 §8.5
+/// rationale as [`CLIENT_SECRET`]: a native-app `client_secret` cannot
+/// be confidential because it ships in the binary. PKCE handles the
+/// real exchange protection. Pulled verbatim from the public Antigravity
+/// desktop client; Google publishes it knowing it cannot be kept secret.
 pub const ANTIGRAVITY_CLIENT_SECRET: &str = "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";
 
 /// Antigravity scope set. Adds `cclog` + `experimentsandconfigs` on top

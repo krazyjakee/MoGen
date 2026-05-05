@@ -234,35 +234,6 @@ fn parse_error(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
 
-// --- Test seam (used by integration tests) ----------------------------------
-
-/// Test-only: drive the code exchange against an injected token URL.
-#[doc(hidden)]
-pub fn exchange_code_against(
-    http: &reqwest::blocking::Client,
-    code: &str,
-    verifier: &str,
-    token_url: &str,
-) -> Result<(String, String, u64, Option<String>), OAuthError> {
-    let form = [
-        ("client_id", client::CLIENT_ID),
-        ("client_secret", client::CLIENT_SECRET),
-        ("code", code),
-        ("code_verifier", verifier),
-        ("grant_type", "authorization_code"),
-        ("redirect_uri", client::REDIRECT_URI),
-    ];
-    let resp = http.post(token_url).form(&form).send()?;
-    let status = resp.status();
-    let bytes = resp.bytes()?;
-    if !status.is_success() {
-        let message = parse_error(&bytes);
-        return Err(OAuthError::TokenExchange { status: status.as_u16(), message });
-    }
-    let parsed: TokenExchangeResponse = serde_json::from_slice(&bytes)?;
-    Ok((parsed.access_token, parsed.refresh_token, parsed.expires_in, parsed.scope))
-}
-
 #[cfg(test)]
 fn build_authorize_url_for_test(pkce: &PkcePair, config: &ProviderConfig) -> String {
     build_authorize_url(pkce, config)
