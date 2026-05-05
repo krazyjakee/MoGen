@@ -9,6 +9,7 @@ operate on, see [`dsl.md`](./dsl.md). For the desktop GUI that wraps the
 same pipeline, see [`studio.md`](./studio.md).
 
 - [Common flags and conventions](#common-flags-and-conventions)
+- [`auth`](#auth) — sign in to Google OAuth + MoGHub
 - [`build`](#build) — compile DSL to GLB
 - [`parse`](#parse) — dump the AST
 - [`check`](#check) — validate a DSL file
@@ -33,7 +34,7 @@ A few flag patterns repeat across every LLM-driven subcommand
 | flag | meaning |
 |---|---|
 | `--api-key <KEY>` | Override `GEMINI_API_KEY` for this invocation. |
-| `--model <NAME>` | Gemini model id. Default `gemini-pro-latest` for text, `gemini-2.5-flash-image` for `textures`. |
+| `--model <NAME>` | Gemini model id. Default `gemini-pro-latest` for text. For `textures`, the default depends on credentials: `gemini-3-pro-image-preview` when authenticated via OAuth (paid plan), otherwise `gemini-2.5-flash-image`. Pass `gemini-3.1-flash-image-preview` (or any other image model) to override. |
 | `--temperature <N>` | Sampling temperature. Library default is `0.3` when omitted. |
 | `--thinking <low\|medium\|high\|xhigh>` | Cap server-side reasoning. `low` = 512 tokens, `medium` = 2048, `high` = 8192 (default), `xhigh` = 24576 (slowest, most careful). |
 | `--budget_tokens <N>` | Abort if total prompt + response token count exceeds this limit. |
@@ -54,6 +55,66 @@ meta (
   prompt = "A simple four-legged chair.",
 )
 ```
+
+---
+
+## `auth`
+
+Sign in / out for every credential `mogen` persists under `~/.mogen/`.
+The command is target-aware: `mogen auth <target> <verb>` where
+`<target>` is one of `gemini-cli`, `antigravity`, or `moghub`. The
+top-level `mogen auth status` (no target) prints a one-line summary for
+every target at a glance.
+
+```sh
+mogen auth status                          # one-line summary per target
+mogen auth gemini-cli  {login,status,logout}
+mogen auth antigravity {login,status,logout}
+mogen auth moghub      {login,status,logout}
+```
+
+| target        | what it authenticates                                       | on-disk file                       |
+|---------------|-------------------------------------------------------------|------------------------------------|
+| `gemini-cli`  | Google OAuth for text gen via Cloud Code Assist             | `~/.mogen/google_auth.json`        |
+| `antigravity` | Google OAuth for image gen via Cloud Code Assist            | `~/.mogen/antigravity_auth.json`   |
+| `moghub`      | MoGHub session UUID for community publishing + browsing     | `~/.mogen/moghub_auth.json`        |
+
+All three login flows use a loopback browser handshake — `gemini-cli`
+and `antigravity` go through Google's OAuth consent screen on a fixed
+loopback port (`51121`); `moghub` opens
+`<server>/api/auth/desktop/start` and waits for the redirect back. On
+Unix the resulting files are written with mode `0600`.
+
+| flag | applies to | meaning |
+|---|---|---|
+| `--force` | every target's `login` | re-authenticate even if a valid token is already on disk. |
+| `--no-browser` | gemini-cli, antigravity | print the authorize URL instead of opening a browser (useful over SSH). |
+| `--timeout <SECS>` | gemini-cli, antigravity | how long to wait for the OAuth callback. Clamped to `[10, 3600]`. Default `300`. |
+| `--server <URL>` | moghub | sign in against a self-hosted MoGHub instance. The URL round-trips into the on-disk session. |
+| `--verbose` | every target's `status` | extra detail — token-store path, OAuth scopes, the chosen `cloudcode-pa` endpoint, and (for `moghub`) a live `whoami` round-trip. |
+
+```sh
+mogen auth gemini-cli login                         # zero-config, opens browser
+mogen auth antigravity login                        # required for OAuth-driven `mogen textures`
+mogen auth moghub login --server https://staging.moghub.org
+
+mogen auth status --verbose                         # show every target with full detail
+mogen auth gemini-cli logout                        # scope sign-out per target
+```
+
+`mogen generate` / `modify` / `animate` / `repair` automatically use the
+gemini-cli OAuth bundle whenever `GEMINI_API_KEY` is unset; `mogen
+textures` prefers the antigravity bundle when present (set
+`MOGEN_IMAGE_PROVIDER=antigravity` to force it). The MoGHub session
+file is shared with Studio, so signing in once via the CLI surfaces the
+session in the desktop's Community window and vice versa.
+
+`logout` walks every legacy path (`~/.cache/mogen/`,
+`%LOCALAPPDATA%\mogen\`) so a half-cleaned upgrade can't silently
+re-authenticate. None of the logout commands call the upstream revoke
+endpoint — refresh tokens stay valid server-side until the user
+explicitly revokes consent at <https://myaccount.google.com> or signs
+out of MoGHub on the web.
 
 ---
 
@@ -279,7 +340,7 @@ mogen textures <input.mog> [--style "<hint>"] [--texture-size <N>]
 | `--glb` | GLB output path. Defaults to `<input>.glb`. |
 | `--textures-dir` | Where PNGs are written. Defaults to `textures/<mog-stem>/` so sibling assets don't collide on shared material names. |
 | `--style` | Style hint appended to each image prompt. Default `photorealistic`. |
-| `--model` | Gemini image model id. Default `gemini-2.5-flash-image`. |
+| `--model` | Gemini image model id. Default depends on credentials: `gemini-3-pro-image-preview` when authenticated via OAuth, otherwise `gemini-2.5-flash-image`. Pass `gemini-3.1-flash-image-preview` (or any other image model) to override. |
 | `--force` | Regenerate slots whose attr is already declared in the `.mog` or whose PNG already exists at the planned path. |
 | `--dry-run` | Print the plan and skip all API calls and file writes. |
 | `--no-build` | Stop after rewriting the `.mog`; don't run `build`. |

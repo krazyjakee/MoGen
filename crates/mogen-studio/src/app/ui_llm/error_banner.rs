@@ -1,6 +1,6 @@
 use eframe::egui;
 
-use crate::app::types::LlmErrorClass;
+use crate::app::types::{LlmErrorClass, LlmExtraAction};
 use crate::app::MogenStudioApp;
 
 impl MogenStudioApp {
@@ -51,6 +51,18 @@ impl MogenStudioApp {
                     ) && ui.button("Open Settings…").clicked()
                     {
                         self.show_options = true;
+                    }
+                    if info.action == Some(LlmExtraAction::ForceRegenerateTextures)
+                        && ui
+                            .button("New textures")
+                            .on_hover_text(
+                                "Regenerate every material's PBR set from scratch, \
+                                 ignoring existing PNGs and spliced texture paths.",
+                            )
+                            .clicked()
+                    {
+                        let ctx = ui.ctx().clone();
+                        self.start_llm_textures_force(ctx);
                     }
                     if ui
                         .small_button("Dismiss")

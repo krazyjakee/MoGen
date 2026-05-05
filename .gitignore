@@ -47,3 +47,12 @@ examples/*.glb
 examples/textures
 
 *.blend
+
+# Local generated assets at repo root (Studio scratch outputs)
+/textures/
+/chair.*
+/fishing-rod.*
+/untitled.mp4
+
+# Stray Claude Code tool-result dumps that landed at repo root
+*tool-results*.txt
