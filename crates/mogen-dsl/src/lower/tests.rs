@@ -715,6 +715,39 @@ fn grid_replicates_children() {
 }
 
 #[test]
+fn grid_attach_applies_uniformly_per_instance() {
+    // Regression: attach inside a grid body must not leak to the global
+    // resolve_attaches pass — otherwise the first instance gets attach
+    // applied twice (once globally, once per-instance) and ends up at
+    // 2× the offset of the others.
+    let g = lower_src(
+        r#"
+        scene {
+          grid "row" (count=[4, 1, 1], step=[0.5, 0, 0]) {
+            sphere "body" (radius=0.1)
+            cylinder "cap" (radius=0.05, height=0.02)
+            attach (parent="body", child="cap", socket="top", plug="bottom")
+          }
+        }
+        "#,
+    );
+    let cap_ys: Vec<f32> = g
+        .nodes
+        .iter()
+        .filter(|n| n.name == "cap")
+        .map(|n| n.transform.translation.y)
+        .collect();
+    assert_eq!(cap_ys.len(), 4, "expected 4 cap instances, got {}", cap_ys.len());
+    let first = cap_ys[0];
+    for (i, y) in cap_ys.iter().enumerate() {
+        assert!(
+            (y - first).abs() < 1e-5,
+            "cap[{i}] y={y} differs from cap[0] y={first} — attach applied unevenly across grid instances"
+        );
+    }
+}
+
+#[test]
 fn relative_placement_above_snaps_flush() {
     let g = lower_src(
         r#"

@@ -6,6 +6,20 @@ use mogen_core::Span;
 
 use super::internals::{clamp_span, is_ident_byte, match_closing_paren, splice};
 
+/// Read the value substring of `name=…` in the header of the node covered by
+/// `span`, returning `None` when the node has no header or the attr is absent.
+/// The returned slice is trimmed: `pos=[1,2,3]` → `[1,2,3]`, `noise=0.3 ` →
+/// `0.3`. Inspector panels use this to show the user's current authored value
+/// without re-parsing the AST.
+pub fn get_attr<'a>(src: &'a str, span: Span, name: &str) -> Option<&'a str> {
+    let (start, end) = clamp_span(src, span);
+    let (hdr_open, hdr_close) = find_header_parens(src, start, end)?;
+    let (kstart, vend) = find_attr_in_header(src, hdr_open + 1, hdr_close, name)?;
+    let slice = &src[kstart..vend];
+    let eq = slice.find('=')?;
+    Some(slice[eq + 1..].trim())
+}
+
 /// Set or insert an attribute on the node covered by `span`. If the attribute
 /// already exists on that node, its value is replaced up to the next
 /// top-level comma or the closing `)`. If not, ` name=val` is appended just
@@ -377,6 +391,23 @@ mod tests {
         let span = span_of(src, "box \"b\" (y=1.0 , x=0)");
         let out = set_attr(src, span, "y", "2.0");
         assert_eq!(out, "box \"b\" (y=2.0 , x=0)");
+    }
+
+    #[test]
+    fn get_attr_reads_scalar_and_vec_values() {
+        let src = "box \"b\" (pos=[0, 1, 2], noise=0.3, faceted=1)";
+        let span = span_of(src, "box \"b\" (pos=[0, 1, 2], noise=0.3, faceted=1)");
+        assert_eq!(get_attr(src, span, "noise"), Some("0.3"));
+        assert_eq!(get_attr(src, span, "faceted"), Some("1"));
+        assert_eq!(get_attr(src, span, "pos"), Some("[0, 1, 2]"));
+        assert_eq!(get_attr(src, span, "twist_y"), None);
+    }
+
+    #[test]
+    fn get_attr_returns_none_when_no_header() {
+        let src = "box \"b\" { }";
+        let span = span_of(src, "box \"b\" { }");
+        assert_eq!(get_attr(src, span, "noise"), None);
     }
 
     #[test]

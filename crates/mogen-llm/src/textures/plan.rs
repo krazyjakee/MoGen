@@ -203,12 +203,19 @@ pub fn build_plan(ast: &[Node], args: &TexturesArgs) -> Vec<Plan> {
         });
 
         // --- derived maps ---
+        // Mask-mode materials are alpha-cutout foliage / fins / fronds whose
+        // albedo is a sparse cluster of opaque pixels on a transparent
+        // background. The Sobel-from-luminance bake in `pbr_maps` reads each
+        // needle/leaf edge as a steep cavity, producing speckled normal and
+        // metallic-roughness maps that turn every cutout pixel into a tiny
+        // specular highlight. Skip the derived bake for those materials and
+        // let the authored scalars (roughness=1, metallic=0) carry the look.
         for (kind, disabled) in [
             (SlotKind::Normal, args.no_normal),
             (SlotKind::MetallicRoughness, args.no_metallic_roughness),
             (SlotKind::Occlusion, args.no_occlusion),
         ] {
-            if args.no_pbr || disabled {
+            if args.no_pbr || disabled || is_mask {
                 continue;
             }
             let rel_path = args.textures_dir.join(format!("{stem}{}", kind.suffix()));
@@ -449,6 +456,31 @@ mod tests {
         assert!(matches!(plans[1].action, PlanAction::Derive));
         assert!(matches!(plans[2].action, PlanAction::Derive));
         assert!(matches!(plans[3].action, PlanAction::Derive));
+    }
+
+    #[test]
+    fn mask_material_skips_derived_pbr_maps() {
+        // Foliage / cutout materials should produce only an albedo plan;
+        // derived normal / MR / AO bakes turn each leaf-edge into a speckle.
+        let src = r#"material "leaf" (color=[0.2,0.6,0.2], alpha_mode="mask")"#;
+        let ast = parse_or_panic(src);
+        let args = TexturesArgs::with_defaults(PathBuf::from("x.mog"));
+        let plans = build_plan(&ast, &args);
+        assert_eq!(plans.len(), 1, "mask material yields only albedo");
+        assert_eq!(plans[0].kind, SlotKind::Albedo);
+        assert!(plans[0].is_mask);
+    }
+
+    #[test]
+    fn opaque_material_still_gets_derived_pbr_maps() {
+        // Sanity-check the negative case so the mask gate doesn't drift into
+        // suppressing every material.
+        let src = r#"material "wood" (color=[0.5,0.3,0.1])"#;
+        let ast = parse_or_panic(src);
+        let args = TexturesArgs::with_defaults(PathBuf::from("x.mog"));
+        let plans = build_plan(&ast, &args);
+        assert_eq!(plans.len(), 4);
+        assert!(plans.iter().all(|p| !p.is_mask));
     }
 
     #[test]

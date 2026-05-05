@@ -17,7 +17,7 @@ pub use diagnostic::{has_errors, Diagnostic, Severity, Span};
 pub use graph::{AttachBinding, ConformBinding, NodeId, SceneGraph, SceneNode};
 pub use meta::Meta;
 pub use light::{Light, LightKind};
-pub use material::{AlphaMode, Material, MaterialId, TextureRef, UvMode};
+pub use material::{AlphaMode, Material, MaterialId, MaterialShader, TextureRef, UvMode};
 pub use mesh::Mesh;
 pub use skin::{Skin, SkinId};
 pub use transform::Transform;

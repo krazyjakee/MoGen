@@ -198,6 +198,14 @@ pub(super) fn expand_grid(
                     "group",
                     Transform::from_translation(offset),
                 );
+                // Inherit the replicator's frame so `redirect_pick` treats
+                // these synthetic instance groups the same as the imported
+                // subtree they wrap. Without this, `use_id = None` plus the
+                // `editable = false` flag below would trap viewport
+                // selections on a non-editable node and the transform
+                // gizmo would never appear for an imported replicator.
+                graph.nodes[iid.0 as usize].use_id = node.use_id;
+                graph.nodes[iid.0 as usize].origin = node.origin.clone();
                 for c in &node.children {
                     match c.kind.as_str() {
                         "material" | "attach" | "conform" => continue,
@@ -398,6 +406,8 @@ pub(super) fn expand_replicator(
     for (i, t) in instance_transforms.iter().enumerate() {
         let instance_name = format!("{wrapper_name}_{i}");
         let iid = graph.add_child(wrapper_id, instance_name, "group", *t);
+        graph.nodes[iid.0 as usize].use_id = node.use_id;
+        graph.nodes[iid.0 as usize].origin = node.origin.clone();
         for c in &node.children {
             match c.kind.as_str() {
                 "material" | "attach" | "conform" => continue,

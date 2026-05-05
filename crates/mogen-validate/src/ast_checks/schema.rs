@@ -39,6 +39,10 @@ pub const GEOMETRY_COMMON_ATTRS: &[&str] = &[
     // Collider request: `collider="aabb"` is the only accepted value in v1;
     // the lowering pass derives the box from the node's subtree mesh extents.
     "collider",
+    // Shadow opt-out: `cast_shadow=0` excludes this node (and its subtree) from
+    // the realtime shadow pre-pass and from the exported glTF shadow hint.
+    // Default is true, so authors only ever write the attribute to disable it.
+    "cast_shadow",
     // Deformation modifiers — composable variety knobs that work on any
     // primitive. Apply between primitive construction and anchor shift, so
     // the deformed mesh is what attach/connector logic sees. Stochastic
@@ -132,7 +136,8 @@ pub fn attrs_for_kind(kind: &str) -> &'static [&'static str] {
         "branch" => &[
             "length", "radius", "depth", "splits", "length_falloff", "radius_falloff",
             "branch_angle", "roll", "tropism", "bend", "segments", "samples", "seed",
-            "jitter", "leaves", "leaf_size", "leaf_cards", "leaf_mat",
+            "jitter", "leaves", "leaf_size", "leaf_cards", "leaf_aspect", "leaf_mat",
+            "form", "leader_bias", "multi_stem",
         ],
         "decal" => &[
             "size", "prompt", "image", "tint", "roughness", "offset",
@@ -149,6 +154,7 @@ pub fn attrs_for_kind(kind: &str) -> &'static [&'static str] {
             "transmission",
             "double_sided",
             "uv_mode", "uv_scale",
+            "shader",
             "base_color_texture", "metallic_roughness_texture",
             "normal_texture", "occlusion_texture", "emissive_texture",
             "prompt",
@@ -225,7 +231,8 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         | (_, "twist_y")
         | (_, "taper")
         | (_, "droop")
-        | (_, "faceted") => "number",
+        | (_, "faceted")
+        | (_, "cast_shadow") => "number",
         ("box", "size")
         | ("plane", "size")
         | ("quad", "size")
@@ -273,8 +280,11 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         | ("branch", "samples")
         | ("branch", "leaves")
         | ("branch", "leaf_size")
-        | ("branch", "leaf_cards") => "number",
-        ("branch", "leaf_mat") => "string",
+        | ("branch", "leaf_cards")
+        | ("branch", "leaf_aspect")
+        | ("branch", "leader_bias")
+        | ("branch", "multi_stem") => "number",
+        ("branch", "leaf_mat") | ("branch", "form") => "string",
         ("cylinder", "radius")
         | ("cylinder", "height")
         | ("cylinder", "segments")
@@ -347,7 +357,7 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         | ("material", "transmission")
         | ("material", "double_sided") => "number",
         ("material", "color") | ("material", "emissive") => "vec3",
-        ("material", "alpha_mode") | ("material", "uv_mode") => "string",
+        ("material", "alpha_mode") | ("material", "uv_mode") | ("material", "shader") => "string",
         ("material", "uv_scale") => "number or vec2",
         ("material", "base_color_texture")
         | ("material", "metallic_roughness_texture")

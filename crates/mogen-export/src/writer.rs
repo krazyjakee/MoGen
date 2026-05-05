@@ -330,6 +330,12 @@ fn emit_node(n: &SceneNode, mesh: Option<usize>, light: Option<usize>) -> Value 
             }),
         );
     }
+    // Default is true; only stamp the hint when the author opted out so the
+    // typical case keeps the JSON chunk lean. Importers that don't recognise
+    // the key fall back to "casts shadows" — the spec-default behaviour.
+    if !n.cast_shadow {
+        extras.insert("cast_shadow".into(), json!(false));
+    }
     if !extras.is_empty() {
         obj.insert("extras".into(), Value::Object(extras));
     }

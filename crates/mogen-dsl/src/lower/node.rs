@@ -14,6 +14,7 @@ use super::helpers::{
 };
 use super::layout::{apply_relative_placement, expand_grid, expand_replicator, expand_stack};
 use super::light::lower_light;
+use super::lod::LodOriginScaleGuard;
 use super::primitive::primitive_mesh;
 
 pub(super) fn lower_into(
@@ -21,6 +22,12 @@ pub(super) fn lower_into(
     parent: Option<NodeId>,
     graph: &mut SceneGraph,
 ) -> Result<NodeId> {
+    // Switch the active LOD multiplier to whatever the imported file
+    // (identified by `node.origin`) declared, if any. Geometry declared in
+    // the user's own file has `origin == None` and falls through to the
+    // top-level `LOD_SCALE`. The guard restores the previous scale on drop
+    // so children with a different origin still get their own override.
+    let _lod = LodOriginScaleGuard::for_origin(node.origin.as_deref());
     if node.kind == "mirror" || node.kind == "array" {
         return expand_replicator(node, parent, graph);
     }
@@ -66,6 +73,13 @@ pub(super) fn lower_into(
     // in `lower_with_source` walks the resolved subtree and assigns the AABB.
     if matches!(node.attr_string("collider"), Some("aabb")) {
         super::COLLIDER_REQUESTS.with(|r| r.borrow_mut().push(id));
+    }
+
+    // Shadow opt-out: `cast_shadow=0` excludes the node's mesh from the
+    // realtime shadow pre-pass and stamps `extras.cast_shadow=false` on the
+    // exported glTF node. Default is true so existing scenes are unchanged.
+    if let Some(v) = node.attr_number("cast_shadow") {
+        graph.nodes[id.0 as usize].cast_shadow = v != 0.0;
     }
 
     // Metadata: role, tags (comma-separated string).

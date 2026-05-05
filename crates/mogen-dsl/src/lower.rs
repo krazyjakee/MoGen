@@ -30,7 +30,7 @@ use crate::module::{
 use crate::skin_lower::{bind_meshes, lower_skeleton};
 
 use anim::{is_anim_decl, lower_animations};
-use lod::extract_lod_scale;
+use lod::{collect_origin_lods, extract_lod_scale, LodByOriginGuard};
 use material::collect_materials;
 use node::lower_into;
 
@@ -146,6 +146,11 @@ pub fn lower_with_loader(
     // can read it without threading an extra arg through every recursive call.
     // Explicit per-primitive `segments=`/`rings=` still win.
     let _lod = LodScaleGuard::set(extract_lod_scale(ast));
+    // Per-origin LOD overrides: imported files carry their own
+    // `lod_scale` directives that need to apply to that file's geometry,
+    // not the importing file's. Reset for this lower call; the lifted
+    // directives below populate the map.
+    let _lod_by_origin = LodByOriginGuard::fresh();
 
     // Expand modules first: collect every `module` declaration, then substitute
     // `use` calls into concrete node trees. The result has no `module`/`use`/
@@ -159,6 +164,11 @@ pub fn lower_with_loader(
     // local-only callers (mogen-validate, the wasm playground, plain
     // `mogen check`) from triggering registry resolution.
     imported_decls.extend(resolve_registry_uses_with_loader(ast, loader)?);
+    // Each imported file's top-level `lod_scale (value=N)` is lifted into
+    // `imported_decls` with its origin stamped. Register them now so
+    // `lower_into` can swap `LOD_SCALE` to the imported file's value
+    // when descending into geometry that originated there.
+    collect_origin_lods(&imported_decls);
     let imported_reg = collect_modules(&imported_decls)?;
     reg.extend_overlay(imported_reg);
     let user = collect_modules(ast)?;
@@ -241,6 +251,18 @@ pub fn lower_with_loader(
         }
     }
 
+    // Pass 2.7: propagate `cast_shadow=false` down the subtree so a `group`
+    // (or wrapping `use`) can opt out an entire subassembly with one flag.
+    // Walking root-first means an ancestor's `false` overrides any descendant
+    // default; a descendant that authored its own `cast_shadow=0` already
+    // landed on `false` during lowering, so no information is lost. The flag
+    // is monotone — false stays false — which keeps the propagation order
+    // insensitive to sibling traversal.
+    let roots: Vec<NodeId> = graph.roots.clone();
+    for r in roots {
+        propagate_cast_shadow(&mut graph, r, true);
+    }
+
     // Pass 3: joints first (clips may reference joint names), then clips,
     // then procedural templates (which can target either joints or nodes).
     // Imported animations live inside their synthesised module body, so they
@@ -248,4 +270,16 @@ pub fn lower_with_loader(
     // no separate walk needed.
     lower_animations(&expanded, &mut graph)?;
     Ok(graph)
+}
+
+/// Walk the subtree rooted at `id` and clear `cast_shadow` on every node
+/// whose ancestor chain contains a node already opted out. `inherited` is the
+/// effective flag from the parent (`true` for root calls).
+fn propagate_cast_shadow(graph: &mut SceneGraph, id: NodeId, inherited: bool) {
+    let effective = inherited && graph.nodes[id.0 as usize].cast_shadow;
+    graph.nodes[id.0 as usize].cast_shadow = effective;
+    let children = graph.nodes[id.0 as usize].children.clone();
+    for c in children {
+        propagate_cast_shadow(graph, c, effective);
+    }
 }

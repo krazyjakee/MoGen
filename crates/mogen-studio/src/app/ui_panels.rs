@@ -6,7 +6,9 @@
 //! - `diagnostics` — validator footer
 //! - `selected` — single-node inspector (transform / light / delete / dup)
 //! - `summary` — scene-level stats + LOD slider
-//! - `materials` — per-material editor and unused-texture cleanup
+//! - `materials` — per-material editor, per-material texture thumbnail +
+//!   Generate / Regenerate / Delete / Reveal actions, and the
+//!   unused-texture cleanup list
 //! - `animation` — clip playback + scrub
 //! - `overlay` — floating viewport toolbar
 

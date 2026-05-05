@@ -50,6 +50,15 @@ out vec4 frag;
 uniform vec3 u_camera_pos;
 // Mirrors the VS uniform. See `PreviewShader::shader_mode` for the mapping.
 uniform int u_shader_mode;
+// Per-material shader override. 0=Standard (PBR), 1=Water. Distinct from
+// `u_shader_mode` (a global preview-style selector): per-material shaders
+// only apply to surfaces whose authored `Material::shader` opted in, which
+// is why the FS reads them separately.
+uniform int u_material_shader;
+// Seconds since renderer start, monotonic. Drives time-varying material
+// shaders (e.g. water waves). Only the per-material shader branches sample
+// it; the standard PBR path is time-invariant.
+uniform float u_time;
 
 // Per-batch material scalars.
 uniform vec3 u_base_color;
@@ -82,6 +91,17 @@ uniform sampler2D u_mr_tex;
 uniform sampler2D u_normal_tex;
 uniform sampler2D u_ao_tex;
 uniform sampler2D u_emissive_tex;
+// Per-material multiplier on the tangent-space normal's XY components, applied
+// after the texture sample. 1.0 = use the map verbatim; 0 = flat shading.
+// Mirrors glTF's `normalTexture.scale` so the slider in the materials panel
+// has a live preview effect without re-baking the PNG.
+uniform float u_normal_scale;
+// Mirrors `Material::uv_scale`. Already baked into `v_uv` for texture
+// sampling; surfaced separately so procedural shaders that need to dodge
+// UV-parameterization singularities (water turbulence on a sphere/ellipsoid
+// pole, for example) can evaluate their pattern in world space scaled by
+// the same density knob authors expect.
+uniform vec2 u_uv_scale;
 
 // Two analytic key/fill lights for direct illumination plus a procedural sky
 // dome that doubles as the IBL probe for ambient + specular reflection. The
@@ -239,6 +259,34 @@ mat3 cotangent_frame(vec3 N, vec3 p, vec2 uv) {
     vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
     float invmax = inversesqrt(max(dot(T, T), dot(B, B)));
     return mat3(T * invmax, B * invmax, N);
+}
+
+// Tileable water turbulence after David Hoskins (GLSL Sandbox), original
+// turbulence by joltz0r. Period 1 in UV — `mod(uv*TAU, TAU)` wraps the
+// argument exactly every 1.0 so the field tiles cleanly across the surface.
+// Used by the water shader as a procedural caustic-like normal layer:
+// authors keep `uv_scale` as the ripple-density knob (it's already baked
+// into v_uv by `flatten`), while the bulk wave silhouette and foam come
+// from the world-XZ directional sines. Returns a peaky height-like scalar
+// (pow(., 8) at the tail) — finite-difference gradients of this read as
+// thin caustic lines, which is the look we want.
+float water_turbulence(vec2 uv) {
+    const float TAU = 6.28318530718;
+    float t = u_time * 0.5 + 23.0;
+    vec2 p = mod(uv * TAU, TAU) - 250.0;
+    vec2 i = p;
+    float c = 1.0;
+    float inten = 0.005;
+    for (int n = 0; n < 5; ++n) {
+        float tt = t * (1.0 - (3.5 / float(n + 1)));
+        i = p + vec2(cos(tt - i.x) + sin(tt + i.y),
+                     sin(tt - i.y) + cos(tt + i.x));
+        c += 1.0 / length(vec2(p.x / (sin(i.x + tt) / inten),
+                               p.y / (cos(i.y + tt) / inten)));
+    }
+    c /= 5.0;
+    c = 1.17 - pow(c, 1.4);
+    return pow(abs(c), 8.0);
 }
 
 // GGX/Trowbridge-Reitz NDF.
@@ -433,12 +481,11 @@ void main() {
     vec3 N = Ngeom;
     if (u_use_normal_tex == 1) {
         vec3 mapped = texture(u_normal_tex, uv).xyz * 2.0 - 1.0;
-        // Boost the XY deviation so subtle maps (e.g. those derived from
-        // albedo luminance in `pbr_maps.rs`) read as real bumps under
-        // realtime lighting. Re-normalising afterwards keeps the vector
-        // unit-length; a strength of 2 roughly doubles the slope without
-        // flipping the facing sign.
-        mapped.xy *= 2.0;
+        // Per-material slope scaling, mirrored from `Material::normal_strength`
+        // / glTF's `normalTexture.scale`. Re-normalising afterwards keeps the
+        // vector unit-length, so a strength of 0 collapses cleanly to the
+        // geometric normal.
+        mapped.xy *= u_normal_scale;
         // Tangent space uses dFdx/dFdy, which only run on triangles with
         // varying UVs. Mapped vector is renormalised on output.
         N = normalize(cotangent_frame(Ngeom, v_world_pos, uv) * mapped);
@@ -448,6 +495,54 @@ void main() {
     vec3 emissive = u_emissive * u_emissive_strength;
     if (u_use_emissive_tex == 1) {
         emissive *= texture(u_emissive_tex, uv).rgb;
+    }
+
+    // Water-shader pre-pass. Computes a wave-perturbed normal here so it's
+    // ready when the main composition replaces `absorbed_tm` / `reflected_tm`
+    // after the standard tonemap split. The standard PBR pipeline still runs
+    // in between, but its output is overwritten — water is a near-mirror
+    // dielectric whose appearance is dominated by sky reflection + sun glint
+    // rather than the diffuse + small-spec mix the PBR path is built around.
+    // Trying to coax water out of the PBR split alone produces a painted-blue
+    // look (the diffuse contribution overpowers the reflection at low NdV).
+    //
+    // Material knobs that flow into the wave field:
+    //   uv_scale        → ripple density (cycles per world unit). Higher
+    //                     values pack more ripples into the same surface.
+    //   normal_strength → slope multiplier on the procedural normal.
+    //                     Mirrors how `u_normal_scale` scales authored
+    //                     normal maps for standard materials.
+    //   normal_texture  → blended on top of the procedural normal at half
+    //                     strength so authors can layer extra detail
+    //                     (drips, surface debris) without losing the ripple.
+    if (u_material_shader == 1) {
+        // Procedural turbulence normal. Domain is world-XZ scaled by
+        // `u_uv_scale` so authors keep a per-material density knob without
+        // touching `v_uv` — UV-driven patterns spiral around the poles of
+        // spherical/ellipsoid unwraps, world-space evaluation has no such
+        // singularity. Three-tap finite difference gives a world-XZ gradient
+        // that we decode as a tangent-space normal and rotate via the
+        // cotangent frame so it perturbs the geometric surface correctly.
+        vec2 turb_uv = v_world_pos.xz * u_uv_scale;
+        float h0 = water_turbulence(turb_uv);
+        float eps = 0.002;
+        float hu = water_turbulence(turb_uv + vec2(eps, 0.0));
+        float hv = water_turbulence(turb_uv + vec2(0.0, eps));
+        vec2 turb_grad = vec2(hu - h0, hv - h0) / eps;
+        vec3 nt = normalize(vec3(-turb_grad * 0.03 * u_normal_scale, 1.0));
+        vec3 N_proc = normalize(cotangent_frame(Ngeom, v_world_pos, v_uv) * nt);
+
+        // Optional authored normal map blended on top. Half-weight mix
+        // keeps the procedural ripple readable while letting the map add
+        // extra high-frequency detail (drips, surface debris, etc.).
+        if (u_use_normal_tex == 1) {
+            vec3 mapped = texture(u_normal_tex, uv).xyz * 2.0 - 1.0;
+            mapped.xy *= u_normal_scale;
+            vec3 N_tex = normalize(cotangent_frame(N_proc, v_world_pos, uv) * mapped);
+            N = normalize(mix(N_proc, N_tex, 0.5));
+        } else {
+            N = N_proc;
+        }
     }
 
     vec3 F0 = mix(vec3(0.04), albedo, metallic);
@@ -595,11 +690,135 @@ void main() {
     vec3 emissive_disp = vec3(1.0) - exp(-emissive_rim);
     absorbed_tm += emissive_disp;
 
+    // Water-shader composition. Replaces the PBR pipeline's
+    // `absorbed_tm` / `reflected_tm` outputs wholesale with a self-
+    // contained mix of body tint + sky reflection + sun glint + foam.
+    // The PBR work above ran (and even consumed the wave-perturbed N) —
+    // it's overwritten here because the diffuse-dominated PBR split
+    // can't produce a convincing water look by itself: at typical
+    // top-down viewing angles the diffuse contribution drowns out the
+    // 2% spec, and the surface reads as flat-painted rather than
+    // reflective.
+    //
+    // Material knobs that flow into composition:
+    //   metallic         → Fresnel F0 base. 0 = clean dielectric water
+    //                      (2% reflectance head-on); 1 = liquid metal
+    //                      (mercury, molten silver) where the body tint
+    //                      *is* the reflection colour at all angles.
+    //   roughness        → sky-reflection blur + sun-glint sharpness +
+    //                      foam intensity. Tied here as the obvious
+    //                      single "smooth ↔ choppy" knob.
+    //   transmission     → see-through factor. 0 = opaque body; 1 = body
+    //                      absorption fully recedes so the sky reflection
+    //                      and what's behind the surface dominate.
+    //   alpha_mode=Blend → translucent water (with Fresnel-rim opacity so
+    //                      the silhouette stays visible at grazing angles).
+    //                      Combine with `transmission` to dial how much of
+    //                      the pool floor shows through.
+    //   emissive         → glow (lava, magic potion, irradiated swamp).
+    //                      Composited post-tonemap to preserve hue at
+    //                      high `emissive_strength`, same as the standard
+    //                      path.
+    //   base_color_texture / emissive_texture → optional tint / glow maps.
+    if (u_material_shader == 1) {
+        float NdV_w = clamp(dot(N, V), 0.0, 1.0);
+
+        // Body tint: optional texture multiplied onto the authored colour
+        // lets authors paint shallow / deep variation across a single
+        // surface (e.g. a darker drop-off in a coastal shelf).
+        vec3 body_color = u_base_color;
+        if (u_use_base_tex == 1) {
+            body_color *= texture(u_base_tex, uv).rgb;
+        }
+
+        // Roughness drives reflection blur. We mix between the dome+sun
+        // probe (sharp) and the dome-only probe (soft) so a smooth surface
+        // mirrors the sun and a rough one only catches the diffuse sky.
+        // The sun_glint lobe below adds the explicit sun-reflection peak
+        // back in with its own roughness-dependent sharpness, so smooth
+        // water gets *both* a sharp probe sample and a tight glint while
+        // rough water dampens both together.
+        vec3 R = reflect(-V, N);
+        float blur = roughness * roughness;
+        vec3 sky_reflect = mix(sample_sky(R), sample_sky_dome(R), blur);
+
+        // Schlick Fresnel with metallic-aware F0. Dielectric water sits at
+        // the standard 2% F0, ramping toward 100% at grazing — that
+        // fresnel ramp is the whole reason water reads as water. Metallic
+        // water (mercury) tints F0 with the body colour so the reflection
+        // never goes white at the rim.
+        vec3 F0w = mix(vec3(0.02), body_color, metallic);
+        vec3 fresnel = F_Schlick(NdV_w, F0w);
+
+        // Body absorption: authored colour modulated by the upper
+        // hemisphere of the sky dome along the surface normal. Sampling
+        // the dome (instead of using a constant) means an overcast scene
+        // gives moody cool water and a sunset gives warm water without
+        // the author having to retune `color`. Metallic surfaces don't
+        // *have* a diffuse body — for them this term collapses to zero
+        // and the visible colour comes entirely from the tinted Fresnel
+        // reflection, exactly like a metal in the standard PBR path.
+        vec3 body_amb = sample_sky_dome(N) * body_color * 0.9 * (1.0 - metallic);
+
+        // Sun glint: tight Phong-style highlight where the sun's
+        // reflection lines up with the wave normal. Exponent drops with
+        // roughness so smooth water gets a laser-tight sparkle and rough
+        // water gets a wide, soft halo. Strength tapers too so a stormy
+        // surface doesn't cumulatively blow out.
+        vec3 sun_L = -normalize(u_sun_dir);
+        vec3 H_sun = normalize(V + sun_L);
+        float NdH_sun = max(dot(N, H_sun), 0.0);
+        float glint_exp = mix(360.0, 16.0, roughness);
+        float glint_strength = mix(10.0, 2.0, roughness);
+        vec3 sun_glint = u_sun_color * pow(NdH_sun, glint_exp) * glint_strength * fresnel;
+
+        // Transmission scales body absorption away: at transmission=1 the
+        // surface contributes only its specular reflection, matching the
+        // KHR_materials_transmission spec for the "fully clear" extreme.
+        vec3 absorbed_water = body_amb * (vec3(1.0) - fresnel) * (1.0 - u_transmission);
+        vec3 reflected_water = sky_reflect * fresnel + sun_glint;
+
+        // Same AgX path the standard branch uses, so water blends
+        // tonally with the rest of the scene.
+        vec3 combined_w = absorbed_water + reflected_water;
+        vec3 tm_w = agx_tonemap(combined_w);
+        vec3 frac_w = clamp(reflected_water / max(combined_w, vec3(1e-4)), vec3(0.0), vec3(1.0));
+        reflected_tm = tm_w * frac_w;
+        absorbed_tm = tm_w - reflected_tm;
+
+        // Emissive composited post-tonemap — same trick as the standard
+        // branch — so authored hue survives at high strength. Lets water
+        // glow (lava, glowing potion, bioluminescent surf). The Fresnel
+        // rim boost makes the grazing edge of curved emissive water
+        // brighter, which reads as a bloom halo on the silhouette.
+        vec3 emissive_water = emissive * (1.0 + 1.5 * pow(1.0 - NdV_w, 2.0));
+        absorbed_tm += vec3(1.0) - exp(-emissive_water);
+
+        // Alpha pipeline. Default opaque preserves the previous behaviour
+        // (water reads as a fully-covering surface). `Blend` opens the
+        // door to translucent water — combined with `transmission` this
+        // is how authors get a clear pool with the tile floor visible
+        // through it. The Fresnel rim restores opacity at grazing angles
+        // so the water silhouette never disappears entirely, matching
+        // glTF's transmission-with-alpha convention.
+        if (u_alpha_mode == 2 || u_transmission > 0.0) {
+            float clarity = (1.0 - u_transmission * 0.85);
+            out_alpha = base_sample.a * clarity;
+            float fresnel_rim = pow(1.0 - NdV_w, 5.0);
+            out_alpha = mix(out_alpha, max(out_alpha, base_sample.a), fresnel_rim);
+        } else {
+            out_alpha = 1.0;
+        }
+    }
+
     // Style overrides. Stylistic modes don't model reflection-vs-transmission,
     // so they collapse everything into `absorbed_tm` and the transparent
     // result fades uniformly. Keep these branches in sync with the matching
-    // `shader_mode` values in `preview_shader.rs`.
-    if (u_shader_mode == 1) {
+    // `shader_mode` values in `preview_shader.rs`. Per-material shaders
+    // (water) opt out — the global preview style is for stylistic looks
+    // across the whole viewport, but water never makes sense as a CRT or
+    // matcap surface, and the toon quantization breaks the wave shading.
+    if (u_material_shader == 0 && u_shader_mode == 1) {
         // Toon: 4-band quantized lambert using the key-light direction, tinted
         // with the authored albedo plus a dark Fresnel-based outline.
         float NdL = max(dot(N, normalize(-u_key_dir)), 0.0);
@@ -612,7 +831,7 @@ void main() {
         float outline = pow(1.0 - max(dot(N, V), 0.0), 4.0);
         absorbed_tm = mix(toon, vec3(0.03), smoothstep(0.75, 0.95, outline));
         reflected_tm = vec3(0.0);
-    } else if (u_shader_mode == 2) {
+    } else if (u_material_shader == 0 && u_shader_mode == 2) {
         // CRT: horizontal scanlines + an RGB aperture-grille mask. No post-
         // process FBO, so this rides on gl_FragCoord directly — the mask
         // pattern is in screen pixels, which matches how real trinitrons
@@ -625,7 +844,7 @@ void main() {
         else mask.b = 1.15;
         absorbed_tm = clamp(tonemapped * scan * mask, 0.0, 1.0);
         reflected_tm = vec3(0.0);
-    } else if (u_shader_mode == 3) {
+    } else if (u_material_shader == 0 && u_shader_mode == 3) {
         // Matcap: a clay-lit hemisphere preview that ignores the PBR
         // material entirely. Great for checking silhouette and surface
         // curvature while sculpting.
@@ -643,7 +862,9 @@ void main() {
     // `base.a`. For transmissive materials we ramp the alpha back up at
     // grazing angles so the Fresnel rim of a glass sphere stays visible.
     // pow5 of (1 - NdV) is the same shape Schlick uses for Fresnel.
-    if (u_transmission > 0.0) {
+    // Water materials manage their own alpha (always opaque) — skip the
+    // transmission ramp so their `out_alpha = 1.0` survives.
+    if (u_material_shader == 0 && u_transmission > 0.0) {
         float fresnel_rim = pow(1.0 - NdV, 5.0);
         out_alpha = mix(out_alpha, base_sample.a, fresnel_rim);
     }

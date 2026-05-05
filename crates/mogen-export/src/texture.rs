@@ -42,6 +42,14 @@ impl TextureTable {
         let t = tex.as_ref()?;
         self.by_key.get(&(t.path.clone(), kind)).copied()
     }
+
+    /// Test-only: register a path → texture-index mapping without a real PNG
+    /// on disk. Lets material-emission tests exercise the slot wiring against
+    /// a populated table.
+    #[cfg(test)]
+    pub(crate) fn insert_for_test(&mut self, path: PathBuf, kind: SlotKind, idx: usize) {
+        self.by_key.insert((path, kind), idx);
+    }
 }
 
 /// Stub used when the `textures` feature is disabled (e.g. wasm builds with

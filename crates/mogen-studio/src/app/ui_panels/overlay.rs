@@ -9,6 +9,9 @@ impl MogenStudioApp {
     /// to the toolbar.
     pub(in crate::app) fn ui_viewport_overlay(&mut self, ctx: &egui::Context, viewport_rect: egui::Rect) {
         use crate::gizmo::GizmoMode;
+        use crate::preview_shader::{
+            preview_shader_label, preview_shader_short_label, PreviewShader, PREVIEW_SHADERS,
+        };
         use crate::viewer::environment::{
             environment_label, environment_short_label, Environment, ENVIRONMENTS,
         };
@@ -112,6 +115,43 @@ impl MogenStudioApp {
                                 })
                                 .response
                                 .on_hover_text("Toggle viewport overlays");
+                            });
+                            ui.separator();
+                            // Preview-shader picker. Mirrors View → Shader so
+                            // PBR / Toon / CRT / Matcap / Wireframe is one
+                            // click away without leaving the viewport. Like
+                            // environment + shadows below, it's persisted in
+                            // settings and disabled in cinema mode so the
+                            // presentation pass stays clean.
+                            ui.add_enabled_ui(!cinema_on, |ui| {
+                                let cur_shader = self.settings.preview_shader();
+                                let mut chosen_shader: Option<PreviewShader> = None;
+                                let label =
+                                    format!("◑ {}", preview_shader_short_label(cur_shader));
+                                ui.menu_button(label, |ui| {
+                                    ui.label(egui::RichText::new("Shader").strong());
+                                    ui.separator();
+                                    for s in PREVIEW_SHADERS {
+                                        let selected = s == cur_shader;
+                                        if ui
+                                            .selectable_label(selected, preview_shader_label(s))
+                                            .clicked()
+                                            && !selected
+                                        {
+                                            chosen_shader = Some(s);
+                                            ui.close_menu();
+                                        }
+                                    }
+                                })
+                                .response
+                                .on_hover_text(
+                                    "Viewport preview shader (PBR, Toon, CRT, Matcap, Wireframe)",
+                                );
+                                if let Some(s) = chosen_shader {
+                                    self.settings.set_preview_shader(s);
+                                    self.viewer.set_preview_shader(s);
+                                    let _ = self.settings.save();
+                                }
                             });
                             ui.separator();
                             // Environment-lighting preset picker. Drives the

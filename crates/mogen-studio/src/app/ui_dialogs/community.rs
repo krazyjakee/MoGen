@@ -331,8 +331,8 @@ impl MogenStudioApp {
     /// Render a compact MoGHub auth chip — meant for places like the
     /// main-window status bar where vertical space is precious. Signed
     /// in: avatar + `@handle` + notification bell with unread badge,
-    /// chip menu has "Open Community" + "Sign out". Signed out: a
-    /// "Sign in" button that kicks the loopback OAuth flow.
+    /// chip menu has "Open Community" + "Sign out". Signed out: the
+    /// chip draws nothing; sign-in lives in the Community window.
     ///
     /// Cooperates with the same workers as the in-window auth strip:
     /// `kick_whoami` runs lazily on first paint when a persisted token
@@ -390,8 +390,6 @@ impl MogenStudioApp {
             ui.weak("MoGHub: complete sign-in in browser…");
         } else if self.community.pending_whoami.is_some() {
             ui.weak("MoGHub: checking…");
-        } else if ui.small_button("Sign in to MoGHub").clicked() {
-            self.kick_signin(ctx);
         }
     }
 

@@ -534,7 +534,7 @@ impl MogenStudioApp {
                         .on_hover_text("Push the active tab to MoGHub as a new model or version")
                 } else {
                     publish_btn
-                        .on_hover_text("Sign in to MoGHub from the status bar to publish")
+                        .on_hover_text("Sign in to MoGHub from the Community window to publish")
                 };
                 if publish_btn.clicked() {
                     action = MenuAction::OpenPublish;
@@ -642,11 +642,10 @@ impl MogenStudioApp {
                 if ctx.memory(|m| m.focused().is_none()) {
                     self.redo_active();
                 } else {
-                    inject_key(
-                        ctx,
-                        egui::Key::Z,
-                        egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
-                    );
+                    // Drive the focused TextEdit's redo via Cmd/Ctrl+Y, not
+                    // Cmd/Ctrl+Shift+Z — see `dispatch_shortcuts` for the
+                    // egui 0.29 bug that makes Shift+Z route to undo.
+                    inject_key(ctx, egui::Key::Y, egui::Modifiers::COMMAND);
                 }
             }
             MenuAction::Cut => {
@@ -753,20 +752,30 @@ impl MogenStudioApp {
             }
         }
 
-        // App-level undo / redo: only fire when nothing is focused, so typing
-        // in the code editor or any prompt field still gets native TextEdit
-        // history. Cmd+Shift+Z is tested first because its modifier set is a
-        // strict superset of Cmd+Z's — otherwise the redo press would be
-        // consumed as an undo.
-        if ctx.memory(|m| m.focused().is_none()) {
-            let undo_sc = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Z);
-            let redo_sc = egui::KeyboardShortcut::new(
-                egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
-                egui::Key::Z,
-            );
-            if ctx.input_mut(|i| i.consume_shortcut(&redo_sc)) {
+        // Cmd/Ctrl+Shift+Z must always be intercepted before TextEdit sees
+        // it. egui 0.29's TextEdit checks its undo arm first using
+        // `matches_logically(Modifiers::COMMAND)`, which (per its own
+        // doctests) accepts the extra Shift — so a focused editor treats
+        // the redo press as another undo and silently destroys redoable
+        // state. Consume here, then route by focus: with no focus, drive
+        // the app-level redo stack; with a focused TextEdit, re-emit as
+        // Cmd/Ctrl+Y so the editor's redo arm fires (Y is unambiguous,
+        // unlike Shift+Z).
+        let redo_sc = egui::KeyboardShortcut::new(
+            egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+            egui::Key::Z,
+        );
+        let redo_pressed = ctx.input_mut(|i| i.consume_shortcut(&redo_sc));
+        let nothing_focused = ctx.memory(|m| m.focused().is_none());
+        if redo_pressed {
+            if nothing_focused {
                 self.redo_active();
-            } else if ctx.input_mut(|i| i.consume_shortcut(&undo_sc)) {
+            } else {
+                inject_key(ctx, egui::Key::Y, egui::Modifiers::COMMAND);
+            }
+        } else if nothing_focused {
+            let undo_sc = egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::Z);
+            if ctx.input_mut(|i| i.consume_shortcut(&undo_sc)) {
                 self.undo_active();
             }
         }
@@ -828,6 +837,7 @@ impl MogenStudioApp {
         let mut close_all = false;
         let mut duplicate: Option<usize> = None;
         let mut copy_path: Option<String> = None;
+        let mut reveal_path: Option<std::path::PathBuf> = None;
         let mut new_from_empty_area = false;
         // Total rect the tab strip gets to draw in. We compare the last item's
         // right edge against this to detect clicks on the unused tail — that's
@@ -871,6 +881,20 @@ impl MogenStudioApp {
                             {
                                 if let Some(p) = &f.path {
                                     copy_path = Some(p.display().to_string());
+                                }
+                                ui.close_menu();
+                            }
+                            if ui
+                                .add_enabled(has_path, egui::Button::new("Reveal in file system"))
+                                .on_hover_text(if has_path {
+                                    "Open the OS file manager at this MOG file's location"
+                                } else {
+                                    "Save the MOG file first to give it a path"
+                                })
+                                .clicked()
+                            {
+                                if let Some(p) = &f.path {
+                                    reveal_path = Some(p.clone());
                                 }
                                 ui.close_menu();
                             }
@@ -957,6 +981,13 @@ impl MogenStudioApp {
         if let Some(path) = copy_path {
             ui.output_mut(|o| o.copied_text = path.clone());
             self.active_mut().status = format!("copied path: {path}");
+        }
+        if let Some(path) = reveal_path {
+            let status = match crate::app::editor_link::reveal_in_os(&path) {
+                Ok(()) => format!("revealed {}", path.display()),
+                Err(e) => format!("reveal failed: {} ({e})", path.display()),
+            };
+            self.active_mut().status = status;
         }
         if let Some(i) = close {
             self.request_close_file(i);

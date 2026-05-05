@@ -235,7 +235,9 @@ fn expand_use(
 /// shortcuts already accepted by every other node kind (see
 /// [`crate::lower::helpers::transform_from_attrs`]) plus the `collider`
 /// attribute, so `use "desk" (pos=…, collider="aabb")` works the same as
-/// wrapping the use in a group.
+/// wrapping the use in a group. `cast_shadow` rides along for the same
+/// reason — toggling shadow casting on a single import shouldn't require
+/// editing the imported file.
 fn is_wrapper_attr(k: &str) -> bool {
     matches!(
         k,
@@ -251,6 +253,7 @@ fn is_wrapper_attr(k: &str) -> bool {
             | "from"
             | "to"
             | "collider"
+            | "cast_shadow"
     )
 }
 

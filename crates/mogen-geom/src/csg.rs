@@ -22,10 +22,15 @@
 //!
 //! ## Vertex properties
 //!
-//! When both operands carry UVs we send `[x, y, z, u, v]` per vertex
-//! (`n_props = 5`); Manifold interpolates the UVs linearly across boolean
-//! intersection cuts. Otherwise we send positions only and let the cleanup
-//! pass synthesise triplanar UVs.
+//! When both operands carry UVs *and* those UVs are continuous across
+//! coincident-position vertex copies, we send `[x, y, z, u, v]` per vertex
+//! (`n_props = 5`) and Manifold interpolates the UVs linearly across boolean
+//! intersection cuts. Most of our primitives emit per-face vertex copies with
+//! face-specific UVs (a cube corner has three different UVs, a cylinder seam
+//! has two), so the welding step would average those into garbage that the
+//! boolean then smears across newly-cut triangles. When we detect that
+//! pattern on either operand we drop UVs for the boolean and let the cleanup
+//! pass synthesise triplanar UVs on the result.
 //!
 //! Per-vertex normals are not passed through — Manifold's boolean produces
 //! new vertices on intersection curves whose normals would need to come
@@ -40,6 +45,8 @@
 //! the caller's primitive and panic with the offending status — silent
 //! fallback would mask geometry corruption.
 
+use std::collections::HashMap;
+
 use manifold_csg::Manifold;
 
 use mogen_core::Mesh;
@@ -50,17 +57,65 @@ use crate::cleanup::{recompute_normals, weld_vertices};
 /// through the cleanup pass doesn't get re-welded with a different threshold.
 const WELD_EPS: f32 = 1e-4;
 
+/// True when the mesh has two or more vertices at (within `eps`) the same
+/// position carrying meaningfully different UVs — the per-face vertex copies
+/// of a cube, the wrap seam of a cylinder, the rim where a side wall meets a
+/// cap. Welding such verts averages their UVs, which is fine for normals
+/// (smoothing) but garbage for textures: the boolean then linearly
+/// interpolates that garbage across newly-cut triangles. When this is true,
+/// callers fall back to triplanar UV synthesis on the result.
+fn has_uv_seams(mesh: &Mesh, eps: f32) -> bool {
+    if !mesh.has_uvs() {
+        return false;
+    }
+    let scale = 1.0 / eps.max(1e-9);
+    let uv_eps_sq = 1e-6_f32; // ~1e-3 in either component
+    let mut buckets: HashMap<[i64; 3], u32> = HashMap::new();
+    for (i, p) in mesh.positions.iter().enumerate() {
+        let key = [
+            (p[0] * scale).round() as i64,
+            (p[1] * scale).round() as i64,
+            (p[2] * scale).round() as i64,
+        ];
+        match buckets.get(&key) {
+            None => {
+                buckets.insert(key, i as u32);
+            }
+            Some(&first) => {
+                let p1 = mesh.positions[first as usize];
+                let dx = p[0] - p1[0];
+                let dy = p[1] - p1[1];
+                let dz = p[2] - p1[2];
+                if dx * dx + dy * dy + dz * dz > eps * eps {
+                    continue;
+                }
+                let uv0 = mesh.uvs[first as usize];
+                let uv1 = mesh.uvs[i];
+                let du = uv0[0] - uv1[0];
+                let dv = uv0[1] - uv1[1];
+                if du * du + dv * dv > uv_eps_sq {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 /// Convert a `Mesh` into the `(vert_props, n_props, tri_indices)` triple
-/// Manifold expects. UVs are interleaved when present so they survive the
-/// boolean; positions are emitted as the first three components either way.
+/// Manifold expects. UVs are interleaved when present and continuous across
+/// coincident-position copies, so they survive the boolean. When the mesh has
+/// UV seams (per-face vertex copies, cylinder wrap seams, cap-to-wall rims),
+/// welding would average distinct face UVs into garbage; we fall back to
+/// position-only and let `clean_csg_output` synthesise triplanar UVs.
 fn to_manifold_input(mesh: &Mesh) -> (Vec<f32>, usize, Vec<u32>) {
+    let send_uvs = mesh.has_uvs() && !has_uv_seams(mesh, WELD_EPS);
     let welded = weld_vertices(mesh, WELD_EPS);
-    let has_uvs = welded.has_uvs();
-    let n_props = if has_uvs { 5 } else { 3 };
+    let n_props = if send_uvs { 5 } else { 3 };
     let mut vert_props = Vec::with_capacity(welded.positions.len() * n_props);
     for (i, p) in welded.positions.iter().enumerate() {
         vert_props.extend_from_slice(p);
-        if has_uvs {
+        if send_uvs {
             vert_props.extend_from_slice(&welded.uvs[i]);
         }
     }
@@ -255,7 +310,10 @@ mod tests {
     }
 
     #[test]
-    fn union_preserves_uvs_when_both_operands_have_them() {
+    fn union_drops_seam_uvs_so_triplanar_can_take_over() {
+        // Box/cylinder primitives carry per-face UV seams that would average
+        // into garbage if welded. The boolean must drop them so the cleanup
+        // pass can synthesise triplanar UVs on the result.
         let a = ubox([1.0, 1.0, 1.0]);
         let mut b = ubox([1.0, 1.0, 1.0]);
         for p in &mut b.positions {
@@ -263,18 +321,45 @@ mod tests {
         }
         assert!(a.has_uvs() && b.has_uvs(), "box primitives emit UVs");
         let u = union(&a, &b);
-        assert!(u.has_uvs(), "union output should carry UVs through Manifold");
-        assert_eq!(u.positions.len(), u.uvs.len());
+        assert!(
+            !u.has_uvs(),
+            "boxes have UV seams — boolean output must defer to triplanar"
+        );
     }
 
     #[test]
-    fn difference_preserves_uvs_when_both_operands_have_them() {
+    fn difference_drops_seam_uvs_so_triplanar_can_take_over() {
         let a = ubox([2.0, 2.0, 2.0]);
         let b = ucyl(0.4, 3.0, 16);
         assert!(a.has_uvs() && b.has_uvs());
         let r = difference(&a, &b);
-        assert!(r.has_uvs());
-        assert_eq!(r.positions.len(), r.uvs.len());
+        assert!(
+            !r.has_uvs(),
+            "seamed inputs must yield no-UV output for triplanar fallback"
+        );
+    }
+
+    #[test]
+    fn seamless_uv_inputs_survive_boolean() {
+        // Build operands whose coincident-position vertices share UVs (no
+        // seams) so the boolean keeps UVs end-to-end.
+        let a = ubox([1.0, 1.0, 1.0]);
+        let mut a = a;
+        // Replace per-face UVs with a single uv-per-position to simulate a
+        // seamless mesh (e.g., a sphere-equivalent with no wrap seam).
+        for uv in &mut a.uvs {
+            *uv = [0.5, 0.5];
+        }
+        let mut b = ubox([1.0, 1.0, 1.0]);
+        for p in &mut b.positions {
+            p[0] += 0.5;
+        }
+        for uv in &mut b.uvs {
+            *uv = [0.5, 0.5];
+        }
+        let u = union(&a, &b);
+        assert!(u.has_uvs(), "seamless UVs survive the boolean");
+        assert_eq!(u.positions.len(), u.uvs.len());
     }
 
     #[test]

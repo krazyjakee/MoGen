@@ -338,7 +338,18 @@ fn lift_loaded_into(
                     }
                 }
             }
-            "lod_scale" => {}
+            "lod_scale" => {
+                // Preserve the imported file's `lod_scale` so lowering can
+                // honour it for that file's geometry. Stamp the origin so
+                // `lower()` keys it onto the imported file's path; the lower
+                // pass then matches it against each node's `origin`. Without
+                // this, an imported file's `lod_scale (value=0.5)` would be
+                // silently overridden by the importing file's setting (or by
+                // the default 1.0).
+                let mut lod = inner_node;
+                set_origin_recursive(&mut lod, &canonical);
+                out.push(lod);
+            }
             "meta" => {
                 // `meta` is per-file provenance (name, version, seed,
                 // thinking budget, original prompt). It belongs to the
@@ -929,6 +940,115 @@ mod tests {
         let mat_id = scene.find_material("wood").expect("wood should resolve");
         let wood = &scene.materials[mat_id.0 as usize];
         assert!((wood.base_color[0] - 0.9).abs() < 1e-6, "got {wood:?}");
+    }
+
+    #[test]
+    fn imported_file_lod_scale_applies_to_its_own_geometry() {
+        // Regression: the importing file's `lod_scale` (or default 1.0)
+        // used to apply to imported geometry because `lift_loaded_into`
+        // dropped imported `lod_scale` directives. Now each imported file
+        // honours its own top-level `lod_scale` while the importing
+        // file's geometry continues to use the importing file's setting.
+        let tmp = TempDir::new("import_lod");
+        tmp.write(
+            "low.mog",
+            r#"
+            lod_scale (value=0.5)
+            scene { sphere "s_imported" (radius=0.5) }
+            "#,
+        );
+        let main_src = r#"
+            import "low.mog"
+            scene {
+              use "low" ()
+              sphere "s_main" (radius=0.5)
+            }
+        "#;
+        let ast = parse(main_src).unwrap();
+        let scene = crate::lower::lower_with_source(&ast, Some(tmp.path.as_path())).unwrap();
+        let imported = scene
+            .nodes
+            .iter()
+            .find(|n| n.name == "s_imported")
+            .expect("imported sphere");
+        let main = scene
+            .nodes
+            .iter()
+            .find(|n| n.name == "s_main")
+            .expect("main sphere");
+        let imported_verts = imported.mesh.as_ref().unwrap().positions.len();
+        let main_verts = main.mesh.as_ref().unwrap().positions.len();
+        assert!(
+            imported_verts < main_verts,
+            "imported file's `lod_scale (value=0.5)` should reduce its vert count \
+             below the main scene's default (imported={imported_verts}, main={main_verts})"
+        );
+    }
+
+    #[test]
+    fn importing_file_lod_does_not_leak_into_imports() {
+        // Symmetric guarantee: a generous `lod_scale` in the user's file
+        // must not balloon the vert count of imported geometry. Each file
+        // uses its own setting.
+        let tmp = TempDir::new("import_lod_isolation");
+        tmp.write(
+            "default.mog",
+            r#"scene { sphere "s_imported" (radius=0.5) }"#,
+        );
+        let main_src = r#"
+            lod_scale (value=2)
+            import "default.mog"
+            scene {
+              use "default" ()
+              sphere "s_main" (radius=0.5)
+            }
+        "#;
+        let ast = parse(main_src).unwrap();
+        let scene = crate::lower::lower_with_source(&ast, Some(tmp.path.as_path())).unwrap();
+        // Baseline: a default-LOD sphere in a standalone scene.
+        let baseline_ast = parse(r#"scene { sphere "s" (radius=0.5) }"#).unwrap();
+        let baseline = crate::lower::lower(&baseline_ast).unwrap();
+        let baseline_verts = baseline
+            .nodes
+            .iter()
+            .find(|n| n.name == "s")
+            .unwrap()
+            .mesh
+            .as_ref()
+            .unwrap()
+            .positions
+            .len();
+        let imported_verts = scene
+            .nodes
+            .iter()
+            .find(|n| n.name == "s_imported")
+            .unwrap()
+            .mesh
+            .as_ref()
+            .unwrap()
+            .positions
+            .len();
+        let main_verts = scene
+            .nodes
+            .iter()
+            .find(|n| n.name == "s_main")
+            .unwrap()
+            .mesh
+            .as_ref()
+            .unwrap()
+            .positions
+            .len();
+        assert_eq!(
+            imported_verts, baseline_verts,
+            "imported file with no `lod_scale` should keep default tessellation \
+             (got {imported_verts}, expected default {baseline_verts}); the importing \
+             file's `lod_scale=2` must not leak into imports"
+        );
+        assert!(
+            main_verts > baseline_verts,
+            "main scene with `lod_scale=2` should still upscale its own geometry \
+             (got {main_verts}, baseline {baseline_verts})"
+        );
     }
 
     #[test]

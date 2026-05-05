@@ -43,6 +43,18 @@ pub fn preview_shader_label(s: PreviewShader) -> &'static str {
     }
 }
 
+/// Compact label used in the floating viewport bar where horizontal room is
+/// scarce. Mirrors `environment_short_label` / `ShadowQuality::short_label`.
+pub fn preview_shader_short_label(s: PreviewShader) -> &'static str {
+    match s {
+        PreviewShader::Standard => "PBR",
+        PreviewShader::Toon => "Toon",
+        PreviewShader::Crt => "CRT",
+        PreviewShader::Matcap => "Matcap",
+        PreviewShader::Wireframe => "Wire",
+    }
+}
+
 pub fn parse_preview_shader(s: &str) -> Option<PreviewShader> {
     match s.trim().to_ascii_lowercase().as_str() {
         "standard" | "pbr" | "" => Some(PreviewShader::Standard),

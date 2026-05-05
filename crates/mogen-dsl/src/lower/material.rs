@@ -1,6 +1,6 @@
 use anyhow::{anyhow, bail, Result};
 
-use mogen_core::{AlphaMode, Material, SceneGraph, TextureRef, UvMode};
+use mogen_core::{AlphaMode, Material, MaterialShader, SceneGraph, TextureRef, UvMode};
 
 use crate::ast::{Node, Value};
 
@@ -117,6 +117,20 @@ fn register_material(node: &Node, graph: &mut SceneGraph) -> Result<()> {
         mat.uv_scale = [s, s];
     } else if let Some(pair) = node.attr_pair("uv_scale") {
         mat.uv_scale = pair;
+    }
+
+    let shader_attr = node
+        .attr("shader")
+        .and_then(|v| match v {
+            Value::String(s) | Value::Ident(s) => Some(s.as_str()),
+            _ => None,
+        });
+    if let Some(kind) = shader_attr {
+        mat.shader = match kind {
+            "standard" | "pbr" => MaterialShader::Standard,
+            "water" => MaterialShader::Water,
+            other => bail!("unknown shader \"{other}\" — expected standard or water"),
+        };
     }
 
     mat.origin = node.origin.clone();

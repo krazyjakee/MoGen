@@ -36,7 +36,20 @@ jagged surfaces), `faceted` (0/1 — discard smooth normals for a low-poly \
 look), `seed` (integer to vary the random pattern). Stochastic modifiers \
 (`noise`, `jitter`) are deterministic for a given `seed`. Default \
 tessellation auto-bumps when a smooth modifier is present so a bent \
-cylinder doesn't read as faceted.
+cylinder doesn't read as faceted. \
+**`noise`/`jitter` reshape geometry — they are the wrong tool for flat \
+surface grain or fine-scale roughness (wood grain, stucco, brushed metal, \
+fabric weave, plaster, sand, leather pores).** That kind of micro-detail \
+belongs to the normal map, which is auto-derived from each material's \
+albedo texture — leave the geometry smooth and let the texture pipeline \
+supply the bumpiness. Reach for `noise`/`jitter` only when the silhouette \
+itself should be lumpy or jagged (rocks, asteroids, fractured stone). \
+**Rock recipes (icosphere/sphere with rock material):** soft / weathered / \
+rounded boulders use `noise=0.7, jitter=0.1`; sharp / jagged / fractured \
+rocks use `noise=1.5, jitter=0.2`. Mid-range values like `noise=0.3–0.5` \
+read as melted blobs, not stone — pick one of the two recipes and bias \
+toward it. Pair with `subdivisions=3–4` on icosphere and a non-uniform \
+`scale=` so each rock reads as unique.
 
 ";
 

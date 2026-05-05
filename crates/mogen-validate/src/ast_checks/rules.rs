@@ -210,6 +210,24 @@ pub(super) fn check_anim_required(n: &Node, diags: &mut Vec<Diagnostic>) {
                 }
             }
         }
+        "branch" => {
+            if let Some(name) = n.attr("form").and_then(as_string_or_ident) {
+                if !matches!(
+                    name,
+                    "decurrent" | "excurrent" | "weeping" | "shrub" | "palm"
+                ) {
+                    diags.push(
+                        Diagnostic::error(
+                            "E0210",
+                            format!(
+                                "branch form must be \"decurrent\", \"excurrent\", \"weeping\", \"shrub\", or \"palm\"; got \"{name}\""
+                            ),
+                        )
+                        .with_span(n.span),
+                    );
+                }
+            }
+        }
         "light" => {
             let kind = n.attr("kind").and_then(as_string_or_ident);
             match kind {

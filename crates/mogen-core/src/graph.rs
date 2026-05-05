@@ -102,6 +102,12 @@ pub struct SceneNode {
     /// mogen does not run physics — this is metadata only.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub collider: Option<crate::Aabb>,
+    /// Whether this node's mesh contributes to the realtime shadow pre-pass and
+    /// to the exported `extras.cast_shadow` hint downstream importers read.
+    /// Defaults to `true`; set `cast_shadow=0` in the DSL to opt a node out
+    /// (decals, ground planes, low-impact filler geometry).
+    #[serde(default = "default_cast_shadow", skip_serializing_if = "is_default_cast_shadow")]
+    pub cast_shadow: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -163,6 +169,14 @@ fn is_default_editable(b: &bool) -> bool {
     *b
 }
 
+fn default_cast_shadow() -> bool {
+    true
+}
+
+fn is_default_cast_shadow(b: &bool) -> bool {
+    *b
+}
+
 fn is_false(b: &bool) -> bool {
     !*b
 }
@@ -180,6 +194,7 @@ impl Default for SceneNode {
             children: Vec::new(),
             connectors: Vec::new(),
             collider: None,
+            cast_shadow: true,
             tags: Vec::new(),
             role: None,
             kind: String::new(),

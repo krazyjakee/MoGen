@@ -1,9 +1,9 @@
     use super::flatten::{flatten, PaletteSource, FLOATS_PER_VERTEX};
     use super::state::{
-        apply_gizmo_drag, commit_gizmo_drag, gizmo_handles_supported, is_import_wrapper,
-        redirect_pick, replace_selection, replace_selection_cycling, snap_rotate_delta,
-        snap_scale_factor, snap_translate_delta, toggle_selection, GizmoDrag, PendingEdit,
-        ViewerState, PICK_CYCLE_RADIUS_PX, SCALE_SNAP_STEP,
+        apply_gizmo_drag, commit_gizmo_drag, gizmo_handles_supported, is_import_wrapper, node_path,
+        redirect_pick, replace_selection, replace_selection_cycling, resolve_node_path,
+        snap_rotate_delta, snap_scale_factor, snap_translate_delta, toggle_selection, GizmoDrag,
+        PendingEdit, ViewerState, PICK_CYCLE_RADIUS_PX, SCALE_SNAP_STEP,
     };
     use eframe::egui;
     use glam::{Mat4, Quat, Vec3};
@@ -624,7 +624,7 @@
         assert_eq!(st.selected, vec![wrapper]);
         assert_eq!(
             st.selected_paths,
-            vec![vec!["lptp".to_string()]],
+            vec![vec![("lptp".to_string(), 0u32)]],
         );
     }
 
@@ -653,6 +653,30 @@
         let b = scene.add_child(root, "b", "box", Transform::IDENTITY);
         let c = scene.add_child(root, "c", "box", Transform::IDENTITY);
         (scene, [a, b, c])
+    }
+
+    #[test]
+    fn node_path_round_trips_same_named_replicas() {
+        // Three siblings sharing one name — what `array(...)` /
+        // `mirror` produce. Without the sibling-disambiguator, all three
+        // collapse to the first match on resolve, so a gizmo move on any
+        // copy would re-select the first one after the recompile.
+        let mut scene = SceneGraph::new();
+        let root = scene.add_root("scene", "group", Transform::IDENTITY);
+        let a = scene.add_child(root, "leg", "box", Transform::IDENTITY);
+        let b = scene.add_child(root, "leg", "box", Transform::IDENTITY);
+        let c = scene.add_child(root, "leg", "box", Transform::IDENTITY);
+
+        let pa = node_path(&scene, a).unwrap();
+        let pb = node_path(&scene, b).unwrap();
+        let pc = node_path(&scene, c).unwrap();
+        assert_eq!(pa.last().unwrap().1, 0);
+        assert_eq!(pb.last().unwrap().1, 1);
+        assert_eq!(pc.last().unwrap().1, 2);
+
+        assert_eq!(resolve_node_path(&scene, &pa), Some(a));
+        assert_eq!(resolve_node_path(&scene, &pb), Some(b));
+        assert_eq!(resolve_node_path(&scene, &pc), Some(c));
     }
 
     #[test]

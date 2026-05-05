@@ -249,9 +249,7 @@ impl MogenStudioApp {
             self.ui_llm_progress_card(ui);
         }
 
-        // Texture thumbnail strip sits at the bottom so it doesn't push the
-        // prompt boxes off-screen on narrow layouts. Only drawn when the
-        // active file's scene actually references any albedo files on disk.
-        self.ui_texture_thumbs(ui);
+        // Per-material texture thumbnails + Generate/Regenerate/Delete/Reveal
+        // actions live in the Materials inspector — see `ui_panels::materials`.
     }
 }

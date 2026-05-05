@@ -4,11 +4,11 @@ use std::time::Instant;
 
 use eframe::egui;
 
-use crate::app::types::{UndoKey, TEX_EXISTS_TTL};
+use crate::app::types::{ThumbEntry, UndoKey, TEX_EXISTS_TTL};
 use crate::app::util::{
-    delete_texture_group, ellipsize_path, find_material_source_span, format_inspector_scalar,
-    gather_texture_refs, materials_referenced_by_visible_nodes, origin_in_visible_set,
-    resolve_for_check, scan_unused_textures, visible_origins,
+    delete_material_textures, delete_texture_group, ellipsize_path, find_material_source_span,
+    format_inspector_scalar, gather_texture_refs, materials_referenced_by_visible_nodes,
+    origin_in_visible_set, resolve_for_check, scan_unused_textures, visible_origins,
 };
 use crate::app::MogenStudioApp;
 
@@ -25,10 +25,25 @@ impl MogenStudioApp {
     /// `./textures/` that no material references.
     pub(in crate::app) fn ui_materials(&mut self, ui: &mut egui::Ui) {
         use crate::edit;
-        use mogen_core::{AlphaMode, UvMode};
+        use mogen_core::{AlphaMode, MaterialShader, UvMode};
+
+        // Per-material texture-management actions queued during the UI scan and
+        // applied after the loop so we can take a fresh `&mut self` borrow
+        // without fighting the material-clone iteration.
+        enum TexAction {
+            Regenerate(String),
+            Delete(String),
+            Reveal(PathBuf),
+        }
 
         let i = self.active;
         let selection = self.viewer.primary_selection();
+        let busy = self.files[i].llm_in_flight.is_some();
+        let has_key = self.resolve_api_key().is_some();
+        let has_path = self.files[i].path.is_some();
+        let src_empty = self.files[i].source.trim().is_empty();
+        let tex_enabled = has_key && !busy && !src_empty && has_path;
+        let ctx = ui.ctx().clone();
         let Some(result) = &self.files[i].last_result else {
             ui.label("(no build yet)");
             return;
@@ -80,6 +95,10 @@ impl MogenStudioApp {
         // don't clash with the material clone borrow. Each entry spans a
         // single attr rewrite on the named material.
         let mut pending: Vec<(String, &'static str, String)> = Vec::new();
+        // Per-material texture-management click queued by the per-material
+        // thumbnail row; applied after both loops so the action handler can
+        // mutate source / spawn workers freely.
+        let mut pending_tex_action: Option<TexAction> = None;
 
         // Salt every per-material widget ID with the scene-graph index in
         // addition to the material name. Imports can introduce a second
@@ -179,9 +198,11 @@ impl MogenStudioApp {
                         }
                     });
 
-                    // Normal / AO strength — apply when the textures pipeline
-                    // derives PBR maps for this material. Authored normal/AO
-                    // textures ignore these.
+                    // Normal / AO strength. `normal_strength` is now a render-time
+                    // multiplier on the tangent-space XY components — it scales
+                    // the live preview and exports as glTF's `normalTexture.scale`,
+                    // and is also used as the bake-time slope when the textures
+                    // pipeline derives the normal PNG.
                     ui.horizontal(|ui| {
                         let mut ns = mat.normal_strength;
                         if ui
@@ -191,9 +212,11 @@ impl MogenStudioApp {
                                     .fixed_decimals(2),
                             )
                             .on_hover_text(
-                                "Slope multiplier baked into the derived normal map \
-                                 by `mogen textures`. Larger = more pronounced bumps. \
-                                 Ignored when `normal_texture` is authored directly.",
+                                "Slope multiplier on the normal map. 0 flattens \
+                                 the surface to its geometric normal; larger values \
+                                 exaggerate bumps. Live in the preview and exported \
+                                 as glTF `normalTexture.scale`; also used as the \
+                                 bake-time slope by `mogen textures`.",
                             )
                             .changed()
                         {
@@ -420,17 +443,153 @@ impl MogenStudioApp {
                         }
                     });
 
-                    // Texture slot roster for this material — same ✓/✗
-                    // existence check as before, nested under its owner so
-                    // the relationship is obvious.
+                    // Per-material shader override. Studio-only — the export
+                    // path always emits standard PBR. Currently exposes the
+                    // animated water surface; new shaders join this dropdown
+                    // when added.
+                    ui.horizontal(|ui| {
+                        ui.label("Shader");
+                        let mut shader = mat.shader;
+                        let shader_id = egui::Id::new(("shader", *idx, mat.name.as_str()));
+                        egui::ComboBox::from_id_salt(shader_id)
+                            .selected_text(match shader {
+                                MaterialShader::Standard => "standard (PBR)",
+                                MaterialShader::Water => "water",
+                            })
+                            .show_ui(ui, |ui| {
+                                let mut changed = false;
+                                changed |= ui
+                                    .selectable_value(
+                                        &mut shader,
+                                        MaterialShader::Standard,
+                                        "standard (PBR)",
+                                    )
+                                    .changed();
+                                changed |= ui
+                                    .selectable_value(
+                                        &mut shader,
+                                        MaterialShader::Water,
+                                        "water",
+                                    )
+                                    .changed();
+                                if changed {
+                                    let v = match shader {
+                                        MaterialShader::Standard => "\"standard\"",
+                                        MaterialShader::Water => "\"water\"",
+                                    };
+                                    pending.push((
+                                        mat.name.clone(),
+                                        "shader",
+                                        v.to_string(),
+                                    ));
+                                }
+                            });
+                    });
+
+                    // Per-material textures section: albedo thumbnail,
+                    // generate/delete/reveal actions, and the slot roster
+                    // with ✓/✗ existence marks. All texture management for
+                    // this material lives here so the relationship between
+                    // a material and its PNGs is unambiguous.
                     let mat_slots: Vec<(String, &'static str, PathBuf)> = texture_slots
                         .iter()
                         .filter(|(m, _, _)| m == &mat.name)
                         .cloned()
                         .collect();
+                    let albedo_path: Option<PathBuf> = mat_slots
+                        .iter()
+                        .find(|(_, slot, _)| *slot == "base_color")
+                        .map(|(_, _, rel)| resolve_for_check(rel, source_dir.as_deref()));
+                    let albedo_exists = albedo_path
+                        .as_ref()
+                        .map(|p| self.cached_exists(p))
+                        .unwrap_or(false);
+
+                    ui.add_space(4.0);
+                    ui.label(egui::RichText::new("textures").weak());
+
+                    ui.horizontal(|ui| {
+                        let thumb_size = 64.0_f32;
+                        let cell = egui::vec2(thumb_size, thumb_size);
+                        if albedo_exists {
+                            let abs = albedo_path.clone().expect("checked above");
+                            if let Some(handle) = self.thumb_handle(&ctx, &abs) {
+                                ui.add(
+                                    egui::Image::new((handle.id(), cell))
+                                        .rounding(4.0),
+                                )
+                                .on_hover_text(ellipsize_path(&abs, 60));
+                            } else {
+                                let (rect, _) =
+                                    ui.allocate_exact_size(cell, egui::Sense::hover());
+                                ui.painter().rect_filled(
+                                    rect,
+                                    4.0,
+                                    ui.visuals().faint_bg_color,
+                                );
+                            }
+                        } else {
+                            let (rect, _) =
+                                ui.allocate_exact_size(cell, egui::Sense::hover());
+                            ui.painter().rect_filled(
+                                rect,
+                                4.0,
+                                ui.visuals().faint_bg_color,
+                            );
+                            ui.painter().text(
+                                rect.center(),
+                                egui::Align2::CENTER_CENTER,
+                                "(none)",
+                                egui::FontId::proportional(11.0),
+                                ui.visuals().weak_text_color(),
+                            );
+                        }
+
+                        ui.vertical(|ui| {
+                            let gen_label =
+                                if albedo_exists { "Regenerate" } else { "Generate" };
+                            let gen_tip = if albedo_exists {
+                                "Re-run the textures pipeline for this material \
+                                 (forces overwrite of existing PNGs)"
+                            } else {
+                                "Run the textures pipeline for this material — writes a \
+                                 base_color PNG (plus derived normal/MR/AO) into ./textures/"
+                            };
+                            if ui
+                                .add_enabled(tex_enabled, egui::Button::new(gen_label))
+                                .on_hover_text(gen_tip)
+                                .clicked()
+                            {
+                                pending_tex_action =
+                                    Some(TexAction::Regenerate(mat.name.clone()));
+                            }
+                            if ui
+                                .add_enabled(albedo_exists, egui::Button::new("Delete"))
+                                .on_hover_text(
+                                    "Remove the albedo + PBR companion PNGs and clear the \
+                                     *_texture attrs on this material",
+                                )
+                                .clicked()
+                            {
+                                pending_tex_action =
+                                    Some(TexAction::Delete(mat.name.clone()));
+                            }
+                            if ui
+                                .add_enabled(albedo_exists, egui::Button::new("Reveal"))
+                                .on_hover_text(
+                                    "Open this PNG's folder in the OS file manager \
+                                     with the file selected",
+                                )
+                                .clicked()
+                            {
+                                if let Some(p) = albedo_path.clone() {
+                                    pending_tex_action = Some(TexAction::Reveal(p));
+                                }
+                            }
+                        });
+                    });
+
                     if !mat_slots.is_empty() {
-                        ui.add_space(4.0);
-                        ui.label(egui::RichText::new("textures").weak());
                         for (_, slot, rel_path) in &mat_slots {
                             let resolved = resolve_for_check(rel_path, source_dir.as_deref());
                             let exists = self.cached_exists(&resolved);
@@ -549,6 +708,94 @@ impl MogenStudioApp {
                 self.compile_active();
             }
         }
+
+        // Apply the per-material texture click. Mirrors the right-click
+        // actions that previously lived on the LLM panel's thumbnail strip,
+        // now wired directly to the buttons under each material.
+        if let Some(action) = pending_tex_action {
+            match action {
+                TexAction::Regenerate(material) => {
+                    self.start_llm_textures_for_material(ctx.clone(), material);
+                }
+                TexAction::Reveal(path) => {
+                    let status = match crate::app::editor_link::reveal_in_os(&path) {
+                        Ok(()) => format!("revealed {}", path.display()),
+                        Err(e) => format!("reveal failed: {} ({e})", path.display()),
+                    };
+                    self.active_mut().status = status;
+                }
+                TexAction::Delete(material) => {
+                    let source = self.files[i].source.clone();
+                    let (new_source, status) = delete_material_textures(
+                        &source,
+                        source_dir.as_deref(),
+                        &material,
+                        &texture_slots,
+                    );
+                    let changed = new_source != source;
+                    self.tex_exists_cache.clear();
+                    self.thumb_cache.clear();
+                    if changed {
+                        {
+                            let f = &mut self.files[i];
+                            f.source = new_source;
+                            f.dirty = f.source != f.last_saved_source;
+                            f.needs_compile = true;
+                            f.last_edit_at = Some(Instant::now());
+                        }
+                        // Texture-cleanup deletes PNGs from disk as a side
+                        // effect, so this edit is non-undoable like the
+                        // LLM completions. Break the coalesce chain so a
+                        // subsequent gizmo / inspector edit doesn't merge
+                        // into a pre-cleanup stack entry.
+                        self.break_undo_chain(i);
+                        self.compile_active();
+                    }
+                    self.active_mut().status = status;
+                }
+            }
+        }
+    }
+
+    /// Look up or lazily upload an albedo thumbnail for `abs`. `None` when the
+    /// file isn't a readable PNG. Same cache (keyed by absolute path + mtime)
+    /// the LLM panel previously used.
+    fn thumb_handle(
+        &mut self,
+        ctx: &egui::Context,
+        abs: &Path,
+    ) -> Option<egui::TextureHandle> {
+        let mtime = fs::metadata(abs).ok().and_then(|m| m.modified().ok());
+        if let Some(entry) = self.thumb_cache.get(abs) {
+            if entry.mtime == mtime {
+                return Some(entry.handle.clone());
+            }
+        }
+        let bytes = fs::read(abs).ok()?;
+        let img = image::load_from_memory_with_format(&bytes, image::ImageFormat::Png)
+            .ok()?
+            .to_rgba8();
+        // Downscale oversized albedos before upload — a 2048² RGBA8 texture
+        // is 16 MB in VRAM per material, and thumbnails render at 64 px.
+        let image_rgba = if img.width().max(img.height()) > 128 {
+            image::imageops::resize(&img, 128, 128, image::imageops::FilterType::Triangle)
+        } else {
+            img
+        };
+        let (w2, h2) = (image_rgba.width() as usize, image_rgba.height() as usize);
+        let handle = ctx.load_texture(
+            format!("thumb:{}", abs.display()),
+            egui::ColorImage::from_rgba_unmultiplied([w2, h2], image_rgba.as_raw()),
+            egui::TextureOptions::LINEAR,
+        );
+        self.thumb_cache.insert(
+            abs.to_path_buf(),
+            ThumbEntry {
+                handle: handle.clone(),
+                mtime,
+            },
+        );
+        Some(handle)
     }
 
     /// Stat-cached existence check. The texture-roster paint runs every frame

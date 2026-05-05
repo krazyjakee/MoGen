@@ -44,11 +44,15 @@ pub fn list_imports(src: &str) -> Vec<ImportEntry> {
     out
 }
 
-/// Append `body` (a single statement, e.g. `box "b" (size=1)`) as the last
-/// child of the first top-level `scene { … }` block in `src`. If no scene
-/// block exists, append `scene { body }`. Indentation is two spaces — the
-/// project convention; files using a different indent stay valid but won't
-/// match the surrounding block.
+/// Append `body` as the last child of the first top-level `scene { … }`
+/// block in `src`. If no scene block exists, append `scene { body }`.
+/// Indentation is two spaces — the project convention; files using a
+/// different indent stay valid but won't match the surrounding block.
+///
+/// Multi-line bodies (e.g. a CSG op with two operands on separate lines)
+/// are re-indented so every line lands at the scene's inner indent. The
+/// caller is expected to already indent the body's interior relative to
+/// its first line — the merge here just shifts the whole block right.
 pub fn append_to_scene(src: &str, body: &str) -> String {
     if let Some((open, close)) = find_top_level_scene_block(src) {
         let block_indent = block_indent_for_close(src, close);
@@ -63,15 +67,17 @@ pub fn append_to_scene(src: &str, body: &str) -> String {
                 break;
             }
         }
-        let payload = format!("\n{inner_indent}{body}\n{block_indent}");
+        let indented = body.replace('\n', &format!("\n{inner_indent}"));
+        let payload = format!("\n{inner_indent}{indented}\n{block_indent}");
         return splice(src, splice_at..close, &payload);
     }
     let mut out = src.trim_end().to_string();
     if !out.is_empty() {
         out.push_str("\n\n");
     }
+    let indented = body.replace('\n', "\n  ");
     out.push_str("scene {\n  ");
-    out.push_str(body);
+    out.push_str(&indented);
     out.push_str("\n}\n");
     out
 }
@@ -339,6 +345,17 @@ mod tests {
         assert!(out.contains("box \"a\""));
         assert!(out.contains("sphere \"b\" (radius=0.5)"));
         assert!(out.ends_with("}\n"));
+    }
+
+    #[test]
+    fn append_to_scene_indents_multiline_body() {
+        let src = "scene {\n  box \"a\" (size=1)\n}\n";
+        let body = "difference \"d\" () {\n  box \"a\" (size=[1, 1, 1])\n  box \"b\" (size=[0.7, 1.2, 0.7])\n}";
+        let out = append_to_scene(src, body);
+        assert_eq!(
+            out,
+            "scene {\n  box \"a\" (size=1)\n  difference \"d\" () {\n    box \"a\" (size=[1, 1, 1])\n    box \"b\" (size=[0.7, 1.2, 0.7])\n  }\n}\n"
+        );
     }
 
     #[test]

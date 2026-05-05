@@ -65,9 +65,9 @@ struct AttachSpec {
 /// Top-level attaches (authored directly in the user's scene, no `use_id`)
 /// fall back to the global namespace, preserving the historical behavior.
 ///
-/// Attaches inside an `array`/`mirror` subtree are NOT visited here — the
-/// replicator handles them per-instance via [`resolve_attaches_in_scope`] so
-/// each replicated copy resolves parent/child against its own subtree.
+/// Attaches inside an `array`/`mirror`/`grid` subtree are NOT visited here —
+/// the replicator handles them per-instance via [`resolve_attaches_in_scope`]
+/// so each replicated copy resolves parent/child against its own subtree.
 pub fn resolve_attaches(ast: &[Node], graph: &mut SceneGraph) -> Result<()> {
     let specs = collect_attaches(ast)?;
 
@@ -177,7 +177,7 @@ fn walk(n: &Node, out: &mut Vec<AttachSpec>) -> Result<()> {
     }
     // Stop at replicator boundaries: their attach children are resolved
     // per-instance by resolve_attaches_in_scope, not globally.
-    if n.kind == "array" || n.kind == "mirror" {
+    if n.kind == "array" || n.kind == "mirror" || n.kind == "grid" {
         return Ok(());
     }
     for c in &n.children {

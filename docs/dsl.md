@@ -386,6 +386,7 @@ deterministic function of `seed=`.
 
 | attribute | default | effect |
 |---|---|---|
+| `form` | `"decurrent"` | growth habit preset — see below. Sets sensible defaults for all attrs in this table; user attrs still win |
 | `length` | `1.0` | trunk length (m) |
 | `radius` | `0.05` | trunk base radius (m) |
 | `depth` | `4` | recursion depth (number of branching levels) |
@@ -396,14 +397,27 @@ deterministic function of `seed=`.
 | `roll` | `137.5` | roll (degrees) between successive children — the golden angle by default, breaks bilateral symmetry |
 | `tropism` | `0.0` | bias toward +Y per segment (positive = upright trees, negative = drooping) |
 | `bend` | `10` | random bend (degrees) added to each segment frame |
+| `leader_bias` | `0.0` | `0.0`–`1.0` strength of central-leader behaviour. At `1.0` child 0 of every fork continues straight up at full length/radius (pine-like silhouette); at `0.0` all forks are equal (default broadleaf habit) |
+| `multi_stem` | `1` | number of trunks emerging from the base. Only honoured by `form="shrub"`; ignored otherwise |
 | `segments` | `8` | radial segments per spline_tube |
 | `samples` | `4` | samples per spline segment |
 | `seed` | `1` | RNG seed; same seed = identical tree |
 | `jitter` | `0.2` | `0.0`–`1.0` random perturbation amount on lengths/angles |
 | `leaves` | `1` | emit `leaf_card` clusters at terminal tips (`0` to disable) |
-| `leaf_size` | `0.35` | leaf-card extent (m) |
-| `leaf_cards` | `2` | crossed cards per leaf cluster |
+| `leaf_size` | `0.35` | leaf-card height (m) |
+| `leaf_aspect` | `1.0` | leaf width / height ratio. `<1` for needle/willow leaves, `>1` for wide flat leaves |
+| `leaf_cards` | `2` | crossed cards per leaf cluster (or fronds in the palm rosette) |
 | `leaf_mat` | — | material name for leaves; defaults to inherited `mat=` |
+
+`form` values:
+
+| value | habit | distinctive defaults |
+|---|---|---|
+| `"decurrent"` | broadleaf tree (default — oak, maple) | equal forks, square leaves |
+| `"excurrent"` | conifer (pine, spruce) | strong central leader, near-horizontal side branches, narrow needle leaves |
+| `"weeping"` | willow | long branches with strong negative tropism (drooping), long narrow leaves |
+| `"shrub"` | bush | several short trunks at the base (`multi_stem=4` by default), no leader |
+| `"palm"` | palm | single straight trunk with a fan of frond-shaped cards at the tip; no recursive branching |
 
 Wrap a `branch` in a `group` and apply `scale=` / `rot=` to compose
 forests, antlers, vines, or root systems out of the same generator. Pair
@@ -490,6 +504,33 @@ Declared at the top of the file or inside `scene { ... }`. Attributes:
   `prompt="navy nylon ripstop weave"`. The texture pipeline rephrases this
   on retry if the image generator rejects the request for recitation, so a
   literal brand-adjacent phrasing won't permanently jam a build.
+- `shader` — `"standard"` (default) or `"water"`. Selects a per-material
+  shader override in **MoGen Studio's preview only** — the exported `.glb`
+  always uses standard PBR, since glTF 2.0 cannot carry custom shader code.
+  `"water"` swaps the live preview for animated ripples + fresnel-driven
+  body/sky mix + sun glints. The water branch reads the standard material
+  knobs:
+  - `color` is the absorbed body tint when looking straight down
+    (`[0.12, 0.55, 0.62]` reads as a lagoon, `[0.02, 0.05, 0.15]` as deep
+    ocean).
+  - `uv_scale` controls ripple density: `1.0` ≈ pool-scale chop, raise it
+    for choppier small ponds, lower it for lazy ocean swells.
+  - `roughness` ties together chop, sky-reflection blur, sun-glint
+    sharpness, and foam. `0.05` is glassy mirror, `0.4` is a calm pool,
+    `0.9` (the default) is ocean-style ripples, `1.0` adds whitecaps.
+  - `metallic` lerps the Fresnel base from clean dielectric water (`0`)
+    toward liquid metal at `1` — mercury / molten silver, where the body
+    tint becomes the reflection colour at all angles.
+  - `transmission` makes the body absorption recede so the sky reflection
+    and what's behind the surface dominate. Combine with
+    `alpha_mode="blend"` to actually see the pool floor through the water.
+  - `emissive` / `emissive_strength` light the water from within (lava,
+    magic potion, bioluminescent surf).
+  - `normal_strength` multiplies the wave-slope (default `1.5`); raising
+    it deepens the ripples without retuning chop.
+  - `normal_texture` and `base_color_texture` are blended into the
+    procedural waves and body tint respectively so authors can paint in
+    high-frequency detail or shallow/deep variation.
 
 Example:
 
@@ -500,6 +541,8 @@ material "oak" (
   base_color_texture="textures/oak_albedo.png",
   normal_texture="textures/oak_normal.png"
 )
+
+material "lake" (color=[0.05, 0.32, 0.45], shader="water")
 ```
 
 Texture files are embedded in the output GLB, so the resulting `.glb` is
@@ -1414,6 +1457,34 @@ The export writes one entry per collider'd node into glTF
 downstream importer to convert into a `CollisionShape3D` (or equivalent).
 MoGen Studio renders an off-by-default wireframe gizmo at each collider'd
 node; toggle it from **View → Show Colliders** or the viewport context menu.
+
+---
+
+## Shadow casting
+
+Every node casts shadows by default. Add `cast_shadow=0` to opt a node — and
+its entire subtree — out of the realtime shadow pre-pass and the exported
+shadow hint:
+
+```
+plane "ground" (size=20, mat="grass", cast_shadow=0)
+group "filler" (cast_shadow=0) {
+  box (size=[1, 1, 1])     # inherits cast_shadow=0
+  use  "rocks"             # inherits too
+}
+```
+
+The flag propagates monotonically: an ancestor's `cast_shadow=0` overrides a
+descendant default. Setting it on a child while a parent already disabled it
+is a no-op (the descendant stays opted out).
+
+The export writes `extras.cast_shadow=false` only on opted-out nodes; the
+typical "casts shadow" case omits the key entirely so the JSON chunk stays
+lean. Downstream importers that don't recognise the key fall back to the
+glTF default (casts shadow), matching the spec.
+
+The right-sidebar inspector exposes the toggle as a checkbox under
+**Shadow**.
 
 ---
 

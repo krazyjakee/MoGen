@@ -62,8 +62,12 @@ pub struct Renderer {
     u_normal_tex: Option<glow::UniformLocation>,
     u_ao_tex: Option<glow::UniformLocation>,
     u_emissive_tex: Option<glow::UniformLocation>,
+    u_normal_scale: Option<glow::UniformLocation>,
+    u_uv_scale: Option<glow::UniformLocation>,
     u_joint_mats: Option<glow::UniformLocation>,
     u_shader_mode: Option<glow::UniformLocation>,
+    u_material_shader: Option<glow::UniformLocation>,
+    u_time: Option<glow::UniformLocation>,
     u_num_lights: Option<glow::UniformLocation>,
     u_light_kind: Option<glow::UniformLocation>,
     u_light_pos: Option<glow::UniformLocation>,
@@ -103,6 +107,10 @@ pub struct Renderer {
     /// `glPolygonMode` in `draw`; kept separate from `shader_mode` because
     /// wireframe's shader path is just the standard PBR output.
     wireframe: bool,
+    /// Seconds since renderer start, fed to `u_time` each draw. Drives
+    /// time-varying per-material shaders (water). The viewer pushes a fresh
+    /// value via [`Self::set_frame_time`] before each paint.
+    frame_time: f32,
     /// Cached uploaded textures keyed by (resolved filesystem path, sRGB flag).
     /// Albedo and emissive maps load as sRGB; normal, MR, and AO load as
     /// linear, so the same PNG used in two roles would need two separate GL
@@ -277,8 +285,12 @@ impl Renderer {
             let u_normal_tex = u("u_normal_tex");
             let u_ao_tex = u("u_ao_tex");
             let u_emissive_tex = u("u_emissive_tex");
+            let u_normal_scale = u("u_normal_scale");
+            let u_uv_scale = u("u_uv_scale");
             let u_joint_mats = u("u_joint_mats[0]");
             let u_shader_mode = u("u_shader_mode");
+            let u_material_shader = u("u_material_shader");
+            let u_time = u("u_time");
             let u_num_lights = u("u_num_lights");
             let u_light_kind = u("u_light_kind[0]");
             let u_light_pos = u("u_light_pos[0]");
@@ -344,8 +356,12 @@ impl Renderer {
                 u_normal_tex,
                 u_ao_tex,
                 u_emissive_tex,
+                u_normal_scale,
+                u_uv_scale,
                 u_joint_mats,
                 u_shader_mode,
+                u_material_shader,
+                u_time,
                 u_num_lights,
                 u_light_kind,
                 u_light_pos,
@@ -378,6 +394,7 @@ impl Renderer {
                 environment: Environment::default().params(),
                 shader_mode: 0,
                 wireframe: false,
+                frame_time: 0.0,
                 texture_cache: TextureCache::new(),
                 vbo_bytes: 0,
                 ebo_bytes: 0,
@@ -398,6 +415,13 @@ impl Renderer {
     pub fn set_preview(&mut self, shader_mode: i32, wireframe: bool) {
         self.shader_mode = shader_mode;
         self.wireframe = wireframe;
+    }
+
+    /// Hand the renderer the latest monotonic frame time (seconds) for
+    /// time-varying material shaders. Cheap — just stores the value; the
+    /// next `draw` uploads it to `u_time`.
+    pub fn set_frame_time(&mut self, secs: f32) {
+        self.frame_time = secs;
     }
 
     /// Hand the renderer the latest resolved punctual lights for the active

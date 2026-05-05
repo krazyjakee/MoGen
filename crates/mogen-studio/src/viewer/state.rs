@@ -16,6 +16,17 @@ use super::lights::{collect_lights, ResolvedLight};
 use super::shadows::ShadowQuality;
 use crate::preview_shader::PreviewShader;
 
+/// Stable, recompile-survivable handle for a scene node. Each entry is a
+/// `(name, sibling_disambiguator)` pair: walk root→leaf, picking the
+/// `disambiguator`-th sibling that matches `name` under the running parent.
+/// The disambiguator counts only siblings with the same name — unique names
+/// always carry `0`, so adding/removing differently-named siblings doesn't
+/// invalidate unrelated paths. Without it, `array(...)`/`mirror`/etc.
+/// replicas (which all share a name) would all collapse onto the first
+/// match after a recompile, so a gizmo drag on the second copy would
+/// re-select the first one when the rebuild lands.
+pub type SelectionPath = Vec<(String, u32)>;
+
 /// Shared state between the egui main thread and the render-time paint callback.
 pub struct ViewerState {
     pub camera: OrbitCamera,
@@ -61,7 +72,7 @@ pub struct ViewerState {
     /// Used to re-resolve `NodeId`s after a recompile renumbers scene nodes.
     /// Kept separate from `selected` so `set_scene` can refresh ids without
     /// app code having to track both.
-    pub selected_paths: Vec<Vec<String>>,
+    pub selected_paths: Vec<SelectionPath>,
     /// Viewport gizmo mode. Toggled by toolbar buttons; the drag handler
     /// looks at this to pick which axis-hit/drag-math function to call.
     pub gizmo_mode: crate::gizmo::GizmoMode,
@@ -1218,36 +1229,65 @@ fn dominant_axis_index(v: Vec3) -> usize {
     }
 }
 
-/// Walk from `id` up to a root collecting names in root → ... → node order.
-pub(super) fn node_path(scene: &SceneGraph, id: NodeId) -> Option<Vec<String>> {
+/// Walk from `id` up to a root collecting `(name, sibling_disambiguator)`
+/// in root → ... → node order. The disambiguator is the index of the node
+/// among siblings under the same parent that share its `name` (in scene
+/// order). Replicators (`array`, `mirror`, …) produce siblings with
+/// identical names, so name-only paths would collide.
+pub(super) fn node_path(scene: &SceneGraph, id: NodeId) -> Option<SelectionPath> {
     if id.0 as usize >= scene.nodes.len() {
         return None;
     }
-    let mut out = Vec::new();
+    let mut out: SelectionPath = Vec::new();
     let mut cur = Some(id);
     while let Some(n) = cur {
-        let node = &scene.nodes[n.0 as usize];
-        out.push(node.name.clone());
+        let node = scene.nodes.get(n.0 as usize)?;
+        let siblings: &[NodeId] = match node.parent {
+            Some(pid) => &scene.nodes.get(pid.0 as usize)?.children,
+            None => &scene.roots,
+        };
+        let mut disamb: u32 = 0;
+        for sib in siblings {
+            if *sib == n {
+                break;
+            }
+            if let Some(s) = scene.nodes.get(sib.0 as usize) {
+                if s.name == node.name {
+                    disamb += 1;
+                }
+            }
+        }
+        out.push((node.name.clone(), disamb));
         cur = node.parent;
     }
     out.reverse();
     Some(out)
 }
 
-/// Re-resolve a saved node path against a freshly-lowered scene. Returns the
-/// first node whose parent chain matches — collisions (two siblings with the
-/// same name) are a DSL authoring smell, so we don't try to disambiguate.
-pub(super) fn resolve_node_path(scene: &SceneGraph, path: &[String]) -> Option<NodeId> {
-    if path.is_empty() {
-        return None;
+/// Re-resolve a saved selection path against a freshly-lowered scene by
+/// walking root → leaf and picking the `disamb`-th same-named child at each
+/// step. Returns `None` when any step finds no matching sibling — usually
+/// because the node was deleted by the most recent edit.
+pub(super) fn resolve_node_path(scene: &SceneGraph, path: &[(String, u32)]) -> Option<NodeId> {
+    let mut iter = path.iter();
+    let (root_name, root_disamb) = iter.next()?;
+    let mut current = pick_nth_named(scene, &scene.roots, root_name, *root_disamb)?;
+    for (name, disamb) in iter {
+        let children = &scene.nodes.get(current.0 as usize)?.children;
+        current = pick_nth_named(scene, children, name, *disamb)?;
     }
-    for i in 0..scene.nodes.len() {
-        let id = NodeId(i as u32);
-        let Some(cur_path) = node_path(scene, id) else {
-            continue;
-        };
-        if cur_path == path {
-            return Some(id);
+    Some(current)
+}
+
+fn pick_nth_named(scene: &SceneGraph, ids: &[NodeId], name: &str, n: u32) -> Option<NodeId> {
+    let mut count: u32 = 0;
+    for &id in ids {
+        let node = scene.nodes.get(id.0 as usize)?;
+        if node.name == name {
+            if count == n {
+                return Some(id);
+            }
+            count += 1;
         }
     }
     None

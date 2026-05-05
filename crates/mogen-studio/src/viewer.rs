@@ -29,6 +29,7 @@ pub use lights::ResolvedLight;
 pub use shadows::ShadowQuality;
 pub use state::{
     is_import_wrapper, CaptureFrame, CaptureKind, CaptureOutcome, CaptureRequest, PendingEdit,
+    SelectionPath,
 };
 
 use crate::preview_shader::PreviewShader;
@@ -43,6 +44,11 @@ use state::{
 pub struct Viewer {
     pub state: Arc<Mutex<ViewerState>>,
     pub renderer: Arc<Mutex<Renderer>>,
+    /// Monotonic clock anchored at viewer construction. Forwarded to the
+    /// renderer each paint as `u_time` so per-material shaders (water) get a
+    /// stable, wraparound-free seconds counter without depending on the
+    /// system wall clock.
+    start: std::time::Instant,
 }
 
 impl Viewer {
@@ -50,6 +56,7 @@ impl Viewer {
         Ok(Self {
             state: Arc::new(Mutex::new(ViewerState::default())),
             renderer: Arc::new(Mutex::new(Renderer::new(gl)?)),
+            start: std::time::Instant::now(),
         })
     }
 
@@ -182,7 +189,7 @@ impl Viewer {
     /// All stable name-paths in click order, parallel to `all_selected()`.
     /// Used by the undo stack to capture / restore the full selection across
     /// recompiles when raw `NodeId` indices may have shifted.
-    pub fn all_selected_paths(&self) -> Vec<Vec<String>> {
+    pub fn all_selected_paths(&self) -> Vec<SelectionPath> {
         self.state.lock().unwrap().selected_paths.clone()
     }
 
@@ -190,7 +197,7 @@ impl Viewer {
     /// so the inspector doesn't render against stale indices; the next
     /// `set_scene` call resolves the paths back to `NodeId`s once the
     /// recompile lands.
-    pub fn set_selected_paths(&self, paths: Vec<Vec<String>>) {
+    pub fn set_selected_paths(&self, paths: Vec<SelectionPath>) {
         let mut st = self.state.lock().unwrap();
         st.selected_paths = paths;
         st.selected.clear();
@@ -709,13 +716,15 @@ impl Viewer {
             }
 
             // Backspace / Delete removes the selected node when the viewport
-            // is hovered. Same hover gate as Esc so the keypress doesn't fire
-            // through from the editor or inspector. The actual source mutation
-            // and undo bookkeeping happen in `drain_viewport_edits`.
+            // is hovered AND no widget holds keyboard focus — otherwise
+            // `consume_key` snatches the Backspace out of a focused TextEdit
+            // (inspector field, spotlight, etc.) just because the cursor
+            // happens to be over the 3D view.
             if !cinema_active
                 && !gizmo_in_progress
                 && response.hovered()
                 && !st.selected.is_empty()
+                && ui.memory(|m| m.focused().is_none())
             {
                 let pressed = ui.input_mut(|i| {
                     i.consume_key(egui::Modifiers::NONE, egui::Key::Delete)
@@ -759,6 +768,12 @@ impl Viewer {
                     needs_repaint = true;
                 }
             }
+            // Per-material shaders that animate (water) need the viewport to
+            // keep repainting even when no clips are active, otherwise the
+            // waves freeze.
+            if st.mesh.has_animated_shader() {
+                needs_repaint = true;
+            }
             max_fps = st.max_fps;
         }
         if needs_repaint {
@@ -779,6 +794,11 @@ impl Viewer {
         let viewport_height = rect.height();
         let state_for_paint = self.state.clone();
         let renderer_for_paint = self.renderer.clone();
+        // Snapshot the monotonic clock outside the move closure so the GL
+        // thread doesn't need access to `self`. `as_secs_f32` rolls over
+        // around 2^24 seconds (~6 months) — well past any sane viewport
+        // session, so it stays a clean monotonic float for water shaders.
+        let frame_time = self.start.elapsed().as_secs_f32();
 
         let cb = egui_glow::CallbackFn::new(move |_info, painter| {
             let gl = painter.gl();
@@ -802,6 +822,11 @@ impl Viewer {
             // other. Only one frame is processed per paint so the UI thread
             // gets to redraw between renders (otherwise a 180-frame video
             // freezes the window for the whole encode).
+            // Push the frame clock before the capture branch so a still
+            // capture of a water material samples the same `u_time` the
+            // viewport just used (otherwise the capture would render with
+            // the previous frame's clock).
+            rr.set_frame_time(frame_time);
             if st.capture_request.is_some() {
                 process_capture_step(&mut rr, gl, &mut st);
             }

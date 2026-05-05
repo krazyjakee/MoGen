@@ -241,6 +241,13 @@ fn is_mergeable(n: &SceneNode, id: NodeId, protected: &HashSet<NodeId>) -> bool 
     if n.collider.is_some() {
         return false;
     }
+    // Shadow opt-outs survive the merge unchanged: if we folded a
+    // `cast_shadow=false` leaf into a casting sibling, the union mesh would
+    // silently start throwing shadows again. Cheaper and clearer to keep
+    // opted-out leaves on their own.
+    if !n.cast_shadow {
+        return false;
+    }
     match &n.mesh {
         Some(m) if !m.is_skinned() => true,
         _ => false,
@@ -317,6 +324,7 @@ fn build_merged_node(
         children: Vec::new(),
         connectors: Vec::new(),
         collider: None,
+        cast_shadow: true,
         tags: vec!["merged".into()],
         role: None,
         source_span: None,

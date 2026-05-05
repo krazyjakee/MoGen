@@ -203,3 +203,67 @@ fn open_in_os(path: &std::path::Path) -> std::io::Result<()> {
         Command::new("xdg-open").arg(path).status().map(|_| ())
     }
 }
+
+/// Open the OS file manager at `path`'s parent directory, with `path`
+/// itself selected/highlighted when the platform supports it.
+///
+/// macOS uses `open -R`; Windows uses `explorer /select,`; Linux speaks the
+/// `org.freedesktop.FileManager1.ShowItems` DBus interface (honoured by
+/// Nautilus, Nemo, Dolphin, Caja, Thunar, …) and falls back to
+/// `xdg-open <parent>` if DBus or the file manager isn't available — that
+/// loses the selection but still gets the user to the right folder.
+pub(in crate::app) fn reveal_in_os(path: &std::path::Path) -> std::io::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open").arg("-R").arg(path).status().map(|_| ())
+    }
+    #[cfg(target_os = "windows")]
+    {
+        // `explorer /select,<path>` opens the parent folder with the file
+        // highlighted. The comma is part of the syntax, not a separator.
+        let mut arg = std::ffi::OsString::from("/select,");
+        arg.push(path);
+        Command::new("explorer").arg(arg).status().map(|_| ())
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let uri = path_to_file_uri(path);
+        let dbus = Command::new("dbus-send")
+            .args([
+                "--session",
+                "--print-reply",
+                "--dest=org.freedesktop.FileManager1",
+                "--type=method_call",
+                "/org/freedesktop/FileManager1",
+                "org.freedesktop.FileManager1.ShowItems",
+            ])
+            .arg(format!("array:string:{uri}"))
+            .arg("string:")
+            .output();
+        if let Ok(out) = dbus {
+            if out.status.success() {
+                return Ok(());
+            }
+        }
+        let parent = path.parent().unwrap_or(path);
+        Command::new("xdg-open").arg(parent).status().map(|_| ())
+    }
+}
+
+/// Encode an absolute path as a `file://` URI, percent-encoding any byte
+/// that isn't an unreserved URI character. Used to pass paths to
+/// `org.freedesktop.FileManager1.ShowItems`, which expects RFC-3986 URIs.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn path_to_file_uri(path: &std::path::Path) -> String {
+    let s = path.to_string_lossy();
+    let mut out = String::from("file://");
+    for b in s.as_bytes() {
+        let c = *b as char;
+        if c.is_ascii_alphanumeric() || matches!(c, '/' | '_' | '.' | '-' | '~') {
+            out.push(c);
+        } else {
+            out.push_str(&format!("%{:02X}", b));
+        }
+    }
+    out
+}

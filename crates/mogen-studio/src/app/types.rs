@@ -10,7 +10,7 @@ use mogen_llm::gemini::{ThinkingLevel, Usage};
 use mogen_llm::textures::{TextureStage, DEFAULT_TEXTURE_SIZE};
 
 use crate::pipeline::CompileResult;
-use crate::viewer::CameraSnapshot;
+use crate::viewer::{CameraSnapshot, SelectionPath};
 
 /// Debounce window before a keystroke triggers a recompile. Long enough that
 /// holding a key (or pasting) doesn't recompile mid-word; short enough that
@@ -62,8 +62,8 @@ pub(super) struct UndoEntry {
     /// re-highlight the restored node(s) after recompile. Empty vec when
     /// nothing was selected. Order matches the viewport selection order
     /// (last entry is the primary).
-    pub(super) selection_before: Vec<Vec<String>>,
-    pub(super) selection_after: Vec<Vec<String>>,
+    pub(super) selection_before: Vec<SelectionPath>,
+    pub(super) selection_after: Vec<SelectionPath>,
 }
 
 /// Coalesce key. Two entries merge only when every field matches AND the
@@ -76,7 +76,7 @@ pub(super) struct UndoKey {
     /// click order. Empty when nothing was selected. Used so a multi-frame
     /// inspector burst on the same selection coalesces, but switching
     /// selection breaks the chain.
-    pub(super) node_path: Vec<Vec<String>>,
+    pub(super) node_path: Vec<SelectionPath>,
 }
 
 /// Per-tab undo history. Newest entries at the back of `past`; redo lives in

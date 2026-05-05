@@ -306,6 +306,38 @@ impl MogenStudioApp {
                 ui.end_row();
             });
 
+        // Shadow casting toggle — present on every editable node that isn't a
+        // light. `cast_shadow` defaults to true at lower time, so the absence
+        // of an attribute reads as "casts shadow"; toggling off writes
+        // `cast_shadow=0` (number, matching the `faceted` convention) and
+        // toggling back on deletes the attribute so the source stays clean.
+        // The lowering pass propagates `false` down the subtree, so flipping
+        // this on a group disables shadows for every descendant mesh.
+        let mut wants_set_cast_shadow_off = false;
+        let mut wants_remove_cast_shadow = false;
+        if node.light.is_none() {
+            ui.add_space(8.0);
+            ui.separator();
+            ui.label(egui::RichText::new("Shadow").strong());
+            let mut cast = node.cast_shadow;
+            if ui
+                .checkbox(&mut cast, "Cast shadow")
+                .on_hover_text(
+                    "Whether this node (and its subtree) contributes to the \
+                     realtime shadow pre-pass. When off, MoGen also writes \
+                     `extras.cast_shadow=false` to the exported glTF node so \
+                     downstream importers (Godot etc.) can mirror the choice.",
+                )
+                .changed()
+            {
+                if cast {
+                    wants_remove_cast_shadow = true;
+                } else {
+                    wants_set_cast_shadow_off = true;
+                }
+            }
+        }
+
         // Collider editor — single checkbox toggling `collider="aabb"` on
         // the node. Skipped for `light` nodes since the validator rejects
         // `collider=` there (lights have no AABB to enclose).
@@ -353,6 +385,103 @@ impl MogenStudioApp {
                     egui::Color32::from_rgb(230, 200, 100),
                     "  (no mesh in subtree — AABB skipped)",
                 );
+            }
+        }
+
+        // Deform modifiers — variety knobs (`noise`, `jitter`, bend/twist/
+        // taper/droop, faceted) that the lowering pipeline applies between
+        // primitive construction and anchor shift. Gated to nodes whose mesh
+        // actually flows through `apply_deform`: skip loaded `.glb` meshes
+        // (`kind="mesh"`), top-level CSG results, and `solid` / group-style
+        // nodes that don't carry a primitive mesh of their own.
+        let supports_deform = node.mesh.is_some()
+            && node.kind != "mesh"
+            && !matches!(
+                node.kind.as_str(),
+                "union" | "difference" | "intersect" | "solid"
+            );
+        let mut wants_remove_deform: Vec<&'static str> = Vec::new();
+        if supports_deform {
+            if let Some(span) = node_span {
+                let src = &self.files[i].source;
+                let read_f32 = |attr: &str| -> Option<f32> {
+                    crate::edit::get_attr(src, span, attr)
+                        .and_then(|s| s.parse::<f32>().ok())
+                };
+                let cur_noise = read_f32("noise");
+                let cur_jitter = read_f32("jitter");
+                let cur_bend_x = read_f32("bend_x");
+                let cur_bend_y = read_f32("bend_y");
+                let cur_bend_z = read_f32("bend_z");
+                let cur_twist_y = read_f32("twist_y");
+                let cur_taper = read_f32("taper");
+                let cur_droop = read_f32("droop");
+                let cur_faceted = read_f32("faceted");
+                let cur_seed = crate::edit::get_attr(src, span, "seed")
+                    .and_then(|s| s.parse::<u32>().ok());
+                let any_set = cur_noise.is_some()
+                    || cur_jitter.is_some()
+                    || cur_bend_x.is_some()
+                    || cur_bend_y.is_some()
+                    || cur_bend_z.is_some()
+                    || cur_twist_y.is_some()
+                    || cur_taper.is_some()
+                    || cur_droop.is_some()
+                    || cur_faceted.is_some()
+                    || cur_seed.is_some();
+
+                ui.add_space(8.0);
+                ui.separator();
+                egui::CollapsingHeader::new("Deform")
+                    .id_salt("inspector_deform_header")
+                    .default_open(any_set)
+                    .show(ui, |ui| {
+                        egui::Grid::new("inspector_deform")
+                            .num_columns(2)
+                            .spacing([6.0, 4.0])
+                            .show(ui, |ui| {
+                                deform_unit_row(
+                                    ui, "Noise", "noise", cur_noise, 0.3,
+                                    node_id, &mut edits, &mut wants_remove_deform,
+                                );
+                                deform_unit_row(
+                                    ui, "Jitter", "jitter", cur_jitter, 0.3,
+                                    node_id, &mut edits, &mut wants_remove_deform,
+                                );
+                                deform_angle_row(
+                                    ui, "Bend X", "bend_x", cur_bend_x, 15.0,
+                                    node_id, &mut edits, &mut wants_remove_deform,
+                                );
+                                deform_angle_row(
+                                    ui, "Bend Y", "bend_y", cur_bend_y, 15.0,
+                                    node_id, &mut edits, &mut wants_remove_deform,
+                                );
+                                deform_angle_row(
+                                    ui, "Bend Z", "bend_z", cur_bend_z, 15.0,
+                                    node_id, &mut edits, &mut wants_remove_deform,
+                                );
+                                deform_angle_row(
+                                    ui, "Twist Y", "twist_y", cur_twist_y, 30.0,
+                                    node_id, &mut edits, &mut wants_remove_deform,
+                                );
+                                deform_taper_row(
+                                    ui, cur_taper, node_id,
+                                    &mut edits, &mut wants_remove_deform,
+                                );
+                                deform_unit_row(
+                                    ui, "Droop", "droop", cur_droop, 0.3,
+                                    node_id, &mut edits, &mut wants_remove_deform,
+                                );
+                                deform_faceted_row(
+                                    ui, cur_faceted, node_id,
+                                    &mut edits, &mut wants_remove_deform,
+                                );
+                                deform_seed_row(
+                                    ui, cur_seed, node_id,
+                                    &mut edits, &mut wants_remove_deform,
+                                );
+                            });
+                    });
             }
         }
 
@@ -590,6 +719,38 @@ impl MogenStudioApp {
             }
         }
 
+        if wants_set_cast_shadow_off {
+            edits.push(PendingEdit::SetAttrCanonical {
+                node: node_id,
+                attr: "cast_shadow".into(),
+                value: "0".into(),
+                delete: Vec::new(),
+            });
+        }
+        if wants_remove_cast_shadow {
+            if let Some(span) = node_span {
+                let before = self.files[i].source.clone();
+                let new_src = crate::edit::delete_attr(&before, span, "cast_shadow");
+                {
+                    let f = &mut self.files[i];
+                    f.source = new_src;
+                    f.dirty = f.source != f.last_saved_source;
+                    f.needs_compile = true;
+                    f.last_edit_at = Some(Instant::now());
+                }
+                self.break_undo_chain(i);
+                self.push_undo(
+                    i,
+                    before,
+                    UndoKey {
+                        surface: "inspector-action",
+                        attr: Some("cast_shadow".into()),
+                        node_path: Vec::new(),
+                    },
+                );
+            }
+        }
+
         if wants_set_collider {
             edits.push(PendingEdit::SetAttrCanonical {
                 node: node_id,
@@ -616,6 +777,30 @@ impl MogenStudioApp {
                     UndoKey {
                         surface: "inspector-action",
                         attr: Some("collider".into()),
+                        node_path: Vec::new(),
+                    },
+                );
+            }
+        }
+
+        for attr in wants_remove_deform {
+            if let Some(span) = node_span {
+                let before = self.files[i].source.clone();
+                let new_src = crate::edit::delete_attr(&before, span, attr);
+                {
+                    let f = &mut self.files[i];
+                    f.source = new_src;
+                    f.dirty = f.source != f.last_saved_source;
+                    f.needs_compile = true;
+                    f.last_edit_at = Some(Instant::now());
+                }
+                self.break_undo_chain(i);
+                self.push_undo(
+                    i,
+                    before,
+                    UndoKey {
+                        surface: "inspector-action",
+                        attr: Some(attr.into()),
                         node_path: Vec::new(),
                     },
                 );
@@ -728,4 +913,199 @@ impl MogenStudioApp {
             }
         });
     }
+}
+
+/// Render a Deform-row for a 0..=1 unit modifier (`noise`, `jitter`, `droop`).
+/// `default` is the value used when the user clicks "+ add" on an absent attr.
+#[allow(clippy::too_many_arguments)]
+fn deform_unit_row(
+    ui: &mut egui::Ui,
+    label: &str,
+    attr: &'static str,
+    current: Option<f32>,
+    default: f32,
+    node_id: mogen_core::NodeId,
+    edits: &mut Vec<crate::viewer::PendingEdit>,
+    wants_remove: &mut Vec<&'static str>,
+) {
+    deform_scalar_row(
+        ui, label, attr, current, default,
+        0.0..=1.0, 0.01, "", node_id, edits, wants_remove,
+    );
+}
+
+/// Render a Deform-row for an angle modifier (`bend_x`/`y`/`z`, `twist_y`),
+/// authored in degrees. The lowering pass runs `.to_radians()` before applying.
+#[allow(clippy::too_many_arguments)]
+fn deform_angle_row(
+    ui: &mut egui::Ui,
+    label: &str,
+    attr: &'static str,
+    current: Option<f32>,
+    default: f32,
+    node_id: mogen_core::NodeId,
+    edits: &mut Vec<crate::viewer::PendingEdit>,
+    wants_remove: &mut Vec<&'static str>,
+) {
+    deform_scalar_row(
+        ui, label, attr, current, default,
+        -180.0..=180.0, 0.5, "°", node_id, edits, wants_remove,
+    );
+}
+
+/// Render the `taper` row. Different range/default from the unit row because
+/// taper's neutral is 1.0 (no scale change) and authors flare past 1.0 for
+/// trumpet shapes — clamping to [0, 1] would silently drop that case.
+fn deform_taper_row(
+    ui: &mut egui::Ui,
+    current: Option<f32>,
+    node_id: mogen_core::NodeId,
+    edits: &mut Vec<crate::viewer::PendingEdit>,
+    wants_remove: &mut Vec<&'static str>,
+) {
+    deform_scalar_row(
+        ui, "Taper", "taper", current, 0.5,
+        0.0..=4.0, 0.02, "", node_id, edits, wants_remove,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn deform_scalar_row(
+    ui: &mut egui::Ui,
+    label: &str,
+    attr: &'static str,
+    current: Option<f32>,
+    default: f32,
+    range: std::ops::RangeInclusive<f32>,
+    speed: f32,
+    suffix: &str,
+    node_id: mogen_core::NodeId,
+    edits: &mut Vec<crate::viewer::PendingEdit>,
+    wants_remove: &mut Vec<&'static str>,
+) {
+    use crate::app::util::format_inspector_scalar;
+    use crate::viewer::PendingEdit;
+    ui.label(label);
+    ui.horizontal(|ui| match current {
+        Some(initial) => {
+            let mut v = initial;
+            let resp = ui.add(
+                egui::DragValue::new(&mut v)
+                    .speed(speed)
+                    .suffix(suffix)
+                    .range(range),
+            );
+            if resp.changed() {
+                edits.push(PendingEdit::SetAttrCanonical {
+                    node: node_id,
+                    attr: attr.into(),
+                    value: format_inspector_scalar(v),
+                    delete: Vec::new(),
+                });
+            }
+            if ui
+                .small_button("✕")
+                .on_hover_text("Remove modifier")
+                .clicked()
+            {
+                wants_remove.push(attr);
+            }
+        }
+        None => {
+            ui.label(egui::RichText::new("(none)").italics().weak());
+            if ui.small_button("+ add").clicked() {
+                edits.push(PendingEdit::SetAttrCanonical {
+                    node: node_id,
+                    attr: attr.into(),
+                    value: format_inspector_scalar(default),
+                    delete: Vec::new(),
+                });
+            }
+        }
+    });
+    ui.end_row();
+}
+
+/// Render the `faceted` row as a checkbox: present-and-non-zero is on, absent
+/// or `0` is off. Toggling on writes `faceted=1`; toggling off removes the
+/// attr entirely so it doesn't sit at `0` polluting the source.
+fn deform_faceted_row(
+    ui: &mut egui::Ui,
+    current: Option<f32>,
+    node_id: mogen_core::NodeId,
+    edits: &mut Vec<crate::viewer::PendingEdit>,
+    wants_remove: &mut Vec<&'static str>,
+) {
+    use crate::viewer::PendingEdit;
+    ui.label("Faceted");
+    ui.horizontal(|ui| {
+        let on = current.map(|v| v != 0.0).unwrap_or(false);
+        let mut new_on = on;
+        ui.checkbox(&mut new_on, "")
+            .on_hover_text("Hard-edge per-triangle normals (low-poly look).");
+        if new_on != on {
+            if new_on {
+                edits.push(PendingEdit::SetAttrCanonical {
+                    node: node_id,
+                    attr: "faceted".into(),
+                    value: "1".into(),
+                    delete: Vec::new(),
+                });
+            } else if current.is_some() {
+                wants_remove.push("faceted");
+            }
+        }
+    });
+    ui.end_row();
+}
+
+/// Render the `seed` row. Drives the random stream for `noise` / `jitter`;
+/// authors typically tweak it to roll a different stochastic result while
+/// keeping the modifier amounts the same.
+fn deform_seed_row(
+    ui: &mut egui::Ui,
+    current: Option<u32>,
+    node_id: mogen_core::NodeId,
+    edits: &mut Vec<crate::viewer::PendingEdit>,
+    wants_remove: &mut Vec<&'static str>,
+) {
+    use crate::viewer::PendingEdit;
+    ui.label("Seed");
+    ui.horizontal(|ui| match current {
+        Some(initial) => {
+            let mut v = initial;
+            let resp = ui.add(
+                egui::DragValue::new(&mut v)
+                    .speed(1.0)
+                    .range(0..=u32::MAX),
+            );
+            if resp.changed() {
+                edits.push(PendingEdit::SetAttrCanonical {
+                    node: node_id,
+                    attr: "seed".into(),
+                    value: v.to_string(),
+                    delete: Vec::new(),
+                });
+            }
+            if ui
+                .small_button("✕")
+                .on_hover_text("Remove seed (defaults to 1)")
+                .clicked()
+            {
+                wants_remove.push("seed");
+            }
+        }
+        None => {
+            ui.label(egui::RichText::new("(none)").italics().weak());
+            if ui.small_button("+ add").clicked() {
+                edits.push(PendingEdit::SetAttrCanonical {
+                    node: node_id,
+                    attr: "seed".into(),
+                    value: "1".into(),
+                    delete: Vec::new(),
+                });
+            }
+        }
+    });
+    ui.end_row();
 }

@@ -21,7 +21,7 @@ mod internals;
 mod lod;
 mod node;
 
-pub use attr::{delete_attr, set_attr};
+pub use attr::{delete_attr, get_attr, set_attr};
 pub use imports::insert_imports;
 pub use insert::{append_to_scene, list_imports, suggest_primitive_name};
 pub use lod::{get_lod_scale, set_lod_scale};

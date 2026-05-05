@@ -21,7 +21,15 @@ pub(crate) fn emit_material(m: &Material, textures: &TextureTable) -> Value {
     obj.insert("pbrMetallicRoughness".into(), Value::Object(pbr));
 
     if let Some(idx) = textures.index_of(&m.normal_texture, SlotKind::Linear) {
-        obj.insert("normalTexture".into(), json!({ "index": idx }));
+        // glTF's `normalTexture.scale` defaults to 1.0; emit it explicitly when
+        // the material's `normal_strength` differs so importers (Godot, Blender,
+        // gltf-validator) honour the slope multiplier without re-baking the PNG.
+        let mut nt = serde_json::Map::new();
+        nt.insert("index".into(), json!(idx));
+        if (m.normal_strength - 1.0).abs() > f32::EPSILON {
+            nt.insert("scale".into(), json!(m.normal_strength));
+        }
+        obj.insert("normalTexture".into(), Value::Object(nt));
     }
     if let Some(idx) = textures.index_of(&m.occlusion_texture, SlotKind::Linear) {
         obj.insert("occlusionTexture".into(), json!({ "index": idx }));
@@ -178,6 +186,46 @@ mod tests {
         let v = emit_material(&m, &TextureTable::default());
         assert!(v.get("emissiveFactor").is_some());
         assert!(v.get("extensions").is_none());
+    }
+
+    #[test]
+    fn normal_texture_emits_scale_when_strength_differs_from_one() {
+        use mogen_core::TextureRef;
+        use std::path::PathBuf;
+        let mut table = TextureTable::default();
+        let path = PathBuf::from("rock_normal.png");
+        table.insert_for_test(path.clone(), SlotKind::Linear, 7);
+
+        // strength == 1.0 → no `scale` field, just the index.
+        let mut m = mat("rock");
+        m.normal_texture = Some(TextureRef { path: path.clone() });
+        m.normal_strength = 1.0;
+        let v = emit_material(&m, &table);
+        let nt = &v["normalTexture"];
+        assert_eq!(nt["index"], json!(7));
+        assert!(nt.get("scale").is_none(), "no scale at default strength: {nt}");
+
+        // strength != 1.0 → scale is written so importers honour the slope.
+        m.normal_strength = 2.5;
+        let v = emit_material(&m, &table);
+        let nt = &v["normalTexture"];
+        assert_eq!(nt["scale"], json!(2.5_f32));
+
+        // strength == 0 disables bumping; still emit `scale=0` so the importer
+        // matches the studio's flat-shaded preview.
+        m.normal_strength = 0.0;
+        let v = emit_material(&m, &table);
+        assert_eq!(v["normalTexture"]["scale"], json!(0.0_f32));
+    }
+
+    #[test]
+    fn normal_texture_omitted_when_no_texture_authored() {
+        // Without a `normal_texture` slot the strength has nowhere to land —
+        // confirm the exporter doesn't synthesise a scale-only normalTexture.
+        let mut m = mat("plain");
+        m.normal_strength = 4.0;
+        let v = emit_material(&m, &TextureTable::default());
+        assert!(v.get("normalTexture").is_none());
     }
 
     #[test]

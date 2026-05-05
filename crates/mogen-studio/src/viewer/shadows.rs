@@ -943,6 +943,9 @@ impl ShadowSystem {
                 if matches!(b.alpha_mode, AlphaMode::Blend) || b.transmission > 0.0 {
                     continue;
                 }
+                if !b.cast_shadow {
+                    continue;
+                }
                 if !frustum.sphere_visible(b.centroid, b.radius) {
                     continue;
                 }

@@ -37,6 +37,36 @@ pub enum UvMode {
     Fit,
 }
 
+/// Per-material override for the studio's preview shader. `Standard` is the
+/// PBR path everyone else uses; `Water` swaps in an animated waves +
+/// fresnel-blue + sky-reflection branch. The exporter ignores this field —
+/// glTF can't carry custom shaders, so the .glb falls back to whatever PBR
+/// scalars the material was authored with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum MaterialShader {
+    #[default]
+    Standard,
+    Water,
+}
+
+impl MaterialShader {
+    /// Integer handed to the fragment shader via `u_material_shader`. Keep in
+    /// sync with the branches in `viewer/shaders.rs`.
+    pub fn shader_id(self) -> i32 {
+        match self {
+            MaterialShader::Standard => 0,
+            MaterialShader::Water => 1,
+        }
+    }
+
+    /// Whether this shader animates in the preview and so needs continuous
+    /// repaints. Used by the viewer to keep ticking when the scene is
+    /// otherwise static.
+    pub fn animates(self) -> bool {
+        matches!(self, MaterialShader::Water)
+    }
+}
+
 /// A reference to an on-disk image used as a material texture. Paths are
 /// resolved relative to the `.mog` file that declared them. During export the
 /// exporter reads the bytes, embeds them into the GLB binary chunk, and writes
@@ -90,6 +120,12 @@ pub struct Material {
     /// uses world-space UVs so texel density is constant across primitives;
     /// `Fit` keeps the legacy per-face `[0, 1]²` mapping for sign-style images.
     pub uv_mode: UvMode,
+    /// Studio-only shader override. `Standard` (default) goes through the
+    /// regular PBR path; `Water` selects an animated waves branch in the
+    /// viewer's fragment shader. Skipped during serde when default so saved
+    /// scenes stay roundtrip-clean for the common case.
+    #[serde(default, skip_serializing_if = "is_default_shader")]
+    pub shader: MaterialShader,
     /// Per-axis multiplier applied to UVs at export. In `Tile` mode this sets
     /// "tiles per world unit" (e.g. `[2, 2]` doubles the tiling density on a
     /// brick wall). In `Fit` mode it scales the `[0, 1]` parameter — `> 1`
@@ -150,6 +186,7 @@ impl Material {
             transmission: 0.0,
             double_sided: false,
             uv_mode: UvMode::default(),
+            shader: MaterialShader::default(),
             uv_scale: [1.0, 1.0],
             base_color_texture: None,
             metallic_roughness_texture: None,
@@ -168,4 +205,8 @@ impl Material {
             || self.occlusion_texture.is_some()
             || self.emissive_texture.is_some()
     }
+}
+
+fn is_default_shader(s: &MaterialShader) -> bool {
+    matches!(s, MaterialShader::Standard)
 }

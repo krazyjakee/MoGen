@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use glam::{Mat4, Vec3};
-use mogen_core::{AlphaMode, NodeId, SceneGraph, Transform};
+use mogen_core::{AlphaMode, MaterialShader, NodeId, SceneGraph, Transform};
 
 use super::anim::world_transforms_from_locals;
 
@@ -34,6 +34,17 @@ pub struct DrawBatch {
     pub base_color_alpha: f32,
     pub metallic: f32,
     pub roughness: f32,
+    /// Per-material multiplier on the tangent-space normal's XY components,
+    /// applied after the normal-map sample. Mirrors glTF's `normalTexture.scale`
+    /// — `0.0` flattens the surface to its geometric normal, larger values
+    /// exaggerate bumps. Sourced from `Material::normal_strength`.
+    pub normal_scale: f32,
+    /// Material `uv_scale`, surfaced as a uniform so procedural shaders
+    /// (e.g. water turbulence) can evaluate their pattern in world space
+    /// and still expose a per-material density knob. The vertex stream
+    /// already pre-multiplies UVs by this for texture sampling — this
+    /// copy is for FS code paths that don't go through `v_uv`.
+    pub uv_scale: [f32; 2],
     pub emissive: [f32; 3],
     pub emissive_strength: f32,
     /// KHR_materials_transmission factor in [0,1]. Used as a cheap
@@ -77,6 +88,17 @@ pub struct DrawBatch {
     /// chunk-splits of the same rigid group are emitted as adjacent
     /// material-equal batches.
     pub material_id: Option<u32>,
+    /// Whether this batch contributes to the shadow pre-pass. Mirrors the
+    /// per-node `cast_shadow` flag from the [`SceneGraph`] (already
+    /// inheritance-resolved at lower time). Batches mix nodes only when every
+    /// member shares this flag — `flatten_with_worlds` keys grouping by it so
+    /// a single batch is always all-cast or all-skip.
+    pub cast_shadow: bool,
+    /// Per-material shader override copied off the source [`Material`].
+    /// `Standard` (default) routes through the regular PBR path; non-default
+    /// shaders (e.g. `Water`) take a dedicated branch in the FS keyed by
+    /// `MaterialShader::shader_id`.
+    pub shader: MaterialShader,
 }
 
 /// One entry per clip, for UI menus.
@@ -164,6 +186,15 @@ pub struct FlatMesh {
     pub tri_node: Vec<NodeId>,
 }
 
+impl FlatMesh {
+    /// True when any visible batch uses an animated per-material shader
+    /// (currently just water). The viewport uses this to keep requesting
+    /// repaints when the scene is otherwise static so the waves keep moving.
+    pub fn has_animated_shader(&self) -> bool {
+        self.batches.iter().any(|b| b.shader.animates())
+    }
+}
+
 pub fn flatten(scene: &SceneGraph, base_dir: Option<&Path>) -> FlatMesh {
     let worlds = scene.world_transforms();
     flatten_with_worlds(scene, &worlds, base_dir)
@@ -228,11 +259,14 @@ pub fn flatten_with_worlds(
     worlds: &[Mat4],
     base_dir: Option<&Path>,
 ) -> FlatMesh {
-    // One bucket per (skin, material). Rigid buckets may then be split when
-    // their distinct-node count exceeds MAX_JOINTS — the per-batch palette
-    // uniform array can't hold more entries than the shader's `u_joint_mats`
-    // declares. BTreeMap so traversal order is stable across rebuilds.
-    type GroupKey = (Option<u32>, Option<u32>);
+    // One bucket per (skin, material, cast_shadow). Rigid buckets may then be
+    // split when their distinct-node count exceeds MAX_JOINTS — the per-batch
+    // palette uniform array can't hold more entries than the shader's
+    // `u_joint_mats` declares. The cast_shadow leg of the key keeps batches
+    // shadow-homogeneous so the pre-pass can `continue` on a single per-batch
+    // bool instead of walking node ids back through the scene. BTreeMap so
+    // traversal order is stable across rebuilds.
+    type GroupKey = (Option<u32>, Option<u32>, bool);
     let mut groups: BTreeMap<GroupKey, Vec<usize>> = BTreeMap::new();
     for (i, node) in scene.nodes.iter().enumerate() {
         if node.mesh.is_none() {
@@ -240,7 +274,7 @@ pub fn flatten_with_worlds(
         }
         let skin_id = node.skin.map(|s| s.0);
         let mat_id = node.material.map(|m| m.0);
-        groups.entry((skin_id, mat_id)).or_default().push(i);
+        groups.entry((skin_id, mat_id, node.cast_shadow)).or_default().push(i);
     }
 
     let mut vertices: Vec<f32> = Vec::new();
@@ -251,7 +285,7 @@ pub fn flatten_with_worlds(
     let mut min = Vec3::splat(f32::INFINITY);
     let mut max = Vec3::splat(f32::NEG_INFINITY);
 
-    for ((skin_id, mat_id), node_ids) in groups {
+    for ((skin_id, mat_id, cast_shadow), node_ids) in groups {
         let material = mat_id.and_then(|id| scene.materials.get(id as usize));
         let uv_scale = material.map(|m| m.uv_scale).unwrap_or([1.0, 1.0]);
         let is_skinned = skin_id.is_some();
@@ -392,12 +426,14 @@ pub fn flatten_with_worlds(
                 base_color_alpha,
                 metallic,
                 roughness,
+                normal_scale,
                 emissive,
                 emissive_strength,
                 transmission,
                 alpha_mode,
                 alpha_cutoff,
                 double_sided,
+                shader,
             ) = match material {
                 Some(m) => (
                     m.base_color_texture.as_ref().map(resolve),
@@ -409,12 +445,14 @@ pub fn flatten_with_worlds(
                     m.base_color[3],
                     m.metallic,
                     m.roughness,
+                    m.normal_strength,
                     m.emissive,
                     m.emissive_strength,
                     m.transmission,
                     m.alpha_mode,
                     m.alpha_cutoff,
                     m.double_sided,
+                    m.shader,
                 ),
                 None => (
                     None,
@@ -426,12 +464,14 @@ pub fn flatten_with_worlds(
                     1.0,
                     0.0,
                     0.9,
+                    1.0,
                     [0.0, 0.0, 0.0],
                     1.0,
                     0.0,
                     AlphaMode::Opaque,
                     0.5,
                     false,
+                    MaterialShader::Standard,
                 ),
             };
             let (centroid, radius) = if bmin.is_finite() && bmax.is_finite() {
@@ -458,6 +498,8 @@ pub fn flatten_with_worlds(
                 base_color_alpha,
                 metallic,
                 roughness,
+                normal_scale,
+                uv_scale,
                 emissive,
                 emissive_strength,
                 transmission,
@@ -468,6 +510,8 @@ pub fn flatten_with_worlds(
                 radius,
                 palette_id,
                 material_id: mat_id,
+                cast_shadow,
+                shader,
             });
         }
     }

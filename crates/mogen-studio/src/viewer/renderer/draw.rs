@@ -92,6 +92,13 @@ impl Renderer {
             if let Some(loc) = &self.u_shader_mode {
                 gl.uniform_1_i32(Some(loc), self.shader_mode);
             }
+            // Per-frame clock for time-varying per-material shaders. Pushed
+            // before the per-batch loop so every batch sees the same `t`
+            // value within a paint — the per-material shader uniform itself
+            // is set inside the material-change branch below.
+            if let Some(loc) = &self.u_time {
+                gl.uniform_1_f32(Some(loc), self.frame_time);
+            }
             if let Some(loc) = &self.u_viewproj {
                 gl.uniform_matrix_4_f32_slice(Some(loc), false, &viewproj.to_cols_array());
             }
@@ -290,8 +297,11 @@ impl Renderer {
             let base_color_alpha = b.base_color_alpha;
             let metallic = b.metallic;
             let roughness = b.roughness;
+            let normal_scale = b.normal_scale;
+            let uv_scale = b.uv_scale;
             let emissive = b.emissive;
             let emissive_strength = b.emissive_strength;
+            let shader_id = b.shader.shader_id();
             let index_start = b.index_start;
             let index_count = b.index_count;
             let textures = self.draw_textures[idx];
@@ -377,6 +387,9 @@ impl Renderer {
                     if let Some(loc) = &self.u_transmission {
                         gl.uniform_1_f32(Some(loc), transmission);
                     }
+                    if let Some(loc) = &self.u_material_shader {
+                        gl.uniform_1_i32(Some(loc), shader_id);
+                    }
                     if let Some(loc) = &self.u_use_base_tex {
                         gl.uniform_1_i32(Some(loc), textures[0].is_some() as i32);
                     }
@@ -385,6 +398,12 @@ impl Renderer {
                     }
                     if let Some(loc) = &self.u_use_normal_tex {
                         gl.uniform_1_i32(Some(loc), textures[2].is_some() as i32);
+                    }
+                    if let Some(loc) = &self.u_normal_scale {
+                        gl.uniform_1_f32(Some(loc), normal_scale);
+                    }
+                    if let Some(loc) = &self.u_uv_scale {
+                        gl.uniform_2_f32(Some(loc), uv_scale[0], uv_scale[1]);
                     }
                     if let Some(loc) = &self.u_use_ao_tex {
                         gl.uniform_1_i32(Some(loc), textures[3].is_some() as i32);

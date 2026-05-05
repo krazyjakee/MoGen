@@ -4,6 +4,7 @@ use super::types::{
     UndoEntry, UndoKey, UNDO_COALESCE_WINDOW, UNDO_STACK_CAP,
 };
 use super::MogenStudioApp;
+use crate::viewer::SelectionPath;
 
 impl MogenStudioApp {
     /// Record one undo entry for tab `i`. Caller passes the source as it was
@@ -116,7 +117,7 @@ impl MogenStudioApp {
         &mut self,
         i: usize,
         target_source: String,
-        sel_paths: Vec<Vec<String>>,
+        sel_paths: Vec<SelectionPath>,
     ) {
         {
             let f = &mut self.files[i];
@@ -137,7 +138,7 @@ impl MogenStudioApp {
     /// Stable name-paths of the currently selected nodes, sourced from the
     /// viewer for the active tab. Empty vec for non-active tabs (we don't
     /// carry per-tab selection in Phase 1).
-    pub(super) fn current_selection_path(&self, i: usize) -> Vec<Vec<String>> {
+    pub(super) fn current_selection_path(&self, i: usize) -> Vec<SelectionPath> {
         if i == self.active {
             self.viewer.all_selected_paths()
         } else {
