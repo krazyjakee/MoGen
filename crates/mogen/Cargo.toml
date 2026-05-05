@@ -15,23 +15,8 @@ mogen-dsl = { workspace = true, features = ["csg"] }
 mogen-validate = { workspace = true, features = ["csg"] }
 mogen-export = { workspace = true, features = ["textures", "merge"] }
 mogen-llm = { workspace = true }
-mogen-moghub-client = { workspace = true, features = ["oauth"] }
-keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
-dirs = "5"
-mogen-registry = { workspace = true }
-mogen-render = { workspace = true }
 mogen-update = { workspace = true }
 anyhow = { workspace = true }
 clap = { workspace = true }
 serde_json = { workspace = true }
 indicatif = "0.17"
-image = { workspace = true }
-# Used to base64-encode the publish-thumbnail PNG before attaching it to
-# `PublishRequest::thumbnail_png_base64`.
-base64 = "0.22"
-
-[dev-dependencies]
-tiny_http = "0.12"
-tempfile = "3"
-assert_cmd = "2"
-predicates = "3"

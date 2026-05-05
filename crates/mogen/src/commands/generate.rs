@@ -148,5 +148,5 @@ pub(crate) fn generate(args: GenerateArgs) -> Result<()> {
         .with_context(|| format!("writing {}", dsl_path.display()))?;
 
     // Reuse the regular build path so the user gets the same progress line.
-    build(dsl_path, out_path, false, false)
+    build(dsl_path, out_path)
 }

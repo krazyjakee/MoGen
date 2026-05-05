@@ -1,13 +1,9 @@
 pub(crate) mod animate;
-pub(crate) mod auth;
 pub(crate) mod bench;
 pub(crate) mod build;
 pub(crate) mod generate;
 pub(crate) mod inspect;
-pub(crate) mod login;
 pub(crate) mod modify;
-pub(crate) mod publish;
-pub(crate) mod relock;
 pub(crate) mod repair;
 pub(crate) mod textures;
 pub(crate) mod update;

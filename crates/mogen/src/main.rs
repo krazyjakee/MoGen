@@ -15,11 +15,8 @@ use commands::build::build;
 use commands::generate::{generate, GenerateArgs};
 use commands::inspect::{check, dump_scene, inspect, parse_cmd};
 use commands::modify::{modify, ModifyArgs};
-use commands::relock::relock;
 use commands::repair::{repair, RepairArgs};
 use commands::textures::textures_cmd;
-use commands::login::{login, LoginArgs};
-use commands::publish::{publish, PublishArgs};
 use commands::update::{update, UpdateArgs};
 
 /// CLI-facing mirror of [`ThinkingLevel`]. Kept separate so we don't leak
@@ -83,19 +80,7 @@ enum Cmd {
         /// Output GLB path. Defaults to `<input>.glb` alongside the DSL file.
         #[arg(short, long)]
         out: Option<PathBuf>,
-        /// Refuse to fetch missing registry refs. Build succeeds only if
-        /// every `use "@user/slug"` is already pinned in `mog.lock` and
-        /// its source is in the cache. Use in CI.
-        #[arg(long)]
-        frozen: bool,
-        /// Refuse any network call. Builds against the existing cache +
-        /// lockfile only; errors with the missing pin if not satisfied.
-        #[arg(long)]
-        offline: bool,
     },
-    /// Re-resolve every `use "@user/slug[@v]"` registry ref to its current
-    /// latest version and rewrite `mog.lock`.
-    Relock { input: PathBuf },
     /// Parse a DSL file and print the AST.
     Parse { input: PathBuf },
     /// Validate a DSL file (semantic + reference checks). Exit non-zero on any error.
@@ -409,73 +394,6 @@ enum Cmd {
         #[arg(long)]
         force: bool,
     },
-    /// Sign in to MoGHub via the loopback OAuth flow. The resulting
-    /// session token is stored in the OS keyring and is shared with
-    /// MoGen Studio — sign in once, both surfaces see the same
-    /// session. With `--logout` removes the stored token instead.
-    Login {
-        /// MoGHub base URL. Falls back to `MOGHUB_URL`, then the
-        /// client default. Useful when running against a private
-        /// deployment or `http://localhost:3000` for local dev.
-        #[arg(long)]
-        base_url: Option<String>,
-        /// Force a fresh sign-in even if a valid token is already
-        /// stored.
-        #[arg(long)]
-        force: bool,
-        /// Remove the stored token from every storage tier (keyring +
-        /// fallback file) and exit.
-        #[arg(long)]
-        logout: bool,
-    },
-    /// Publish a `.mog` file to MoGHub as a new model or version.
-    /// Requires a stored session — run `mogen login` first.
-    ///
-    /// Title, description, and tags default to the file's `meta(...)`
-    /// block; pass the matching flag to override. The slug is derived
-    /// server-side from the title.
-    Publish {
-        /// `.mog` file to publish (the entry file). Multi-file
-        /// publish is on the runway; v1 sends just this one.
-        input: PathBuf,
-        /// Display title. Defaults to `meta(name = …)`.
-        #[arg(long)]
-        title: Option<String>,
-        /// Long-form description (Markdown allowed; rendered server-
-        /// side on the model page). Defaults to `meta(description = …)`.
-        #[arg(long)]
-        description: Option<String>,
-        /// SPDX-style license string. Defaults to `CC0-1.0`.
-        #[arg(long)]
-        license: Option<String>,
-        /// `public` (default), `unlisted`, or `private`.
-        #[arg(long)]
-        visibility: Option<String>,
-        /// Per-publish message — what changed. Empty for the first
-        /// version.
-        #[arg(long)]
-        message: Option<String>,
-        /// Tag to attach. May be repeated; capped at 8 server-side.
-        /// When omitted, defaults to `meta(tags = [...])`.
-        #[arg(long = "tag")]
-        tags: Vec<String>,
-        /// Force-publish as a registry module (`use "@user/slug"`).
-        /// Without this or `--no-module`, the type is auto-detected:
-        /// module when the source has no top-level `import` declarations,
-        /// scene otherwise.
-        #[arg(long, conflicts_with = "no_module")]
-        module: bool,
-        /// Force-publish as a scene, overriding the auto-detect.
-        #[arg(long)]
-        no_module: bool,
-        /// Pin a parent version for fork lineage. Pass the
-        /// `version_id` UUID returned by the parent's detail page.
-        #[arg(long)]
-        parent_version_id: Option<String>,
-        /// Override the MoGHub base URL. Same precedence as `login`.
-        #[arg(long)]
-        base_url: Option<String>,
-    },
     /// Run a suite of prompts through `generate` and report success rate and
     /// mean token cost. Does not write GLBs.
     Bench {
@@ -507,16 +425,10 @@ enum Cmd {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.cmd {
-        Cmd::Build {
-            input,
-            out,
-            frozen,
-            offline,
-        } => {
+        Cmd::Build { input, out } => {
             let out = out.unwrap_or_else(|| input.with_extension("glb"));
-            build(input, out, frozen, offline)
+            build(input, out)
         }
-        Cmd::Relock { input } => relock(input),
         Cmd::Parse { input } => parse_cmd(input),
         Cmd::Check { input, json } => check(input, json),
         Cmd::DumpScene { input, json } => dump_scene(input, json),
@@ -689,45 +601,6 @@ fn main() -> ExitCode {
             yes,
             check_only: check,
             force,
-        }),
-        Cmd::Login {
-            base_url,
-            force,
-            logout,
-        } => login(LoginArgs {
-            base_url,
-            force,
-            logout,
-        }),
-        Cmd::Publish {
-            input,
-            title,
-            description,
-            license,
-            visibility,
-            message,
-            tags,
-            module,
-            no_module,
-            parent_version_id,
-            base_url,
-        } => publish(PublishArgs {
-            input,
-            title,
-            description,
-            license,
-            visibility,
-            message,
-            tags,
-            module: if module {
-                Some(true)
-            } else if no_module {
-                Some(false)
-            } else {
-                None
-            },
-            parent_version_id,
-            base_url,
         }),
         Cmd::Bench {
             prompts,

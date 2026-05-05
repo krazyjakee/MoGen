@@ -170,7 +170,7 @@ pub(crate) fn textures_cmd(args: mogen_llm::textures::TexturesArgs) -> Result<()
     }
 
     let glb_out = args.glb.clone().unwrap_or_else(|| args.input.with_extension("glb"));
-    let build_result = build(dsl_out, glb_out, false, false);
+    let build_result = build(dsl_out, glb_out);
     if !failures.is_empty() {
         // Even if the build succeeded with the partial textures, the run as
         // a whole had failures and the caller should know.
