@@ -86,11 +86,17 @@ pub(crate) fn dispatch(cmd: AuthCmd) -> Result<()> {
             }
             LoginCmd::Moghub { force, server } => moghub_login(force, server),
         },
-        AuthCmd::Status { target: Some(t), verbose } => match t {
-            AuthTarget::GeminiCli => oauth_status(verbose, &GEMINI_CLI_CONFIG),
-            AuthTarget::Antigravity => oauth_status(verbose, &ANTIGRAVITY_CONFIG),
-            AuthTarget::Moghub => moghub_status(verbose),
-        },
+        AuthCmd::Status { target: Some(t), verbose } => {
+            let state = match t {
+                AuthTarget::GeminiCli => oauth_status_inner(verbose, &GEMINI_CLI_CONFIG)?,
+                AuthTarget::Antigravity => oauth_status_inner(verbose, &ANTIGRAVITY_CONFIG)?,
+                AuthTarget::Moghub => moghub_status_inner(verbose)?,
+            };
+            if matches!(state, LoginState::NotLoggedIn) {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
         AuthCmd::Status { target: None, verbose } => status_all(verbose),
         AuthCmd::Logout { target } => match target {
             AuthTarget::GeminiCli => oauth_logout(&GEMINI_CLI_CONFIG),
@@ -98,6 +104,16 @@ pub(crate) fn dispatch(cmd: AuthCmd) -> Result<()> {
             AuthTarget::Moghub => moghub_logout(),
         },
     }
+}
+
+/// Internal status outcome. `_inner` helpers return this so callers decide
+/// when to exit — `mogen auth <target> status` exits 1 on `NotLoggedIn`,
+/// but `mogen auth status` (all targets) defers the exit until every
+/// target has had a chance to print.
+#[derive(Clone, Copy, Debug)]
+enum LoginState {
+    LoggedIn,
+    NotLoggedIn,
 }
 
 // --- Google OAuth (gemini-cli + antigravity) -------------------------
@@ -152,8 +168,14 @@ fn oauth_login(
     save_bundle(&write_path, &outcome.bundle)
         .with_context(|| format!("saving {}", write_path.display()))?;
 
-    if read_path != write_path && read_path.exists() {
-        let _ = delete_bundle(&read_path);
+    // Clean up *every* legacy copy, not just the one `read_path` happened
+    // to resolve to. An install with files in both `~/.cache/mogen/` and
+    // `%LOCALAPPDATA%\mogen\` would otherwise leave the second one behind.
+    for legacy in all_existing_token_paths_for(config) {
+        if legacy == write_path {
+            continue;
+        }
+        let _ = delete_bundle(&legacy);
     }
 
     let who = outcome.bundle.email.as_deref().unwrap_or("(unknown account)");
@@ -165,7 +187,10 @@ fn oauth_login(
     Ok(())
 }
 
-fn oauth_status(verbose: bool, config: &'static ProviderConfig) -> Result<()> {
+fn oauth_status_inner(
+    verbose: bool,
+    config: &'static ProviderConfig,
+) -> Result<LoginState> {
     let label = provider_label(config);
     let login_hint = format!("mogen auth {label} login");
     let path = match token_store_path_for(config) {
@@ -175,7 +200,7 @@ fn oauth_status(verbose: bool, config: &'static ProviderConfig) -> Result<()> {
                 "Not logged in to {label} (no token store path resolvable; set MOGEN_CACHE_DIR). \
                  Run '{login_hint}'."
             );
-            std::process::exit(1);
+            return Ok(LoginState::NotLoggedIn);
         }
     };
 
@@ -183,7 +208,7 @@ fn oauth_status(verbose: bool, config: &'static ProviderConfig) -> Result<()> {
         Ok(Some(b)) => b,
         Ok(None) => {
             println!("Not logged in to {label}. Run '{login_hint}'.");
-            std::process::exit(1);
+            return Ok(LoginState::NotLoggedIn);
         }
         Err(err) => bail!("reading {}: {err}", path.display()),
     };
@@ -224,7 +249,7 @@ fn oauth_status(verbose: bool, config: &'static ProviderConfig) -> Result<()> {
         }
     }
 
-    Ok(())
+    Ok(LoginState::LoggedIn)
 }
 
 fn oauth_logout(config: &'static ProviderConfig) -> Result<()> {
@@ -321,10 +346,10 @@ fn moghub_login(force: bool, server: Option<String>) -> Result<()> {
     Ok(())
 }
 
-fn moghub_status(verbose: bool) -> Result<()> {
+fn moghub_status_inner(verbose: bool) -> Result<LoginState> {
     let Some(token) = moghub_session::read_session() else {
         println!("Not logged in to moghub. Run 'mogen auth moghub login'.");
-        std::process::exit(1);
+        return Ok(LoginState::NotLoggedIn);
     };
     let base_url =
         moghub_session::read_base_url().unwrap_or_else(|| MOGHUB_DEFAULT_BASE_URL.to_string());
@@ -348,7 +373,7 @@ fn moghub_status(verbose: bool) -> Result<()> {
         }
     }
 
-    Ok(())
+    Ok(LoginState::LoggedIn)
 }
 
 fn moghub_logout() -> Result<()> {
@@ -398,11 +423,11 @@ fn status_all(verbose: bool) -> Result<()> {
 
     if verbose {
         println!();
-        let _ = oauth_status(true, &GEMINI_CLI_CONFIG);
+        let _ = oauth_status_inner(true, &GEMINI_CLI_CONFIG);
         println!();
-        let _ = oauth_status(true, &ANTIGRAVITY_CONFIG);
+        let _ = oauth_status_inner(true, &ANTIGRAVITY_CONFIG);
         println!();
-        let _ = moghub_status(true);
+        let _ = moghub_status_inner(true);
     }
 
     if !any_logged_in {

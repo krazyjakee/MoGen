@@ -156,8 +156,10 @@ pub fn refresh_against(
     let bytes = resp.bytes()?;
 
     if !status.is_success() {
-        let raw = String::from_utf8_lossy(&bytes);
-        if raw.contains("invalid_grant") {
+        // Match on the parsed `error` field, not a substring of the raw
+        // body — `error_description` can legitimately mention
+        // "invalid_grant" while `error` is something benign.
+        if parse_error_code(&bytes).as_deref() == Some("invalid_grant") {
             return Err(OAuthError::Revoked);
         }
         let message = parse_error(&bytes);
@@ -187,6 +189,15 @@ fn parse_error(bytes: &[u8]) -> String {
         }
     }
     String::from_utf8_lossy(bytes).into_owned()
+}
+
+/// Extract the OAuth `error` code (e.g. `"invalid_grant"`) from a token
+/// endpoint failure body. Returns `None` when the body isn't JSON or the
+/// field is missing, so callers can fall back to the generic
+/// `TokenExchange` error path.
+fn parse_error_code(bytes: &[u8]) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_slice(bytes).ok()?;
+    v.get("error").and_then(|s| s.as_str()).map(str::to_string)
 }
 
 #[cfg(test)]
@@ -224,5 +235,27 @@ mod tests {
     fn already_expired_token_is_expired() {
         let b = fixture(100);
         assert!(b.is_access_expired(1_000_000));
+    }
+
+    #[test]
+    fn parse_error_code_extracts_invalid_grant() {
+        let body = br#"{"error":"invalid_grant","error_description":"Token has been expired or revoked."}"#;
+        assert_eq!(parse_error_code(body).as_deref(), Some("invalid_grant"));
+    }
+
+    #[test]
+    fn parse_error_code_returns_none_when_field_missing() {
+        let body = br#"{"error_description":"some other failure"}"#;
+        assert_eq!(parse_error_code(body), None);
+    }
+
+    #[test]
+    fn parse_error_code_does_not_match_substring_in_description() {
+        // Regression: previously a `raw.contains("invalid_grant")` check
+        // would falsely classify any 4xx whose description merely
+        // mentioned the token state as a hard `Revoked` outcome. The
+        // structured parse must look at `error`, not the body verbatim.
+        let body = br#"{"error":"invalid_request","error_description":"missing field: invalid_grant_type"}"#;
+        assert_eq!(parse_error_code(body).as_deref(), Some("invalid_request"));
     }
 }

@@ -309,7 +309,7 @@ fn pick_inline_image_sse(bytes: &[u8]) -> Result<RawInlineData, GeminiError> {
     if std::env::var("MOGEN_DEBUG_HTTP").ok().as_deref() == Some("1") {
         // Trim base64 inline_data payloads — full SSE chunks are megabytes
         // when an image lands. We only need to see error paths.
-        let preview = if text.len() > 4096 { &text[..4096] } else { text };
+        let preview = truncate_at_char_boundary(text, 4096);
         eprintln!("[mogen image SSE] {} bytes, preview:\n{}", text.len(), preview);
     }
     let mut last_finish_reasons: Vec<String> = Vec::new();
@@ -350,6 +350,22 @@ fn pick_inline_image_sse(bytes: &[u8]) -> Result<RawInlineData, GeminiError> {
         )));
     }
     Err(GeminiError::EmptyResponse)
+}
+
+/// Slice `s` to at most `max_bytes`, snapping back to the previous UTF-8
+/// char boundary when the byte index lands inside a multi-byte sequence.
+/// `&str[..n]` panics on a non-boundary `n`; Google error responses do
+/// carry non-ASCII (smart quotes, em-dashes), so a debug-mode hex slice
+/// of one would crash the request mid-image-gen.
+fn truncate_at_char_boundary(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
 }
 
 /// Inner request body for image gen. The API-key path needs
@@ -555,5 +571,29 @@ mod tests {
             matches!(err, GeminiError::InvalidResponse(_)),
             "expected InvalidResponse, got {err:?}",
         );
+    }
+
+    #[test]
+    fn truncate_at_char_boundary_returns_full_string_when_short() {
+        let s = "hello";
+        assert_eq!(truncate_at_char_boundary(s, 4096), "hello");
+    }
+
+    #[test]
+    fn truncate_at_char_boundary_snaps_back_from_inside_multibyte_char() {
+        // Regression: `&s[..3]` panics on a 4-byte UTF-8 char that starts
+        // before byte 3 ends after it. Google SSE bodies can include
+        // non-ASCII characters in error descriptions; the debug-print
+        // path must not crash.
+        let s = "abc😀def"; // emoji is 4 bytes (F0 9F 98 80)
+        let out = truncate_at_char_boundary(s, 4); // lands inside the emoji
+        assert_eq!(out, "abc"); // snapped back to last char boundary
+    }
+
+    #[test]
+    fn truncate_at_char_boundary_keeps_complete_chars_at_exact_boundary() {
+        let s = "abc😀def";
+        let out = truncate_at_char_boundary(s, 7); // boundary just after emoji
+        assert_eq!(out, "abc😀");
     }
 }

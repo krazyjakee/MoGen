@@ -388,11 +388,20 @@ impl GeminiClient {
             GeminiError::OAuth("oauth_post_with_retry called on API-key client".into())
         })?;
 
-        // Eager refresh if we're inside the expiry buffer.
+        // Eager refresh if we're inside the expiry buffer. Persist the
+        // updated bundle on success so a rotated token survives a process
+        // restart — best-effort; a non-writable store warns to stderr but
+        // doesn't fail the call.
         {
             let mut bundle = mu.lock().expect("oauth bundle mutex poisoned");
-            google_oauth::refresh_if_needed(&self.http, &mut bundle, now_unix(), config)
-                .map_err(|e| GeminiError::OAuth(e.to_string()))?;
+            let refreshed =
+                google_oauth::refresh_if_needed(&self.http, &mut bundle, now_unix(), config)
+                    .map_err(|e| GeminiError::OAuth(e.to_string()))?;
+            if refreshed {
+                if let Err(e) = google_oauth::persist_bundle(&bundle, config) {
+                    eprintln!("mogen: failed to persist refreshed OAuth bundle: {e}");
+                }
+            }
         }
         let token = mu.lock().expect("poison").access_token.clone();
 
@@ -408,6 +417,9 @@ impl GeminiClient {
                 let mut bundle = mu.lock().expect("poison");
                 google_oauth::refresh_now(&self.http, &mut bundle, now_unix(), config)
                     .map_err(|e| GeminiError::OAuth(e.to_string()))?;
+                if let Err(e) = google_oauth::persist_bundle(&bundle, config) {
+                    eprintln!("mogen: failed to persist refreshed OAuth bundle: {e}");
+                }
             }
             let token2 = mu.lock().expect("poison").access_token.clone();
             let resp2 = apply(self.http.post(cloudcode_url).json(body), &token2).send()?;

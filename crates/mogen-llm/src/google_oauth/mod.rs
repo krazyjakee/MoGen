@@ -38,8 +38,8 @@ pub use client::{
 pub use flow::{run_login_flow, LoginOptions, LoginOutcome};
 pub use store::{
     all_existing_token_paths, all_existing_token_paths_for, delete_bundle, load_bundle,
-    save_bundle, token_store_path, token_store_path_for, token_store_write_path,
-    token_store_write_path_for, TOKEN_STORE_FILENAME,
+    persist_bundle, save_bundle, token_store_path, token_store_path_for,
+    token_store_write_path, token_store_write_path_for, TOKEN_STORE_FILENAME,
 };
 pub use token::{refresh_if_needed, refresh_now, OAuthBundle, RefreshUrlOverrideGuard};
 

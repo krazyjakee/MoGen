@@ -144,6 +144,19 @@ pub fn delete_bundle(path: &std::path::Path) -> Result<(), OAuthError> {
     }
 }
 
+/// Persist `bundle` to the canonical write path for `config`. Convenience
+/// wrapper around [`token_store_write_path_for`] + [`save_bundle`] used by
+/// the refresh path so a rotated access/refresh token survives a process
+/// restart instead of forcing a fresh refresh on every launch.
+pub fn persist_bundle(
+    bundle: &OAuthBundle,
+    config: &ProviderConfig,
+) -> Result<(), OAuthError> {
+    let path = token_store_write_path_for(config)
+        .ok_or_else(|| OAuthError::Io("no canonical token store path".into()))?;
+    save_bundle(&path, bundle)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
