@@ -389,6 +389,11 @@ impl MogenStudioApp {
         ui: &mut egui::Ui,
         ctx: &egui::Context,
     ) {
+        // Drain worker channels here too — `community_window` only
+        // polls when it's open, so without this the chip's
+        // `pending_whoami`/`pending_notifications` stay set forever
+        // when the user never opens the Community window.
+        self.poll_community_workers(ctx);
         // Lazy whoami the first time the chip is shown with a stored
         // token but no cached `me`. Mirrors the gate in
         // `community_window` so the status bar bootstraps even if the
