@@ -1939,7 +1939,18 @@ impl MogenStudioApp {
                 self.community.pending_whoami = None;
                 if let MoghubMessage::WhoAmI(result) = msg {
                     match result {
-                        Ok(w) => self.community.me = w.user,
+                        Ok(w) => {
+                            self.community.me = w.user;
+                            // moghub returns 200 + `user: None` for an
+                            // unknown session (not 401). Without this,
+                            // a stale token would loop the kick-gate
+                            // forever — me stays None, token stays set.
+                            if self.community.me.is_none()
+                                && !self.settings.moghub_session.is_empty()
+                            {
+                                let _ = self.settings.clear_moghub_session();
+                            }
+                        }
                         Err(MoghubError::Unauthorized) => {
                             // Token revoked / expired server-side. Drop
                             // it from settings so we don't keep retrying.
