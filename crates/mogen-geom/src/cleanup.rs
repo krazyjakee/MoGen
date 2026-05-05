@@ -95,6 +95,49 @@ pub fn weld_vertices(mesh: &Mesh, eps: f32) -> Mesh {
     }
 }
 
+/// True when the mesh is a closed 2-manifold: every undirected edge is shared
+/// by exactly two triangles after welding coincident vertices on the same
+/// epsilon `csg.rs` uses before handing meshes to Manifold. Used by the
+/// export-time merge pass to gate which leaves can be CSG-unioned together —
+/// open primitives (`plane`, `disc`, `curved_plane`, `spline_ribbon`, decals)
+/// would trip `Manifold::from_mesh_f32` and panic, so they have to pass
+/// through the merge unchanged.
+pub fn is_closed_manifold(mesh: &Mesh) -> bool {
+    if mesh.indices.is_empty() || mesh.indices.len() % 3 != 0 {
+        return false;
+    }
+    let scale = 1.0 / WELD_EPS.max(1e-9);
+    let mut canon: Vec<u32> = Vec::with_capacity(mesh.positions.len());
+    let mut bucket: HashMap<[i64; 3], u32> = HashMap::new();
+    for p in &mesh.positions {
+        let key = [
+            (p[0] * scale).round() as i64,
+            (p[1] * scale).round() as i64,
+            (p[2] * scale).round() as i64,
+        ];
+        let next = bucket.len() as u32;
+        let id = *bucket.entry(key).or_insert(next);
+        canon.push(id);
+    }
+    let mut edge_counts: HashMap<(u32, u32), u32> = HashMap::new();
+    for tri in mesh.indices.chunks_exact(3) {
+        let a = canon[tri[0] as usize];
+        let b = canon[tri[1] as usize];
+        let c = canon[tri[2] as usize];
+        if a == b || b == c || a == c {
+            continue;
+        }
+        for (u, v) in [(a, b), (b, c), (c, a)] {
+            let key = if u < v { (u, v) } else { (v, u) };
+            *edge_counts.entry(key).or_insert(0) += 1;
+        }
+    }
+    if edge_counts.is_empty() {
+        return false;
+    }
+    edge_counts.values().all(|&c| c == 2)
+}
+
 /// Drop triangles with (near) zero area, as well as any triangle whose indices
 /// collapsed to fewer than three distinct vertices.
 pub fn cull_degenerate(mesh: &Mesh) -> Mesh {
@@ -345,6 +388,30 @@ mod tests {
         };
         let out = cull_coplanar_opposites(&mesh);
         assert_eq!(out.indices.len(), 6);
+    }
+
+    #[test]
+    fn box_is_closed_manifold_after_canonicalisation() {
+        // box_mesh emits per-face vertex copies; the closed-manifold check
+        // must canonicalise positions on the same epsilon csg.rs uses, so
+        // the cube reads as closed even though its index list references 24
+        // separate vertices.
+        let m = crate::box_mesh([1.0, 1.0, 1.0], mogen_core::UvMode::default());
+        assert!(is_closed_manifold(&m));
+    }
+
+    #[test]
+    fn open_primitives_are_not_closed() {
+        let plane = crate::plane_mesh([1.0, 1.0], mogen_core::UvMode::default());
+        let disc = crate::disc_mesh(0.5, 16, mogen_core::UvMode::default());
+        assert!(!is_closed_manifold(&plane));
+        assert!(!is_closed_manifold(&disc));
+    }
+
+    #[test]
+    fn empty_mesh_is_not_closed() {
+        let empty = Mesh::default();
+        assert!(!is_closed_manifold(&empty));
     }
 
     #[test]

@@ -249,7 +249,12 @@ fn is_mergeable(n: &SceneNode, id: NodeId, protected: &HashSet<NodeId>) -> bool 
         return false;
     }
     match &n.mesh {
-        Some(m) if !m.is_skinned() => true,
+        // Open primitives (`plane`, `disc`, `curved_plane`, `spline_ribbon`,
+        // decals) trip Manifold's `from_mesh_f32` and panic the boolean. Keep
+        // them as standalone leaves; the merge pass is an optimisation, not a
+        // semantic rewrite, so dropping non-closed meshes from candidate
+        // groups is safe.
+        Some(m) if !m.is_skinned() && mogen_geom::is_closed_manifold(m) => true,
         _ => false,
     }
 }
@@ -483,6 +488,40 @@ mod tests {
         let out = merge_solid_groups(&s, |_| {});
         let leaf_count = out.nodes.iter().filter(|n| n.mesh.is_some()).count();
         assert_eq!(leaf_count, 2);
+    }
+
+    #[test]
+    fn open_sibling_does_not_merge_with_closed_one() {
+        // Regression for the sports_bag.mog panic: a closed primitive (box)
+        // and an open primitive (plane) share a material. The merge pass used
+        // to feed both into `union_many`, which panics inside Manifold on the
+        // open mesh. After the gate, the open leaf should pass through and
+        // the closed one stays on its own (group-of-one is also passthrough).
+        let mut s = SceneGraph::new();
+        let mat = s.add_material(Material::new("fabric"));
+        let root = s.add_root("group", "group", Transform::default());
+        let solid = s.add_child(root, "body", "box", Transform::default());
+        let open = s.add_child(
+            root,
+            "patch",
+            "plane",
+            Transform::from_translation([1.0, 0.0, 0.0].into()),
+        );
+        s.set_mesh(solid, box_mesh([1.0, 1.0, 1.0], mogen_core::UvMode::default()));
+        s.set_mesh(
+            open,
+            mogen_geom::plane_mesh([1.0, 1.0], mogen_core::UvMode::default()),
+        );
+        s.set_material(solid, mat);
+        s.set_material(open, mat);
+
+        let out = merge_sibling_meshes(&s, |_| {});
+        let leaf_count = out.nodes.iter().filter(|n| n.mesh.is_some()).count();
+        assert_eq!(leaf_count, 2, "open mesh must not be merged with the closed one");
+        assert!(
+            out.nodes.iter().all(|n| n.kind != "merged"),
+            "no group of two-or-more closed siblings exists, so no merge node should appear",
+        );
     }
 
     #[test]
