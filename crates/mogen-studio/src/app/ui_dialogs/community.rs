@@ -48,6 +48,22 @@ const PUBLISH_THUMB_SIZE: u32 = 512;
 /// 512px source down on the GPU.
 const PUBLISH_THUMB_PREVIEW_SIZE: f32 = 128.0;
 
+/// Pull the slug out of a canonical `/m/<user>/<slug>` URL path returned
+/// by `POST /api/models`. Returns `None` if the path doesn't have at
+/// least three segments — covers a server change in the URL shape
+/// without panicking.
+fn slug_from_url_path(url_path: &str) -> Option<String> {
+    let segments: Vec<&str> = url_path
+        .trim_start_matches('/')
+        .split('/')
+        .filter(|s| !s.is_empty())
+        .collect();
+    match segments.as_slice() {
+        ["m", _user, slug, ..] => Some((*slug).to_string()),
+        _ => None,
+    }
+}
+
 /// Pick a unique temp path for one publish-dialog thumbnail render. Suffixed
 /// with the pid + nanos so back-to-back open/cancel cycles don't trip over a
 /// previous run's leftover file.
@@ -267,6 +283,36 @@ pub(crate) struct PublishDialogState {
     /// Capture-pipeline error, if the GL worker reported one. Shown next
     /// to the preview so the user knows the upload will go without one.
     thumbnail_error: Option<String>,
+    /// MoGHub model that this file was last published to, lifted from the
+    /// `meta(moghub_model_id=…, moghub_slug=…, moghub_version=…)` stamp
+    /// applied on a previous successful publish. When `Some` and the user
+    /// hasn't toggled `publish_as_new`, the request carries
+    /// `target_model_id` so the server appends a new version instead of
+    /// allocating a fresh slug.
+    update_target: Option<UpdateTarget>,
+    /// User wants to abandon the stamped identity and create a brand-new
+    /// MoGHub model from this source. Surfaced as a checkbox in the
+    /// dialog when `update_target` is set.
+    publish_as_new: bool,
+}
+
+/// What we know about the prior publish of the file currently open in
+/// the Publish dialog. Read from the source's `meta(...)` block; the
+/// fields are kept together so the UI can render a single
+/// "Updating @user/slug → v(N+1)" caption without juggling three
+/// optionals.
+#[derive(Clone)]
+pub(crate) struct UpdateTarget {
+    /// UUID identifying the MoGHub model. Sent verbatim as
+    /// `target_model_id` in the publish request.
+    model_id: String,
+    /// Slug last seen in the URL path. Used for the dialog caption and
+    /// re-stamped on success in case the server ever permits slug
+    /// changes (today it doesn't).
+    slug: String,
+    /// Last published version number. The next publish will create
+    /// `last_version + 1`.
+    last_version: i32,
 }
 
 impl MogenStudioApp {
@@ -1324,6 +1370,27 @@ impl MogenStudioApp {
             .collect::<Vec<_>>()
             .join(", ");
 
+        // Lift the previous publish's identity (if any) off the source's
+        // meta block. All three keys must be present + parseable — a
+        // half-stamped file (e.g. user hand-edited it) falls back to the
+        // first-publish path, which is the safer default.
+        let update_target = mogen_dsl::read_meta_attr(&active_source, "moghub_model_id")
+            .and_then(|model_id| {
+                let slug =
+                    mogen_dsl::read_meta_attr(&active_source, "moghub_slug")?;
+                let last_version: i32 = mogen_dsl::read_meta_attr(
+                    &active_source,
+                    "moghub_version",
+                )?
+                .parse()
+                .ok()?;
+                Some(UpdateTarget {
+                    model_id,
+                    slug,
+                    last_version,
+                })
+            });
+
         // Kick off a thumbnail capture of the live viewport. The GL paint
         // callback consumes the request on the next frame and writes a PNG
         // to `thumbnail_temp`; `publish_dialog` drains the outcome and
@@ -1364,6 +1431,8 @@ impl MogenStudioApp {
             thumbnail_bytes: None,
             thumbnail_texture: None,
             thumbnail_error: None,
+            update_target,
+            publish_as_new: false,
         });
     }
 
@@ -1438,7 +1507,21 @@ impl MogenStudioApp {
                             .hint_text("from meta(name = \"…\")"),
                     );
                 });
-                ui.weak(format!("Publishing as @{me_handle} (slug auto-assigned)"));
+                let updating = state
+                    .update_target
+                    .as_ref()
+                    .filter(|_| !state.publish_as_new);
+                if let Some(target) = updating {
+                    ui.weak(format!(
+                        "Updating @{me_handle}/{} → v{}",
+                        target.slug,
+                        target.last_version + 1,
+                    ));
+                } else {
+                    ui.weak(format!(
+                        "Publishing as @{me_handle} (slug auto-assigned)"
+                    ));
+                }
                 ui.horizontal(|ui| {
                     ui.label("Filename");
                     ui.add(egui::TextEdit::singleline(&mut state.filename));
@@ -1495,6 +1578,17 @@ impl MogenStudioApp {
                     "Publish as module (other authors can `use \"@…\"` it)",
                 );
 
+                // Escape hatch when republishing: lets the user fork the
+                // file off the previous identity without hand-editing the
+                // meta block. Only relevant when an `update_target` was
+                // lifted from the source.
+                if state.update_target.is_some() {
+                    ui.checkbox(
+                        &mut state.publish_as_new,
+                        "Publish as new (allocate a fresh slug)",
+                    );
+                }
+
                 ui.label("Preview");
                 ui.horizontal(|ui| {
                     let dim = egui::vec2(
@@ -1531,7 +1625,18 @@ impl MogenStudioApp {
                 }
 
                 ui.horizontal(|ui| {
-                    let label = if posting { "Publishing…" } else { "Publish" };
+                    let updating = state
+                        .update_target
+                        .as_ref()
+                        .filter(|_| !state.publish_as_new);
+                    let label = match (posting, updating) {
+                        (true, Some(_)) => "Publishing update…".to_string(),
+                        (true, None) => "Publishing…".to_string(),
+                        (false, Some(t)) => {
+                            format!("Publish update v{}", t.last_version + 1)
+                        }
+                        (false, None) => "Publish".to_string(),
+                    };
                     if ui
                         .add_enabled(!posting, egui::Button::new(label))
                         .clicked()
@@ -1654,6 +1759,11 @@ impl MogenStudioApp {
             .thumbnail_bytes
             .as_ref()
             .map(|bytes| STANDARD.encode(bytes));
+        let target_model_id = state
+            .update_target
+            .as_ref()
+            .filter(|_| !state.publish_as_new)
+            .map(|t| t.model_id.clone());
         let req = PublishRequest {
             title: state.title.clone(),
             description: state.description.clone(),
@@ -1672,6 +1782,7 @@ impl MogenStudioApp {
             thumbnail_png_base64,
             parent_version_id: None,
             publish_as_module: state.publish_as_module,
+            target_model_id,
         };
         let url = self.settings.moghub_url.clone();
         let token = self.settings.moghub_session.clone();
@@ -1748,16 +1859,85 @@ impl MogenStudioApp {
             return;
         };
         self.community.pending_publish = None;
-        if let MoghubMessage::Published(result) = msg {
-            if let Some(state) = self.community.publish.as_mut() {
-                match result {
-                    Ok(r) => {
-                        state.success = Some(r);
-                        state.error = None;
-                    }
-                    Err(e) => state.error = Some(format_err(&e)),
+        let MoghubMessage::Published(result) = msg else {
+            return;
+        };
+        let Some(state) = self.community.publish.as_mut() else {
+            return;
+        };
+        match result {
+            Ok(r) => {
+                // Stamp the published identity into the source so the
+                // *next* publish targets the same MoGHub model. Computed
+                // here rather than on the server because PublishResponse
+                // doesn't carry the version number — but the dialog
+                // always knows the last version (None → 1, Some(N) →
+                // N+1) and the slug parses out of the canonical
+                // `/m/<user>/<slug>` URL.
+                let next_version = state
+                    .update_target
+                    .as_ref()
+                    .filter(|_| !state.publish_as_new)
+                    .map(|t| t.last_version + 1)
+                    .unwrap_or(1);
+                let stamped_slug = slug_from_url_path(&r.url_path);
+                let stamped_model_id = r.model_id.clone();
+                let entry_path = state.entry_path.clone();
+                state.success = Some(r);
+                state.error = None;
+                self.stamp_publish_meta(
+                    entry_path.as_deref(),
+                    &stamped_model_id,
+                    stamped_slug.as_deref(),
+                    next_version,
+                );
+            }
+            Err(e) => state.error = Some(format_err(&e)),
+        }
+    }
+
+    /// Persist the MoGHub identity into the active tab's source, then
+    /// save it to disk so re-opening the file reproduces the update
+    /// path. Best-effort: an untitled buffer (no `entry_path`) gets the
+    /// stamp applied in memory only; the next manual save will land it
+    /// on disk. Mismatched-active-tab is a no-op — the user might have
+    /// switched tabs while the publish was in flight, and we'd rather
+    /// drop the stamp than overwrite an unrelated file.
+    fn stamp_publish_meta(
+        &mut self,
+        entry_path: Option<&std::path::Path>,
+        model_id: &str,
+        slug: Option<&str>,
+        version: i32,
+    ) {
+        let target_index = match entry_path {
+            Some(p) => self.file_index_by_path(p),
+            None => {
+                if self.active().path.is_none() {
+                    Some(self.active)
+                } else {
+                    None
                 }
             }
+        };
+        let Some(i) = target_index else {
+            return;
+        };
+        let mut src = self.files[i].source.clone();
+        src = mogen_dsl::upsert_meta_attr(&src, "moghub_model_id", model_id);
+        if let Some(s) = slug {
+            src = mogen_dsl::upsert_meta_attr(&src, "moghub_slug", s);
+        }
+        src = mogen_dsl::upsert_meta_attr(
+            &src,
+            "moghub_version",
+            &version.to_string(),
+        );
+        self.files[i].source = src;
+        self.files[i].dirty = self.files[i].source != self.files[i].last_saved_source;
+        self.files[i].needs_compile = true;
+        if let Some(path) = self.files[i].path.clone() {
+            self.save_index_to(i, &path);
         }
     }
 

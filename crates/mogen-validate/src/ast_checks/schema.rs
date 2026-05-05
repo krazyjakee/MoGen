@@ -102,6 +102,10 @@ pub fn attrs_for_kind(kind: &str) -> &'static [&'static str] {
         "meta" => &[
             "name", "version", "mogen_version", "description", "tags",
             "seed", "thinking", "prompt",
+            // Stamped by MoGen Studio's Publish dialog after a successful
+            // upload; subsequent publishes use them to republish into the
+            // same MoGHub model instead of allocating a new slug.
+            "moghub_model_id", "moghub_slug", "moghub_version",
         ],
         "box" | "plane" | "quad" | "prism" => &["size"],
         "slab" | "post" | "panel" => &["size"],
@@ -201,7 +205,10 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         | ("meta", "description")
         | ("meta", "seed")
         | ("meta", "thinking")
-        | ("meta", "prompt") => "string",
+        | ("meta", "prompt")
+        | ("meta", "moghub_model_id")
+        | ("meta", "moghub_slug")
+        | ("meta", "moghub_version") => "string",
         ("meta", "tags") => "list of string",
         (_, "pos") | (_, "rot") => "vec3",
         (_, "scale") => "number or vec3",

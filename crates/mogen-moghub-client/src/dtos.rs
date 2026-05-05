@@ -181,6 +181,12 @@ pub struct PublishRequest {
     pub parent_version_id: Option<String>,
     #[serde(default)]
     pub publish_as_module: bool,
+    /// Set when republishing into an existing model the caller owns.
+    /// Reuses the model_id + slug and appends a new version. Mutually
+    /// exclusive with `parent_version_id` server-side. UUID as a string,
+    /// matching the rest of the DTOs.
+    #[serde(default)]
+    pub target_model_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
