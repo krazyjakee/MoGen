@@ -30,6 +30,7 @@ use crate::app::moghub::{
     mark_notifications_read, post_comment, publish_model, start_signin, toggle_like, InFlight,
     MoghubMessage,
 };
+use crate::app::publish_textures::collect_publish_textures;
 use crate::app::types::FileState;
 use crate::app::MogenStudioApp;
 use crate::viewer::{CaptureFrame, CaptureKind, CaptureRequest};
@@ -1593,38 +1594,61 @@ impl MogenStudioApp {
         // imports — if any — can't resolve without an on-disk base dir, so
         // bundling fails gracefully and the publish proceeds with the entry
         // alone.
+        let mut imports: Vec<(String, String)> = Vec::new();
+        let entry_dir_for_textures = state
+            .entry_path
+            .as_ref()
+            .and_then(|p| p.parent().map(|p| p.to_path_buf()));
+        if let Some(entry_dir) = entry_dir_for_textures.as_deref() {
+            match mogen_dsl::collect_local_import_files(entry_dir, &state.source) {
+                Ok(found) => {
+                    for (name, source) in found {
+                        if name == state.filename {
+                            state.error = Some(format!(
+                                "import filename collides with entry filename `{}` — \
+                                 rename one before publishing",
+                                state.filename
+                            ));
+                            return;
+                        }
+                        imports.push((name, source));
+                    }
+                }
+                Err(e) => {
+                    state.error = Some(format!("collecting imports: {e}"));
+                    return;
+                }
+            }
+        }
+
         let mut files = vec![PublishFileInput {
             filename: state.filename.clone(),
             source: state.source.clone(),
             is_entry: true,
         }];
-        if let Some(entry_path) = state.entry_path.as_ref() {
-            if let Some(entry_dir) = entry_path.parent() {
-                match mogen_dsl::collect_local_import_files(entry_dir, &state.source) {
-                    Ok(imports) => {
-                        for (name, source) in imports {
-                            if name == state.filename {
-                                state.error = Some(format!(
-                                    "import filename collides with entry filename `{}` — \
-                                     rename one before publishing",
-                                    state.filename
-                                ));
-                                return;
-                            }
-                            files.push(PublishFileInput {
-                                filename: name,
-                                source,
-                                is_entry: false,
-                            });
-                        }
-                    }
-                    Err(e) => {
-                        state.error = Some(format!("collecting imports: {e}"));
-                        return;
-                    }
+        for (name, source) in &imports {
+            files.push(PublishFileInput {
+                filename: name.clone(),
+                source: source.clone(),
+                is_entry: false,
+            });
+        }
+
+        // Bundle every PNG/JPG/JPEG/WebP referenced from a material in the
+        // entry or any imported `.mog`. Untitled buffers can't resolve
+        // texture paths without an on-disk base, so they publish without
+        // textures (matches the import-bundling fallback above).
+        let textures = if let Some(entry_dir) = entry_dir_for_textures.as_deref() {
+            match collect_publish_textures(entry_dir, &state.source, &imports) {
+                Ok(t) => t,
+                Err(e) => {
+                    state.error = Some(format!("bundling textures: {e}"));
+                    return;
                 }
             }
-        }
+        } else {
+            Vec::new()
+        };
 
         let thumbnail_png_base64 = state
             .thumbnail_bytes
@@ -1644,6 +1668,7 @@ impl MogenStudioApp {
                 .take(8)
                 .collect(),
             files,
+            textures,
             thumbnail_png_base64,
             parent_version_id: None,
             publish_as_module: state.publish_as_module,

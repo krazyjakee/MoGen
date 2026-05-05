@@ -30,6 +30,7 @@ mod moghub;
 mod multi_caret;
 mod onboarding;
 mod pricing;
+mod publish_textures;
 mod spotlight;
 mod text_menu;
 mod thumbnail;

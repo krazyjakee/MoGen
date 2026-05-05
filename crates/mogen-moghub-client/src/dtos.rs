@@ -145,6 +145,17 @@ pub struct PublishFileInput {
     pub is_entry: bool,
 }
 
+/// Binary asset bundled with a publish — texture PNG/JPG/WebP referenced
+/// from a `.mog` material. Stored next to the `.mog` files in the asset
+/// volume; `filename` must be a basename (no path separators) per the
+/// moghub `decode_textures` validator.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PublishTextureInput {
+    pub filename: String,
+    /// Standard base64 of the raw image bytes (no `data:` prefix).
+    pub bytes_base64: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PublishRequest {
     pub title: String,
@@ -159,6 +170,11 @@ pub struct PublishRequest {
     #[serde(default)]
     pub tags: Vec<String>,
     pub files: Vec<PublishFileInput>,
+    /// Texture/image assets shipped with the publish. Decoded server-side
+    /// and written into the version directory; not validated through the
+    /// mogen pipeline.
+    #[serde(default)]
+    pub textures: Vec<PublishTextureInput>,
     #[serde(default)]
     pub thumbnail_png_base64: Option<String>,
     #[serde(default)]
