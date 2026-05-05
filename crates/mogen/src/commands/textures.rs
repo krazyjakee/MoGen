@@ -4,12 +4,24 @@ use std::time::Instant;
 
 use anyhow::{Context, Result};
 use mogen_llm::gemini::GeminiClient;
-use mogen_llm::Provider;
+use mogen_llm::image::{default_image_model_when_oauth, DEFAULT_IMAGE_MODEL};
+use mogen_llm::image_client::ImageClient;
+use mogen_llm::zai::{self, ZaiClient};
+use mogen_llm::GoogleCredential;
 
 use crate::commands::build::build;
-use crate::common::{ensure_parent_dir, resolve_api_key};
+use crate::common::{ensure_parent_dir, resolve_gemini_image_credential};
 use crate::format::format_duration;
 use crate::spinner::Spinner;
+
+/// Which image backend the run will hit. Drives the model-default fallback
+/// and the spinner phrasing — "fetching from Gemini" vs "fetching from Z.ai".
+#[derive(Copy, Clone)]
+enum ProviderKind {
+    GeminiApiKey,
+    GeminiOAuth,
+    Zai,
+}
 
 pub(crate) fn textures_cmd(args: mogen_llm::textures::TexturesArgs) -> Result<()> {
     let src = fs::read_to_string(&args.input)
@@ -66,17 +78,63 @@ pub(crate) fn textures_cmd(args: mogen_llm::textures::TexturesArgs) -> Result<()
 
     // Only bring up a client if we'll actually need one. Cache-only and
     // derive-only runs don't need a key.
-    // Image generation only ships against Gemini today — non-Gemini providers
-    // would need a separate image endpoint that doesn't exist in OpenAI's
-    // chat-completions or Anthropic's messages APIs (and Ollama has no
-    // image-out path at all). Always read GEMINI_API_KEY here regardless of
-    // any `--provider` selection on the parent command.
-    let client = if to_gen > 0 {
-        let api_key = resolve_api_key(Provider::Gemini, args.api_key.clone())?;
-        Some(GeminiClient::new(api_key))
+    //
+    // Provider routing: explicit `--zai-api-key` (or non-empty `ZAI_API_KEY`
+    // env) routes albedo generation to Z.ai's `glm-image`. Otherwise fall
+    // back to Gemini — non-Gemini text providers (OpenAI/Anthropic/Ollama)
+    // have no image API, so any `--provider` selection on the parent
+    // command is ignored here.
+    let zai_key = args
+        .zai_api_key
+        .clone()
+        .filter(|k| !k.trim().is_empty())
+        .or_else(|| {
+            std::env::var("ZAI_API_KEY")
+                .ok()
+                .filter(|k| !k.trim().is_empty())
+        });
+    let (client, provider_kind) = if to_gen > 0 {
+        if let Some(k) = zai_key {
+            (Some(ImageClient::Zai(ZaiClient::new(k))), ProviderKind::Zai)
+        } else {
+            let cred = resolve_gemini_image_credential(args.api_key.clone())?;
+            match cred {
+                GoogleCredential::ApiKey(k) => (
+                    Some(ImageClient::Gemini(GeminiClient::new(k))),
+                    ProviderKind::GeminiApiKey,
+                ),
+                GoogleCredential::AntigravityOAuth(bundle) => (
+                    Some(ImageClient::Gemini(GeminiClient::from_antigravity_oauth(bundle))),
+                    ProviderKind::GeminiOAuth,
+                ),
+                // `resolve_gemini_image_credential` rejects the gemini-cli bundle
+                // up front, so this arm is unreachable in practice. Treat it as a
+                // hard error rather than silently sending a doomed request.
+                GoogleCredential::OAuth(_) => {
+                    anyhow::bail!(
+                        "internal: gemini-cli OAuth bundle is not valid for image \
+                         generation; resolver should have rejected it"
+                    );
+                }
+            }
+        }
     } else {
-        None
+        (None, ProviderKind::GeminiApiKey)
     };
+
+    // Resolve the image model: explicit `--model` wins; otherwise default
+    // depends on the credential. Z.ai uses its own model id; Gemini splits
+    // into Pro preview (paid OAuth) vs Flash (API-key). When `to_gen` is
+    // zero we never call the image API, so the model name doesn't matter —
+    // pick the API-key default arbitrarily.
+    let model = args.model.clone().unwrap_or_else(|| match provider_kind {
+        ProviderKind::Zai => zai::DEFAULT_IMAGE_MODEL.to_string(),
+        ProviderKind::GeminiOAuth => default_image_model_when_oauth(true).to_string(),
+        ProviderKind::GeminiApiKey => match client.as_ref() {
+            Some(_) => default_image_model_when_oauth(false).to_string(),
+            None => DEFAULT_IMAGE_MODEL.to_string(),
+        },
+    });
 
     let base_dir = args
         .input
@@ -85,25 +143,38 @@ pub(crate) fn textures_cmd(args: mogen_llm::textures::TexturesArgs) -> Result<()
         .unwrap_or_else(|| PathBuf::from("."));
 
     let start = Instant::now();
+    const PHRASES_GEMINI: &[&str] = &[
+        "fetching from Gemini",
+        "decoding PNG",
+        "deriving normals",
+        "deriving roughness",
+        "deriving occlusion",
+        "writing texture files",
+    ];
+    const PHRASES_ZAI: &[&str] = &[
+        "fetching from Z.ai",
+        "decoding PNG",
+        "deriving normals",
+        "deriving roughness",
+        "deriving occlusion",
+        "writing texture files",
+    ];
+    let phrases: &'static [&'static str] = match provider_kind {
+        ProviderKind::Zai => PHRASES_ZAI,
+        _ => PHRASES_GEMINI,
+    };
     let mut spinner = Spinner::new(
         &format!(
             "textures: {to_gen} albedo image{}, {to_derive} derived map{}",
             if to_gen == 1 { "" } else { "s" },
             if to_derive == 1 { "" } else { "s" },
         ),
-        &[
-            "fetching from Gemini",
-            "decoding PNG",
-            "deriving normals",
-            "deriving roughness",
-            "deriving occlusion",
-            "writing texture files",
-        ],
+        phrases,
     );
 
     let report = mogen_llm::textures::run_plan(
         client.as_ref(),
-        &args.model,
+        &model,
         &args,
         &ast,
         &plans,

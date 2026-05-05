@@ -1,10 +1,12 @@
 use eframe::egui;
+use mogen_llm::google_oauth::{ProviderConfig, ANTIGRAVITY_CONFIG, GEMINI_CLI_CONFIG};
 use mogen_llm::Provider;
 
 use crate::app::MogenStudioApp;
 use crate::settings::{
-    thinking_level_key, thinking_level_label, DEFAULT_MAX_REPAIR_ITERS, PROVIDERS,
-    THINKING_LEVELS,
+    thinking_level_key, thinking_level_label, ImageProvider, ProviderSlot,
+    DEFAULT_MAX_REPAIR_ITERS, DEFAULT_OAUTH_GEMINI_FAST_MODEL, DEFAULT_OAUTH_GEMINI_MODEL,
+    IMAGE_PROVIDERS, PROVIDER_SLOTS, THINKING_LEVELS,
 };
 use crate::theme::{apply_theme, theme_label, Theme, THEMES};
 
@@ -31,19 +33,27 @@ impl PrefsTab {
 
 const PREFS_TABS: [PrefsTab; 3] = [PrefsTab::Llm, PrefsTab::Appearance, PrefsTab::Privacy];
 
-/// Models surfaced in the Preferences dropdown for each provider. Free-form
+/// Models surfaced in the Preferences dropdown for each slot. Free-form
 /// text still wins if a user types one in, but these cover the tiers almost
-/// every user will want and give pricing expectations a named anchor.
-fn model_presets(provider: Provider) -> &'static [&'static str] {
-    match provider {
-        Provider::Gemini => &[
+/// every user will want. The Gemini slots split: API-key uses the public
+/// `*-latest` aliases, OAuth pins to concrete preview tags because
+/// `cloudcode-pa.googleapis.com/v1internal` 404s on the latest aliases.
+pub(super) fn model_presets(slot: ProviderSlot) -> &'static [&'static str] {
+    match slot {
+        ProviderSlot::GeminiApiKey => &[
             "gemini-pro-latest",
             "gemini-flash-latest",
             "gemini-2.5-pro",
             "gemini-2.5-flash",
             "gemini-2.5-flash-lite",
         ],
-        Provider::OpenAI => &[
+        ProviderSlot::GeminiOAuth => &[
+            "gemini-3.1-pro-preview",
+            "gemini-3-flash-preview",
+            "gemini-2.5-pro",
+            "gemini-2.5-flash",
+        ],
+        ProviderSlot::OpenAI => &[
             "gpt-5",
             "gpt-5-mini",
             "gpt-5-nano",
@@ -52,13 +62,13 @@ fn model_presets(provider: Provider) -> &'static [&'static str] {
             "o4-mini",
             "o3",
         ],
-        Provider::Anthropic => &[
+        ProviderSlot::Anthropic => &[
             "claude-opus-4-7",
             "claude-sonnet-4-6",
             "claude-sonnet-4-5",
             "claude-haiku-4-5",
         ],
-        Provider::Ollama => &[
+        ProviderSlot::Ollama => &[
             "llama3.3",
             "llama3.2",
             "qwen3",
@@ -68,10 +78,21 @@ fn model_presets(provider: Provider) -> &'static [&'static str] {
             "phi4",
             "gemma3",
         ],
-        Provider::ClaudeCode => &[
+        ProviderSlot::ClaudeCode => &[
             "sonnet",
             "haiku",
             "opus",
+        ],
+        ProviderSlot::Fireworks => &[
+            "accounts/fireworks/routers/kimi-k2p6",
+            "accounts/fireworks/routers/kimi-k2p6-turbo",
+            "accounts/fireworks/routers/kimi-k2p5-turbo",
+        ],
+        ProviderSlot::Zai => &[
+            "glm-5.1",
+            "glm-4.6",
+            "glm-4.5-air",
+            "glm-4.5-flash",
         ],
     }
 }
@@ -87,7 +108,7 @@ impl MogenStudioApp {
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
-            .default_width(420.0)
+            .default_width(520.0)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
@@ -131,6 +152,10 @@ impl MogenStudioApp {
                             self.settings.ollama_base_url.trim().to_string();
                         self.settings.claude_code_path =
                             self.settings.claude_code_path.trim().to_string();
+                        self.settings.zai_api_key =
+                            self.settings.zai_api_key.trim().to_string();
+                        self.settings.fireworks_api_key =
+                            self.settings.fireworks_api_key.trim().to_string();
                         match self.settings.save() {
                             Ok(()) => {
                                 let active = self.settings.provider();
@@ -162,28 +187,94 @@ impl MogenStudioApp {
         ui.heading("LLM provider");
                 ui.label(
                     "Backend used for Generate / Modify / Animate / Ask / Prompt \
-                     Enhance. Texture image generation is always Gemini regardless \
-                     of this setting (no other backend has an image API).",
+                     Enhance. Texture image generation has its own provider \
+                     picker below — Gemini (API key or Antigravity OAuth) or \
+                     Z.ai's `glm-image`.",
                 );
                 ui.add_space(6.0);
-                let current_provider = self.settings.provider();
+                let current_slot = self.settings.provider_slot();
                 egui::ComboBox::from_id_salt("opts_provider")
-                    .selected_text(current_provider.label())
+                    .selected_text(current_slot.label())
                     .show_ui(ui, |ui| {
-                        for p in PROVIDERS {
-                            let selected = p == current_provider;
+                        for slot in PROVIDER_SLOTS {
+                            let selected = slot == current_slot;
                             if ui
-                                .selectable_label(selected, p.label())
+                                .selectable_label(selected, slot.label())
                                 .clicked()
                                 && !selected
                             {
-                                self.settings.set_provider(p);
+                                self.settings.set_provider_slot(slot);
                             }
                         }
                     });
 
                 ui.add_space(12.0);
-                let active_provider = self.settings.provider();
+                ui.heading("Image generation provider");
+                ui.label(
+                    "Which surface texture image generation hits. \"Auto\" \
+                     prefers an Antigravity OAuth bundle when one is signed in \
+                     and falls back to a Gemini API key. Force \"Antigravity \
+                     OAuth\" to skip the API-key fallback, or \"Gemini API key\" \
+                     to bypass OAuth — useful when one surface is rate-limited \
+                     (404s / 429s) and you want the other. \"Z.ai (glm-image)\" \
+                     swaps the entire backend to Z.ai's image API — useful when \
+                     Gemini quota is exhausted.",
+                );
+                ui.add_space(6.0);
+                let current_image = self.settings.image_provider();
+                egui::ComboBox::from_id_salt("opts_image_provider")
+                    .selected_text(current_image.label())
+                    .show_ui(ui, |ui| {
+                        for p in IMAGE_PROVIDERS {
+                            let selected = p == current_image;
+                            if ui
+                                .selectable_label(selected, p.label())
+                                .clicked()
+                                && !selected
+                            {
+                                self.settings.set_image_provider(p);
+                            }
+                        }
+                    });
+
+                if current_image == ImageProvider::ZAI {
+                    ui.add_space(8.0);
+                    ui.label("Z.ai API key").on_hover_text(
+                        "Bearer key for `api.z.ai/api/paas/v4/images/generations`. \
+                         Falls back to the ZAI_API_KEY environment variable when \
+                         this field is blank.",
+                    );
+                    let zai_id = egui::Id::new("opts_zai_api_key");
+                    crate::app::text_menu::text_edit_with_menu(
+                        ui,
+                        zai_id,
+                        &mut self.settings.zai_api_key,
+                        |ui, text| {
+                            ui.add(
+                                egui::TextEdit::singleline(text)
+                                    .password(true)
+                                    .hint_text("paste Z.ai key (leave blank to clear)")
+                                    .desired_width(f32::INFINITY)
+                                    .id(zai_id),
+                            )
+                        },
+                    );
+                    if std::env::var("ZAI_API_KEY")
+                        .map(|v| !v.trim().is_empty())
+                        .unwrap_or(false)
+                    {
+                        ui.add_space(4.0);
+                        ui.colored_label(
+                            egui::Color32::from_rgb(150, 180, 230),
+                            "ZAI_API_KEY is also set in your environment — the \
+                             saved key here takes precedence when non-empty.",
+                        );
+                    }
+                }
+
+                ui.add_space(12.0);
+                let active_slot = self.settings.provider_slot();
+                let active_provider = active_slot.to_provider();
                 if matches!(active_provider, Provider::ClaudeCode) {
                     // Claude Code authenticates through the user's local
                     // `claude` CLI install — no key to paste here. We only
@@ -205,12 +296,20 @@ impl MogenStudioApp {
                             .hint_text("claude")
                             .desired_width(f32::INFINITY),
                     );
+                } else if active_slot.is_gemini_oauth() {
+                    // OAuth-only Gemini slot: hide the key field entirely and
+                    // surface the Sign-in flow + status. The saved Gemini API
+                    // key (if any) is preserved on the side — switching back
+                    // to the API-key slot brings it back into view.
+                    self.prefs_gemini_oauth_section(ui);
                 } else {
                     let key_heading = match active_provider {
                         Provider::Gemini => "Gemini API key",
                         Provider::OpenAI => "OpenAI API key",
                         Provider::Anthropic => "Anthropic API key",
                         Provider::Ollama => "Ollama API key (optional)",
+                        Provider::Fireworks => "Fireworks AI Firepass API key",
+                        Provider::Zai => "Z.ai API key",
                         Provider::ClaudeCode => unreachable!(),
                     };
                     ui.heading(key_heading);
@@ -231,6 +330,18 @@ impl MogenStudioApp {
                             "Optional bearer token for an Ollama endpoint behind an \
                              authenticating proxy. Leave blank for a local install."
                         }
+                        Provider::Fireworks => {
+                            "Used by Generate / Modify / Animate / Ask. Default model is the \
+                             Fire Pass `kimi-k2p6` router (zero per-token cost on Kimi K2 \
+                             for personal agentic-coding use). Stored in your user config \
+                             directory and persists between sessions."
+                        }
+                        Provider::Zai => {
+                            "Used by Generate / Modify / Animate / Ask. Default model is \
+                             `glm-5.1` (Z.ai's GLM family via the OpenAI-compatible chat API). \
+                             The same key drives the `glm-image` texture path when you set \
+                             Image provider → Z.ai. Stored in your user config directory."
+                        }
                         Provider::ClaudeCode => unreachable!(),
                     });
                     ui.add_space(6.0);
@@ -242,6 +353,8 @@ impl MogenStudioApp {
                         Provider::OpenAI => &mut self.settings.openai_api_key,
                         Provider::Anthropic => &mut self.settings.anthropic_api_key,
                         Provider::Ollama => &mut self.settings.ollama_api_key,
+                        Provider::Fireworks => &mut self.settings.fireworks_api_key,
+                        Provider::Zai => &mut self.settings.zai_api_key,
                         Provider::ClaudeCode => unreachable!(),
                     };
                     crate::app::text_menu::text_edit_with_menu(
@@ -287,6 +400,7 @@ impl MogenStudioApp {
                             ),
                         );
                     }
+
                 }
 
                 // --- Models (provider-aware: presets and target fields swap
@@ -302,13 +416,16 @@ impl MogenStudioApp {
                         "Thinking model runs the heavy DSL paths (generate / modify / \
                          animate). Fast model runs cheap rewrites like the Prompt \
                          Enhancer. Showing presets for {}.",
-                        active_provider.label(),
+                        active_slot.label(),
                     ));
                     ui.add_space(6.0);
 
-                    let thinking_default = active_provider.default_model();
-                    let fast_default = active_provider.default_fast_model();
-                    let presets = model_presets(active_provider);
+                    let (thinking_default, fast_default) = if active_slot.is_gemini_oauth() {
+                        (DEFAULT_OAUTH_GEMINI_MODEL, DEFAULT_OAUTH_GEMINI_FAST_MODEL)
+                    } else {
+                        (active_provider.default_model(), active_provider.default_fast_model())
+                    };
+                    let presets = model_presets(active_slot);
 
                     // --- thinking model picker ---
                     ui.label("Thinking model").on_hover_text(
@@ -511,6 +628,103 @@ impl MogenStudioApp {
                             }
                         });
                     });
+    }
+
+    /// Gemini OAuth section. Shown when the active slot is `GeminiOAuth`.
+    /// Renders the two OAuth flows (gemini-cli for text,
+    /// `cloudcode-pa.googleapis.com/v1internal`; Antigravity for images,
+    /// nano-banana / Gemini 3 Pro Image) side-by-side in two columns to
+    /// keep the modal short. Each surface needs its own OAuth client —
+    /// gemini-cli is rejected by the image API with 403, and Antigravity
+    /// can't be reused for text — so the two stay separate. Tokens live
+    /// in `google_auth.json` and `antigravity_auth.json` respectively, so
+    /// signing in here also authenticates the CLI (and vice versa).
+    fn prefs_gemini_oauth_section(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Google sign-in");
+        ui.label(
+            "OAuth slot uses the gemini-cli client for text and Antigravity \
+             for images — each surface only accepts its own client. Switch \
+             to \"Gemini (API key)\" above to skip OAuth.",
+        );
+        ui.add_space(8.0);
+        ui.columns(2, |cols| {
+            cols[0].label(egui::RichText::new("Text (gemini-cli)").strong());
+            cols[0].label(
+                "Routes generate / modify / animate through the paid Pro \
+                 plan — gemini-3-pro-preview and 3.1-pro-preview without an \
+                 API key.",
+            );
+            cols[0].add_space(6.0);
+            self.render_oauth_provider_block(
+                &mut cols[0],
+                &GEMINI_CLI_CONFIG,
+                "Sign in with Google",
+            );
+
+            cols[1].label(egui::RichText::new("Images (Antigravity)").strong());
+            cols[1].label(
+                "Required for `Generate textures` over OAuth (nano-banana / \
+                 Gemini 3 Pro Image). An API key also works as a fallback.",
+            );
+            cols[1].add_space(6.0);
+            self.render_oauth_provider_block(
+                &mut cols[1],
+                &ANTIGRAVITY_CONFIG,
+                "Sign in with Antigravity",
+            );
+        });
+    }
+
+    /// Shared body for both OAuth provider sections — status line, in-flight
+    /// status message, Login/Sign out buttons. Splitting the heading and
+    /// description out of the helper keeps each section's wording specific.
+    fn render_oauth_provider_block(
+        &mut self,
+        ui: &mut egui::Ui,
+        config: &'static ProviderConfig,
+        login_button_label: &str,
+    ) {
+        let stored = self.oauth_stored_status_for(config);
+        if let Some(line) = &stored {
+            ui.label(line);
+        } else {
+            ui.label("Not signed in.");
+        }
+
+        if let Some(msg) = self.oauth_status_message.clone() {
+            ui.add_space(4.0);
+            ui.colored_label(egui::Color32::from_rgb(150, 180, 230), msg);
+        }
+
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            let any_in_flight = self.oauth_login_in_flight();
+            let this_in_flight = self.oauth_login_in_flight_for(config);
+            let login_label = if this_in_flight {
+                "Signing in… (check browser)".to_string()
+            } else if stored.is_some() {
+                format!("Re-authenticate ({login_button_label})")
+            } else {
+                login_button_label.to_string()
+            };
+            let login_btn =
+                ui.add_enabled(!any_in_flight, egui::Button::new(login_label));
+            if login_btn.clicked() {
+                let ctx = ui.ctx().clone();
+                self.start_oauth_login_for(ctx, config);
+            }
+            if stored.is_some() {
+                if ui
+                    .add_enabled(!any_in_flight, egui::Button::new("Sign out"))
+                    .on_hover_text(
+                        "Delete the local OAuth token for this provider.",
+                    )
+                    .clicked()
+                {
+                    self.start_oauth_logout_for(config);
+                }
+            }
+        });
     }
 
     fn prefs_tab_appearance(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {

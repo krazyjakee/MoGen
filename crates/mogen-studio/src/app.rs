@@ -28,6 +28,7 @@ mod line_ops;
 mod llm;
 mod moghub;
 mod multi_caret;
+mod oauth_ui;
 mod onboarding;
 mod pricing;
 mod publish_textures;
@@ -215,6 +216,21 @@ pub struct MogenStudioApp {
     /// Channel carrying the finished build back to the UI thread. Present
     /// means a build is in flight (or at least, the UI hasn't dropped it).
     build_rx: Option<Receiver<BuildOutcome>>,
+    /// Channel carrying the OAuth login outcome back to the UI thread.
+    /// `Some` while the loopback server is open and waiting for the user to
+    /// finish the browser flow. Polled every frame; the result is folded into
+    /// `oauth_status_message` and the saved bundle.
+    oauth_login_rx: Option<Receiver<Result<mogen_llm::OAuthBundle, mogen_llm::OAuthError>>>,
+    /// Which OAuth provider config the in-flight login is for. Pinned when
+    /// `start_oauth_login` spawns the worker so `poll_oauth_login` knows
+    /// which token file (`google_auth.json` vs `antigravity_auth.json`) to
+    /// write the resulting bundle to. `None` when no login is in flight.
+    oauth_login_provider: Option<&'static mogen_llm::google_oauth::ProviderConfig>,
+    /// Last-known short status line for the Gemini OAuth section in
+    /// Preferences. Replaces the inline lookup so the UI can flash messages
+    /// like "logged in as …" or "login failed: …" between flow attempts
+    /// without re-reading the on-disk bundle every frame.
+    oauth_status_message: Option<String>,
     /// Current stage label written by the worker ("merging sibling meshes",
     /// "writing glb", …). Read every frame to drive the modal status line.
     /// Shared because the worker thread updates it mid-build.
@@ -458,6 +474,9 @@ impl MogenStudioApp {
             export_opts_draft: ExportOptions::default(),
             build_rx: None,
             build_stage: Arc::new(Mutex::new(String::new())),
+            oauth_login_rx: None,
+            oauth_login_provider: None,
+            oauth_status_message: None,
             viewer,
             system_instruction_cache: None,
             tex_exists_cache: HashMap::new(),
@@ -659,6 +678,7 @@ impl eframe::App for MogenStudioApp {
         self.poll_prompt_enhance();
         self.poll_ask();
         self.poll_build();
+        self.poll_oauth_login();
         self.poll_update();
         self.poll_generate(ctx);
         self.drive_compile_debounce(ctx);

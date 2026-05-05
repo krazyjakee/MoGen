@@ -11,10 +11,33 @@ use std::fmt;
 
 use crate::anthropic::{AnthropicClient, AnthropicError};
 use crate::claude_code::{ClaudeCodeClient, ClaudeCodeError};
+use crate::fireworks::{FireworksClient, FireworksError};
 use crate::gemini::{GeminiClient, GeminiError};
+use crate::google_oauth::OAuthBundle;
 use crate::ollama::{OllamaClient, OllamaError};
 use crate::openai::{OpenAIClient, OpenAIError};
 use crate::types::{GenerateConfig, GenerateResponse};
+use crate::zai_chat::{ZaiChatClient, ZaiChatError};
+
+/// How the user's Google credential is supplied. Surfaced in the CLI's
+/// credential resolver — flag/env API-key beats stored OAuth, so users can
+/// always force the public-API path even when an OAuth token is on disk.
+///
+/// Two OAuth variants exist because Google gates the image-generation
+/// surface (`:streamGenerateContent` for nano-banana / Gemini 3 Pro Image)
+/// behind the **Antigravity** OAuth client; the gemini-cli OAuth client
+/// gets a 403 there. Text gen accepts either OAuth client.
+#[derive(Debug, Clone)]
+pub enum GoogleCredential {
+    ApiKey(String),
+    /// Bundle issued by the gemini-cli OAuth client (`mogen auth login`).
+    /// Drives text generation against `cloudcode-pa.googleapis.com/v1internal`.
+    OAuth(OAuthBundle),
+    /// Bundle issued by the Antigravity OAuth client
+    /// (`mogen auth login --antigravity`). Required for image generation;
+    /// also works for text gen.
+    AntigravityOAuth(OAuthBundle),
+}
 
 /// Closed set of LLM backends the CLI / Studio can talk to. Persisted as a
 /// lowercase label (see [`Provider::key`]) so adding new variants doesn't
@@ -29,6 +52,13 @@ pub enum Provider {
     /// installed Claude Code login (Pro/Max subscription or API key managed
     /// by `claude`), so no API key is collected here.
     ClaudeCode,
+    /// Fireworks AI's OpenAI-compatible Chat Completions surface. Default
+    /// model is the Fire Pass `kimi-k2p6` router which bills the Kimi K2
+    /// family at zero per-token cost for personal agentic-coding use.
+    Fireworks,
+    /// Z.ai (Zhipu AI) GLM family. OpenAI-compatible Chat Completions at
+    /// `api.z.ai/api/paas/v4/chat/completions`. Default model is `glm-5.1`.
+    Zai,
 }
 
 impl Provider {
@@ -41,6 +71,8 @@ impl Provider {
             Provider::Anthropic => "anthropic",
             Provider::Ollama => "ollama",
             Provider::ClaudeCode => "claude-code",
+            Provider::Fireworks => "fireworks",
+            Provider::Zai => "zai",
         }
     }
 
@@ -52,6 +84,8 @@ impl Provider {
             Provider::Anthropic => "Anthropic",
             Provider::Ollama => "Ollama (local)",
             Provider::ClaudeCode => "Claude Code (subscription)",
+            Provider::Fireworks => "Fireworks AI Firepass",
+            Provider::Zai => "Z.ai (GLM)",
         }
     }
 
@@ -65,6 +99,8 @@ impl Provider {
             Provider::Anthropic => "Anthropic",
             Provider::Ollama => "Ollama",
             Provider::ClaudeCode => "Claude Code",
+            Provider::Fireworks => "Fireworks AI Firepass",
+            Provider::Zai => "Z.ai",
         }
     }
 
@@ -78,6 +114,8 @@ impl Provider {
             "anthropic" | "claude" => Some(Self::Anthropic),
             "ollama" | "local" => Some(Self::Ollama),
             "claude-code" | "claude_code" | "claudecode" | "cc" => Some(Self::ClaudeCode),
+            "fireworks" | "fireworks-ai" | "firepass" | "kimi" => Some(Self::Fireworks),
+            "zai" | "z-ai" | "z.ai" | "zhipu" | "glm" => Some(Self::Zai),
             _ => None,
         }
     }
@@ -94,6 +132,8 @@ impl Provider {
             Provider::Anthropic => "ANTHROPIC_API_KEY",
             Provider::Ollama => "OLLAMA_API_KEY",
             Provider::ClaudeCode => "",
+            Provider::Fireworks => "FIREWORKS_API_KEY",
+            Provider::Zai => "ZAI_API_KEY",
         }
     }
 
@@ -106,6 +146,8 @@ impl Provider {
             Provider::Anthropic => crate::anthropic::DEFAULT_MODEL,
             Provider::Ollama => crate::ollama::DEFAULT_MODEL,
             Provider::ClaudeCode => crate::claude_code::DEFAULT_MODEL,
+            Provider::Fireworks => crate::fireworks::DEFAULT_MODEL,
+            Provider::Zai => crate::zai_chat::DEFAULT_MODEL,
         }
     }
 
@@ -118,6 +160,8 @@ impl Provider {
             Provider::Anthropic => crate::anthropic::DEFAULT_FAST_MODEL,
             Provider::Ollama => crate::ollama::DEFAULT_MODEL,
             Provider::ClaudeCode => crate::claude_code::DEFAULT_FAST_MODEL,
+            Provider::Fireworks => crate::fireworks::DEFAULT_FAST_MODEL,
+            Provider::Zai => crate::zai_chat::DEFAULT_FAST_MODEL,
         }
     }
 
@@ -192,6 +236,11 @@ pub enum ProviderError {
     InvalidResponse(String),
     #[error("provider {provider} does not support {feature}")]
     Unsupported { provider: Provider, feature: &'static str },
+    /// OAuth subsystem failure (refresh failed, project missing, store
+    /// corrupted). The body carries the [`crate::google_oauth::OAuthError`]
+    /// message verbatim so the CLI can show the actionable hint.
+    #[error("OAuth error: {0}")]
+    OAuth(String),
 }
 
 impl From<GeminiError> for ProviderError {
@@ -203,6 +252,15 @@ impl From<GeminiError> for ProviderError {
             GeminiError::EmptyResponse => Self::EmptyResponse,
             GeminiError::BudgetExceeded { used, budget } => Self::BudgetExceeded { used, budget },
             GeminiError::InvalidResponse(s) => Self::InvalidResponse(s),
+            GeminiError::OAuth(s) => Self::OAuth(s),
+            // The cache-unavailable case is an *expected* signal in OAuth
+            // mode: the resolver swallows it and falls back to inline.
+            // Surface it as InvalidResponse so a stray bubble-up still
+            // reads sensibly in user logs.
+            GeminiError::CacheUnavailableOverOAuth => Self::Unsupported {
+                provider: Provider::Gemini,
+                feature: "cachedContents over OAuth",
+            },
         }
     }
 }
@@ -241,6 +299,32 @@ impl From<OllamaError> for ProviderError {
             OllamaError::EmptyResponse => Self::EmptyResponse,
             OllamaError::BudgetExceeded { used, budget } => Self::BudgetExceeded { used, budget },
             OllamaError::InvalidResponse(s) => Self::InvalidResponse(s),
+        }
+    }
+}
+
+impl From<FireworksError> for ProviderError {
+    fn from(e: FireworksError) -> Self {
+        match e {
+            FireworksError::MissingApiKey => Self::MissingApiKey { var: "FIREWORKS_API_KEY" },
+            FireworksError::Transport(err) => classify_reqwest(&err),
+            FireworksError::Api { status, message } => Self::Api { status, message },
+            FireworksError::EmptyResponse => Self::EmptyResponse,
+            FireworksError::BudgetExceeded { used, budget } => Self::BudgetExceeded { used, budget },
+            FireworksError::InvalidResponse(s) => Self::InvalidResponse(s),
+        }
+    }
+}
+
+impl From<ZaiChatError> for ProviderError {
+    fn from(e: ZaiChatError) -> Self {
+        match e {
+            ZaiChatError::MissingApiKey => Self::MissingApiKey { var: "ZAI_API_KEY" },
+            ZaiChatError::Transport(err) => classify_reqwest(&err),
+            ZaiChatError::Api { status, message } => Self::Api { status, message },
+            ZaiChatError::EmptyResponse => Self::EmptyResponse,
+            ZaiChatError::BudgetExceeded { used, budget } => Self::BudgetExceeded { used, budget },
+            ZaiChatError::InvalidResponse(s) => Self::InvalidResponse(s),
         }
     }
 }
@@ -340,6 +424,8 @@ pub enum LlmClient {
     Anthropic(AnthropicClient),
     Ollama(OllamaClient),
     ClaudeCode(ClaudeCodeClient),
+    Fireworks(FireworksClient),
+    Zai(ZaiChatClient),
 }
 
 impl LlmClient {
@@ -354,21 +440,44 @@ impl LlmClient {
             Provider::Anthropic => LlmClient::Anthropic(AnthropicClient::new(api_key)),
             Provider::Ollama => LlmClient::Ollama(OllamaClient::new(api_key)),
             Provider::ClaudeCode => LlmClient::ClaudeCode(ClaudeCodeClient::new()),
+            Provider::Fireworks => LlmClient::Fireworks(FireworksClient::new(api_key)),
+            Provider::Zai => LlmClient::Zai(ZaiChatClient::new(api_key)),
         }
     }
 
-    /// Construct a client for `provider`, reading the API key from the
-    /// matching environment variable ([`Provider::env_var`]).
+    /// Construct a Gemini client from a resolved [`GoogleCredential`]. The
+    /// `mogen` CLI resolver picks the right variant from
+    /// flag → env → on-disk OAuth before calling this. API-key callers
+    /// continue to use [`Self::new`] / [`Self::from_env`].
+    pub fn gemini_from_credential(credential: GoogleCredential) -> Self {
+        match credential {
+            GoogleCredential::ApiKey(key) => LlmClient::Gemini(GeminiClient::new(key)),
+            GoogleCredential::OAuth(bundle) => {
+                LlmClient::Gemini(GeminiClient::from_oauth(bundle))
+            }
+            GoogleCredential::AntigravityOAuth(bundle) => {
+                LlmClient::Gemini(GeminiClient::from_antigravity_oauth(bundle))
+            }
+        }
+    }
+
+    /// Construct a client for `provider`, resolving the API key in
+    /// precedence order: env var ([`Provider::env_var`]) →
+    /// `~/.mogen/settings.json` (shared with Studio) → error. Keyless
+    /// providers (Ollama, ClaudeCode) always succeed with a blank key.
     pub fn from_env(provider: Provider) -> Result<Self, ProviderError> {
         if provider.is_keyless() {
             return Ok(Self::new(provider, String::new()));
         }
         let var = provider.env_var();
-        let key = std::env::var(var).unwrap_or_default();
-        if key.trim().is_empty() {
-            return Err(ProviderError::MissingApiKey { var });
+        let env_key = std::env::var(var).unwrap_or_default();
+        if !env_key.trim().is_empty() {
+            return Ok(Self::new(provider, env_key));
         }
-        Ok(Self::new(provider, key))
+        if let Some(file_key) = crate::settings_store::read_api_key(provider) {
+            return Ok(Self::new(provider, file_key));
+        }
+        Err(ProviderError::MissingApiKey { var })
     }
 
     /// Override the base URL — used by tests to point at a `tiny_http` mock
@@ -390,6 +499,10 @@ impl LlmClient {
             }
             Provider::Ollama => LlmClient::Ollama(OllamaClient::with_base_url(api_key, base_url)),
             Provider::ClaudeCode => LlmClient::ClaudeCode(ClaudeCodeClient::with_path(base_url)),
+            Provider::Fireworks => {
+                LlmClient::Fireworks(FireworksClient::with_base_url(api_key, base_url))
+            }
+            Provider::Zai => LlmClient::Zai(ZaiChatClient::with_base_url(api_key, base_url)),
         }
     }
 
@@ -401,6 +514,8 @@ impl LlmClient {
             LlmClient::Anthropic(_) => Provider::Anthropic,
             LlmClient::Ollama(_) => Provider::Ollama,
             LlmClient::ClaudeCode(_) => Provider::ClaudeCode,
+            LlmClient::Fireworks(_) => Provider::Fireworks,
+            LlmClient::Zai(_) => Provider::Zai,
         }
     }
 
@@ -433,6 +548,8 @@ impl LlmClient {
             LlmClient::Anthropic(c) => c.generate(cfg).map_err(Into::into),
             LlmClient::Ollama(c) => c.generate(cfg).map_err(Into::into),
             LlmClient::ClaudeCode(c) => c.generate(cfg).map_err(Into::into),
+            LlmClient::Fireworks(c) => c.generate(cfg).map_err(Into::into),
+            LlmClient::Zai(c) => c.generate(cfg).map_err(Into::into),
         }
     }
 }
@@ -449,6 +566,8 @@ mod tests {
             Provider::Anthropic,
             Provider::Ollama,
             Provider::ClaudeCode,
+            Provider::Fireworks,
+            Provider::Zai,
         ] {
             assert_eq!(Provider::parse(p.key()), Some(p));
         }
@@ -462,6 +581,11 @@ mod tests {
         assert_eq!(Provider::parse("local"), Some(Provider::Ollama));
         assert_eq!(Provider::parse("CLAUDE_CODE"), Some(Provider::ClaudeCode));
         assert_eq!(Provider::parse("cc"), Some(Provider::ClaudeCode));
+        assert_eq!(Provider::parse("FirePass"), Some(Provider::Fireworks));
+        assert_eq!(Provider::parse("kimi"), Some(Provider::Fireworks));
+        assert_eq!(Provider::parse("Z.AI"), Some(Provider::Zai));
+        assert_eq!(Provider::parse("zhipu"), Some(Provider::Zai));
+        assert_eq!(Provider::parse("glm"), Some(Provider::Zai));
         assert_eq!(Provider::parse("wat"), None);
     }
 

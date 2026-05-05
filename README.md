@@ -20,8 +20,11 @@ no hallucinated triangles.
 
 Usable but still moving fast. Primitives, CSG, hierarchy/modules, arrays and mirrors,
 connectors, skeletons + skinning + animation templates, full PBR materials with embedded
-textures, validation diagnostics, and Gemini-driven generate/modify/animate are all
-working. See [`docs/dsl.md`](docs/dsl.md) for the full feature surface.
+textures, validation diagnostics, and LLM-driven generate/modify/animate are all
+working. Multiple LLM backends are supported out of the box — Gemini (API key or
+Google OAuth), OpenAI, Anthropic, Ollama (local), Claude Code (subscription),
+Fireworks AI Firepass (Kimi K2 routers), and Z.ai (GLM family, default `glm-5.1`). See
+[`docs/dsl.md`](docs/dsl.md) for the full feature surface.
 
 ## Install
 
@@ -151,12 +154,153 @@ mogen check    <file.mog>                          # validate a DSL file
 mogen inspect  <file.glb>                          # summarize a GLB
 ```
 
-`generate`, `modify`, and `animate` need `GEMINI_API_KEY` in the environment (or
-`--api-key`). `animate` is scoped to top-level animation declarations only (`joint`,
-`clip`/`track`, and the `spin` / `open_close` / `wave` / `flap` / `idle` templates) —
-it leaves geometry, materials, and hierarchy untouched. There are a few more
+`generate`, `modify`, and `animate` need an API key for the chosen provider. By
+default that's Gemini (`GEMINI_API_KEY` env var, `--api-key` flag, stored OAuth
+bundle, or the shared settings file — see below). Pick a different backend with
+`--provider <name>` and the matching env var: `OPENAI_API_KEY`,
+`ANTHROPIC_API_KEY`, `FIREWORKS_API_KEY`, `ZAI_API_KEY`, etc. `animate` is
+scoped to top-level animation declarations only (`joint`, `clip`/`track`, and
+the `spin` / `open_close` / `wave` / `flap` / `idle` templates) — it leaves
+geometry, materials, and hierarchy untouched. There are a few more
 developer-facing subcommands (`parse`, `dump-scene`, `bench`) — run `mogen --help`
 for the full list.
+
+### Shared settings file
+
+Both the CLI and Studio read API keys from `~/.mogen/settings.json`
+(`C:\Users\<you>\.mogen\settings.json` on Windows). Studio writes the file as
+part of its larger settings struct whenever you save the Preferences panel; the
+CLI reads only the API-key fields. Keys entered in Studio therefore satisfy
+`mogen generate` etc. on the same machine without also having to export an env
+var.
+
+Resolution precedence for every provider is the same: `--api-key` flag → env
+var → `~/.mogen/settings.json` → (Gemini only) on-disk OAuth bundle → error.
+Set `MOGEN_SETTINGS=/path/to/file.json` to override the path entirely or
+`MOGEN_CACHE_DIR=/path/to/dir` to override just the parent directory. Older
+installs that wrote settings to `dirs::config_dir()/mogen/settings.json` are
+still read on first launch and migrated forward automatically.
+
+The file is plain JSON. A minimal example:
+
+```json
+{
+  "gemini_api_key": "AIza...",
+  "openai_api_key": "sk-...",
+  "anthropic_api_key": "sk-ant-...",
+  "fireworks_api_key": "fw_...",
+  "zai_api_key": "..."
+}
+```
+
+### Providers
+
+| Provider     | `--provider` value | Default model                              | Env var               |
+| ------------ | ------------------ | ------------------------------------------ | --------------------- |
+| Gemini       | `gemini`           | `gemini-pro-latest`                        | `GEMINI_API_KEY`      |
+| OpenAI       | `openai`           | `gpt-4o`                                   | `OPENAI_API_KEY`      |
+| Anthropic    | `anthropic`        | `claude-sonnet-4-5`                        | `ANTHROPIC_API_KEY`   |
+| Ollama       | `ollama`           | `llama3.1`                                 | `OLLAMA_API_KEY` \*   |
+| Claude Code  | `claude-code`      | `sonnet` (delegates to `claude` CLI)       | — (subscription)      |
+| Fireworks AI Firepass | `fireworks` | `accounts/fireworks/routers/kimi-k2p6`     | `FIREWORKS_API_KEY`   |
+| Z.ai (GLM)   | `zai`              | `glm-5.1`                                  | `ZAI_API_KEY`         |
+
+\* Ollama is keyless for local installs — the env var is only consulted when
+running behind an authenticating reverse proxy.
+
+Notes:
+
+- **Fireworks AI Firepass** ships with the Kimi K2 *Fire Pass* routers
+  (`kimi-k2p6` for the thinking model, `kimi-k2p6-turbo` for the fast tier);
+  any other Fireworks-hosted model id works via `--model`.
+- **Z.ai** uses an OpenAI-compatible Chat Completions endpoint at
+  `api.z.ai/api/paas/v4/chat/completions`. The same `ZAI_API_KEY` also
+  authenticates the `glm-image` image-gen path used by `mogen textures`.
+- **Claude Code** is keyless — it shells out to the `claude` CLI, so auth
+  is whatever `claude login` already set up.
+
+### Sign in with a paid Gemini account
+
+Free-tier `GEMINI_API_KEY`s are locked out of `gemini-3-pro-preview` and other
+Pro tiers (the API returns `limit=0` 429s). If you have a paid Pro plan via
+your Google account, you can sign in with Google instead — no setup required:
+
+```
+mogen auth gemini-cli login         # opens browser, signs in with Google (gemini-cli client)
+mogen auth antigravity login        # signs in with the Antigravity client — required for image gen
+mogen auth status                   # one-line status across every target (gemini-cli, antigravity, moghub)
+mogen auth gemini-cli status        # email + project + token expiry for one target
+mogen auth gemini-cli logout        # delete the gemini-cli token (use `antigravity` / `moghub` to scope)
+mogen generate "a chair"            # uses OAuth automatically when GEMINI_API_KEY is unset
+```
+
+Every credential `mogen` knows how to persist lives under `~/.mogen/`. The
+top-level `mogen auth` is target-aware:
+
+| target        | login flow                                              | on-disk file                       |
+|---------------|---------------------------------------------------------|------------------------------------|
+| `gemini-cli`  | Google OAuth (text gen via Cloud Code Assist)           | `~/.mogen/google_auth.json`        |
+| `antigravity` | Google OAuth (image gen via Cloud Code Assist)          | `~/.mogen/antigravity_auth.json`   |
+| `moghub`      | MoGHub session (community publish + browse)             | `~/.mogen/moghub_auth.json`        |
+
+`mogen auth moghub login [--server URL]` runs the same loopback OAuth
+flow Studio uses, so a single sign-in covers both surfaces. `--server`
+defaults to the production server and round-trips into the on-disk
+session so future status calls reach the same host.
+
+`mogen` ships two public OAuth clients: Google's official
+[Gemini CLI](https://github.com/google-gemini/gemini-cli) client (default) and
+the Antigravity desktop client (used by Google's Antigravity IDE). Both produce
+a normal Google sign-in consent screen. Tokens land in
+`~/.mogen/google_auth.json` and `~/.mogen/antigravity_auth.json` respectively
+(`C:\Users\<you>\.mogen\…` on Windows) with mode `0600` on Unix. Older installs
+that wrote to `~/.cache/mogen/` or `%LOCALAPPDATA%\mogen\` still work — those
+paths are read as legacy fallbacks.
+
+Credential precedence on `generate`/`modify`/`animate`/`repair`/`bench` is
+`--api-key` flag > `GEMINI_API_KEY` env > `~/.mogen/settings.json` > stored
+OAuth token > error. Setting the env var temporarily (or passing `--api-key`)
+shadows the OAuth token — `mogen auth status --verbose` flags this when it
+happens.
+
+OAuth-mode requests go to `cloudcode-pa.googleapis.com/v1internal:generateContent`
+on the user's own Cloud project (discovered via `loadCodeAssist`); the public
+`generativelanguage.googleapis.com` API is not used in this mode.
+
+**Caveats.** The bundled OAuth clients are Google's published clients.
+They're stable but Google could rotate them; keep `GEMINI_API_KEY` available as
+a fallback. The `cachedContents` system-instruction cache is disabled in OAuth
+mode (the surface doesn't expose it); the system instruction is sent inline
+instead.
+
+### Texture generation
+
+`mogen textures` walks the materials in a `.mog` file and generates per-material
+PBR maps. Albedo is generated by an image model; normal, metallic-roughness,
+and occlusion maps are derived locally from the albedo (Sobel gradients +
+luminance cavity detection, tileable). The generated PNGs land in the
+project's `textures/<scene-name>/` folder and the matching
+`base_color_texture` / `normal_texture` / etc. attributes are spliced back into
+the source file using span-aware edits — no reformatting.
+
+Three image backends are supported:
+
+- **Antigravity OAuth (default for paid Google accounts).** Routes through
+  `daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent` with
+  endpoint failover, model catalog probe, and capacity-error backoff retries
+  (3s / 6s / 12s). The plain `gemini-cli` bundle is *not* accepted by the
+  image surface — run `mogen auth antigravity login` once.
+- **Gemini API key.** When `GEMINI_API_KEY` is set, image gen goes through the
+  public `generativelanguage.googleapis.com` surface. Default model is
+  `gemini-3-pro-image-preview`; pass `--model gemini-3.1-flash-image-preview`
+  (or any other image model) to override.
+- **Z.ai `glm-image`.** Selected via Studio's provider dropdown (or the same
+  `ZAI_API_KEY` if you wire it up by hand). Useful when you'd rather not burn
+  Antigravity quota on bulk texture runs.
+
+Repeat `mogen textures` calls reuse PNGs already on disk (the `build_plan`
+step's `UseExisting` action) — only missing slots hit the network. There is no
+in-memory or on-disk cache otherwise.
 
 ## Contributing
 

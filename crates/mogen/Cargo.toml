@@ -15,6 +15,7 @@ mogen-dsl = { workspace = true, features = ["csg"] }
 mogen-validate = { workspace = true, features = ["csg"] }
 mogen-export = { workspace = true, features = ["textures", "merge"] }
 mogen-llm = { workspace = true }
+mogen-moghub-client = { workspace = true, features = ["oauth"] }
 mogen-update = { workspace = true }
 anyhow = { workspace = true }
 clap = { workspace = true }

@@ -4,9 +4,11 @@ use std::path::Path;
 
 use anyhow::{bail, Context, Result};
 use mogen_core::{Diagnostic, Severity};
+use mogen_llm::google_oauth::{ANTIGRAVITY_CONFIG, GEMINI_CLI_CONFIG};
 use mogen_llm::{
-    cacheable_block, default_cache_path, inline_block, resolve_or_create_cache,
-    system_instruction, GenerateConfig, LlmClient, Provider, StdlibIndex, DEFAULT_TTL_SECONDS,
+    cacheable_block, default_cache_path, inline_block, load_bundle, read_api_key,
+    resolve_or_create_cache, system_instruction, token_store_path, token_store_path_for,
+    GenerateConfig, GoogleCredential, LlmClient, Provider, StdlibIndex, DEFAULT_TTL_SECONDS,
 };
 
 /// Group error diagnostics by category (derived from the code prefix) so the
@@ -46,10 +48,11 @@ pub(crate) fn diag_category(code: &str) -> &'static str {
     }
 }
 
-/// Resolve the API key for `provider`. Precedence: explicit `--api-key` flag,
-/// then the provider's environment variable ([`Provider::env_var`]). Ollama
-/// is allowed to start with a blank key — most local installs don't require
-/// auth.
+/// Resolve the API key for `provider`. Precedence: explicit `--api-key`
+/// flag → provider env var ([`Provider::env_var`]) →
+/// `~/.mogen/settings.json` (shared with Studio). Ollama and Claude Code
+/// are allowed to start with a blank key — most local installs don't
+/// require auth.
 pub(crate) fn resolve_api_key(provider: Provider, flag: Option<String>) -> Result<String> {
     if let Some(k) = flag {
         if k.trim().is_empty() {
@@ -58,10 +61,11 @@ pub(crate) fn resolve_api_key(provider: Provider, flag: Option<String>) -> Resul
         return Ok(k);
     }
     if provider.is_keyless() {
-        // Ollama (local) and Claude Code (subscription via `claude` CLI) are
-        // keyless by default — fall through with empty string so the client
-        // constructs without auth. An env var is still consulted for users
-        // running Ollama behind an authenticating reverse proxy.
+        // Ollama (local) and Claude Code (subscription via `claude` CLI)
+        // are keyless by default — fall through with empty string so the
+        // client constructs without auth. An env var or settings entry is
+        // still consulted for users running Ollama behind an
+        // authenticating reverse proxy.
         let var = provider.env_var();
         if !var.is_empty() {
             let from_env = std::env::var(var).unwrap_or_default();
@@ -69,14 +73,20 @@ pub(crate) fn resolve_api_key(provider: Provider, flag: Option<String>) -> Resul
                 return Ok(from_env);
             }
         }
+        if let Some(k) = read_api_key(provider) {
+            return Ok(k);
+        }
         return Ok(String::new());
     }
     let var = provider.env_var();
     let from_env = std::env::var(var).unwrap_or_default();
-    if from_env.trim().is_empty() {
-        bail!("missing {var} (set env var or pass --api-key)");
+    if !from_env.trim().is_empty() {
+        return Ok(from_env);
     }
-    Ok(from_env)
+    if let Some(k) = read_api_key(provider) {
+        return Ok(k);
+    }
+    bail!("missing {var} (set env var, pass --api-key, or store it in ~/.mogen/settings.json)");
 }
 
 /// Resolve the model id for the call. Falls back to the provider-specific
@@ -89,6 +99,115 @@ pub(crate) fn resolve_model(provider: Provider, flag: Option<String>) -> String 
 /// Construct the right [`LlmClient`] for `provider` with `api_key`.
 pub(crate) fn build_client(provider: Provider, api_key: String) -> LlmClient {
     LlmClient::new(provider, api_key)
+}
+
+/// Resolve the Google credential for Gemini calls. Precedence:
+/// `--api-key` flag → `GEMINI_API_KEY` env → on-disk OAuth bundle → error.
+///
+/// API-key beats stored OAuth deliberately so users can always force the
+/// public-API path when both are configured (`mogen auth status` flags this
+/// shadowing).
+pub(crate) fn resolve_gemini_credential(flag: Option<String>) -> Result<GoogleCredential> {
+    if let Some(k) = flag {
+        if k.trim().is_empty() {
+            bail!("--api-key is empty");
+        }
+        return Ok(GoogleCredential::ApiKey(k));
+    }
+    let from_env = std::env::var("GEMINI_API_KEY").unwrap_or_default();
+    if !from_env.trim().is_empty() {
+        return Ok(GoogleCredential::ApiKey(from_env));
+    }
+    if let Some(k) = read_api_key(Provider::Gemini) {
+        return Ok(GoogleCredential::ApiKey(k));
+    }
+    if let Some(path) = token_store_path() {
+        match load_bundle(&path) {
+            Ok(Some(bundle)) => return Ok(GoogleCredential::OAuth(bundle)),
+            Ok(None) => {}
+            Err(e) => {
+                eprintln!(
+                    "mogen: stored OAuth credentials at {} unreadable ({e}); ignoring",
+                    path.display()
+                );
+            }
+        }
+    }
+    bail!(
+        "missing GEMINI_API_KEY (set env var, pass --api-key, store it in ~/.mogen/settings.json, or run 'mogen auth login')"
+    );
+}
+
+/// Resolve a Google credential suitable for **image generation** (the
+/// nano-banana / `gemini-3-pro-image` surface).
+///
+/// Precedence: `--api-key` flag → `GEMINI_API_KEY` env → on-disk
+/// **Antigravity** OAuth bundle → error.
+///
+/// The plain `mogen auth login` (gemini-cli) bundle is intentionally *not*
+/// accepted here — that OAuth client is rejected by the image surface with
+/// a 403 "caller does not have permission". Instead, when only the
+/// gemini-cli bundle is present we surface a clear "run `mogen auth login
+/// --antigravity`" error so the user can authorise the image-capable
+/// client without losing their existing text-gen login.
+pub(crate) fn resolve_gemini_image_credential(
+    flag: Option<String>,
+) -> Result<GoogleCredential> {
+    if let Some(k) = flag {
+        if k.trim().is_empty() {
+            bail!("--api-key is empty");
+        }
+        return Ok(GoogleCredential::ApiKey(k));
+    }
+    let from_env = std::env::var("GEMINI_API_KEY").unwrap_or_default();
+    if !from_env.trim().is_empty() {
+        return Ok(GoogleCredential::ApiKey(from_env));
+    }
+    if let Some(k) = read_api_key(Provider::Gemini) {
+        return Ok(GoogleCredential::ApiKey(k));
+    }
+    if let Some(path) = token_store_path_for(&ANTIGRAVITY_CONFIG) {
+        match load_bundle(&path) {
+            Ok(Some(bundle)) => {
+                return Ok(GoogleCredential::AntigravityOAuth(bundle));
+            }
+            Ok(None) => {}
+            Err(e) => {
+                eprintln!(
+                    "mogen: stored Antigravity OAuth credentials at {} unreadable ({e}); ignoring",
+                    path.display()
+                );
+            }
+        }
+    }
+    let has_gemini_cli = token_store_path_for(&GEMINI_CLI_CONFIG)
+        .and_then(|p| load_bundle(&p).ok().flatten())
+        .is_some();
+    if has_gemini_cli {
+        bail!(
+            "image generation requires the Antigravity OAuth client. \
+             Your current `mogen auth login` bundle uses the gemini-cli \
+             client, which the image surface rejects with 403. \
+             Run `mogen auth login --antigravity` (or set GEMINI_API_KEY) \
+             and try again."
+        );
+    }
+    bail!(
+        "missing GEMINI_API_KEY (set env var, pass --api-key, or run \
+         `mogen auth login --antigravity` for image generation over OAuth)"
+    );
+}
+
+/// Build a Gemini-aware [`LlmClient`]. For Gemini, threads `flag → env →
+/// stored OAuth` through [`resolve_gemini_credential`]; for non-Gemini
+/// providers this is identical to [`build_client`] over [`resolve_api_key`].
+pub(crate) fn build_llm_client(provider: Provider, flag: Option<String>) -> Result<LlmClient> {
+    if matches!(provider, Provider::Gemini) {
+        let cred = resolve_gemini_credential(flag)?;
+        return Ok(LlmClient::gemini_from_credential(cred));
+    }
+    let key = resolve_api_key(provider, flag)?;
+    Ok(build_client(provider, key))
 }
 
 /// Create the parent directory for `path` if it doesn't already exist. Called

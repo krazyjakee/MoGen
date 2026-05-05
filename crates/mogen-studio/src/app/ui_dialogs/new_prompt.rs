@@ -2,8 +2,12 @@ use std::path::Path;
 
 use eframe::egui;
 
+use super::prefs::model_presets;
 use crate::app::types::{EnhanceTarget, GenImageInput, MAX_GEN_IMAGE_BYTES};
 use crate::app::MogenStudioApp;
+use crate::settings::{
+    thinking_level_key, thinking_level_label, ProviderSlot, PROVIDER_SLOTS, THINKING_LEVELS,
+};
 
 /// Decode the image bytes via the `image` crate, downscale to a thumbnail
 /// (96 px on the long side), and upload to the GPU as an `egui::TextureHandle`
@@ -81,7 +85,6 @@ impl MogenStudioApp {
         let mut spawn_now = false;
         let mut pick_image = false;
         let mut clear_image = false;
-        let has_key = self.resolve_api_key().is_some();
         let mut image_status: Option<String> = None;
         egui::Window::new("New from Prompt")
             .open(&mut open)
@@ -166,6 +169,107 @@ impl MogenStudioApp {
                     }
                 });
 
+                ui.add_space(8.0);
+                ui.separator();
+                ui.add_space(4.0);
+                ui.label("Generation:");
+                ui.add_space(2.0);
+
+                // --- provider dropdown ---
+                let current_slot = self.settings.provider_slot();
+                let mut new_slot = current_slot;
+                egui::ComboBox::from_id_salt("new_prompt_provider")
+                    .selected_text(current_slot.label())
+                    .show_ui(ui, |ui| {
+                        for slot in PROVIDER_SLOTS {
+                            if ui
+                                .selectable_label(slot == current_slot, slot.label())
+                                .clicked()
+                            {
+                                new_slot = slot;
+                            }
+                        }
+                    });
+                if new_slot != current_slot {
+                    self.settings.set_provider_slot(new_slot);
+                }
+                let active_slot: ProviderSlot = self.settings.provider_slot();
+                let active_provider = active_slot.to_provider();
+
+                // --- model dropdown (skipped when the provider has no
+                // dedicated model field — currently only Claude Code).
+                if self
+                    .settings
+                    .thinking_model_field_mut(active_provider)
+                    .is_some()
+                {
+                    let presets = model_presets(active_slot);
+                    let model_default = active_provider.default_model();
+                    let mut model_draft = self
+                        .settings
+                        .thinking_model_field(active_provider)
+                        .to_string();
+                    let selected_text = if model_draft.is_empty() {
+                        format!("(default: {model_default})")
+                    } else {
+                        model_draft.clone()
+                    };
+                    ui.add_space(4.0);
+                    ui.label("Model");
+                    egui::ComboBox::from_id_salt((
+                        "new_prompt_model",
+                        active_provider.key(),
+                    ))
+                    .selected_text(selected_text)
+                    .show_ui(ui, |ui| {
+                        if ui
+                            .selectable_label(
+                                model_draft.is_empty(),
+                                format!("(default: {model_default})"),
+                            )
+                            .clicked()
+                        {
+                            model_draft.clear();
+                        }
+                        for m in presets {
+                            if ui.selectable_label(model_draft == *m, *m).clicked() {
+                                model_draft = (*m).to_string();
+                            }
+                        }
+                    });
+                    if let Some(buf) =
+                        self.settings.thinking_model_field_mut(active_provider)
+                    {
+                        *buf = model_draft;
+                    }
+                }
+
+                // --- thinking budget dropdown ---
+                ui.add_space(4.0);
+                ui.label("Thinking budget").on_hover_text(
+                    "Cap on hidden reasoning tokens per call. Higher = better DSL on \
+                     hard prompts but slower. Ignored by providers / models that don't \
+                     expose a budget.",
+                );
+                let current_level = self.settings.thinking_level();
+                egui::ComboBox::from_id_salt("new_prompt_thinking")
+                    .selected_text(thinking_level_label(current_level))
+                    .show_ui(ui, |ui| {
+                        for level in THINKING_LEVELS {
+                            if ui
+                                .selectable_label(
+                                    level == current_level,
+                                    thinking_level_label(level),
+                                )
+                                .clicked()
+                            {
+                                self.settings.thinking_level =
+                                    thinking_level_key(level).to_string();
+                            }
+                        }
+                    });
+
+                let has_key = self.resolve_api_key().is_some();
                 if !has_key {
                     ui.add_space(4.0);
                     ui.colored_label(
@@ -220,6 +324,10 @@ impl MogenStudioApp {
             self.show_new_prompt = false;
         }
         if spawn_now {
+            // Persist the provider / model / thinking selection picked in
+            // the dialog so the choice survives app restarts (matches the
+            // behaviour of the same controls in Preferences).
+            let _ = self.settings.save();
             let prompt = self.new_prompt_draft.trim().to_string();
             // Move the staged image (if any) into the new tab so Retry can
             // re-issue the same call without re-picking the file. Strip the

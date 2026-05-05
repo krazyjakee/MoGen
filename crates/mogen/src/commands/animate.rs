@@ -9,8 +9,8 @@ use mogen_llm::{
 
 use crate::commands::build::build;
 use crate::common::{
-    attach_system_instruction, build_client, ensure_parent_dir, format_cached_tokens,
-    pick_default_seed, resolve_api_key, resolve_model, summarize_repair_errors,
+    attach_system_instruction, build_llm_client, ensure_parent_dir, format_cached_tokens,
+    pick_default_seed, resolve_model, summarize_repair_errors,
 };
 use crate::spinner::{Spinner, LLM_FLAVORS};
 
@@ -64,8 +64,7 @@ pub(crate) fn animate(args: AnimateArgs) -> Result<()> {
         ensure_parent_dir(&resolved_out)?;
     }
 
-    let api_key = resolve_api_key(args.provider, args.api_key)?;
-    let client = build_client(args.provider, api_key);
+    let client = build_llm_client(args.provider, args.api_key)?;
     let model = resolve_model(args.provider, args.model);
     let provider_label = args.provider.label();
 

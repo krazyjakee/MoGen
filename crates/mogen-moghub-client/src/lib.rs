@@ -19,6 +19,7 @@ mod error;
 #[cfg(feature = "oauth")]
 pub mod oauth;
 pub mod registry;
+pub mod session_store;
 
 use std::time::Duration;
 

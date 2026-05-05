@@ -5,12 +5,13 @@ use std::path::Path;
 use anyhow::{anyhow, bail, Context, Result};
 use image::codecs::png::{CompressionType, FilterType as PngFilterType, PngEncoder};
 use image::imageops::FilterType as ResampleFilter;
-use image::{DynamicImage, ExtendedColorType, ImageEncoder, ImageFormat, Rgba, RgbaImage};
+use image::{DynamicImage, ExtendedColorType, ImageEncoder, Rgba, RgbaImage};
 use mogen_core::Span;
 use mogen_dsl::ast::{Node, Value};
 
-use crate::gemini::{GeminiClient, GeminiError};
+use crate::gemini::GeminiError;
 use crate::image::GeneratedImage;
+use crate::image_client::{ImageClient, ImageError};
 use crate::pbr_maps::{derive_pbr_maps, PbrMapOptions};
 
 use super::plan::{Plan, PlanAction, SlotKind, TexturesArgs};
@@ -121,7 +122,7 @@ fn pbr_opts(_args: &TexturesArgs, material: &Node) -> PbrMapOptions {
 /// `progress_cb`, when supplied, is invoked once per stage transition of each
 /// material (see [`TextureProgress`]).
 pub fn run_plan(
-    client: Option<&GeminiClient>,
+    client: Option<&ImageClient>,
     model: &str,
     args: &TexturesArgs,
     ast: &[Node],
@@ -219,7 +220,7 @@ pub fn run_plan(
 /// per-material error boundary is obvious from the call site.
 #[allow(clippy::too_many_arguments)]
 fn process_material(
-    client: Option<&GeminiClient>,
+    client: Option<&ImageClient>,
     model: &str,
     args: &TexturesArgs,
     material_nodes: &HashMap<String, &Node>,
@@ -240,7 +241,12 @@ fn process_material(
         match &p.action {
             PlanAction::Generate => {
                 emit(TextureStage::Generating);
-                let bytes = resolve_albedo_bytes(client, model, p, args.texture_size)?;
+                let bytes = resolve_albedo_bytes(
+                    client,
+                    model,
+                    p,
+                    args.texture_size,
+                )?;
                 // Mask-mode materials want a foliage cutout: chroma-key
                 // the pure-black backdrop into alpha=0 so the leaf
                 // silhouette becomes the visible shape on the leaf_card.
@@ -369,16 +375,16 @@ fn process_material(
 }
 
 fn resolve_albedo_bytes(
-    client: Option<&GeminiClient>,
+    client: Option<&ImageClient>,
     model: &str,
     plan: &Plan,
     max_side: u32,
 ) -> Result<Vec<u8>> {
     let client = client.ok_or_else(|| {
-        anyhow!("no GeminiClient available for material {}", plan.material)
+        anyhow!("no image client available for material {}", plan.material)
     })?;
     // Fresh per-material random seed so repeated runs over the same prompt
-    // don't keep landing on the same Gemini sample.
+    // don't keep landing on the same model sample.
     let seed = Some(random_seed());
     let img = generate_with_recitation_retry(
         client,
@@ -387,34 +393,42 @@ fn resolve_albedo_bytes(
         RECITATION_RETRIES,
         seed,
     )
-    .map_err(|e: GeminiError| anyhow!("gemini image: {e}"))?;
+    .map_err(|e: ImageError| anyhow!("{} image: {e}", client.provider_name()))?;
     resize_and_recompress_albedo(&img.png_bytes, max_side)
 }
 
 /// Downscale the albedo so its longer side is at most `max_side` and
-/// re-encode with the PNG `Best` compression preset. Returns the original
-/// bytes when `max_side == 0` or the image is already within the cap — no
-/// point re-encoding if we have nothing to change. RGBA inputs (foliage
-/// cutouts produced by [`chroma_key_black_to_alpha`]) keep their alpha
-/// channel through the resize and re-encode.
-fn resize_and_recompress_albedo(png: &[u8], max_side: u32) -> Result<Vec<u8>> {
-    if max_side == 0 {
-        return Ok(png.to_vec());
+/// re-encode with the PNG `Best` compression preset. Auto-detects the input
+/// container format (PNG via the API-key surface, JPEG via the Antigravity
+/// Cloud Code Assist surface) and always emits PNG so the on-disk extension
+/// stays truthful. Pass-through (raw bytes) only when the input is already
+/// PNG and within the size cap. RGBA inputs (foliage cutouts produced by
+/// [`chroma_key_black_to_alpha`]) keep their alpha channel through the
+/// resize and re-encode.
+fn resize_and_recompress_albedo(bytes: &[u8], max_side: u32) -> Result<Vec<u8>> {
+    let is_png = bytes.starts_with(&[0x89, b'P', b'N', b'G']);
+    if max_side == 0 && is_png {
+        return Ok(bytes.to_vec());
     }
-    let img = image::load_from_memory_with_format(png, ImageFormat::Png)
-        .context("decoding albedo PNG for resize")?;
+    let img = image::load_from_memory(bytes)
+        .context("decoding albedo image for resize")?;
     let (w, h) = (img.width(), img.height());
-    if w <= max_side && h <= max_side {
-        return Ok(png.to_vec());
+    if is_png && max_side > 0 && w <= max_side && h <= max_side {
+        return Ok(bytes.to_vec());
     }
-    let has_alpha = image_has_alpha(&img);
-    // Lanczos3 is the slowest-but-sharpest resampler in the image crate.
-    // PBR textures downscale once at generation time and are then read many
-    // times, so quality wins over speed here.
-    let resized = img.resize(max_side, max_side, ResampleFilter::Lanczos3);
+    let needs_resize = max_side > 0 && (w > max_side || h > max_side);
+    let working = if needs_resize {
+        // Lanczos3 is the slowest-but-sharpest resampler in the image crate.
+        // PBR textures downscale once at generation time and are then read many
+        // times, so quality wins over speed here.
+        img.resize(max_side, max_side, ResampleFilter::Lanczos3)
+    } else {
+        img
+    };
+    let has_alpha = image_has_alpha(&working);
     let mut buf = Vec::new();
     if has_alpha {
-        let rgba = resized.to_rgba8();
+        let rgba = working.to_rgba8();
         PngEncoder::new_with_quality(&mut buf, CompressionType::Best, PngFilterType::Adaptive)
             .write_image(
                 rgba.as_raw(),
@@ -422,9 +436,9 @@ fn resize_and_recompress_albedo(png: &[u8], max_side: u32) -> Result<Vec<u8>> {
                 rgba.height(),
                 ExtendedColorType::Rgba8,
             )
-            .context("encoding resized RGBA albedo PNG")?;
+            .context("encoding RGBA albedo PNG")?;
     } else {
-        let rgb = resized.to_rgb8();
+        let rgb = working.to_rgb8();
         PngEncoder::new_with_quality(&mut buf, CompressionType::Best, PngFilterType::Adaptive)
             .write_image(
                 rgb.as_raw(),
@@ -432,7 +446,7 @@ fn resize_and_recompress_albedo(png: &[u8], max_side: u32) -> Result<Vec<u8>> {
                 rgb.height(),
                 ExtendedColorType::Rgb8,
             )
-            .context("encoding resized RGB albedo PNG")?;
+            .context("encoding RGB albedo PNG")?;
     }
     Ok(buf)
 }
@@ -454,10 +468,10 @@ fn image_has_alpha(img: &DynamicImage) -> bool {
 /// `LUMA_THRESHOLD = 0.10` (in [0, 1]) is well below any natural leaf colour
 /// the model produces (even very dark green veins land near 0.15) and well
 /// above the residual noise Gemini puts on a "pure black" backdrop (~0.02).
-pub(crate) fn chroma_key_black_to_alpha(png: &[u8]) -> Result<Vec<u8>> {
+pub(crate) fn chroma_key_black_to_alpha(bytes: &[u8]) -> Result<Vec<u8>> {
     const LUMA_THRESHOLD: f32 = 0.10;
-    let img = image::load_from_memory_with_format(png, ImageFormat::Png)
-        .context("decoding foliage cutout PNG")?;
+    let img = image::load_from_memory(bytes)
+        .context("decoding foliage cutout image")?;
     let rgb = img.to_rgb8();
     let (w, h) = (rgb.width(), rgb.height());
     let mut out = RgbaImage::new(w, h);
@@ -502,18 +516,22 @@ fn to_forward_slashes(rel: &Path) -> String {
 /// variation across whole runs; the per-attempt subject rewrite + variation
 /// hint handles intra-call variety on recitation retries.
 pub fn generate_with_recitation_retry(
-    client: &GeminiClient,
+    client: &ImageClient,
     model: &str,
     base_prompt: &str,
     max_retries: u32,
     seed: Option<u64>,
-) -> Result<GeneratedImage, GeminiError> {
+) -> Result<GeneratedImage, ImageError> {
     let mut attempt: u32 = 0;
     loop {
         let prompt = build_attempt_prompt(base_prompt, attempt);
         match client.generate_image(model, &prompt, seed) {
             Ok(img) => return Ok(img),
-            Err(GeminiError::InvalidResponse(msg))
+            // Gemini-specific recitation rejection: the safety filter latched
+            // onto literal phrasing in the subject. Rephrase + retry. Other
+            // providers (Z.ai) have no equivalent — their errors fall to the
+            // catch-all and propagate immediately.
+            Err(ImageError::Gemini(GeminiError::InvalidResponse(ref msg)))
                 if msg.contains("IMAGE_RECITATION") && attempt < max_retries =>
             {
                 attempt += 1;
@@ -750,7 +768,7 @@ material "metal" (color=[0.8, 0.8, 0.9])
         ));
         // run_plan with no client → every Generate plan fails at the API
         // resolve step, but the loop must keep going.
-        let report = run_plan(None, &args.model, &args, &ast, &plans, &tmp, None);
+        let report = run_plan(None, "gemini-2.5-flash-image", &args, &ast, &plans, &tmp, None);
         // Both materials reported as failed (ordering matches plan order).
         let names: Vec<&str> = report.failures.iter().map(|f| f.material.as_str()).collect();
         assert!(names.contains(&"wood"), "missing 'wood' failure: {names:?}");
@@ -784,7 +802,7 @@ material "metal" (color=[0.8, 0.8, 0.9])
         let cb = |ev: TextureProgress| {
             stages.lock().unwrap().push(ev.stage);
         };
-        let report = run_plan(None, &args.model, &args, &ast, &plans, &tmp, Some(&cb));
+        let report = run_plan(None, "gemini-2.5-flash-image", &args, &ast, &plans, &tmp, Some(&cb));
         assert_eq!(report.failures.len(), 1);
         let stages = stages.into_inner().unwrap();
         assert!(

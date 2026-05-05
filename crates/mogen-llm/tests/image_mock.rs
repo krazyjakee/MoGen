@@ -2,12 +2,12 @@
 //! the subset of the Gemini image response shape the client decodes.
 
 use std::collections::VecDeque;
-use std::io::Read;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use mogen_llm::gemini::GeminiClient;
+use mogen_llm::image_client::ImageClient;
 use mogen_llm::textures::generate_with_recitation_retry;
 
 struct MockServer {
@@ -181,7 +181,7 @@ fn recitation_retry_succeeds_after_first_failure() {
         (recitation_response(), 200),
         (image_response("image/png", bytes), 200),
     ]);
-    let client = GeminiClient::with_base_url("k", server.base_url());
+    let client = ImageClient::Gemini(GeminiClient::with_base_url("k", server.base_url()));
 
     let img = generate_with_recitation_retry(&client, "m", "albedo of oak", 3, None)
         .expect("retry should recover");
@@ -203,7 +203,7 @@ fn recitation_retry_gives_up_after_max_attempts() {
         (recitation_response(), 200),
         (recitation_response(), 200),
     ]);
-    let client = GeminiClient::with_base_url("k", server.base_url());
+    let client = ImageClient::Gemini(GeminiClient::with_base_url("k", server.base_url()));
 
     let err = generate_with_recitation_retry(&client, "m", "p", 2, None)
         .expect_err("should give up");

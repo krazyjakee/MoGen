@@ -2,8 +2,7 @@
 meta (
   seed = "1776959391893458831",
   thinking = "low",
-  prompt = "banana",
-)
+  prompt = "banana", mogen_version = "0.1.1")
 
 material "yellow" (color=[0.95, 0.85, 0.15], roughness=0.7, base_color_texture="textures/banana/yellow_albedo.png", normal_texture="textures/banana/yellow_normal.png", metallic_roughness_texture="textures/banana/yellow_metallicRoughness.png", metallic=0, transmission=0, double_sided=0)
 material "stem_mat" (color=[0.45, 0.55, 0.2], roughness=0.8, base_color_texture="textures/banana/stem_mat_albedo.png", normal_texture="textures/banana/stem_mat_normal.png", metallic_roughness_texture="textures/banana/stem_mat_metallicRoughness.png")

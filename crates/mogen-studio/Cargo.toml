@@ -65,7 +65,3 @@ sentry = { version = "0.34", default-features = false, features = ["backtrace", 
 # feature; we only need webbrowser directly here for the publish-success
 # "Open in browser" affordance.
 webbrowser = "1"
-# Secure storage for the MoGHub session UUID. Falls back to plain
-# settings.json on systems without a Secret Service / Keychain
-# (notably headless Linux), see settings::moghub_session_get.
-keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
