@@ -108,7 +108,7 @@ impl MogenStudioApp {
             .open(&mut open)
             .collapsible(false)
             .resizable(false)
-            .default_width(420.0)
+            .default_width(520.0)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
@@ -630,51 +630,49 @@ impl MogenStudioApp {
                     });
     }
 
-    /// Gemini OAuth section. Shown when the active slot is `GeminiOAuth` —
-    /// the path that talks to `cloudcode-pa.googleapis.com/v1internal` for
-    /// text generation. Mirrors the CLI's `mogen auth login` — same
-    /// loopback browser flow, same `google_auth.json` token store, so
+    /// Gemini OAuth section. Shown when the active slot is `GeminiOAuth`.
+    /// Renders the two OAuth flows (gemini-cli for text,
+    /// `cloudcode-pa.googleapis.com/v1internal`; Antigravity for images,
+    /// nano-banana / Gemini 3 Pro Image) side-by-side in two columns to
+    /// keep the modal short. Each surface needs its own OAuth client —
+    /// gemini-cli is rejected by the image API with 403, and Antigravity
+    /// can't be reused for text — so the two stay separate. Tokens live
+    /// in `google_auth.json` and `antigravity_auth.json` respectively, so
     /// signing in here also authenticates the CLI (and vice versa).
-    ///
-    /// Image generation needs a separate OAuth client (Antigravity) — see
-    /// [`prefs_antigravity_oauth_section`](Self::prefs_antigravity_oauth_section).
     fn prefs_gemini_oauth_section(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Sign in with Google (paid Gemini Pro plan, text generation)");
+        ui.heading("Google sign-in");
         ui.label(
-            "Routes Gemini text calls through the gemini-cli OAuth client so \
-             gemini-3-pro-preview / gemini-3.1-pro-preview work on a paid \
-             Pro plan without an API key. Switch back to \"Gemini (API key)\" \
-             above to use the public API instead. Image generation uses a \
-             separate Antigravity sign-in below.",
+            "OAuth slot uses the gemini-cli client for text and Antigravity \
+             for images — each surface only accepts its own client. Switch \
+             to \"Gemini (API key)\" above to skip OAuth.",
         );
-        ui.add_space(6.0);
-        self.render_oauth_provider_block(ui, &GEMINI_CLI_CONFIG, "Sign in with Google");
-
-        ui.add_space(14.0);
-        ui.separator();
         ui.add_space(8.0);
-        self.prefs_antigravity_oauth_section(ui);
-    }
+        ui.columns(2, |cols| {
+            cols[0].label(egui::RichText::new("Text (gemini-cli)").strong());
+            cols[0].label(
+                "Routes generate / modify / animate through the paid Pro \
+                 plan — gemini-3-pro-preview and 3.1-pro-preview without an \
+                 API key.",
+            );
+            cols[0].add_space(6.0);
+            self.render_oauth_provider_block(
+                &mut cols[0],
+                &GEMINI_CLI_CONFIG,
+                "Sign in with Google",
+            );
 
-    /// Antigravity OAuth section. Required for texture (nano-banana / Gemini
-    /// 3 Pro Image) generation over OAuth — the gemini-cli client above is
-    /// rejected by the image surface with 403. Stored in a separate token
-    /// file (`antigravity_auth.json`), so logging into one provider does not
-    /// disturb the other.
-    fn prefs_antigravity_oauth_section(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Sign in with Antigravity (image generation)");
-        ui.label(
-            "Authorises the Antigravity OAuth client, which is the only one \
-             accepted by the Gemini image surface (nano-banana / Gemini 3 Pro \
-             Image). Required for `Generate textures` over OAuth; an API key \
-             also works as a fallback.",
-        );
-        ui.add_space(6.0);
-        self.render_oauth_provider_block(
-            ui,
-            &ANTIGRAVITY_CONFIG,
-            "Sign in with Antigravity",
-        );
+            cols[1].label(egui::RichText::new("Images (Antigravity)").strong());
+            cols[1].label(
+                "Required for `Generate textures` over OAuth (nano-banana / \
+                 Gemini 3 Pro Image). An API key also works as a fallback.",
+            );
+            cols[1].add_space(6.0);
+            self.render_oauth_provider_block(
+                &mut cols[1],
+                &ANTIGRAVITY_CONFIG,
+                "Sign in with Antigravity",
+            );
+        });
     }
 
     /// Shared body for both OAuth provider sections — status line, in-flight
