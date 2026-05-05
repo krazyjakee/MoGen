@@ -226,12 +226,27 @@ Pro tiers (the API returns `limit=0` 429s). If you have a paid Pro plan via
 your Google account, you can sign in with Google instead — no setup required:
 
 ```
-mogen auth login                    # opens browser, signs in with Google (gemini-cli client)
-mogen auth login --antigravity      # signs in with the Antigravity client — required for image gen
-mogen auth status                   # show email + project + token expiry
-mogen auth logout                   # delete the local tokens
+mogen auth gemini-cli login         # opens browser, signs in with Google (gemini-cli client)
+mogen auth antigravity login        # signs in with the Antigravity client — required for image gen
+mogen auth status                   # one-line status across every target (gemini-cli, antigravity, moghub)
+mogen auth gemini-cli status        # email + project + token expiry for one target
+mogen auth gemini-cli logout        # delete the gemini-cli token (use `antigravity` / `moghub` to scope)
 mogen generate "a chair"            # uses OAuth automatically when GEMINI_API_KEY is unset
 ```
+
+Every credential `mogen` knows how to persist lives under `~/.mogen/`. The
+top-level `mogen auth` is target-aware:
+
+| target        | login flow                                              | on-disk file                       |
+|---------------|---------------------------------------------------------|------------------------------------|
+| `gemini-cli`  | Google OAuth (text gen via Cloud Code Assist)           | `~/.mogen/google_auth.json`        |
+| `antigravity` | Google OAuth (image gen via Cloud Code Assist)          | `~/.mogen/antigravity_auth.json`   |
+| `moghub`      | MoGHub session (community publish + browse)             | `~/.mogen/moghub_auth.json`        |
+
+`mogen auth moghub login [--server URL]` runs the same loopback OAuth
+flow Studio uses, so a single sign-in covers both surfaces. `--server`
+defaults to the production server and round-trips into the on-disk
+session so future status calls reach the same host.
 
 `mogen` ships two public OAuth clients: Google's official
 [Gemini CLI](https://github.com/google-gemini/gemini-cli) client (default) and
@@ -273,8 +288,8 @@ Three image backends are supported:
 - **Antigravity OAuth (default for paid Google accounts).** Routes through
   `daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent` with
   endpoint failover, model catalog probe, and capacity-error backoff retries
-  (3s / 6s / 12s). The plain `mogen auth login` (gemini-cli) bundle is *not*
-  accepted by the image surface — run `mogen auth login --antigravity` once.
+  (3s / 6s / 12s). The plain `gemini-cli` bundle is *not* accepted by the
+  image surface — run `mogen auth antigravity login` once.
 - **Gemini API key.** When `GEMINI_API_KEY` is set, image gen goes through the
   public `generativelanguage.googleapis.com` surface. Default model is
   `gemini-3-pro-image-preview`; pass `--model gemini-3.1-flash-image-preview`

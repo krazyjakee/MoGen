@@ -1,203 +1,26 @@
+//! Persisted Studio configuration. Split into focused submodules and
+//! re-exported here so existing `crate::settings::*` callers keep working.
+//!
+//! - `provider_slot` — `ProviderSlot`, `PROVIDER_SLOTS`, OAuth-Gemini
+//!   default model constants.
+//! - `image_provider` — `ImageProvider` and `IMAGE_PROVIDERS`.
+//! - `paths` — `settings.json` path resolution + MoGHub URL default.
+
+mod image_provider;
+mod paths;
+mod provider_slot;
+
+pub use image_provider::{ImageProvider, IMAGE_PROVIDERS};
+pub use provider_slot::{
+    ProviderSlot, DEFAULT_OAUTH_GEMINI_FAST_MODEL, DEFAULT_OAUTH_GEMINI_MODEL, PROVIDER_SLOTS,
+};
+
 use std::fs;
-use std::path::PathBuf;
-
-/// Service name used as the keyring entry's `service`. Stable across
-/// releases so an upgrade doesn't leave behind orphaned entries.
-const KEYRING_SERVICE: &str = "mogen-studio";
-/// Keyring entry's `username`. Distinct from the LLM keys so a user
-/// who has both stored sees two separate entries.
-const KEYRING_USERNAME: &str = "moghub_session";
-
-fn keyring_entry() -> Result<keyring::Entry, keyring::Error> {
-    keyring::Entry::new(KEYRING_SERVICE, KEYRING_USERNAME)
-}
-
-fn keyring_get_session() -> Option<String> {
-    let entry = keyring_entry().ok()?;
-    match entry.get_password() {
-        Ok(s) if !s.is_empty() => Some(s),
-        _ => None,
-    }
-}
-
-fn keyring_set_session(token: &str) -> Result<(), keyring::Error> {
-    keyring_entry()?.set_password(token)
-}
-
-fn keyring_delete_session() -> Result<(), keyring::Error> {
-    let entry = keyring_entry()?;
-    match entry.delete_credential() {
-        Ok(()) => Ok(()),
-        Err(keyring::Error::NoEntry) => Ok(()),
-        Err(e) => Err(e),
-    }
-}
 
 use mogen_llm::gemini::{DEFAULT_MODEL, DEFAULT_TEMPERATURE};
 use mogen_llm::{Provider, ThinkingLevel};
+use mogen_moghub_client::session_store as moghub_session;
 use serde::{Deserialize, Serialize};
-
-/// Studio-side provider selection. Wraps [`Provider`] but splits Gemini into
-/// two slots so the user can explicitly pick API-key or OAuth auth from the
-/// Preferences dropdown. `mogen-llm` itself stays unaware — every slot maps
-/// to a single underlying [`Provider`] via [`Self::to_provider`].
-///
-/// API-key vs OAuth was previously a fallback inside `resolve_credential`
-/// (try saved key → env var → stored OAuth bundle). Users who want the OAuth
-/// path while a key is also set had no way to express that. The slot makes
-/// the choice explicit: GeminiApiKey forces the public-API path, GeminiOAuth
-/// forces Cloud Code Assist.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ProviderSlot {
-    GeminiApiKey,
-    GeminiOAuth,
-    OpenAI,
-    Anthropic,
-    Ollama,
-    ClaudeCode,
-    /// Fireworks AI's OpenAI-compatible Chat Completions surface. Default
-    /// model is the Fire Pass `kimi-k2p6` router; users supply their
-    /// `fw_…` API key from `https://fireworks.ai/account/api-keys`.
-    Fireworks,
-    /// Z.ai (Zhipu) GLM family. OpenAI-compatible Chat Completions; default
-    /// model is `glm-5.1`. The same API key drives the `glm-image` texture
-    /// path — see [`ImageProvider::ZAI`].
-    Zai,
-}
-
-impl ProviderSlot {
-    pub fn key(self) -> &'static str {
-        match self {
-            ProviderSlot::GeminiApiKey => "gemini-apikey",
-            ProviderSlot::GeminiOAuth => "gemini-oauth",
-            ProviderSlot::OpenAI => "openai",
-            ProviderSlot::Anthropic => "anthropic",
-            ProviderSlot::Ollama => "ollama",
-            ProviderSlot::ClaudeCode => "claude-code",
-            ProviderSlot::Fireworks => "fireworks",
-            ProviderSlot::Zai => "zai",
-        }
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            ProviderSlot::GeminiApiKey => "Gemini (API key)",
-            ProviderSlot::GeminiOAuth => "Gemini (Google OAuth)",
-            ProviderSlot::OpenAI => "OpenAI",
-            ProviderSlot::Anthropic => "Anthropic",
-            ProviderSlot::Ollama => "Ollama (local)",
-            ProviderSlot::ClaudeCode => "Claude Code (subscription)",
-            ProviderSlot::Fireworks => "Fireworks AI Firepass",
-            ProviderSlot::Zai => "Z.ai (GLM)",
-        }
-    }
-
-    /// Parse a persisted slot key. Accepts the explicit slot keys as well as
-    /// the legacy `Provider::key` strings — `"gemini"` from a pre-OAuth-slot
-    /// settings file maps to `GeminiApiKey`.
-    pub fn parse(s: &str) -> Option<Self> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "gemini-apikey" | "gemini_api_key" | "gemini-key" => Some(Self::GeminiApiKey),
-            "gemini-oauth" | "gemini_oauth" | "gemini-google" => Some(Self::GeminiOAuth),
-            "gemini" | "google" => Some(Self::GeminiApiKey),
-            "openai" | "gpt" | "chatgpt" => Some(Self::OpenAI),
-            "anthropic" | "claude" => Some(Self::Anthropic),
-            "ollama" | "local" => Some(Self::Ollama),
-            "claude-code" | "claude_code" | "claudecode" | "cc" => Some(Self::ClaudeCode),
-            "fireworks" | "fireworks-ai" | "firepass" | "kimi" => Some(Self::Fireworks),
-            "zai" | "z-ai" | "z.ai" | "zhipu" | "glm" => Some(Self::Zai),
-            _ => None,
-        }
-    }
-
-    /// The wire-level provider this slot speaks to. Both Gemini slots collapse
-    /// to [`Provider::Gemini`]; `mogen-llm` doesn't model the auth split — the
-    /// Studio's `resolve_credential` picks API-key vs OAuth from the slot.
-    pub fn to_provider(self) -> Provider {
-        match self {
-            ProviderSlot::GeminiApiKey | ProviderSlot::GeminiOAuth => Provider::Gemini,
-            ProviderSlot::OpenAI => Provider::OpenAI,
-            ProviderSlot::Anthropic => Provider::Anthropic,
-            ProviderSlot::Ollama => Provider::Ollama,
-            ProviderSlot::ClaudeCode => Provider::ClaudeCode,
-            ProviderSlot::Fireworks => Provider::Fireworks,
-            ProviderSlot::Zai => Provider::Zai,
-        }
-    }
-
-    /// True when this slot demands a Google OAuth bundle and must not fall
-    /// back to API-key auth even when a key is configured.
-    pub fn is_gemini_oauth(self) -> bool {
-        matches!(self, ProviderSlot::GeminiOAuth)
-    }
-}
-
-impl Default for ProviderSlot {
-    fn default() -> Self {
-        ProviderSlot::GeminiApiKey
-    }
-}
-
-/// Image-generation provider preference. Surfaced in Preferences → LLM so
-/// the user can choose between Gemini (API key or Antigravity OAuth) and
-/// Z.ai (`glm-image`) without touching any credential's storage.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum ImageProvider {
-    /// Prefer Antigravity OAuth when a bundle is on disk; fall back to the
-    /// Gemini API key. Mirrors the CLI's default resolver.
-    Auto,
-    /// Force the Gemini API key, even if an Antigravity bundle exists.
-    ApiKey,
-    /// Force the Antigravity OAuth bundle.
-    Antigravity,
-    /// Force Z.ai's `glm-image` endpoint. Reads the key from
-    /// [`Settings::zai_api_key`], falling back to the `ZAI_API_KEY` env
-    /// var when the settings field is empty.
-    ZAI,
-}
-
-pub const IMAGE_PROVIDERS: [ImageProvider; 4] = [
-    ImageProvider::Auto,
-    ImageProvider::ApiKey,
-    ImageProvider::Antigravity,
-    ImageProvider::ZAI,
-];
-
-impl Default for ImageProvider {
-    fn default() -> Self {
-        ImageProvider::Auto
-    }
-}
-
-impl ImageProvider {
-    pub fn label(self) -> &'static str {
-        match self {
-            ImageProvider::Auto => "Auto (Antigravity OAuth, fall back to API key)",
-            ImageProvider::ApiKey => "Gemini API key",
-            ImageProvider::Antigravity => "Antigravity OAuth",
-            ImageProvider::ZAI => "Z.ai (glm-image)",
-        }
-    }
-
-    pub fn key(self) -> &'static str {
-        match self {
-            ImageProvider::Auto => "auto",
-            ImageProvider::ApiKey => "apikey",
-            ImageProvider::Antigravity => "antigravity",
-            ImageProvider::ZAI => "zai",
-        }
-    }
-
-    pub fn parse(s: &str) -> Option<Self> {
-        match s.trim().to_ascii_lowercase().as_str() {
-            "" | "auto" | "default" => Some(Self::Auto),
-            "apikey" | "api_key" | "api-key" | "key" => Some(Self::ApiKey),
-            "antigravity" | "oauth" => Some(Self::Antigravity),
-            "zai" | "z.ai" | "z-ai" | "glm" | "glm-image" => Some(Self::ZAI),
-            _ => None,
-        }
-    }
-}
 
 use crate::preview_shader::{
     parse_preview_shader, preview_shader_key, PreviewShader, DEFAULT_PREVIEW_SHADER,
@@ -222,15 +45,16 @@ pub struct Settings {
     /// at production; set to `http://localhost:3000` for dev or to a
     /// private deployment URL. Honoured at runtime by the Community
     /// window and by the registry-aware `mogen build`.
-    #[serde(default = "default_moghub_url")]
+    #[serde(default = "paths::default_moghub_url")]
     pub moghub_url: String,
-    /// Persisted MoGHub session token (UUID string) returned by the
-    /// loopback OAuth flow. Sent as `Authorization: Bearer <uuid>` on
-    /// every authenticated call. Empty when signed-out. Stored alongside
-    /// the LLM keys; same threat model as `gemini_api_key` — anyone with
-    /// read access to `~/.config/mogen/settings.json` can act as the user
-    /// against MoGHub. Keyring storage is on the deferred list.
-    #[serde(default)]
+    /// In-memory cache of the MoGHub session UUID returned by the
+    /// loopback OAuth flow. Authoritative storage is
+    /// `~/.mogen/moghub_auth.json` (shared with the `mogen` CLI); this
+    /// field is populated from that file on load and is never
+    /// serialised back. The legacy field on disk (pre-`~/.mogen/`
+    /// migration) is still tolerated on deserialisation so users
+    /// upgrading from older Studios get migrated transparently.
+    #[serde(default, skip_serializing)]
     pub moghub_session: String,
     /// Z.ai (`glm-image`) API key. Used by the textures pipeline only when
     /// `image_provider == ImageProvider::ZAI`. Falls back to the
@@ -489,16 +313,6 @@ pub struct Settings {
 /// Blender / Maya / Modo defaults.
 pub const DEFAULT_VIEWER_BG_RGB: [u8; 3] = [54, 58, 64];
 
-/// Default thinking model when the active slot is `GeminiOAuth` and no
-/// override is set. The public-API `gemini-pro-latest` alias 404s on
-/// `cloudcode-pa.googleapis.com/v1internal` — pick a concrete preview tag
-/// known to work on the Antigravity OAuth surface.
-pub const DEFAULT_OAUTH_GEMINI_MODEL: &str = "gemini-3.1-pro-preview";
-
-/// Default fast model for the `GeminiOAuth` slot. Matches the cloudcode-pa
-/// surface; `gemini-flash-latest` is a public-API alias and 404s on OAuth.
-pub const DEFAULT_OAUTH_GEMINI_FAST_MODEL: &str = "gemini-3-flash-preview";
-
 /// Factory default for the viewport repaint cap. Picked to match the most
 /// common display refresh rate while keeping battery / thermals reasonable
 /// during long animation playback. Users can raise the cap or pick
@@ -511,7 +325,7 @@ impl Settings {
 
     pub fn load() -> Self {
         let mut s = Self::load_raw();
-        s.hydrate_secrets_from_keyring();
+        s.hydrate_moghub_session();
         s
     }
 
@@ -520,7 +334,7 @@ impl Settings {
         // (Studio's old `dirs::config_dir()/mogen/settings.json` plus
         // earlier `~/.cache/mogen/` users) load on first launch after
         // the move. `Settings::save` then rewrites to `~/.mogen/`.
-        let Some(path) = settings_path(mogen_llm::PathMode::Read) else {
+        let Some(path) = paths::settings_path(mogen_llm::PathMode::Read) else {
             return Self::default();
         };
         let bytes_result = fs::read(&path);
@@ -533,7 +347,7 @@ impl Settings {
                 // try the explicit pre-move Studio path too — covers
                 // setups where `MOGEN_CACHE_DIR` is set (which makes
                 // the read helper skip the `dirs::config_dir()` slot).
-                let Some(legacy) = legacy_settings_path() else {
+                let Some(legacy) = paths::legacy_settings_path() else {
                     return Self::default();
                 };
                 let Ok(b) = fs::read(&legacy) else {
@@ -572,7 +386,7 @@ impl Settings {
         // entered in Studio. Atomic write via sibling-tmp + rename so a
         // crash mid-write can't truncate the file; on Unix we chmod 0600
         // before the rename so the API keys aren't world-readable.
-        let path = settings_path(mogen_llm::PathMode::Write)
+        let path = paths::settings_path(mogen_llm::PathMode::Write)
             .ok_or_else(|| "no config directory available".to_string())?;
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
@@ -595,63 +409,62 @@ impl Settings {
         Ok(())
     }
 
-    /// On every load: prefer the keyring's copy of `moghub_session` over
-    /// whatever's on disk. If the disk value is non-empty AND the
-    /// keyring is empty (the typical migration case after an upgrade),
-    /// try to push the disk value into the keyring and clear the field
-    /// from settings.json so the secret no longer round-trips through
-    /// disk. Failures are silent — on systems without a working
-    /// keyring backend (e.g. headless Linux without Secret Service)
-    /// we fall back to the existing on-disk storage.
-    fn hydrate_secrets_from_keyring(&mut self) {
-        match keyring_get_session() {
+    /// On every load: prefer the value in `~/.mogen/moghub_auth.json`
+    /// over whatever the legacy `settings.json` field carried. If the
+    /// new file is empty and the legacy field is set (the typical
+    /// upgrade path from a Studio that wrote the secret into
+    /// settings.json or stored it in the OS keyring), migrate the
+    /// value to the new file and resave settings.json so the field
+    /// stops round-tripping there. The CLI reads the same file, so
+    /// this also surfaces a Studio sign-in to `mogen auth moghub
+    /// status`.
+    fn hydrate_moghub_session(&mut self) {
+        match moghub_session::read_session() {
             Some(token) => {
                 self.moghub_session = token;
             }
             None => {
-                if !self.moghub_session.is_empty()
-                    && keyring_set_session(&self.moghub_session).is_ok()
-                {
-                    self.moghub_session.clear();
-                    let _ = self.save();
-                    // Re-read so the cached field reflects what the
-                    // keyring now holds (also covers the unlikely
-                    // case where the just-stored value diverged).
-                    if let Some(t) = keyring_get_session() {
-                        self.moghub_session = t;
+                if !self.moghub_session.is_empty() {
+                    let base = if self.moghub_url.trim().is_empty() {
+                        None
+                    } else {
+                        Some(self.moghub_url.as_str())
+                    };
+                    if moghub_session::save_session(&self.moghub_session, base).is_ok() {
+                        // Re-save settings.json so the legacy
+                        // moghub_session field is dropped from disk
+                        // (the field is `skip_serializing`, so this
+                        // overwrite is what actually clears it).
+                        let _ = self.save();
                     }
                 }
             }
         }
     }
 
-    /// Persist a freshly-issued MoGHub session token. Writes to the
-    /// keyring first; on success clears the in-memory field's disk
-    /// twin so settings.json doesn't carry a copy. On keyring failure
-    /// the token stays on the field as a fallback (settings.json then
-    /// holds it, same as the pre-keyring world).
+    /// Persist a freshly-issued MoGHub session token. Writes
+    /// `~/.mogen/moghub_auth.json` and updates the in-memory cache.
+    /// `save()` is best-effort so anything else mutated alongside the
+    /// sign-in still lands.
     pub fn set_moghub_session(&mut self, token: &str) -> Result<(), String> {
-        match keyring_set_session(token) {
-            Ok(()) => {
-                // Cache reflects what the keyring now holds.
-                self.moghub_session = token.to_string();
-                // Best-effort save so anything else mutated alongside
-                // the token sync also lands.
-                self.save()?;
-                Ok(())
-            }
-            Err(_) => {
-                self.moghub_session = token.to_string();
-                self.save()
-            }
-        }
+        let base = if self.moghub_url.trim().is_empty() {
+            None
+        } else {
+            Some(self.moghub_url.as_str())
+        };
+        moghub_session::save_session(token, base)
+            .map_err(|e| format!("write moghub session: {e}"))?;
+        self.moghub_session = token.to_string();
+        self.save()
     }
 
-    /// Wipe the persisted MoGHub session. Removes the keyring entry
-    /// and clears the cached field, then saves so the disk file
-    /// reflects the cleared state.
+    /// Wipe the persisted MoGHub session. Removes the on-disk session
+    /// file (across canonical + legacy paths) and clears the cached
+    /// field, then saves settings.json so any in-memory mutations
+    /// alongside the sign-out also land.
     pub fn clear_moghub_session(&mut self) -> Result<(), String> {
-        let _ = keyring_delete_session();
+        moghub_session::clear_session()
+            .map_err(|e| format!("remove moghub session: {e}"))?;
         self.moghub_session.clear();
         self.save()
     }
@@ -1045,53 +858,3 @@ pub const THINKING_LEVELS: [ThinkingLevel; 4] = [
     ThinkingLevel::High,
     ThinkingLevel::XHigh,
 ];
-
-/// Order in which provider slots appear in the Options dropdown. Both
-/// Gemini auth modes are listed up front because Gemini is the historical
-/// default and the only image-capable backend; the OAuth slot is the path
-/// users with paid Antigravity plans will reach for.
-pub const PROVIDER_SLOTS: [ProviderSlot; 8] = [
-    ProviderSlot::GeminiApiKey,
-    ProviderSlot::GeminiOAuth,
-    ProviderSlot::OpenAI,
-    ProviderSlot::Anthropic,
-    ProviderSlot::Ollama,
-    ProviderSlot::ClaudeCode,
-    ProviderSlot::Fireworks,
-    ProviderSlot::Zai,
-];
-
-/// Canonical settings path: `~/.mogen/settings.json`. Shared with the
-/// CLI so a key entered in Studio's Preferences also satisfies
-/// `mogen generate` etc. without requiring an env var.
-///
-/// `mode` follows [`mogen_llm::PathMode`]:
-///   - `Read` walks legacy locations (old `dirs::config_dir()/mogen/`,
-///     `~/.cache/mogen/`, `%LOCALAPPDATA%\mogen\`) before falling back
-///     to the canonical target. Lets existing installs keep working
-///     after the move.
-///   - `Write` always returns the canonical `~/.mogen/` target so new
-///     saves migrate forward automatically.
-fn settings_path(mode: mogen_llm::PathMode) -> Option<PathBuf> {
-    if let Some(p) = mogen_llm::settings_store_path(mode) {
-        return Some(p);
-    }
-    // Last-ditch: the legacy `dirs::config_dir()` location. Reached
-    // only when neither HOME/USERPROFILE nor LOCALAPPDATA are set,
-    // which effectively never happens.
-    dirs::config_dir().map(|d| d.join("mogen").join("settings.json"))
-}
-
-/// Legacy `dirs::config_dir()/mogen/settings.json` location. Probed
-/// during [`Settings::load`] so Studio installs that pre-date the move
-/// to `~/.mogen/` keep their saved keys/preferences on first launch.
-fn legacy_settings_path() -> Option<PathBuf> {
-    dirs::config_dir().map(|d| d.join("mogen").join("settings.json"))
-}
-
-/// Default MoGHub origin. Production deployment lives here; the field
-/// is editable in Preferences (and overridable at process scope via the
-/// `MOGHUB_URL` env var honoured by `MoghubClient::from_env`).
-fn default_moghub_url() -> String {
-    "https://moghub.org".to_string()
-}
