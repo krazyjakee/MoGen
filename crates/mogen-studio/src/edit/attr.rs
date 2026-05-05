@@ -116,7 +116,14 @@ fn find_header_parens(src: &str, start: usize, end: usize) -> Option<(usize, usi
             }
             b'{' => return None, // body before any paren header
             b'(' => {
-                let close = match_closing_paren(src, i, end)?;
+                // Scan to `src.len()` rather than `end` so the matcher tracks
+                // the real closing `)` even when an earlier edit (or batch
+                // member) has expanded the header past the captured span end.
+                // Without this, a follow-up `set_attr` on the same span would
+                // miss the now-shifted `)` and synthesise a second `(...)`
+                // header. `match_closing_paren` is paren-depth-tracking, so
+                // widening the limit doesn't tempt it past the true close.
+                let close = match_closing_paren(src, i, src.len())?;
                 return Some((i, close));
             }
             _ => i += 1,
@@ -318,6 +325,26 @@ mod tests {
         assert!(out.contains("x=9"));
         assert!(out.contains("holes=[[-1, -1, 1, 1], [0, 0, 2, 2]]"));
         assert!(out.contains("z=0"));
+    }
+
+    #[test]
+    fn set_attr_multi_insert_same_span_grows_correctly() {
+        // The viewport gizmo's relative-placed Translate writeback emits
+        // three `x=`/`y=`/`z=` set ops with one captured span. Each insert
+        // grows the source past the original span end; the closing `)`
+        // scan must follow it instead of bailing and synthesising a second
+        // `(...)` header. Pin the round-trip so the helper stays usable for
+        // multi-edit batches.
+        let src = "scene {\n  box \"seat\" ()\n}\n";
+        let span = span_of(src, "box \"seat\" ()");
+        let s1 = set_attr(src, span, "x", "1");
+        let s2 = set_attr(&s1, span, "y", "2");
+        let s3 = set_attr(&s2, span, "z", "3");
+        assert!(
+            s3.contains("box \"seat\" (x=1, y=2, z=3)"),
+            "expected fused header, got {s3}"
+        );
+        assert_eq!(s3.matches('(').count(), 1, "no synthesised second header: {s3}");
     }
 
     #[test]

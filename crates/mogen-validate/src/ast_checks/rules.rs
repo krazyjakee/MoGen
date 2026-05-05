@@ -412,4 +412,35 @@ pub(super) fn check_anim_required(n: &Node, diags: &mut Vec<Diagnostic>) {
         }
         _ => {}
     }
+    check_deform_attrs(n, diags);
+}
+
+/// Validate the deformation modifier attrs that any geometry primitive accepts.
+/// Catches out-of-range stochastic dials so the lowering pass can trust the
+/// inputs.
+fn check_deform_attrs(n: &Node, diags: &mut Vec<Diagnostic>) {
+    for attr in ["noise", "jitter"] {
+        if let Some(Value::Number(v)) = n.attr(attr) {
+            if !(0.0..=1.0).contains(v) {
+                diags.push(
+                    Diagnostic::warning(
+                        "W1002",
+                        format!("`{attr}` is {v}; values are clamped to [0, 1]"),
+                    )
+                    .with_span(n.span),
+                );
+            }
+        }
+    }
+    if let Some(Value::Number(t)) = n.attr("taper") {
+        if *t < 0.0 {
+            diags.push(
+                Diagnostic::warning(
+                    "W1003",
+                    format!("`taper` is {t}; values are clamped to [0, ∞) (1.0 = no change)"),
+                )
+                .with_span(n.span),
+            );
+        }
+    }
 }

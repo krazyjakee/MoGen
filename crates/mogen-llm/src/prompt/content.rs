@@ -24,6 +24,20 @@ what's listed below — in particular, animation templates take no \
 non-centre point (hinge, wrist, shoulder), wrap the target in a `group` \
 whose origin sits at the pivot and target the `joint`, not the mesh.
 
+**Deformation modifiers** (every primitive accepts these as common attrs — \
+use them to add variety without authoring extra geometry): `bend_x`, \
+`bend_y`, `bend_z` (degrees of arc-length-preserving bend around the named \
+axis — bends a vertical column or beam), `twist_y` (degrees of helical \
+twist around Y), `taper` (ratio in [0, ∞), 1.0 = no change, 0.5 shrinks \
+the top to half width), `droop` (gravity-style sag along -Y, 0..1 of \
+length), `noise` (coherent blobby surface displacement, 0..1; good for \
+rocks/asteroids), `jitter` (per-vertex random displacement, 0..1; good for \
+jagged surfaces), `faceted` (0/1 — discard smooth normals for a low-poly \
+look), `seed` (integer to vary the random pattern). Stochastic modifiers \
+(`noise`, `jitter`) are deterministic for a given `seed`. Default \
+tessellation auto-bumps when a smooth modifier is present so a bent \
+cylinder doesn't read as faceted.
+
 ";
 
 pub(super) const PREAMBLE: &str = "\

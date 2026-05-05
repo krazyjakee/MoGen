@@ -16,13 +16,15 @@
 
 pub mod dtos;
 mod error;
+#[cfg(feature = "oauth")]
+pub mod oauth;
 pub mod registry;
 
 use std::time::Duration;
 
 use anyhow::Result;
 use reqwest::blocking::Client as HttpClient;
-use reqwest::header::{ACCEPT, AUTHORIZATION, USER_AGENT};
+use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, USER_AGENT};
 use url::Url;
 
 pub use dtos::*;
@@ -148,6 +150,89 @@ impl MoghubClient {
         String::from_utf8(bytes).map_err(|e| MoghubError::Decode(e.to_string()))
     }
 
+    /// POST a JSON body and decode the JSON response. Used for
+    /// authenticated mutations (likes, comments, publish, …). Bearer
+    /// is attached when set.
+    fn post_json<T: serde::de::DeserializeOwned, B: serde::Serialize>(
+        &self,
+        path: &str,
+        body: &B,
+    ) -> Result<T, MoghubError> {
+        let url = self.url_for(path)?;
+        let mut req = self
+            .http
+            .post(url)
+            .header(ACCEPT, "application/json")
+            .header(CONTENT_TYPE, "application/json")
+            .header(USER_AGENT, USER_AGENT_VALUE);
+        if let Some(t) = &self.token {
+            req = req.header(AUTHORIZATION, format!("Bearer {t}"));
+        }
+        let resp = req
+            .json(body)
+            .send()
+            .map_err(MoghubError::network)?;
+        decode_json(resp)
+    }
+
+    /// POST with no body, decode JSON. Distinct from [`Self::post_json`]
+    /// because reqwest's `.json(())` serialises `null`, which some
+    /// handlers (looking at you, `axum::extract::Json`) reject as a
+    /// missing field.
+    fn post_empty<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, MoghubError> {
+        let url = self.url_for(path)?;
+        let mut req = self
+            .http
+            .post(url)
+            .header(ACCEPT, "application/json")
+            .header(USER_AGENT, USER_AGENT_VALUE);
+        if let Some(t) = &self.token {
+            req = req.header(AUTHORIZATION, format!("Bearer {t}"));
+        }
+        let resp = req.send().map_err(MoghubError::network)?;
+        decode_json(resp)
+    }
+
+    /// DELETE, decode JSON. Used for like-undo.
+    fn delete_json<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, MoghubError> {
+        let url = self.url_for(path)?;
+        let mut req = self
+            .http
+            .delete(url)
+            .header(ACCEPT, "application/json")
+            .header(USER_AGENT, USER_AGENT_VALUE);
+        if let Some(t) = &self.token {
+            req = req.header(AUTHORIZATION, format!("Bearer {t}"));
+        }
+        let resp = req.send().map_err(MoghubError::network)?;
+        decode_json(resp)
+    }
+
+    /// Fetch raw bytes from either an absolute URL (e.g. a GitHub avatar
+    /// CDN) or a moghub-relative path (e.g. `/api/m/.../thumbnail.png`).
+    /// The bearer token is only attached for relative paths so we don't
+    /// leak it to third-party origins.
+    pub fn fetch_image_bytes(&self, url: &str) -> Result<Vec<u8>, MoghubError> {
+        if url.starts_with("http://") || url.starts_with("https://") {
+            let resp = self
+                .http
+                .get(url)
+                .header(USER_AGENT, USER_AGENT_VALUE)
+                .send()
+                .map_err(MoghubError::network)?;
+            let status = resp.status();
+            if !status.is_success() {
+                let body = resp.text().unwrap_or_default();
+                return Err(MoghubError::status(status.as_u16(), body));
+            }
+            resp.bytes()
+                .map(|b| b.to_vec())
+                .map_err(MoghubError::network)
+        } else {
+            self.get_bytes(url)
+        }
+    }
+
     // --- public API endpoints (no auth required) ----------------------
 
     /// `GET /api/whoami` — returns the signed-in user, or `None` for
@@ -193,6 +278,24 @@ impl MoghubClient {
             "/api/m/{}/{}",
             urlencode_segment(user),
             urlencode_segment(slug)
+        );
+        self.get(&path)
+    }
+
+    /// `GET /api/m/:user/:slug/versions/:version` — full source bodies for
+    /// one specific version. Use this whenever you have a pinned version
+    /// number; `model_detail` only returns the latest.
+    pub fn version_detail(
+        &self,
+        user: &str,
+        slug: &str,
+        version: i32,
+    ) -> Result<ModelVersionDetail, MoghubError> {
+        let path = format!(
+            "/api/m/{}/{}/versions/{}",
+            urlencode_segment(user),
+            urlencode_segment(slug),
+            version,
         );
         self.get(&path)
     }
@@ -283,6 +386,66 @@ impl MoghubClient {
             urlencode_segment(slug)
         );
         self.get(&path)
+    }
+
+    // --- mutations (require a bearer token) ---------------------------
+
+    /// `POST /api/m/:user/:slug/like` — idempotent. Returns the
+    /// canonical liked-state + count.
+    pub fn like(&self, user: &str, slug: &str) -> Result<LikeResponse, MoghubError> {
+        let path = format!(
+            "/api/m/{}/{}/like",
+            urlencode_segment(user),
+            urlencode_segment(slug)
+        );
+        self.post_empty(&path)
+    }
+
+    /// `DELETE /api/m/:user/:slug/like`.
+    pub fn unlike(&self, user: &str, slug: &str) -> Result<LikeResponse, MoghubError> {
+        let path = format!(
+            "/api/m/{}/{}/like",
+            urlencode_segment(user),
+            urlencode_segment(slug)
+        );
+        self.delete_json(&path)
+    }
+
+    /// `POST /api/m/:user/:slug/comments` — bbcode body. Returns the
+    /// newly-inserted comment with `body_html` already rendered.
+    pub fn post_comment(
+        &self,
+        user: &str,
+        slug: &str,
+        body: &str,
+    ) -> Result<Comment, MoghubError> {
+        let path = format!(
+            "/api/m/{}/{}/comments",
+            urlencode_segment(user),
+            urlencode_segment(slug)
+        );
+        self.post_json(
+            &path,
+            &CreateCommentRequest {
+                body: body.to_string(),
+            },
+        )
+    }
+
+    /// `GET /api/notifications` — inbox + unread count for the
+    /// signed-in user.
+    pub fn notifications(&self) -> Result<NotificationList, MoghubError> {
+        self.get("/api/notifications")
+    }
+
+    /// `POST /api/notifications` — mark every notification read.
+    pub fn mark_notifications_read(&self) -> Result<NotificationList, MoghubError> {
+        self.post_empty("/api/notifications")
+    }
+
+    /// `POST /api/models` — create a new model version.
+    pub fn publish(&self, req: &PublishRequest) -> Result<PublishResponse, MoghubError> {
+        self.post_json("/api/models", req)
     }
 }
 

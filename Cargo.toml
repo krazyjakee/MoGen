@@ -11,6 +11,7 @@ members = [
     "crates/mogen",
     "crates/mogen-moghub-client",
     "crates/mogen-registry",
+    "crates/mogen-render",
     "crates/mogen-studio",
     "crates/mogen-update",
     "crates/mogen-wasm",
@@ -50,4 +51,5 @@ mogen-export = { path = "crates/mogen-export", default-features = false }
 mogen-llm = { path = "crates/mogen-llm" }
 mogen-moghub-client = { path = "crates/mogen-moghub-client" }
 mogen-registry = { path = "crates/mogen-registry" }
+mogen-render = { path = "crates/mogen-render" }
 mogen-update = { path = "crates/mogen-update" }

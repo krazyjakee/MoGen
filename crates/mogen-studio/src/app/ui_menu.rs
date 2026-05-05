@@ -524,6 +524,33 @@ impl MogenStudioApp {
                     action = MenuAction::OpenCommunity;
                     ui.close_menu();
                 }
+                let signed_in = self.community.me.is_some();
+                let publish_btn = ui.add_enabled(
+                    signed_in,
+                    egui::Button::new("Publish current file…"),
+                );
+                let publish_btn = if signed_in {
+                    publish_btn
+                        .on_hover_text("Push the active tab to MoGHub as a new model or version")
+                } else {
+                    publish_btn
+                        .on_hover_text("Sign in to MoGHub from the status bar to publish")
+                };
+                if publish_btn.clicked() {
+                    action = MenuAction::OpenPublish;
+                    ui.close_menu();
+                }
+                if shortcut_menu_item(
+                    ui,
+                    "Insert module reference…",
+                    ShortcutAction::OpenModulePalette,
+                    "Search the registry and insert a `use \"@user/slug@v\"` line at the cursor",
+                )
+                .clicked()
+                {
+                    action = MenuAction::OpenModulePalette;
+                    ui.close_menu();
+                }
             });
 
             ui.menu_button("Help", |ui| {
@@ -649,6 +676,12 @@ impl MogenStudioApp {
             }
             MenuAction::OpenCommunity => {
                 self.community.open = true;
+            }
+            MenuAction::OpenPublish => {
+                self.open_publish_dialog();
+            }
+            MenuAction::OpenModulePalette => {
+                self.open_module_palette(ctx);
             }
             MenuAction::OpenUpdate => {
                 self.open_update_dialog();

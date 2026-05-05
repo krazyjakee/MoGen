@@ -41,7 +41,7 @@ mogen-dsl = { workspace = true, features = ["csg"] }
 mogen-validate = { workspace = true, features = ["csg"] }
 mogen-export = { workspace = true, features = ["textures", "merge"] }
 mogen-llm = { workspace = true }
-mogen-moghub-client = { workspace = true }
+mogen-moghub-client = { workspace = true, features = ["oauth"] }
 mogen-update = { workspace = true }
 anyhow = { workspace = true }
 glam = { workspace = true }
@@ -55,10 +55,17 @@ egui_glow = "0.29"
 glow = "0.14"
 rfd = "0.15"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+# Used to base64-encode the publish-dialog preview thumbnail before
+# attaching it to `PublishRequest::thumbnail_png_base64`.
+base64 = "0.22"
 arboard = { version = "3", default-features = false }
 sentry = { version = "0.34", default-features = false, features = ["backtrace", "contexts", "debug-images", "panic", "reqwest", "rustls"] }
-# Loopback OAuth: a one-shot HTTP listener catches GitHub's redirect and a
-# system-default browser opens the auth URL. tiny_http is small + sync;
-# webbrowser is a tiny shim around xdg-open / open / start.
-tiny_http = "0.12"
+# Browser shim — opens the GitHub OAuth URL via the system handler.
+# tiny_http is pulled in transitively via mogen-moghub-client's `oauth`
+# feature; we only need webbrowser directly here for the publish-success
+# "Open in browser" affordance.
 webbrowser = "1"
+# Secure storage for the MoGHub session UUID. Falls back to plain
+# settings.json on systems without a Secret Service / Keychain
+# (notably headless Linux), see settings::moghub_session_get.
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }

@@ -172,12 +172,13 @@ fn unauthorized_maps_to_dedicated_error() {
 }
 
 #[test]
-fn pinned_old_version_errors_clearly() {
-    // The current public API can't return a non-latest version's source,
-    // so the registry impl errors with a message pointing at
-    // `mogen update`. Once the per-version endpoint ships in P2 this
-    // test will need updating.
-    let body = r#"{
+fn pinned_old_version_resolves_via_version_detail() {
+    // P2 added GET /api/m/:user/:slug/versions/:version, so the
+    // registry resolver no longer errors on non-latest pins — it
+    // hits that endpoint after model_detail tells us latest != pin.
+    // Stub returns the latest from /api/m/:user/:slug and the
+    // pinned bytes from /api/m/:user/:slug/versions/:version.
+    let detail = r#"{
         "id":"00000000-0000-0000-0000-000000000001",
         "user":{"id":"u1","handle":"alice","avatar_url":null},
         "slug":"chairs","title":"Chairs","description":"","license":"CC0",
@@ -191,8 +192,31 @@ fn pinned_old_version_errors_clearly() {
         "parent":null,"liked_by_me":false,"is_module":true,
         "dependent_count":0,"tombstoned":false
     }"#;
-    let body_owned = body.to_string();
-    let server = StubServer::new(move |_req| json_response(&body_owned));
+    let pinned = r#"{
+        "model_id":"00000000-0000-0000-0000-000000000001",
+        "user":{"id":"u1","handle":"alice","avatar_url":null},
+        "slug":"chairs","is_module":true,"tombstoned":false,
+        "version":{
+          "id":"00000000-0000-0000-0000-000000000020","version":2,
+          "publish_message":"v2","thumbnail_url":null,
+          "created_at":"2026-01-01T00:00:00Z",
+          "files":[{
+            "filename":"chair.mog","is_entry":true,"bytes":7,
+            "source":"node{}\n","dedup_target":null
+          }]
+        },
+        "mog_lock":"{}"
+    }"#;
+    let detail_owned = detail.to_string();
+    let pinned_owned = pinned.to_string();
+    let server = StubServer::new(move |req| {
+        let url = req.url();
+        if url.contains("/versions/") {
+            json_response(&pinned_owned)
+        } else {
+            json_response(&detail_owned)
+        }
+    });
     let client = MoghubClient::new(&server.base_url).unwrap();
     let spec = RegistryRef {
         user: "alice".into(),
@@ -200,7 +224,8 @@ fn pinned_old_version_errors_clearly() {
         version: Some(2),
         raw: "@alice/chairs@2".into(),
     };
-    let err = client.fetch(&spec).unwrap_err().to_string();
-    assert!(err.contains("not the latest"), "got: {err}");
-    assert!(err.contains("mogen update"), "got: {err}");
+    let fetched = client.fetch(&spec).expect("non-latest pin should resolve");
+    assert_eq!(fetched.version, 2);
+    assert_eq!(fetched.files.len(), 1);
+    assert_eq!(fetched.files[0].filename, "chair.mog");
 }

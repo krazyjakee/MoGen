@@ -101,6 +101,22 @@ pub struct ModelVersion {
     pub files: Vec<ModelFile>,
 }
 
+/// Response shape for `GET /api/m/:user/:slug/versions/:version` — the
+/// non-latest counterpart of [`ModelDetail`]. Carries the same file
+/// bodies inline so a single GET round-trips a pinned version.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelVersionDetail {
+    pub model_id: String,
+    pub user: UserSummary,
+    pub slug: String,
+    pub is_module: bool,
+    pub tombstoned: bool,
+    pub version: ModelVersion,
+    /// Raw `mog.lock` JSON. Studio doesn't parse this directly; the
+    /// registry resolver does.
+    pub mog_lock: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelDetail {
     pub id: String,
@@ -131,7 +147,6 @@ pub struct PublishFileInput {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PublishRequest {
-    pub slug: String,
     pub title: String,
     #[serde(default)]
     pub description: String,

@@ -3,6 +3,12 @@ name = "mogen-moghub-client"
 version.workspace = true
 edition.workspace = true
 
+[features]
+default = []
+# Loopback OAuth helper. Optional because some embedders (server-side
+# tooling, future SDK consumers) don't need tiny_http + webbrowser.
+oauth = ["tiny_http", "webbrowser"]
+
 [dependencies]
 mogen-registry.workspace = true
 anyhow.workspace = true
@@ -15,6 +21,8 @@ thiserror.workspace = true
 # is reserved for the publish thumbnail upload (P2); harmless to include.
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls", "multipart"] }
 url = "2"
+tiny_http = { version = "0.12", optional = true }
+webbrowser = { version = "1", optional = true }
 
 [dev-dependencies]
 # Tiny in-process HTTP server we mount per test so we don't depend on a

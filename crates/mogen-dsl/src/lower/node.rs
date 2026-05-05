@@ -8,6 +8,7 @@ use crate::ast::{Node, Value};
 use super::branch::expand_branch;
 use super::connector::{add_aabb_connectors_if_missing, add_connector, default_connectors};
 use super::csg::lower_csg;
+use super::deform::apply_deform;
 use super::helpers::{
     anchor_for, apply_anchor_to_mesh, inherit_material_from_ancestor, transform_from_attrs,
 };
@@ -113,6 +114,13 @@ pub(super) fn lower_into(
         .unwrap_or_default();
     if let Some(mesh_res) = primitive_mesh(node, uv_mode) {
         let mut mesh = mesh_res?;
+        // Deformation runs before anchor shift so the anchor reflects the
+        // post-deform AABB — the user's `anchor=bottom` still lines up flush
+        // with the base of a bent or melted shape rather than its parametric
+        // bounding box.
+        if node.kind != "mesh" {
+            apply_deform(&mut mesh, node);
+        }
         anchor_shift = apply_anchor_to_mesh(&mut mesh, anchor.as_deref());
         graph.set_mesh(id, mesh);
     } else {

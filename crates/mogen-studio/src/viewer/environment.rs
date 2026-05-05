@@ -31,15 +31,22 @@ pub enum Environment {
     Night,
     /// Dim neutral interior light — no sun, soft horizon-only fill.
     Indoor,
+    /// No environmental contribution: black sky dome, no sun, zero IBL. The
+    /// analytic key/fill fallback (hardcoded in the FS) still illuminates
+    /// geometry when the scene has no DSL `light` nodes, so the model stays
+    /// visible against the black background; once DSL lights are authored,
+    /// only those plus emissives contribute.
+    None,
 }
 
-pub const ENVIRONMENTS: [Environment; 6] = [
+pub const ENVIRONMENTS: [Environment; 7] = [
     Environment::Studio,
     Environment::Daylight,
     Environment::Sunset,
     Environment::Overcast,
     Environment::Night,
     Environment::Indoor,
+    Environment::None,
 ];
 
 pub const DEFAULT_ENVIRONMENT: Environment = Environment::Studio;
@@ -76,6 +83,7 @@ pub fn environment_key(e: Environment) -> &'static str {
         Environment::Overcast => "overcast",
         Environment::Night => "night",
         Environment::Indoor => "indoor",
+        Environment::None => "none",
     }
 }
 
@@ -87,6 +95,7 @@ pub fn environment_label(e: Environment) -> &'static str {
         Environment::Overcast => "Overcast (soft)",
         Environment::Night => "Night (moonlit)",
         Environment::Indoor => "Indoor (dim)",
+        Environment::None => "None (off)",
     }
 }
 
@@ -101,6 +110,7 @@ pub fn environment_short_label(e: Environment) -> &'static str {
         Environment::Overcast => "Overcast",
         Environment::Night => "Night",
         Environment::Indoor => "Indoor",
+        Environment::None => "None",
     }
 }
 
@@ -112,6 +122,7 @@ pub fn parse_environment(s: &str) -> Option<Environment> {
         "overcast" | "cloudy" => Some(Environment::Overcast),
         "night" | "moonlit" | "moon" => Some(Environment::Night),
         "indoor" | "interior" => Some(Environment::Indoor),
+        "none" | "off" | "black" => Some(Environment::None),
         _ => None,
     }
 }
@@ -189,6 +200,22 @@ impl Environment {
                 sky_ground: Vec3::new(0.08, 0.07, 0.06),
                 sun_dir: Vec3::new(-0.3, -1.0, -0.4),
                 // No sun indoors — dome only.
+                sun_color: Vec3::ZERO,
+            },
+            Environment::None => EnvironmentParams {
+                // Directions match the Studio preset so the FS fallback rig
+                // (used only when `u_num_lights == 0`) still has a sane
+                // `normalize(-u_key_dir)` and the geometry isn't lost on a
+                // black background. The fallback's key/fill colours are
+                // hardcoded in the shader and intentionally outside this
+                // struct, so they keep an unauthored model visible while the
+                // sky probe + sun disc collapse to black below.
+                key_dir: Vec3::new(-0.4, -1.0, -0.3),
+                fill_dir: Vec3::new(0.6, -0.2, 0.5),
+                sky_top: Vec3::ZERO,
+                sky_horizon: Vec3::ZERO,
+                sky_ground: Vec3::ZERO,
+                sun_dir: Vec3::new(-0.4, -1.0, -0.3),
                 sun_color: Vec3::ZERO,
             },
         }

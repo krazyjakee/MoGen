@@ -408,11 +408,12 @@ mod tests {
         // The cached portion (grammar + kinds + allowlist). Bytes here are
         // paid once per cache lifetime, so the cap is loose — but a guard
         // still catches an accidentally-uncached request-varying section
-        // sneaking in. Today's cacheable block is ~17 KB.
+        // sneaking in. The deformation-modifier paragraph in
+        // `ALLOWLIST_INTRO` adds ~700 bytes vs the pre-modifier baseline.
         let s = cacheable_block();
         assert!(
-            s.len() < 22_000,
-            "cacheable_block grew to {} bytes — cap is 22_000. Reference \
+            s.len() < 23_000,
+            "cacheable_block grew to {} bytes — cap is 23_000. Reference \
              material that grows without bound should be fetched on demand, \
              not pinned in the cache.",
             s.len()

@@ -18,6 +18,8 @@ use commands::modify::{modify, ModifyArgs};
 use commands::relock::relock;
 use commands::repair::{repair, RepairArgs};
 use commands::textures::textures_cmd;
+use commands::login::{login, LoginArgs};
+use commands::publish::{publish, PublishArgs};
 use commands::update::{update, UpdateArgs};
 
 /// CLI-facing mirror of [`ThinkingLevel`]. Kept separate so we don't leak
@@ -407,6 +409,73 @@ enum Cmd {
         #[arg(long)]
         force: bool,
     },
+    /// Sign in to MoGHub via the loopback OAuth flow. The resulting
+    /// session token is stored in the OS keyring and is shared with
+    /// MoGen Studio — sign in once, both surfaces see the same
+    /// session. With `--logout` removes the stored token instead.
+    Login {
+        /// MoGHub base URL. Falls back to `MOGHUB_URL`, then the
+        /// client default. Useful when running against a private
+        /// deployment or `http://localhost:3000` for local dev.
+        #[arg(long)]
+        base_url: Option<String>,
+        /// Force a fresh sign-in even if a valid token is already
+        /// stored.
+        #[arg(long)]
+        force: bool,
+        /// Remove the stored token from every storage tier (keyring +
+        /// fallback file) and exit.
+        #[arg(long)]
+        logout: bool,
+    },
+    /// Publish a `.mog` file to MoGHub as a new model or version.
+    /// Requires a stored session — run `mogen login` first.
+    ///
+    /// Title, description, and tags default to the file's `meta(...)`
+    /// block; pass the matching flag to override. The slug is derived
+    /// server-side from the title.
+    Publish {
+        /// `.mog` file to publish (the entry file). Multi-file
+        /// publish is on the runway; v1 sends just this one.
+        input: PathBuf,
+        /// Display title. Defaults to `meta(name = …)`.
+        #[arg(long)]
+        title: Option<String>,
+        /// Long-form description (Markdown allowed; rendered server-
+        /// side on the model page). Defaults to `meta(description = …)`.
+        #[arg(long)]
+        description: Option<String>,
+        /// SPDX-style license string. Defaults to `CC0-1.0`.
+        #[arg(long)]
+        license: Option<String>,
+        /// `public` (default), `unlisted`, or `private`.
+        #[arg(long)]
+        visibility: Option<String>,
+        /// Per-publish message — what changed. Empty for the first
+        /// version.
+        #[arg(long)]
+        message: Option<String>,
+        /// Tag to attach. May be repeated; capped at 8 server-side.
+        /// When omitted, defaults to `meta(tags = [...])`.
+        #[arg(long = "tag")]
+        tags: Vec<String>,
+        /// Force-publish as a registry module (`use "@user/slug"`).
+        /// Without this or `--no-module`, the type is auto-detected:
+        /// module when the source has no top-level `import` declarations,
+        /// scene otherwise.
+        #[arg(long, conflicts_with = "no_module")]
+        module: bool,
+        /// Force-publish as a scene, overriding the auto-detect.
+        #[arg(long)]
+        no_module: bool,
+        /// Pin a parent version for fork lineage. Pass the
+        /// `version_id` UUID returned by the parent's detail page.
+        #[arg(long)]
+        parent_version_id: Option<String>,
+        /// Override the MoGHub base URL. Same precedence as `login`.
+        #[arg(long)]
+        base_url: Option<String>,
+    },
     /// Run a suite of prompts through `generate` and report success rate and
     /// mean token cost. Does not write GLBs.
     Bench {
@@ -620,6 +689,45 @@ fn main() -> ExitCode {
             yes,
             check_only: check,
             force,
+        }),
+        Cmd::Login {
+            base_url,
+            force,
+            logout,
+        } => login(LoginArgs {
+            base_url,
+            force,
+            logout,
+        }),
+        Cmd::Publish {
+            input,
+            title,
+            description,
+            license,
+            visibility,
+            message,
+            tags,
+            module,
+            no_module,
+            parent_version_id,
+            base_url,
+        } => publish(PublishArgs {
+            input,
+            title,
+            description,
+            license,
+            visibility,
+            message,
+            tags,
+            module: if module {
+                Some(true)
+            } else if no_module {
+                Some(false)
+            } else {
+                None
+            },
+            parent_version_id,
+            base_url,
         }),
         Cmd::Bench {
             prompts,

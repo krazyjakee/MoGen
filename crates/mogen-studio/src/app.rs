@@ -686,6 +686,13 @@ impl eframe::App for MogenStudioApp {
                     ));
                 }
                 self.ui_session_meter(ui);
+                // MoGHub auth chip lives at the right edge of the status
+                // bar so it's always visible — not just when the
+                // Community window is open. Right-to-left layout pins it
+                // there without a fixed-width spacer.
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    self.draw_moghub_status_chip(ui, ctx);
+                });
             });
         });
         egui::SidePanel::right("inspector")
@@ -855,6 +862,8 @@ impl eframe::App for MogenStudioApp {
         self.ui_external_conflict(ctx);
         self.ui_about(ctx);
         self.community_window(ctx);
+        self.publish_dialog(ctx);
+        self.module_palette_dialog(ctx);
         self.ui_update_dialog(ctx);
         self.ui_docs(ctx);
         self.ui_ask(ctx);

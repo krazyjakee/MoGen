@@ -381,7 +381,7 @@
             start_ray_dir: Vec3::Z,
             delta: 0.0,
         });
-        assert!(commit_gizmo_drag(&mut st).is_none());
+        assert!(commit_gizmo_drag(&mut st).is_empty());
     }
 
     #[test]
@@ -402,15 +402,17 @@
             start_ray_dir: Vec3::Z,
             delta: 0.75,
         });
+        let mut edits = commit_gizmo_drag(&mut st).into_iter();
         let Some(PendingEdit::SetAttrCanonical {
             node,
             attr,
             value,
             delete,
-        }) = commit_gizmo_drag(&mut st)
+        }) = edits.next()
         else {
             panic!("expected SetAttrCanonical");
         };
+        assert!(edits.next().is_none(), "non-relative_placed should emit one edit");
         assert_eq!(node, NodeId(3));
         assert_eq!(attr, "pos");
         assert_eq!(value, "[0.25, 1.25, 0]");
@@ -431,15 +433,17 @@
             start_ray_dir: Vec3::Z,
             delta: 45.0_f32.to_radians(),
         });
+        let mut edits = commit_gizmo_drag(&mut st).into_iter();
         let Some(PendingEdit::SetAttrCanonical {
             node,
             attr,
             value,
             delete,
-        }) = commit_gizmo_drag(&mut st)
+        }) = edits.next()
         else {
             panic!("expected SetAttrCanonical from non-trivial rotation");
         };
+        assert!(edits.next().is_none(), "rotate should emit a single edit");
         assert_eq!(node, NodeId(7));
         assert_eq!(attr, "rot");
         assert_eq!(value, "[0, 45, 0]");
@@ -465,7 +469,8 @@
             start_ray_dir: Vec3::Z,
             delta: 1.0,
         });
-        let Some(PendingEdit::SetAttrCanonical { value, .. }) = commit_gizmo_drag(&mut st) else {
+        let edits = commit_gizmo_drag(&mut st);
+        let Some(PendingEdit::SetAttrCanonical { value, .. }) = edits.into_iter().next() else {
             panic!("expected SetAttrCanonical");
         };
         assert_eq!(value, "[0, 0, 1]", "got {value}");
@@ -489,7 +494,8 @@
             start_ray_dir: Vec3::Z,
             delta: 1.0,
         });
-        let Some(PendingEdit::SetAttrCanonical { value, .. }) = commit_gizmo_drag(&mut st) else {
+        let edits = commit_gizmo_drag(&mut st);
+        let Some(PendingEdit::SetAttrCanonical { value, .. }) = edits.into_iter().next() else {
             panic!("expected SetAttrCanonical");
         };
         assert_eq!(value, "[0, 0.5, 0]", "got {value}");
@@ -516,7 +522,8 @@
             start_ray_dir: Vec3::Z,
             delta: 30.0_f32.to_radians(),
         });
-        let Some(PendingEdit::SetAttrCanonical { value, .. }) = commit_gizmo_drag(&mut st) else {
+        let edits = commit_gizmo_drag(&mut st);
+        let Some(PendingEdit::SetAttrCanonical { value, .. }) = edits.into_iter().next() else {
             panic!("expected SetAttrCanonical");
         };
         assert_eq!(value, "[0, 30, 0]", "got {value}");
@@ -811,6 +818,82 @@
         st.scene = Some(Arc::new(scene));
         replace_selection(&mut st, Some(body));
         assert_eq!(st.selected, vec![wrapper]);
+    }
+
+    #[test]
+    fn gizmo_handles_supported_for_relative_placed_in_every_mode() {
+        // `above="..."` (and friends) recompute one axis of translation each
+        // compile, but the Translate commit emits per-axis shortcuts that
+        // trip `pos_axis_explicit` and freeze the dragged position. Rotate
+        // and Scale aren't touched by the layout pass at all. So none of the
+        // three modes should refuse handles on a `relative_placed` node.
+        let mut scene = SceneGraph::new();
+        let parent = scene.add_root("group", "group", Transform::IDENTITY);
+        let child = scene.add_child(parent, "tier2", "box", Transform::IDENTITY);
+        scene.nodes[child.0 as usize].relative_placed = true;
+        for mode in [
+            crate::gizmo::GizmoMode::Translate,
+            crate::gizmo::GizmoMode::Rotate,
+            crate::gizmo::GizmoMode::Scale,
+        ] {
+            assert!(
+                gizmo_handles_supported(&scene, child, mode),
+                "expected handles for mode {mode:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn commit_gizmo_drag_translate_relative_placed_emits_axis_shortcuts() {
+        // `relative_placed` Translate commits write per-axis shortcuts so the
+        // snap-axis value trips `pos_axis_explicit` even when it lands on 0
+        // (a plain `pos=[…]` would lose the snap-axis component to the next
+        // layout pass when the resolved value is 0). The first edit also
+        // strips `pos`/`from`/`to` so they don't fight the new shortcuts.
+        let mut scene = SceneGraph::new();
+        let parent = scene.add_root("group", "group", Transform::IDENTITY);
+        let child = scene.add_child(parent, "tier2", "box", Transform::IDENTITY);
+        scene.nodes[child.0 as usize].relative_placed = true;
+        let mut st = ViewerState::default();
+        st.scene = Some(Arc::new(scene));
+        st.gizmo_drag = Some(GizmoDrag {
+            node: child,
+            axis: crate::gizmo::Axis::Y,
+            mode: crate::gizmo::GizmoMode::Translate,
+            start_transform: Transform::from_trs(
+                Vec3::new(0.1, 0.5, 0.0),
+                Quat::IDENTITY,
+                Vec3::ONE,
+            ),
+            start_origin: Vec3::ZERO,
+            parent_start_world: Mat4::IDENTITY,
+            start_ray_origin: Vec3::ZERO,
+            start_ray_dir: Vec3::Z,
+            delta: 0.75,
+        });
+        let edits = commit_gizmo_drag(&mut st);
+        assert_eq!(edits.len(), 3, "expected three shortcut edits, got {edits:?}");
+        let unwrap_set = |e: &PendingEdit| match e {
+            PendingEdit::SetAttrCanonical { node, attr, value, delete } => {
+                (*node, attr.clone(), value.clone(), delete.clone())
+            }
+            _ => panic!("expected SetAttrCanonical, got {e:?}"),
+        };
+        let (n0, a0, v0, d0) = unwrap_set(&edits[0]);
+        let (n1, a1, v1, d1) = unwrap_set(&edits[1]);
+        let (n2, a2, v2, d2) = unwrap_set(&edits[2]);
+        assert_eq!(n0, child);
+        assert_eq!(n1, child);
+        assert_eq!(n2, child);
+        assert_eq!(a0, "x");
+        assert_eq!(a1, "y");
+        assert_eq!(a2, "z");
+        assert_eq!(v0, "0.1");
+        assert_eq!(v1, "1.25");
+        assert_eq!(v2, "0");
+        assert_eq!(d0, vec!["pos", "from", "to"]);
+        assert!(d1.is_empty());
+        assert!(d2.is_empty());
     }
 
     /// Three-level scene: outer user-authored group containing a `use`

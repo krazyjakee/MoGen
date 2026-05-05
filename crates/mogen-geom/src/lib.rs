@@ -4,6 +4,7 @@ pub mod conform;
 pub mod csg;
 #[cfg(any(feature = "csg", feature = "unstable-wasm-uu"))]
 pub mod csg_smooth;
+pub mod deform;
 pub mod primitives;
 pub mod surface_query;
 pub mod xform;
@@ -19,6 +20,7 @@ pub use conform::{
 pub use csg::{difference, difference_many, intersect, intersect_many, union, union_many};
 #[cfg(any(feature = "csg", feature = "unstable-wasm-uu"))]
 pub use csg_smooth::union_smooth;
+pub use deform::{bend, droop, jitter, noise, split_for_facets, taper, twist_y};
 pub use surface_query::{SurfaceIndex, SurfacePoint};
 pub use primitives::{
     box_mesh, capsule_mesh, cone_mesh, curved_plane_mesh, cylinder_mesh, disc_mesh, ellipsoid_mesh,

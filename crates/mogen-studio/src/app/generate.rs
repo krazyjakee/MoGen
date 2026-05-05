@@ -217,16 +217,15 @@ impl MogenStudioApp {
     /// Drain any completed capture from the viewer and any completed ffmpeg
     /// encode. Called once per frame from `update`.
     ///
-    /// Filters out `PickerThumb` outcomes — those belong to the file-picker's
-    /// background thumbnail engine, which polls them on its own tick. Without
-    /// the filter, the picker's thumbnails would be drained here and lost
-    /// before the engine could decode + upload them, leaving every cell
-    /// stuck on "rendering…".
+    /// Filters out `PickerThumb` and `Publish` outcomes — those belong to the
+    /// file-picker's background thumbnail engine and the publish dialog
+    /// respectively, both of which poll the viewer on their own tick. Without
+    /// the filter, their captures would be drained here and lost before the
+    /// owner could read them.
     pub(super) fn poll_generate(&mut self, ctx: &egui::Context) {
-        if let Some(outcome) = self
-            .viewer
-            .take_capture_outcome_if(|kind| !matches!(kind, CaptureKind::PickerThumb))
-        {
+        if let Some(outcome) = self.viewer.take_capture_outcome_if(|kind| {
+            !matches!(kind, CaptureKind::PickerThumb | CaptureKind::Publish)
+        }) {
             self.handle_capture_outcome(ctx, outcome);
         }
         if let Some(encode) = self.video_encode.as_ref() {
@@ -271,12 +270,12 @@ impl MogenStudioApp {
                     self.files[i].status = "thumbnail: render produced no output".into();
                 }
             }
-            CaptureKind::PickerThumb => {
-                // Picker thumbs are owned by `ThumbnailManager`; `poll_generate`
-                // filters them out before reaching this handler. Reaching here
-                // would only happen if the filter were bypassed — drop the
-                // outcome on the floor rather than mis-attributing it to the
-                // active file's status line.
+            CaptureKind::PickerThumb | CaptureKind::Publish => {
+                // PickerThumb is owned by `ThumbnailManager`; Publish by the
+                // community publish dialog. `poll_generate` filters both out
+                // before reaching this handler. Reaching here would only
+                // happen if the filter were bypassed — drop on the floor
+                // rather than mis-attributing it to the active file's status.
             }
             CaptureKind::Video => {
                 let pending = match self.pending_video.take() {

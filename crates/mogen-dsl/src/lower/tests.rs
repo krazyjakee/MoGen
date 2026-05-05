@@ -927,3 +927,74 @@ fn wall_cuts_holes_via_csg() {
     });
     assert!(!strict_inside, "wall hole interior should be empty");
 }
+
+#[test]
+fn deform_noise_changes_mesh_positions() {
+    // Same primitive built once plain and once with noise+seed should differ.
+    let plain = lower_src(r#"scene { sphere "s" (radius=0.5) }"#);
+    let noisy = lower_src(r#"scene { sphere "s" (radius=0.5, noise=0.4, seed=7) }"#);
+    let p = find_mesh_node(&plain, "s").mesh.as_ref().unwrap();
+    let n = find_mesh_node(&noisy, "s").mesh.as_ref().unwrap();
+    // Auto-bumped tessellation: noisy mesh should have more verts than plain.
+    assert!(
+        n.positions.len() > p.positions.len(),
+        "expected noise to bump tessellation: plain={}, noisy={}",
+        p.positions.len(),
+        n.positions.len()
+    );
+    // Per-vertex positions necessarily differ from the plain unit sphere.
+    let plain_radii: f32 = p.positions.iter()
+        .map(|q| (q[0].powi(2) + q[1].powi(2) + q[2].powi(2)).sqrt())
+        .sum::<f32>() / p.positions.len() as f32;
+    let noisy_radii: f32 = n.positions.iter()
+        .map(|q| (q[0].powi(2) + q[1].powi(2) + q[2].powi(2)).sqrt())
+        .sum::<f32>() / n.positions.len() as f32;
+    // Plain sphere radii average ~0.5; noise perturbs them but the mean stays
+    // near 0.5 (zero-mean random shift). What we want is that the per-vertex
+    // STD is non-trivial.
+    let noisy_std: f32 = (n.positions.iter()
+        .map(|q| {
+            let r = (q[0].powi(2) + q[1].powi(2) + q[2].powi(2)).sqrt();
+            (r - noisy_radii).powi(2)
+        })
+        .sum::<f32>() / n.positions.len() as f32).sqrt();
+    let plain_std: f32 = (p.positions.iter()
+        .map(|q| {
+            let r = (q[0].powi(2) + q[1].powi(2) + q[2].powi(2)).sqrt();
+            (r - plain_radii).powi(2)
+        })
+        .sum::<f32>() / p.positions.len() as f32).sqrt();
+    assert!(
+        noisy_std > plain_std + 0.001,
+        "expected noise to widen radius distribution: plain_std={plain_std}, noisy_std={noisy_std}"
+    );
+}
+
+#[test]
+fn deform_seed_determinism() {
+    // Same source compiled twice should produce byte-identical positions.
+    let a = lower_src(r#"scene { box "b" (size=[1,1,1], noise=0.3, seed=42) }"#);
+    let b = lower_src(r#"scene { box "b" (size=[1,1,1], noise=0.3, seed=42) }"#);
+    let pa = find_mesh_node(&a, "b").mesh.as_ref().unwrap();
+    let pb = find_mesh_node(&b, "b").mesh.as_ref().unwrap();
+    assert_eq!(pa.positions, pb.positions);
+}
+
+#[test]
+fn deform_taper_shrinks_top_of_cylinder() {
+    let g = lower_src(
+        r#"scene { cylinder "c" (radius=0.5, height=1.0, taper=0.5) }"#,
+    );
+    let mesh = find_mesh_node(&g, "c").mesh.as_ref().unwrap();
+    let mut top_max = 0.0_f32;
+    let mut bot_max = 0.0_f32;
+    for p in &mesh.positions {
+        let r = (p[0] * p[0] + p[2] * p[2]).sqrt();
+        if p[1] > 0.4 { top_max = top_max.max(r); }
+        if p[1] < -0.4 { bot_max = bot_max.max(r); }
+    }
+    assert!((top_max - 0.25).abs() < 1e-3, "top radius should be ~0.25, got {top_max}");
+    assert!((bot_max - 0.5).abs() < 1e-3, "bottom radius should be ~0.5, got {bot_max}");
+}
+
+

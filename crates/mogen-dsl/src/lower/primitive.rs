@@ -17,12 +17,37 @@ use crate::lower::source_dir;
 use super::helpers::{resolve_size3, resolve_size_xy, resolve_size_xz};
 use super::lod::{scaled_default, scaled_subdivisions};
 
+/// Density multiplier for primitive default tessellation when the node
+/// carries a smooth-deformation modifier — `bend_*`, `twist_y`, `noise`,
+/// `droop`. Twice the segments avoids the obvious faceted look on a bent
+/// cylinder, at ~4× triangles. An explicit `segments=` from the author
+/// always wins.
+fn deform_density(node: &Node) -> u32 {
+    let needs_dense = node.attr("bend_x").is_some()
+        || node.attr("bend_y").is_some()
+        || node.attr("bend_z").is_some()
+        || node.attr("twist_y").is_some()
+        || node.attr("noise").is_some()
+        || node.attr("droop").is_some();
+    if needs_dense {
+        2
+    } else {
+        1
+    }
+}
+
 /// Dispatch a primitive `Node` to its mesh builder. Returns `None` for non-
 /// primitive kinds (group, scene, material, CSG ops, animation decls, …) so
 /// callers can handle those separately. The inner `Result` carries failures
 /// from primitives whose construction can fail at lowering time (e.g. `mesh`
 /// loading a `.glb` from disk).
 pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh>> {
+    // Multiplier applied to every default tessellation count. 1× when the
+    // node has no smooth-deform modifier; 2× when it does, so a bent or
+    // melted shape doesn't read as low-poly. Author's explicit `segments=`,
+    // `rings=`, etc. always override.
+    let dd = deform_density(node);
+    let seg_default = |base: u32, min: u32| scaled_default(base * dd, min);
     let m: Mesh = match node.kind.as_str() {
         "box" | "slab" | "post" | "panel" => {
             let s = resolve_size3(node, Vec3::ONE);
@@ -57,26 +82,26 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
         "cylinder" => {
             let radius = node.attr_number("radius").unwrap_or(0.5);
             let height = node.attr_number("height").unwrap_or(1.0);
-            let segments = node.attr_number("segments").map(|n| n as u32).unwrap_or_else(|| scaled_default(24, 3));
+            let segments = node.attr_number("segments").map(|n| n as u32).unwrap_or_else(|| seg_default(24, 3));
             cylinder_mesh(radius, height, segments, uv_mode)
         }
         "cone" => {
             let radius = node.attr_number("radius").unwrap_or(0.5);
             let height = node.attr_number("height").unwrap_or(1.0);
-            let segments = node.attr_number("segments").map(|n| n as u32).unwrap_or_else(|| scaled_default(24, 3));
+            let segments = node.attr_number("segments").map(|n| n as u32).unwrap_or_else(|| seg_default(24, 3));
             cone_mesh(radius, height, segments, uv_mode)
         }
         "sphere" => {
             let radius = node.attr_number("radius").unwrap_or(0.5);
-            let rings = node.attr_number("rings").map(|n| n as u32).unwrap_or_else(|| scaled_default(16, 2));
-            let segments = node.attr_number("segments").map(|n| n as u32).unwrap_or_else(|| scaled_default(24, 3));
+            let rings = node.attr_number("rings").map(|n| n as u32).unwrap_or_else(|| seg_default(16, 2));
+            let segments = node.attr_number("segments").map(|n| n as u32).unwrap_or_else(|| seg_default(24, 3));
             sphere_mesh(radius, rings, segments, uv_mode)
         }
         "capsule" => {
             let radius = node.attr_number("radius").unwrap_or(0.5);
             let height = node.attr_number("height").unwrap_or(1.0);
-            let rings = node.attr_number("rings").map(|n| n as u32).unwrap_or_else(|| scaled_default(8, 2));
-            let segments = node.attr_number("segments").map(|n| n as u32).unwrap_or_else(|| scaled_default(24, 3));
+            let rings = node.attr_number("rings").map(|n| n as u32).unwrap_or_else(|| seg_default(8, 2));
+            let segments = node.attr_number("segments").map(|n| n as u32).unwrap_or_else(|| seg_default(24, 3));
             capsule_mesh(radius, height, rings, segments, uv_mode)
         }
         "torus" => {
@@ -85,11 +110,11 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
             let major_segments = node
                 .attr_number("major_segments")
                 .map(|n| n as u32)
-                .unwrap_or_else(|| scaled_default(24, 3));
+                .unwrap_or_else(|| seg_default(24, 3));
             let minor_segments = node
                 .attr_number("minor_segments")
                 .map(|n| n as u32)
-                .unwrap_or_else(|| scaled_default(12, 3));
+                .unwrap_or_else(|| seg_default(12, 3));
             torus_mesh(major, minor, major_segments, minor_segments, uv_mode)
         }
         "prism" => {
@@ -104,7 +129,7 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
         }
         "disc" => {
             let radius = node.attr_number("radius").unwrap_or(0.5);
-            let segments = node.attr_number("segments").map(|n| n as u32).unwrap_or_else(|| scaled_default(24, 3));
+            let segments = node.attr_number("segments").map(|n| n as u32).unwrap_or_else(|| seg_default(24, 3));
             disc_mesh(radius, segments, uv_mode)
         }
         "icosphere" => {
@@ -112,7 +137,7 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
             let subdivisions = node
                 .attr_number("subdivisions")
                 .map(|n| n as u32)
-                .unwrap_or_else(|| scaled_subdivisions(2));
+                .unwrap_or_else(|| scaled_subdivisions(1 + dd));
             icosphere_mesh(radius, subdivisions, uv_mode)
         }
         "rounded_box" => {
@@ -121,7 +146,7 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
             let segments = node
                 .attr_number("segments")
                 .map(|n| n as u32)
-                .unwrap_or_else(|| scaled_default(4, 1));
+                .unwrap_or_else(|| seg_default(4, 1));
             rounded_box_mesh([s.x, s.y, s.z], radius, segments, uv_mode)
         }
         "wedge" => {
@@ -138,19 +163,19 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
             let outer = node.attr_number("outer").unwrap_or(0.5);
             let inner = node.attr_number("inner").unwrap_or(0.3);
             let height = node.attr_number("height").unwrap_or(1.0);
-            let segments = node.attr_number("segments").map(|n| n as u32).unwrap_or_else(|| scaled_default(24, 3));
+            let segments = node.attr_number("segments").map(|n| n as u32).unwrap_or_else(|| seg_default(24, 3));
             tube_mesh(outer, inner, height, segments, uv_mode)
         }
         "hemisphere" => {
             let radius = node.attr_number("radius").unwrap_or(0.5);
-            let rings = node.attr_number("rings").map(|n| n as u32).unwrap_or_else(|| scaled_default(8, 2));
-            let segments = node.attr_number("segments").map(|n| n as u32).unwrap_or_else(|| scaled_default(24, 3));
+            let rings = node.attr_number("rings").map(|n| n as u32).unwrap_or_else(|| seg_default(8, 2));
+            let segments = node.attr_number("segments").map(|n| n as u32).unwrap_or_else(|| seg_default(24, 3));
             hemisphere_mesh(radius, rings, segments, uv_mode)
         }
         "half_cylinder" => {
             let radius = node.attr_number("radius").unwrap_or(0.5);
             let height = node.attr_number("height").unwrap_or(1.0);
-            let segments = node.attr_number("segments").map(|n| n as u32).unwrap_or_else(|| scaled_default(24, 3));
+            let segments = node.attr_number("segments").map(|n| n as u32).unwrap_or_else(|| seg_default(24, 3));
             half_cylinder_mesh(radius, height, segments, uv_mode)
         }
         "torus_arc" => {
@@ -160,25 +185,25 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
             let major_segments = node
                 .attr_number("major_segments")
                 .map(|n| n as u32)
-                .unwrap_or_else(|| scaled_default(24, 3));
+                .unwrap_or_else(|| seg_default(24, 3));
             let minor_segments = node
                 .attr_number("minor_segments")
                 .map(|n| n as u32)
-                .unwrap_or_else(|| scaled_default(12, 3));
+                .unwrap_or_else(|| seg_default(12, 3));
             torus_arc_mesh(major, minor, arc_deg.to_radians(), major_segments, minor_segments, uv_mode)
         }
         "ellipsoid" => {
             let s = resolve_size3(node, Vec3::ONE);
-            let rings = node.attr_number("rings").map(|n| n as u32).unwrap_or_else(|| scaled_default(16, 2));
-            let segments = node.attr_number("segments").map(|n| n as u32).unwrap_or_else(|| scaled_default(24, 3));
+            let rings = node.attr_number("rings").map(|n| n as u32).unwrap_or_else(|| seg_default(16, 2));
+            let segments = node.attr_number("segments").map(|n| n as u32).unwrap_or_else(|| seg_default(24, 3));
             ellipsoid_mesh([s.x, s.y, s.z], rings, segments, uv_mode)
         }
         "superellipsoid" => {
             let s = resolve_size3(node, Vec3::ONE);
             let ew = node.attr_number("ew").unwrap_or(1.0);
             let ns = node.attr_number("ns").unwrap_or(1.0);
-            let rings = node.attr_number("rings").map(|n| n as u32).unwrap_or_else(|| scaled_default(16, 2));
-            let segments = node.attr_number("segments").map(|n| n as u32).unwrap_or_else(|| scaled_default(24, 3));
+            let rings = node.attr_number("rings").map(|n| n as u32).unwrap_or_else(|| seg_default(16, 2));
+            let segments = node.attr_number("segments").map(|n| n as u32).unwrap_or_else(|| seg_default(24, 3));
             superellipsoid_mesh([s.x, s.y, s.z], ew, ns, rings, segments, uv_mode)
         }
         "curved_plane" => {
@@ -188,11 +213,11 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
             let segments_u = node
                 .attr_number("segments_u")
                 .map(|n| n as u32)
-                .unwrap_or_else(|| scaled_default(12, 1));
+                .unwrap_or_else(|| seg_default(12, 1));
             let segments_v = node
                 .attr_number("segments_v")
                 .map(|n| n as u32)
-                .unwrap_or_else(|| scaled_default(12, 1));
+                .unwrap_or_else(|| seg_default(12, 1));
             curved_plane_mesh(s, bend_u, bend_v, segments_u, segments_v, uv_mode)
         }
         "wall" => {
@@ -218,7 +243,7 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
             let profile = node
                 .attr_list_pair("profile")
                 .unwrap_or_else(|| vec![[0.0, -0.5], [0.5, 0.0], [0.0, 0.5]]);
-            let segments = node.attr_number("segments").map(|n| n as u32).unwrap_or_else(|| scaled_default(24, 3));
+            let segments = node.attr_number("segments").map(|n| n as u32).unwrap_or_else(|| seg_default(24, 3));
             let cap_ends = node.attr_number("cap_ends").map(|n| n != 0.0).unwrap_or(true);
             lathe_mesh(&profile, segments, cap_ends, uv_mode)
         }
@@ -240,11 +265,11 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
             let segments = node
                 .attr_number("segments")
                 .map(|n| n as u32)
-                .unwrap_or_else(|| scaled_default(12, 3));
+                .unwrap_or_else(|| seg_default(12, 3));
             let samples = node
                 .attr_number("samples")
                 .map(|n| n as u32)
-                .unwrap_or_else(|| scaled_default(8, 2));
+                .unwrap_or_else(|| seg_default(8, 2));
             let cap_ends = node.attr_number("cap_ends").map(|n| n != 0.0).unwrap_or(true);
             spline_tube_mesh(&points, &radii, segments, samples, cap_ends, uv_mode)
         }
@@ -262,7 +287,7 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
             let samples = node
                 .attr_number("samples")
                 .map(|n| n as u32)
-                .unwrap_or_else(|| scaled_default(8, 2));
+                .unwrap_or_else(|| seg_default(8, 2));
             // Author writes degrees (per the prompt), the mesh builder takes radians.
             let twist = node.attr_number("twist").unwrap_or(0.0).to_radians();
             spline_ribbon_mesh(&points, &widths, samples, twist, uv_mode)
