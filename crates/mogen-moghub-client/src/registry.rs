@@ -6,11 +6,11 @@
 //! a specific version is requested — a `GET /api/m/:user/:slug/versions`
 //! lookup followed by a `GET .../files/:filename` for each file.
 //!
-//! For latest fetches we can do everything with a single `model_detail`
-//! call because the response includes `version: ModelVersion` (with
-//! files inline). For pinned fetches we have to walk the version history
-//! today; a per-version endpoint (planned in P2) would collapse this to
-//! one call.
+//! For latest fetches we use `model_detail` (the response carries the
+//! latest version inline). For pinned non-latest fetches we use
+//! `version_detail`, which P2 added on the moghub side and which returns
+//! the same `ModelVersion` shape with file bodies, so the resolver
+//! handles both with one round-trip per ref.
 
 use anyhow::{anyhow, Result};
 
@@ -42,24 +42,24 @@ impl RegistryClient for MoghubClient {
             return Ok(into_fetched(&detail.id, &detail.version));
         }
 
-        // Pinned-but-not-latest: today the public API doesn't expose a
-        // by-version-number GET that includes file bodies, so fall back
-        // to fetching the file list via /versions and pulling each
-        // file's source via /files (latest-only). That works for v=N
-        // when N is latest, but for older Ns it's a known gap until the
-        // P2 endpoint lands. Document the failure clearly so users can
-        // upgrade with `mogen update`.
-        Err(anyhow!(
-            "@{}/{}@{} is not the latest version on the server (latest is {}). \
-             Pinning to older versions requires a server endpoint that isn't \
-             live yet — run `mogen update` to refresh the lockfile, or remove \
-             the `@{}` suffix to track latest.",
-            spec.user,
-            spec.slug,
-            spec.version.unwrap_or(-1),
-            detail.version.version,
-            spec.version.unwrap_or(-1),
-        ))
+        // Pinned-but-not-latest: hit the by-version-number endpoint that
+        // P2 shipped. Its response shape is `ModelVersionDetail`, which
+        // wraps the same `ModelVersion` we get back inline from
+        // `model_detail`, so the same `into_fetched` adapter works for
+        // both branches. A 410 here means the model was tombstoned
+        // between the latest check and now, which we surface verbatim.
+        let pinned = spec.version.unwrap_or(-1);
+        let v = self
+            .version_detail(&spec.user, &spec.slug, pinned)
+            .map_err(|e| anyhow!("fetching @{}/{}@{}: {e}", spec.user, spec.slug, pinned))?;
+        if v.tombstoned {
+            return Err(anyhow!(
+                "@{}/{} was deleted by its owner; remove the `use` or pick a fork",
+                spec.user,
+                spec.slug
+            ));
+        }
+        Ok(into_fetched(&v.model_id, &v.version))
     }
 }
 

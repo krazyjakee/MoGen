@@ -30,7 +30,8 @@ use crate::ast::{Expr, Node};
 pub use collect::collect_modules;
 pub use expand::{expand_modules, UseParents};
 pub use imports::{
-    resolve_imports, resolve_imports_with_loader, resolve_registry_uses_with_loader,
+    collect_local_import_files, resolve_imports, resolve_imports_with_loader,
+    resolve_registry_uses_with_loader,
 };
 pub use loader::{parse_registry_spec, FsLoader, LoadedFile, Loader, RegistrySpec};
 

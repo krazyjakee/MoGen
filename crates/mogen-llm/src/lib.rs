@@ -203,6 +203,32 @@ mod tests {
     }
 
     #[test]
+    fn embed_seed_header_preserves_llm_supplied_meta() {
+        // The LLM is now instructed to lead its output with a `meta(name,
+        // description, tags)` block. `embed_seed_header` must append
+        // seed/thinking/prompt to that same block without trampling the
+        // author-facing attrs — otherwise MoGHub publish loses the title
+        // and tag set.
+        let llm_output = "\
+meta (name = \"wooden_stool\", description = \"a four-legged wooden stool\", tags = [\"furniture\", \"stool\"])
+
+material \"wood\" (color=[0.55, 0.35, 0.18])
+
+scene { box \"b\" (size=[1,1,1], mat=\"wood\") }
+";
+        let wrapped = embed_seed_header(llm_output, 17, "a wooden stool", Some(ThinkingLevel::Low));
+        assert!(wrapped.contains("name = \"wooden_stool\""));
+        assert!(wrapped.contains("description = \"a four-legged wooden stool\""));
+        assert!(wrapped.contains("tags = [\"furniture\", \"stool\"]"));
+        // And the auto-stamped attrs land in the same block.
+        assert_eq!(parse_seed_header(&wrapped), Some(17));
+        assert_eq!(parse_thinking_header(&wrapped), Some(ThinkingLevel::Low));
+        assert!(wrapped.contains("prompt = \"a wooden stool\""));
+        // No second `meta (...)` block was inserted.
+        assert_eq!(wrapped.matches("meta (").count(), 1);
+    }
+
+    #[test]
     fn embed_strips_legacy_comments() {
         let src = "// mogen-generate seed=1\n// mogen-generate thinking=low\n// prompt: old\nscene {}\n";
         let wrapped = embed_seed_header(src, 2, "new", Some(ThinkingLevel::High));

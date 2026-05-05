@@ -538,4 +538,32 @@ mod common_attr_scope_tests {
             "bind= must be rejected on decal: {diags:?}"
         );
     }
+
+    #[test]
+    fn deform_modifiers_accepted_on_primitives() {
+        let src = r#"scene {
+            sphere "s" (
+                radius=0.5,
+                noise=0.3, jitter=0.1, seed=7,
+                bend_x=10, bend_y=15, bend_z=20,
+                twist_y=45, taper=0.6, droop=0.2,
+                faceted=1
+            )
+        }"#;
+        let diags = diags_for(src);
+        assert!(
+            !diags.iter().any(|d| d.code == "W0102"),
+            "deformation modifiers should be common attrs on geometry primitives: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn out_of_range_noise_warns() {
+        let src = r#"scene { sphere "s" (radius=0.5, noise=1.5) }"#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "W1002"),
+            "expected W1002 for out-of-range noise: {diags:?}"
+        );
+    }
 }

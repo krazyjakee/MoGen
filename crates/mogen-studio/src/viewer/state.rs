@@ -225,14 +225,16 @@ pub(super) fn snap_scale_factor(factor: f32) -> f32 {
 /// `PickerThumb` is a separate variant from `Thumbnail` so the file-picker's
 /// background thumbnail engine can pump captures through the viewer without
 /// `poll_generate` stealing the outcome and treating it as the user-driven
-/// "Generate Thumbnail" menu action. Both behave identically inside the GL
-/// paint callback (no animation override, single frame); the only thing
-/// the variant carries is "who owns this outcome".
+/// "Generate Thumbnail" menu action. `Publish` does the same for the publish
+/// dialog's preview capture. All three single-frame kinds behave identically
+/// inside the GL paint callback (no animation override, single frame); the
+/// variant only carries "who owns this outcome".
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CaptureKind {
     Thumbnail,
     Video,
     PickerThumb,
+    Publish,
 }
 
 /// One frame the renderer should produce as part of a capture. Yaw/pitch
@@ -603,16 +605,19 @@ pub(super) fn gizmo_handles_supported(
     if node.use_id.is_some() && !is_import_wrapper(scene, node_id) {
         return false;
     }
-    // Relative placement re-shifts the node's translation every compile, so
-    // a `pos=` writeback would stack on the next layout pass.
-    if node.relative_placed {
-        return false;
-    }
+    // Relative placement (`above`/`below`/`left_of`/...) re-shifts one axis
+    // of `transform.translation` every compile from the target's AABB. A
+    // plain `pos=[…]` writeback would get overwritten on the snap axis when
+    // the resolved value happens to be 0 (the layout pass treats `pos.y == 0`
+    // as "not set" and re-runs the snap). The Translate commit handles this
+    // by emitting per-axis shortcuts (`x=`, `y=`, `z=`) — see
+    // `commit_gizmo_drag`. Rotation and scale are not touched by the layout
+    // pass, so they round-trip through the canonical writeback unchanged.
+    let _ = mode;
     // Attach-bound nodes get their transform composed as `attach + user`,
     // so a `pos=` / `rot=` writeback survives the next compile as long as
     // we subtract the attach contribution before writing. The commit path
     // does that by reading `attach_binding.anchor` / `rotation`.
-    let _ = mode;
     true
 }
 
@@ -724,8 +729,10 @@ pub(super) fn update_gizmo_drag(
     st.update_palettes();
 }
 
-pub(super) fn commit_gizmo_drag(st: &mut ViewerState) -> Option<PendingEdit> {
-    let drag = st.gizmo_drag.as_ref()?;
+pub(super) fn commit_gizmo_drag(st: &mut ViewerState) -> Vec<PendingEdit> {
+    let Some(drag) = st.gizmo_drag.as_ref() else {
+        return Vec::new();
+    };
     // Skip commit only when the numerical delta is truly zero (exact
     // press-and-release with no cursor movement). Even a sub-degree drag
     // should round-trip through the DSL so the user's intent sticks.
@@ -736,7 +743,7 @@ pub(super) fn commit_gizmo_drag(st: &mut ViewerState) -> Option<PendingEdit> {
         crate::gizmo::GizmoMode::Scale => (drag.delta - 1.0).abs() < 1e-6,
     };
     if trivial {
-        return None;
+        return Vec::new();
     }
     use crate::gizmo::GizmoMode;
     // Shortcut/corner-form attrs that the DSL lets override the canonical
@@ -769,7 +776,48 @@ pub(super) fn commit_gizmo_drag(st: &mut ViewerState) -> Option<PendingEdit> {
         Some(b) => final_local.rotation * b.rotation_quat().inverse(),
         None => final_local.rotation,
     };
+    let relative_placed = st
+        .scene
+        .as_ref()
+        .and_then(|s| s.nodes.get(drag.node.0 as usize))
+        .map(|n| n.relative_placed)
+        .unwrap_or(false);
     match drag.mode {
+        GizmoMode::Translate if relative_placed => {
+            // The layout pass (`above`/`below`/`left_of`/...) re-shifts one
+            // axis of `transform.translation` from the target's AABB unless
+            // `pos_axis_explicit` finds a non-zero shortcut/`pos` component
+            // for that axis. A single `pos=[…]` writeback would lose to the
+            // snap when the resolved value happens to be 0 — so emit per-axis
+            // shortcuts (`x=`/`y=`/`z=`) instead. Whichever axis is the snap
+            // axis, the matching shortcut takes precedence in `resolve_pos`
+            // and trips `pos_axis_explicit` at recompile, freezing the node
+            // at the dragged position. Setting a shortcut to `0` is the
+            // documented "release the snap" gesture, so values that happen
+            // to land at 0 still hand control back to the layout pass.
+            let mut edits = Vec::with_capacity(3);
+            // First edit also strips `pos`/`from`/`to` so the canonical and
+            // corner-form attrs don't fight the new shortcuts on recompile.
+            edits.push(PendingEdit::SetAttrCanonical {
+                node: drag.node,
+                attr: "x".to_string(),
+                value: format_scalar(user_pos.x),
+                delete: ["pos", "from", "to"].iter().map(|s| s.to_string()).collect(),
+            });
+            edits.push(PendingEdit::SetAttrCanonical {
+                node: drag.node,
+                attr: "y".to_string(),
+                value: format_scalar(user_pos.y),
+                delete: Vec::new(),
+            });
+            edits.push(PendingEdit::SetAttrCanonical {
+                node: drag.node,
+                attr: "z".to_string(),
+                value: format_scalar(user_pos.z),
+                delete: Vec::new(),
+            });
+            edits
+        }
         GizmoMode::Translate => {
             // Write the full vec3 under `pos=` rather than a lone axis
             // shortcut (`x=`, `y=`, `z=`). Dragging the X handle, then Y,
@@ -780,7 +828,7 @@ pub(super) fn commit_gizmo_drag(st: &mut ViewerState) -> Option<PendingEdit> {
             // been pulled back through the parent inverse, so children of
             // a rotated/scaled parent move along the world axis the user
             // grabbed instead of the parent's tilted axis.
-            Some(PendingEdit::SetAttrCanonical {
+            vec![PendingEdit::SetAttrCanonical {
                 node: drag.node,
                 attr: "pos".to_string(),
                 value: format!(
@@ -790,7 +838,7 @@ pub(super) fn commit_gizmo_drag(st: &mut ViewerState) -> Option<PendingEdit> {
                     format_scalar(user_pos.z)
                 ),
                 delete: POS_SHADOWS.iter().map(|s| s.to_string()).collect(),
-            })
+            }]
         }
         GizmoMode::Rotate => {
             // `apply_gizmo_drag` already conjugated the world-axis rotation
@@ -804,12 +852,12 @@ pub(super) fn commit_gizmo_drag(st: &mut ViewerState) -> Option<PendingEdit> {
                 format_scalar(ry.to_degrees()),
                 format_scalar(rz.to_degrees())
             );
-            Some(PendingEdit::SetAttrCanonical {
+            vec![PendingEdit::SetAttrCanonical {
                 node: drag.node,
                 attr: "rot".to_string(),
                 value,
                 delete: ROT_SHADOWS.iter().map(|s| s.to_string()).collect(),
-            })
+            }]
         }
         GizmoMode::Scale => {
             let new_scale = final_local.scale;
@@ -820,12 +868,12 @@ pub(super) fn commit_gizmo_drag(st: &mut ViewerState) -> Option<PendingEdit> {
                 format_scalar(new_scale.z)
             );
             // Scale has no DSL shortcut attrs — no shadows to strip.
-            Some(PendingEdit::SetAttrCanonical {
+            vec![PendingEdit::SetAttrCanonical {
                 node: drag.node,
                 attr: "scale".to_string(),
                 value,
                 delete: Vec::new(),
-            })
+            }]
         }
     }
 }

@@ -12,7 +12,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context as _, Result};
 use mogen_core::Span;
 
 use crate::ast::{Node, Value};
@@ -411,6 +411,99 @@ fn lift_loaded_into(
             raw_for_errors,
             alias
         );
+    }
+    Ok(())
+}
+
+/// Walk transitive `import "path.mog"` directives starting from `entry_source`
+/// and return every reachable sibling `.mog` file as `(filename, source)` pairs.
+/// Used by the publisher to bundle a scene with its local imports into a
+/// single multi-file `PublishRequest`. Registry uses (`use "@user/slug[@v]"`)
+/// are external dependencies and intentionally skipped — those resolve through
+/// `mog.lock` on the consumer side, not as bundled bytes.
+///
+/// Each filename is the imported file's path relative to `entry_dir`, with
+/// platform-native separators normalised to forward slashes so the same
+/// filename round-trips through the moghub server (which stores
+/// `model_files.filename` as a string and joins it back on the consumer side).
+///
+/// Errors:
+/// - the entry source fails to parse;
+/// - an `import` resolves to a path outside `entry_dir` (publishers can't
+///   reach into a parent directory — the user must move the file or flatten
+///   the layout);
+/// - any imported file fails to load or parse.
+///
+/// `entry_dir` is canonicalised before traversal so symlink hops and
+/// `..`/`.` segments resolve consistently with the cycle-detection used by
+/// [`resolve_imports`].
+pub fn collect_local_import_files(
+    entry_dir: &Path,
+    entry_source: &str,
+) -> Result<Vec<(String, String)>> {
+    let entry_dir_canonical = std::fs::canonicalize(entry_dir)
+        .with_context(|| format!("canonicalising publish base dir {}", entry_dir.display()))?;
+    let mut loader = FsLoader::new();
+    let mut visited: HashSet<PathBuf> = HashSet::new();
+    let mut out: Vec<(String, String)> = Vec::new();
+    collect_local_imports_into(
+        entry_source,
+        Some(entry_dir_canonical.as_path()),
+        &entry_dir_canonical,
+        &mut loader,
+        &mut visited,
+        &mut out,
+    )?;
+    Ok(out)
+}
+
+fn collect_local_imports_into(
+    source: &str,
+    base_dir: Option<&Path>,
+    entry_dir_canonical: &Path,
+    loader: &mut FsLoader,
+    visited: &mut HashSet<PathBuf>,
+    out: &mut Vec<(String, String)>,
+) -> Result<()> {
+    let ast = parse(source).map_err(|e| anyhow!("parsing source for publish bundling: {e}"))?;
+    for n in &ast {
+        if n.kind != "import" {
+            continue;
+        }
+        let raw = n.name.as_deref().ok_or_else(|| {
+            anyhow!("`import` requires a quoted file path, e.g. `import \"shared.mog\"`")
+        })?;
+        let loaded = loader.load(raw, base_dir)?;
+        if !visited.insert(loaded.canonical.clone()) {
+            continue;
+        }
+        let rel = loaded
+            .canonical
+            .strip_prefix(entry_dir_canonical)
+            .map_err(|_| {
+                anyhow!(
+                    "import \"{raw}\" resolves to {} which is outside the entry's directory \
+                     {} — publish-bundling can't reach into a parent dir; move the file \
+                     beside the entry or flatten the layout",
+                    loaded.canonical.display(),
+                    entry_dir_canonical.display()
+                )
+            })?;
+        let filename = rel
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join("/");
+        let inner_dir = loaded.canonical.parent().map(|p| p.to_path_buf());
+        out.push((filename, loaded.source.clone()));
+        collect_local_imports_into(
+            &loaded.source,
+            inner_dir.as_deref(),
+            entry_dir_canonical,
+            loader,
+            visited,
+            out,
+        )?;
     }
     Ok(())
 }
@@ -1040,5 +1133,118 @@ mod tests {
                 node.origin,
             );
         }
+    }
+
+    #[test]
+    fn collect_local_import_files_returns_sibling() {
+        let tmp = TempDir::new("publish-sibling");
+        tmp.write(
+            "shared.mog",
+            r#"module "leg" (h=0.5) { cylinder "leg" (height=$h, radius=0.05) }"#,
+        );
+        let main_src = r#"
+            import "shared.mog"
+            scene { use "leg" (h=0.9) }
+        "#;
+        let files = collect_local_import_files(tmp.path.as_path(), main_src).unwrap();
+        assert_eq!(files.len(), 1, "one import expected");
+        assert_eq!(files[0].0, "shared.mog");
+        assert!(files[0].1.contains("module \"leg\""));
+    }
+
+    #[test]
+    fn collect_local_import_files_walks_transitive() {
+        let tmp = TempDir::new("publish-transitive");
+        tmp.write(
+            "leaf.mog",
+            r#"module "leaflet" (s=0.1) { box "l" (size=[$s, $s, $s]) }"#,
+        );
+        tmp.write(
+            "branch.mog",
+            r#"
+            import "leaf.mog"
+            module "twig" (s=0.5) { use "leaflet" (s=$s) }
+            "#,
+        );
+        let main_src = r#"
+            import "branch.mog"
+            scene { use "twig" (s=0.5) }
+        "#;
+        let files = collect_local_import_files(tmp.path.as_path(), main_src).unwrap();
+        let names: Vec<&str> = files.iter().map(|(n, _)| n.as_str()).collect();
+        assert!(names.contains(&"branch.mog"), "branch missing: {names:?}");
+        assert!(names.contains(&"leaf.mog"), "leaf missing: {names:?}");
+        assert_eq!(files.len(), 2, "expected exactly two bundled files");
+    }
+
+    #[test]
+    fn collect_local_import_files_dedupes_diamond() {
+        let tmp = TempDir::new("publish-diamond");
+        tmp.write(
+            "shared.mog",
+            r#"module "leg" (h=1.0) { cylinder "leg" (height=$h) }"#,
+        );
+        tmp.write(
+            "left.mog",
+            r#"
+            import "shared.mog"
+            module "left" () { use "leg" (h=1.0) }
+            "#,
+        );
+        tmp.write(
+            "right.mog",
+            r#"
+            import "shared.mog"
+            module "right" () { use "leg" (h=1.0) }
+            "#,
+        );
+        let main_src = r#"
+            import "left.mog"
+            import "right.mog"
+            scene { use "left" () }
+        "#;
+        let files = collect_local_import_files(tmp.path.as_path(), main_src).unwrap();
+        let mut names: Vec<&str> = files.iter().map(|(n, _)| n.as_str()).collect();
+        names.sort();
+        assert_eq!(names, vec!["left.mog", "right.mog", "shared.mog"]);
+    }
+
+    #[test]
+    fn collect_local_import_files_skips_registry_uses() {
+        let tmp = TempDir::new("publish-registry-uses");
+        let main_src = r#"
+            scene { use "@alice/chairs@2" () }
+        "#;
+        let files = collect_local_import_files(tmp.path.as_path(), main_src).unwrap();
+        assert!(
+            files.is_empty(),
+            "registry use should not be bundled (it's resolved via mog.lock): {files:?}"
+        );
+    }
+
+    #[test]
+    fn collect_local_import_files_rejects_escape() {
+        let parent = TempDir::new("publish-escape-parent");
+        // Create the entry's *subdirectory* and place a sibling above it
+        // (i.e. in `parent.path`). Importing `../sibling.mog` from within
+        // the entry's dir reaches outside it — should error.
+        let entry_dir = parent.path.join("entry");
+        std::fs::create_dir_all(&entry_dir).unwrap();
+        std::fs::write(
+            parent.path.join("sibling.mog"),
+            r#"module "x" () { box "x" (size=[1, 1, 1]) }"#,
+        )
+        .unwrap();
+        let main_src = r#"
+            import "../sibling.mog"
+            scene { use "x" () }
+        "#;
+        let err =
+            collect_local_import_files(&entry_dir, main_src).expect_err("escape should error");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("outside the entry's directory") || msg.contains("outside"),
+            "expected escape-error message, got: {msg}"
+        );
     }
 }

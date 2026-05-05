@@ -2,6 +2,7 @@ mod anim;
 mod branch;
 mod connector;
 mod csg;
+mod deform;
 mod helpers;
 mod layout;
 mod light;

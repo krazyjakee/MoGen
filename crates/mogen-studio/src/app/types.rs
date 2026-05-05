@@ -344,6 +344,12 @@ pub(super) enum MenuAction {
     /// Read-only in v1; publish + social actions land in subsequent
     /// slices (P2/P3).
     OpenCommunity,
+    /// Open the Publish-to-MoGHub dialog seeded with the active tab.
+    /// Disabled when no signed-in MoGHub session is available.
+    OpenPublish,
+    /// Open the registry module palette to insert a `use "@user/slug@v"`
+    /// reference at the active editor's caret. Bound to Cmd+Shift+M.
+    OpenModulePalette,
     /// Open the Help → Check for Updates… modal. The actual GitHub query is
     /// kicked off by the user clicking "Check now" inside the dialog.
     OpenUpdate,
@@ -374,6 +380,7 @@ pub(super) enum ShortcutAction {
     OpenOptions,
     Frame,
     OpenDocs,
+    OpenModulePalette,
 }
 
 impl ShortcutAction {
@@ -400,6 +407,7 @@ impl ShortcutAction {
             // F1 mirrors the convention of every JetBrains / VS Code IDE —
             // unmodified F-row key, opens contextual help.
             ShortcutAction::OpenDocs => KeyboardShortcut::new(Modifiers::NONE, Key::F1),
+            ShortcutAction::OpenModulePalette => KeyboardShortcut::new(cmd_shift, Key::M),
         }
     }
 
@@ -419,6 +427,7 @@ impl ShortcutAction {
             ShortcutAction::OpenOptions => MenuAction::OpenOptions,
             ShortcutAction::Frame => MenuAction::Frame,
             ShortcutAction::OpenDocs => MenuAction::OpenDocs,
+            ShortcutAction::OpenModulePalette => MenuAction::OpenModulePalette,
         }
     }
 
@@ -445,6 +454,7 @@ impl ShortcutAction {
         ShortcutAction::OpenOptions,
         ShortcutAction::Frame,
         ShortcutAction::OpenDocs,
+        ShortcutAction::OpenModulePalette,
     ];
 }
 

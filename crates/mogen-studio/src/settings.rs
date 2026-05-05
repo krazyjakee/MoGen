@@ -1,6 +1,38 @@
 use std::fs;
 use std::path::PathBuf;
 
+/// Service name used as the keyring entry's `service`. Stable across
+/// releases so an upgrade doesn't leave behind orphaned entries.
+const KEYRING_SERVICE: &str = "mogen-studio";
+/// Keyring entry's `username`. Distinct from the LLM keys so a user
+/// who has both stored sees two separate entries.
+const KEYRING_USERNAME: &str = "moghub_session";
+
+fn keyring_entry() -> Result<keyring::Entry, keyring::Error> {
+    keyring::Entry::new(KEYRING_SERVICE, KEYRING_USERNAME)
+}
+
+fn keyring_get_session() -> Option<String> {
+    let entry = keyring_entry().ok()?;
+    match entry.get_password() {
+        Ok(s) if !s.is_empty() => Some(s),
+        _ => None,
+    }
+}
+
+fn keyring_set_session(token: &str) -> Result<(), keyring::Error> {
+    keyring_entry()?.set_password(token)
+}
+
+fn keyring_delete_session() -> Result<(), keyring::Error> {
+    let entry = keyring_entry()?;
+    match entry.delete_credential() {
+        Ok(()) => Ok(()),
+        Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
 use mogen_llm::gemini::{DEFAULT_MODEL, DEFAULT_TEMPERATURE};
 use mogen_llm::{Provider, ThinkingLevel};
 use serde::{Deserialize, Serialize};
@@ -197,6 +229,14 @@ pub struct Settings {
     /// window and by the registry-aware `mogen build`.
     #[serde(default = "default_moghub_url")]
     pub moghub_url: String,
+    /// Persisted MoGHub session token (UUID string) returned by the
+    /// loopback OAuth flow. Sent as `Authorization: Bearer <uuid>` on
+    /// every authenticated call. Empty when signed-out. Stored alongside
+    /// the LLM keys; same threat model as `gemini_api_key` — anyone with
+    /// read access to `~/.config/mogen/settings.json` can act as the user
+    /// against MoGHub. Keyring storage is on the deferred list.
+    #[serde(default)]
+    pub moghub_session: String,
     /// Persisted as a lowercase label (`low` | `medium` | `high` | `xhigh`) so
     /// new `ThinkingLevel` variants can be added without a migration. Empty /
     /// unknown falls back to the library default at read time.
@@ -470,6 +510,12 @@ impl Settings {
     pub const MAX_RECENT: usize = 12;
 
     pub fn load() -> Self {
+        let mut s = Self::load_raw();
+        s.hydrate_secrets_from_keyring();
+        s
+    }
+
+    fn load_raw() -> Self {
         // Read mode walks legacy locations first, so existing installs
         // (Studio's old `dirs::config_dir()/mogen/settings.json` plus
         // earlier `~/.cache/mogen/` users) load on first launch after
@@ -547,6 +593,67 @@ impl Settings {
         fs::rename(&tmp, &path)
             .map_err(|e| format!("rename {} -> {}: {e}", tmp.display(), path.display()))?;
         Ok(())
+    }
+
+    /// On every load: prefer the keyring's copy of `moghub_session` over
+    /// whatever's on disk. If the disk value is non-empty AND the
+    /// keyring is empty (the typical migration case after an upgrade),
+    /// try to push the disk value into the keyring and clear the field
+    /// from settings.json so the secret no longer round-trips through
+    /// disk. Failures are silent — on systems without a working
+    /// keyring backend (e.g. headless Linux without Secret Service)
+    /// we fall back to the existing on-disk storage.
+    fn hydrate_secrets_from_keyring(&mut self) {
+        match keyring_get_session() {
+            Some(token) => {
+                self.moghub_session = token;
+            }
+            None => {
+                if !self.moghub_session.is_empty()
+                    && keyring_set_session(&self.moghub_session).is_ok()
+                {
+                    self.moghub_session.clear();
+                    let _ = self.save();
+                    // Re-read so the cached field reflects what the
+                    // keyring now holds (also covers the unlikely
+                    // case where the just-stored value diverged).
+                    if let Some(t) = keyring_get_session() {
+                        self.moghub_session = t;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Persist a freshly-issued MoGHub session token. Writes to the
+    /// keyring first; on success clears the in-memory field's disk
+    /// twin so settings.json doesn't carry a copy. On keyring failure
+    /// the token stays on the field as a fallback (settings.json then
+    /// holds it, same as the pre-keyring world).
+    pub fn set_moghub_session(&mut self, token: &str) -> Result<(), String> {
+        match keyring_set_session(token) {
+            Ok(()) => {
+                // Cache reflects what the keyring now holds.
+                self.moghub_session = token.to_string();
+                // Best-effort save so anything else mutated alongside
+                // the token sync also lands.
+                self.save()?;
+                Ok(())
+            }
+            Err(_) => {
+                self.moghub_session = token.to_string();
+                self.save()
+            }
+        }
+    }
+
+    /// Wipe the persisted MoGHub session. Removes the keyring entry
+    /// and clears the cached field, then saves so the disk file
+    /// reflects the cleared state.
+    pub fn clear_moghub_session(&mut self) -> Result<(), String> {
+        let _ = keyring_delete_session();
+        self.moghub_session.clear();
+        self.save()
     }
 
     pub fn gemini_api_key(&self) -> Option<&str> {
@@ -986,5 +1093,5 @@ fn legacy_settings_path() -> Option<PathBuf> {
 /// is editable in Preferences (and overridable at process scope via the
 /// `MOGHUB_URL` env var honoured by `MoghubClient::from_env`).
 fn default_moghub_url() -> String {
-    "https://moghub.app".to_string()
+    "https://moghub.org".to_string()
 }

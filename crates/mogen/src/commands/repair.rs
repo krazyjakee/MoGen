@@ -60,7 +60,7 @@ pub(crate) fn repair(args: RepairArgs) -> Result<()> {
             .out
             .unwrap_or_else(|| args.input.with_extension("glb"));
         ensure_parent_dir(&out)?;
-        return build(args.input, out, false, false);
+        return build(args.input, out);
     }
 
     let filename = args.input.to_string_lossy().to_string();
@@ -189,5 +189,5 @@ pub(crate) fn repair(args: RepairArgs) -> Result<()> {
         return Ok(());
     }
 
-    build(resolved_dsl_out, resolved_out, false, false)
+    build(resolved_dsl_out, resolved_out)
 }

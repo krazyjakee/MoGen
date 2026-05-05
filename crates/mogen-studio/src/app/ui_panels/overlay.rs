@@ -15,7 +15,6 @@ impl MogenStudioApp {
         use crate::viewer::shadows::{ShadowQuality, SHADOW_QUALITIES};
         egui::Area::new(egui::Id::new("viewport_overlay"))
             .fixed_pos(viewport_rect.left_top() + egui::vec2(8.0, 8.0))
-            .order(egui::Order::Foreground)
             .show(ctx, |ui| {
                 egui::Frame::popup(ui.style())
                     .fill(ui.visuals().window_fill().linear_multiply(0.85))
@@ -235,7 +234,6 @@ impl MogenStudioApp {
             egui::Area::new(egui::Id::new("viewport_status"))
                 .fixed_pos(viewport_rect.left_bottom() + egui::vec2(8.0, -8.0))
                 .pivot(egui::Align2::LEFT_BOTTOM)
-                .order(egui::Order::Foreground)
                 .show(ctx, |ui| {
                     egui::Frame::popup(ui.style())
                         .fill(ui.visuals().window_fill().linear_multiply(0.85))

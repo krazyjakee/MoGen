@@ -39,6 +39,12 @@ pub const GEOMETRY_COMMON_ATTRS: &[&str] = &[
     // Collider request: `collider="aabb"` is the only accepted value in v1;
     // the lowering pass derives the box from the node's subtree mesh extents.
     "collider",
+    // Deformation modifiers — composable variety knobs that work on any
+    // primitive. Apply between primitive construction and anchor shift, so
+    // the deformed mesh is what attach/connector logic sees. Stochastic
+    // modifiers (`noise`, `jitter`) are seeded by `seed`.
+    "seed", "noise", "jitter", "bend_x", "bend_y", "bend_z", "twist_y",
+    "taper", "droop", "faceted",
 ];
 
 /// Transform-only subset. Used by `skeleton` (places the whole rig) and `bone`
@@ -207,6 +213,19 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         ("track", "from") | ("track", "to") => "number",
         ("conform", "from") | ("conform", "to") => "string",
         (_, "from") | (_, "to") => "vec3",
+        // Deformation modifier types. `seed` overlaps with the meta-block's
+        // string seed (handled above), so this arm only applies to geometry
+        // primitives where the seed is an integer.
+        (_, "seed")
+        | (_, "noise")
+        | (_, "jitter")
+        | (_, "bend_x")
+        | (_, "bend_y")
+        | (_, "bend_z")
+        | (_, "twist_y")
+        | (_, "taper")
+        | (_, "droop")
+        | (_, "faceted") => "number",
         ("box", "size")
         | ("plane", "size")
         | ("quad", "size")
@@ -252,8 +271,6 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         | ("branch", "bend")
         | ("branch", "segments")
         | ("branch", "samples")
-        | ("branch", "seed")
-        | ("branch", "jitter")
         | ("branch", "leaves")
         | ("branch", "leaf_size")
         | ("branch", "leaf_cards") => "number",

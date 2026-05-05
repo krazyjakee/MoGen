@@ -225,6 +225,54 @@ identically named nodes elsewhere.
 
 ---
 
+## Deformation modifiers
+
+Every primitive accepts a small set of common modifier attrs that perturb the
+generated mesh between primitive construction and anchor placement. The point
+is variety without authoring extra geometry — bent beams, weathered rocks,
+melted candles, jelly blobs — using one or two extra attrs.
+
+| attribute | value | effect |
+|---|---|---|
+| `bend_x`, `bend_y`, `bend_z` | degrees | arc-length-preserving bend around the named axis. Length axis is the perpendicular one (Y for `bend_x`/`bend_z`, X for `bend_y`). |
+| `twist_y` | degrees | helical twist around Y, from 0 at `y_min` to the full angle at `y_max`. |
+| `taper` | ratio (1.0 = unchanged, 0.5 = half-width at top) | linear shrink along Y. |
+| `droop` | amount (0..1 of length) | quadratic gravity-style sag along -Y; the base stays put, the top sinks by `amount * height`. |
+| `noise` | 0..1 | coherent value-noise displacement along the vertex normal. Yields blobby "rock" texture. |
+| `jitter` | 0..1 | per-vertex random displacement along the normal. Higher-frequency than `noise`, looks "jagged". |
+| `faceted` | 0/1 | rebuild the mesh with three unique vertices per triangle and face-flat normals; reads as low-poly. |
+| `seed` | integer | RNG seed for the stochastic modifiers (`noise`, `jitter`); same seed always reproduces the same shape. |
+
+Common combinations:
+
+```
+// Asteroid / rock — coherent bumps + per-vertex jitter + flat shading.
+icosphere "rock"   (radius=0.4, noise=0.30, jitter=0.15, faceted=1, seed=7)
+// Bent timber / pipe — single-axis bend with light surface noise.
+cylinder  "post"   (radius=0.05, height=2.0, bend_z=12, noise=0.04)
+// Melted wax / jelly — gravity-sagged top with soft surface texture.
+cylinder  "candle" (radius=0.18, height=0.7, droop=0.4, noise=0.05)
+// Twisted, tapered beam — combine deterministic deformations freely.
+box       "beam"   (size=[0.2, 0.2, 3], twist_y=20, taper=0.7)
+```
+
+Stochastic modifiers are deterministic for a given `seed` so rebuilds are
+reproducible. Two unnamed primitives with `noise=0.3` and no `seed` share the
+same `seed` default (1) and therefore the same surface — set distinct seeds
+when you want sibling rocks to differ.
+
+Default tessellation auto-bumps (×2 segments / +1 icosphere subdivision) when
+a smooth deformer (`bend_*`, `twist_y`, `noise`, `droop`) is present so a
+bent cylinder doesn't read as faceted. Author's explicit `segments=`,
+`rings=`, `subdivisions=` always override.
+
+Modifiers are not applied to `mesh` (loaded glb) primitives — their joints,
+UVs, and skinning contract are wider than what the deform pass preserves.
+
+See `examples/asteroid_field.mog` for a runnable showcase.
+
+---
+
 ## Scene structure: `scene`, `group`
 
 ```

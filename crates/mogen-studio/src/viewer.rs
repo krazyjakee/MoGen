@@ -606,26 +606,31 @@ impl Viewer {
             }
 
             if primary_released_raw && gizmo_in_progress {
-                let maybe_edit = commit_gizmo_drag(&mut st);
+                let edits = commit_gizmo_drag(&mut st);
                 if std::env::var_os("MOGEN_GIZMO_TRACE").is_some() {
-                    match &maybe_edit {
-                        Some(PendingEdit::SetAttrCanonical {
-                            node,
-                            attr,
-                            value,
-                            delete,
-                        }) => eprintln!(
-                            "[gizmo] commit SetAttrCanonical node={} attr={} value={} delete={:?}",
-                            node.0, attr, value, delete
-                        ),
-                        Some(PendingEdit::DeleteNode { node }) => eprintln!(
-                            "[gizmo] commit DeleteNode node={}",
-                            node.0
-                        ),
-                        None => eprintln!("[gizmo] commit SKIPPED (trivial delta)"),
+                    if edits.is_empty() {
+                        eprintln!("[gizmo] commit SKIPPED (trivial delta)");
+                    } else {
+                        for edit in &edits {
+                            match edit {
+                                PendingEdit::SetAttrCanonical {
+                                    node,
+                                    attr,
+                                    value,
+                                    delete,
+                                } => eprintln!(
+                                    "[gizmo] commit SetAttrCanonical node={} attr={} value={} delete={:?}",
+                                    node.0, attr, value, delete
+                                ),
+                                PendingEdit::DeleteNode { node } => eprintln!(
+                                    "[gizmo] commit DeleteNode node={}",
+                                    node.0
+                                ),
+                            }
+                        }
                     }
                 }
-                if let Some(edit) = maybe_edit {
+                for edit in edits {
                     st.pending_edits.push(edit);
                 }
                 // Clear the preview handle but DO NOT rebuild the mesh here.

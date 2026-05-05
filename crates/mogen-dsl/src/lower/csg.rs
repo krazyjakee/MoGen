@@ -8,6 +8,7 @@ use mogen_geom::{
 use crate::ast::{Node, Value};
 
 use super::connector::{add_aabb_connectors_if_missing, add_connector};
+use super::deform::apply_deform;
 use super::helpers::{inherit_material_from_ancestor, transform_from_attrs};
 use super::node::apply_metadata;
 use super::primitive::primitive_mesh;
@@ -128,7 +129,15 @@ pub(super) fn lower_csg(
 /// every operand contributes UVs in the same convention.
 fn eval_mesh(node: &Node, bake_transform: bool, uv_mode: UvMode) -> Result<Mesh> {
     let local = if let Some(mesh_res) = primitive_mesh(node, uv_mode) {
-        mesh_res?
+        let mut mesh = mesh_res?;
+        // Apply deformation before the operand is fed to the boolean op so
+        // "melted, then cut a hole" matches author intuition. Skipping for
+        // `mesh` (loaded GLB) operands because their joints/UVs/skinning
+        // contract is wider than what the deform pass preserves.
+        if node.kind != "mesh" {
+            apply_deform(&mut mesh, node);
+        }
+        mesh
     } else {
         match node.kind.as_str() {
         "union" | "difference" | "intersect" => {
