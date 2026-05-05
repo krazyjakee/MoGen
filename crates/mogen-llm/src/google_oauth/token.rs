@@ -5,10 +5,49 @@
 //! 4xx response containing `invalid_grant` we surface [`OAuthError::Revoked`]
 //! so the CLI can ask the user to re-run `mogen auth login --force`.
 
+use std::cell::RefCell;
+
 use serde::{Deserialize, Serialize};
 
 use super::client::{self, ProviderConfig};
 use super::OAuthError;
+
+thread_local! {
+    /// Test-only override for the OAuth token endpoint URL. When set,
+    /// [`refresh_now`] posts here instead of [`client::TOKEN_URL`] so
+    /// integration tests can stand up a mock refresh server without
+    /// reaching `oauth2.googleapis.com`. Production never sets this.
+    static REFRESH_URL_OVERRIDE: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+/// RAII guard that installs a refresh-URL override for the duration of a
+/// test. Restores the previous value (almost always `None`) on drop, so a
+/// panic mid-test can't leak the override into another test on the same
+/// thread.
+#[doc(hidden)]
+pub struct RefreshUrlOverrideGuard {
+    prev: Option<String>,
+}
+
+impl RefreshUrlOverrideGuard {
+    /// Install `url` as the refresh endpoint for the current thread.
+    /// Pass `None` to clear (rare — drop-restore handles cleanup).
+    pub fn set(url: Option<String>) -> Self {
+        let prev = REFRESH_URL_OVERRIDE.with(|cell| cell.replace(url));
+        Self { prev }
+    }
+}
+
+impl Drop for RefreshUrlOverrideGuard {
+    fn drop(&mut self) {
+        let prev = self.prev.take();
+        REFRESH_URL_OVERRIDE.with(|cell| *cell.borrow_mut() = prev);
+    }
+}
+
+fn current_refresh_url() -> Option<String> {
+    REFRESH_URL_OVERRIDE.with(|cell| cell.borrow().clone())
+}
 
 /// Persisted credential bundle.
 ///
@@ -91,7 +130,9 @@ pub fn refresh_now(
     now_unix: u64,
     config: &ProviderConfig,
 ) -> Result<(), OAuthError> {
-    refresh_against(http, bundle, now_unix, client::TOKEN_URL, config)
+    let url = current_refresh_url();
+    let token_url = url.as_deref().unwrap_or(client::TOKEN_URL);
+    refresh_against(http, bundle, now_unix, token_url, config)
 }
 
 /// Test seam — same logic as [`refresh_now`] but the token endpoint URL is

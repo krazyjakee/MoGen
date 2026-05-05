@@ -21,6 +21,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use mogen_llm::gemini::GeminiClient;
+use mogen_llm::google_oauth::RefreshUrlOverrideGuard;
 use mogen_llm::{GenerateConfig, OAuthBundle};
 
 /// Captured request: path, body bytes, and a flat header map (last-write-wins).
@@ -219,39 +220,60 @@ fn test_oauth_generate_attaches_bearer_and_user_agent_and_omits_x_api_key() {
 }
 
 #[test]
-fn test_oauth_generate_treats_401_as_transport_failure_without_refresh_token_path() {
-    // A 401 on the first attempt triggers the client's refresh + retry path.
-    // Refresh hits the *real* `oauth2.googleapis.com/token` because the test
-    // can't redirect the constant. With a synthetic refresh token that
-    // server will reject the request, surfacing an OAuth error rather than
-    // succeeding the retry. This still proves the right thing: a 401
-    // exits the cloudcode mock and routes through refresh_now (rather
-    // than returning the original 401 directly).
-    let mock = CloudcodeMock::start(vec![Canned {
+fn test_oauth_generate_401_triggers_refresh_against_mocked_token_endpoint() {
+    // Arrange: cloudcode mock returns a 401 on the first request. The
+    // client's refresh-on-401 path then posts to the OAuth token endpoint;
+    // we redirect that to a *second* mock returning `invalid_grant` so the
+    // test never reaches `oauth2.googleapis.com`.
+    let cloudcode = CloudcodeMock::start(vec![Canned {
         status: 401,
         body: r#"{"error":{"code":401,"message":"UNAUTHENTICATED"}}"#.into(),
     }]);
-    let bundle = bundle_with_endpoint(&mock.base, "ya29.STALE");
-    let client = GeminiClient::from_oauth_with_base_url(bundle, mock.base.clone());
+    let token_mock = CloudcodeMock::start(vec![Canned {
+        status: 400,
+        body: r#"{"error":"invalid_grant","error_description":"Token has been expired or revoked."}"#.into(),
+    }]);
+    let _override = RefreshUrlOverrideGuard::set(Some(token_mock.base.clone()));
+
+    let bundle = bundle_with_endpoint(&cloudcode.base, "ya29.STALE");
+    let client = GeminiClient::from_oauth_with_base_url(bundle, cloudcode.base.clone());
     let mut cfg = GenerateConfig::new("hi");
     cfg.model = "gemini-3-pro-preview".into();
 
-    let err = client.generate(&cfg).expect_err("401 should not succeed");
-    let s = err.to_string();
-    // Either: refresh failed against the real oauth endpoint (transport /
-    // token-exchange / Revoked), or the retry surfaced UNAUTHENTICATED.
-    // Both are acceptable — the assertion just guards against the request
-    // succeeding on the original 401.
+    // Act
+    let err = client.generate(&cfg).expect_err("401 + invalid_grant must error");
+
+    // Assert: surfaces an OAuth error (Revoked maps to a refresh-failure
+    // string), and both mocks observed exactly one request.
+    let msg = err.to_string();
     assert!(
-        !s.is_empty(),
-        "401 must surface an error path, got empty error",
+        msg.to_ascii_lowercase().contains("revoked")
+            || msg.contains("invalid_grant")
+            || msg.contains("refresh"),
+        "expected revoked / invalid_grant / refresh in error, got: {msg}",
     );
 
-    // Confirms the FIRST request reached the cloudcode mock as a 401.
-    let reqs = mock.requests.lock().unwrap();
-    assert!(
-        !reqs.is_empty(),
-        "first request must reach cloudcode mock before refresh path runs",
+    let cc_reqs = cloudcode.requests.lock().unwrap();
+    assert_eq!(cc_reqs.len(), 1, "cloudcode mock saw {} requests", cc_reqs.len());
+    assert_eq!(cc_reqs[0].path, "/v1internal:generateContent");
+
+    let tk_reqs = token_mock.requests.lock().unwrap();
+    assert_eq!(
+        tk_reqs.len(),
+        1,
+        "token mock must receive exactly one refresh attempt, saw {}",
+        tk_reqs.len(),
     );
-    assert_eq!(reqs[0].path, "/v1internal:generateContent");
+    // Refresh body is application/x-www-form-urlencoded with the rotated
+    // refresh token and the gemini-cli client_id.
+    assert!(
+        tk_reqs[0].body.contains("grant_type=refresh_token"),
+        "refresh body must carry grant_type=refresh_token, got: {}",
+        tk_reqs[0].body,
+    );
+    assert!(
+        tk_reqs[0].body.contains("refresh_token=rt"),
+        "refresh body must include the bundle's refresh_token, got: {}",
+        tk_reqs[0].body,
+    );
 }

@@ -569,14 +569,29 @@ impl Settings {
     pub fn save(&self) -> Result<(), String> {
         // Always write to the canonical `~/.mogen/settings.json` so
         // the CLI (which does the same path resolution) can read keys
-        // entered in Studio.
+        // entered in Studio. Atomic write via sibling-tmp + rename so a
+        // crash mid-write can't truncate the file; on Unix we chmod 0600
+        // before the rename so the API keys aren't world-readable.
         let path = settings_path(mogen_llm::PathMode::Write)
             .ok_or_else(|| "no config directory available".to_string())?;
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
         }
         let bytes = serde_json::to_vec_pretty(self).map_err(|e| e.to_string())?;
-        fs::write(&path, bytes).map_err(|e| format!("write {}: {e}", path.display()))?;
+
+        let tmp = path.with_extension("json.tmp");
+        fs::write(&tmp, &bytes).map_err(|e| format!("write {}: {e}", tmp.display()))?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let perms = std::fs::Permissions::from_mode(0o600);
+            fs::set_permissions(&tmp, perms)
+                .map_err(|e| format!("chmod {}: {e}", tmp.display()))?;
+        }
+
+        fs::rename(&tmp, &path)
+            .map_err(|e| format!("rename {} -> {}: {e}", tmp.display(), path.display()))?;
         Ok(())
     }
 
