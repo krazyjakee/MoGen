@@ -17,11 +17,15 @@ vec3      = { "[" ~ expr ~ "," ~ expr ~ "," ~ expr ~ "]" }
 list      = { "[" ~ (list_item ~ ("," ~ list_item)*)? ~ ","? ~ "]" }
 list_item = { vec3 | list | string | expr }
 
-expr   =  { term ~ (add_op ~ term)* }
+expr   =  { sum ~ (cmp_op ~ sum)? }
+sum    =  { term ~ (add_op ~ term)* }
 term   =  { factor ~ (mul_op ~ factor)* }
 factor =  { number | param_ref | "(" ~ expr ~ ")" }
 add_op =  { "+" | "-" }
 mul_op =  { "*" | "/" }
+// Order matters: 2-char operators must precede their 1-char prefixes so
+// `<=` doesn't get tokenised as `<` followed by `=`.
+cmp_op =  { "<=" | ">=" | "==" | "!=" | "<" | ">" }
 
 number    = @{ "-"? ~ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+)? }
 string    = @{ "\"" ~ (!"\"" ~ ANY)* ~ "\"" }

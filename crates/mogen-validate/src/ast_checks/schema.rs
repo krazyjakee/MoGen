@@ -23,6 +23,7 @@ pub const KNOWN_KINDS: &[&str] = &[
     "spin", "open_close", "wave", "flap", "idle",
     "skeleton", "bone",
     "lod_scale",
+    "if", "else", "for",
     "light",
 ];
 
@@ -101,7 +102,10 @@ pub fn common_attrs_for_kind(kind: &str) -> &'static [&'static str] {
         "material" | "connector" | "attach"
         | "joint" | "clip" | "track"
         | "spin" | "open_close" | "wave" | "flap" | "idle"
-        | "lod_scale" | "meta" => &[],
+        | "lod_scale" | "meta"
+        // Control-flow constructs are pre-expansion only — they don't
+        // accept transforms or material binding, just their control attrs.
+        | "if" | "else" | "for" => &[],
         _ => GEOMETRY_COMMON_ATTRS,
     }
 }
@@ -205,6 +209,9 @@ pub fn attrs_for_kind(kind: &str) -> &'static [&'static str] {
             "direction", "curve", "via",
         ],
         "lod_scale" => &["value"],
+        "if" => &["cond"],
+        "else" => &[],
+        "for" => &["var", "from", "to", "step"],
         "light" => &["kind", "color", "intensity", "range", "inner_cone", "outer_cone", "dir"],
         // `smooth` blends limb-to-torso seams for organic shapes.
         // `difference`/`intersect` reject it via attr_type below.
@@ -242,6 +249,9 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         // `from`/`to` as AABB-corner vec3 shortcuts.
         ("track", "from") | ("track", "to") => "number",
         ("conform", "from") | ("conform", "to") => "string",
+        // `for.from`/`to`/`step` are scalar bounds; carve them out before
+        // the generic vec3 fallback below.
+        ("for", "from") | ("for", "to") | ("for", "step") => "number",
         (_, "from") | (_, "to") => "vec3",
         // Deformation modifier types. `seed` overlaps with the meta-block's
         // string seed (handled above), so this arm only applies to geometry
@@ -456,6 +466,12 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         // `via=[c1, c2]` reserved for future multi-segment paths.
         ("conform", "via") => "list",
         ("lod_scale", "value") => "number",
+        // Module control flow attrs. `if.cond` is numeric (truthy ≠ 0);
+        // `for.var` names the binding and accepts ident-or-string;
+        // `for.from`/`to`/`step` are the bounds.
+        ("if", "cond") => "number",
+        ("for", "var") => "string",
+        // (`for.from`/`to`/`step` handled above the generic vec3 arm.)
         ("light", "kind") => "string",
         ("light", "color") | ("light", "dir") => "vec3",
         ("light", "intensity")
