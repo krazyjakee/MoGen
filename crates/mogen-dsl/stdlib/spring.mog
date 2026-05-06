@@ -1,0 +1,8 @@
+// summary: Compression spring — tight helical coil along +Y for shock-absorber, suspension, vintage-clock, or trinket-spring uses. Wraps `coil` with spring-typical defaults: small helix radius, short height, many turns, thin wire. Wrap in a group with a metal `mat=` ("steel"/"brass"); the spring is centred on origin so a parent `pos=`/`scale=` works without offsets.
+module "spring" (radius=0.025, length=0.1, turns=8, wire_radius=0.004) {
+  coil "spring" (
+    radius=$radius, height=$length, turns=$turns,
+    profile_radius=$wire_radius,
+    samples=20, segments=10, cap_ends=1
+  )
+}

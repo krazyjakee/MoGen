@@ -1,0 +1,10 @@
+// summary: Square terrain patch — `heightfield` with natural-looking fbm-noise defaults baked in. Default `4m × 4m`, 64×64 segments, 4 octaves, mid-frequency, 0.5 persistence — reads as rolling hills out of the box. Tweak `amplitude` for relief, `seed` for variation. Wrap with an earth/grass/rock `mat=` and place via `pos=`. For dramatic peaks, raise `amplitude` to ~1.4 and bump `segments` to 96; for a sandy desert dune look, lower `amplitude` to ~0.3.
+module "terrain_patch" (size=4.0, segments=64, amplitude=0.6, seed=1) {
+  heightfield "terrain" (
+    size=[$size, $size],
+    segments_u=$segments, segments_v=$segments,
+    amplitude=$amplitude,
+    octaves=4, frequency=0.5, persistence=0.5,
+    seed=$seed
+  )
+}

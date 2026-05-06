@@ -416,11 +416,15 @@ mod tests {
         // the `*_range` selective-deformation note added ~250 bytes; the
         // chamfered_box / inset_box KINDS_REFERENCE rows added ~700 bytes;
         // the `if`/`else`/`for` rows + control-flow / interpolation prose
-        // added another ~1.4 KB.
+        // added another ~1.4 KB; the organic-shape primitives
+        // (`coil`/`heightfield`/`bezier_patch`/`metaball`/`wave`) added
+        // KINDS_REFERENCE rows + allowlist entries totalling ~250 bytes; the
+        // organic-shape stdlib wrappers (`spring`/`terrain_patch`/`blob`/
+        // `water_patch`) added ~530 bytes of Detailing-recipe entries.
         let s = cacheable_block();
         assert!(
-            s.len() < 28_000,
-            "cacheable_block grew to {} bytes — cap is 28_000. Reference \
+            s.len() < 29_500,
+            "cacheable_block grew to {} bytes — cap is 29_500. Reference \
              material that grows without bound should be fetched on demand, \
              not pinned in the cache.",
             s.len()

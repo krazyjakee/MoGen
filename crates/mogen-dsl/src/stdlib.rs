@@ -45,6 +45,11 @@ const STDLIB_FILES: &[(&str, &str)] = &[
     ("feather_card.mog",          include_str!("../stdlib/feather_card.mog")),
     ("scale_band.mog",            include_str!("../stdlib/scale_band.mog")),
     ("gear.mog",                  include_str!("../stdlib/gear.mog")),
+    // Organic shape wrappers — sensible defaults over Phase D primitives.
+    ("spring.mog",                include_str!("../stdlib/spring.mog")),
+    ("terrain_patch.mog",         include_str!("../stdlib/terrain_patch.mog")),
+    ("blob.mog",                  include_str!("../stdlib/blob.mog")),
+    ("water_patch.mog",           include_str!("../stdlib/water_patch.mog")),
 ];
 
 static STDLIB: OnceLock<ModuleRegistry> = OnceLock::new();

@@ -70,6 +70,14 @@ matching `use \"…\" (…)` call:
   alpha-cutout material.
 - `scaled`/`scaly` skin → ring of `scale_band` calls stacked along Y.
 - `geared`/`cogged` machinery → `gear`.
+- `springy`/`coiled` (compression spring, shock absorber) → `spring`; \
+  for a wider helix or coiled hose use `coil` directly.
+- `terrain`/`hilly`/`rolling`/`mountainous` (ground surface) → `terrain_patch` \
+  (raise `amplitude` for craggy peaks, lower for sandy dunes).
+- `blobby`/`slimy`/`gooey` (organic mass with smooth merging) → `blob`; \
+  for arbitrary metaball constellations use `metaball` directly.
+- `rippling`/`watery`/`pond`/`pool`/`liquid surface` → `water_patch` \
+  (raise `frequency`/`ripple` for choppy, lower for calm).
 
 **Per-node `lod=` multiplier.** Any geometry/group accepts `lod=N` \
 (scoped to that subtree, compounds with the file-global `lod_scale`). \
