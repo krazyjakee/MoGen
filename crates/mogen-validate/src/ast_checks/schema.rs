@@ -10,7 +10,7 @@ pub const KNOWN_KINDS: &[&str] = &[
     "stack", "grid",
     "meta",
     "box", "plane", "quad", "cylinder", "cone", "sphere", "capsule", "torus",
-    "prism", "pyramid", "disc", "icosphere", "rounded_box",
+    "prism", "pyramid", "disc", "icosphere", "rounded_box", "chamfered_box", "inset_box",
     "wedge", "frustum", "tube", "hemisphere", "half_cylinder", "torus_arc", "ellipsoid",
     "superellipsoid", "curved_plane", "lathe", "spline_tube", "spline_ribbon", "leaf_card", "mesh",
     "extrude", "sweep", "loft",
@@ -130,6 +130,8 @@ pub fn attrs_for_kind(kind: &str) -> &'static [&'static str] {
         "disc" => &["radius", "segments"],
         "icosphere" => &["radius", "subdivisions"],
         "rounded_box" => &["size", "radius", "segments"],
+        "chamfered_box" => &["size", "radius"],
+        "inset_box" => &["size", "face", "amount", "depth"],
         "wedge" => &["size"],
         "frustum" => &["bottom", "top", "height"],
         "tube" => &["outer", "inner", "height", "segments"],
@@ -255,6 +257,9 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         | (_, "faceted")
         | (_, "cast_shadow")
         | (_, "lod") => "number",
+        ("chamfered_box", "radius") => "number",
+        ("inset_box", "face") => "string",
+        ("inset_box", "amount") | ("inset_box", "depth") => "number",
         // 2-element `[start, end]` ranges along the deformation's length axis.
         (_, "bend_x_range")
         | (_, "bend_y_range")
@@ -269,6 +274,8 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         | ("quad", "size")
         | ("prism", "size")
         | ("rounded_box", "size")
+        | ("chamfered_box", "size")
+        | ("inset_box", "size")
         | ("wedge", "size")
         | ("ellipsoid", "size")
         | ("superellipsoid", "size")

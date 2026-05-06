@@ -3,12 +3,13 @@ use glam::{Mat4, Vec3};
 
 use mogen_core::{Mesh, UvMode};
 use mogen_geom::{
-    box_mesh, capsule_mesh, clean_csg_output, cone_mesh, curved_plane_mesh, cylinder_mesh,
-    difference_many, disc_mesh, ellipsoid_mesh, extrude_mesh, frustum_mesh, half_cylinder_mesh,
-    hemisphere_mesh, icosphere_mesh, lathe_mesh, leaf_card_mesh, loft_mesh, mesh_from_glb_bytes,
-    plane_mesh, prism_mesh, pyramid_mesh, quad_mesh, read_glb_bytes, rounded_box_mesh, sphere_mesh,
-    spline_ribbon_mesh, spline_tube_mesh, superellipsoid_mesh, sweep_mesh, torus_arc_mesh,
-    torus_mesh, transform_mesh, tube_mesh, wedge_mesh, SweepModulation,
+    box_mesh, capsule_mesh, chamfered_box_mesh, clean_csg_output, cone_mesh, curved_plane_mesh,
+    cylinder_mesh, difference_many, disc_mesh, ellipsoid_mesh, extrude_mesh, frustum_mesh,
+    half_cylinder_mesh, hemisphere_mesh, icosphere_mesh, inset_box_mesh, lathe_mesh,
+    leaf_card_mesh, loft_mesh, mesh_from_glb_bytes, plane_mesh, prism_mesh, pyramid_mesh,
+    quad_mesh, read_glb_bytes, rounded_box_mesh, sphere_mesh, spline_ribbon_mesh, spline_tube_mesh,
+    superellipsoid_mesh, sweep_mesh, torus_arc_mesh, torus_mesh, transform_mesh, tube_mesh,
+    wedge_mesh, InsetFace, SweepModulation,
 };
 
 use crate::ast::Node;
@@ -148,6 +149,24 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
                 .map(|n| n as u32)
                 .unwrap_or_else(|| seg_default(4, 1));
             rounded_box_mesh([s.x, s.y, s.z], radius, segments, uv_mode)
+        }
+        "chamfered_box" => {
+            let s = resolve_size3(node, Vec3::ONE);
+            let radius = node.attr_number("radius").unwrap_or(0.1);
+            chamfered_box_mesh([s.x, s.y, s.z], radius, uv_mode)
+        }
+        "inset_box" => {
+            let s = resolve_size3(node, Vec3::ONE);
+            let face = match node.attr_string("face") {
+                Some(name) => match parse_inset_face(name) {
+                    Ok(f) => f,
+                    Err(e) => return Some(Err(e)),
+                },
+                None => InsetFace::PosY,
+            };
+            let amount = node.attr_number("amount").unwrap_or(0.1);
+            let depth = node.attr_number("depth").unwrap_or(0.05);
+            inset_box_mesh([s.x, s.y, s.z], face, amount, depth, uv_mode)
         }
         "wedge" => {
             let s = resolve_size3(node, Vec3::ONE);
@@ -405,4 +424,24 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
         _ => return None,
     };
     Some(Ok(m))
+}
+
+/// Resolve a user-supplied face name (`"+y"`, `"top"`, `"-x"`, …) to the
+/// internal `InsetFace` enum. Aliases are case-insensitive and accept both
+/// the axis-sign form and English directional names so authors don't have
+/// to remember which is which.
+fn parse_inset_face(s: &str) -> Result<InsetFace> {
+    match s.to_ascii_lowercase().as_str() {
+        "+x" | "right" | "east"        => Ok(InsetFace::PosX),
+        "-x" | "left"  | "west"        => Ok(InsetFace::NegX),
+        "+y" | "top"   | "up"          => Ok(InsetFace::PosY),
+        "-y" | "bottom"| "down"        => Ok(InsetFace::NegY),
+        "+z" | "front" | "south"       => Ok(InsetFace::PosZ),
+        "-z" | "back"  | "north"       => Ok(InsetFace::NegZ),
+        other => Err(anyhow!(
+            "inset_box.face: expected one of \
+             \"+x\"/\"-x\"/\"+y\"/\"-y\"/\"+z\"/\"-z\" \
+             (or top/bottom/left/right/front/back), got \"{other}\""
+        )),
+    }
 }

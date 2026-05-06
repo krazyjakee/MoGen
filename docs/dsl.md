@@ -351,6 +351,8 @@ All primitives accept the common attributes above (`pos`, `rot`, `scale`,
 | `disc` | `radius` | `segments` (24) |
 | `icosphere` | `radius` | `subdivisions` (2) |
 | `rounded_box` | `size=[x,y,z]`, `radius` | `segments` per corner (4) |
+| `chamfered_box` | `size=[x,y,z]` | `radius` (bevel offset, 0.1) — sharp 45° bevels on all 12 edges + 8 corner triangles. Use for hard-edged industrial parts where a fully-rounded `rounded_box` reads as too organic |
+| `inset_box` | `size=[x,y,z]` | `face` (`"+y"\|"-y"\|"+x"\|"-x"\|"+z"\|"-z"` or `"top"/"bottom"/"left"/"right"/"front"/"back"`, default `"+y"`), `amount` (inset distance, 0.1), `depth` (sink depth, 0.05) — five plain box faces + one sunken panel; window frames, recessed door panels, button caps, sunken pickup wells |
 | `wedge` | `size=[x,y,z]` | right-triangle prism — flat bottom on -Y, hypotenuse climbing toward +Y/+Z. Useful for ramps, roof pitches, doorstops |
 | `frustum` | `bottom=[w,d]`, `top=[w,d]`, `height` | truncated rectangular pyramid (defaults `bottom=[1,1]`, `top=[0.5,0.5]`, `height=1`) |
 | `tube` | `outer`, `inner`, `height` | hollow cylinder (pipe / ring); `segments` (24) |
