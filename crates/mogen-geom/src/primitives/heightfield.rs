@@ -39,8 +39,11 @@ pub fn heightfield_mesh(
     seed: u32,
     mode: UvMode,
 ) -> Mesh {
-    let su = segments_u.max(1);
-    let sv = segments_v.max(1);
+    // Lower bound prevents zero-area meshes; upper bound prevents
+    // accidental OOM from a misplaced segments=10000. 4096² = ~16M cells
+    // is already an extreme grid.
+    let su = segments_u.clamp(1, 4096);
+    let sv = segments_v.clamp(1, 4096);
     let w = size[0].max(1e-4);
     let d = size[1].max(1e-4);
     let hx = w * 0.5;
@@ -146,17 +149,20 @@ fn value_noise_2d(x: f32, z: f32, seed: u32) -> f32 {
     a * (1.0 - sz) + b * sz
 }
 
-/// Cheap integer-coords hash → `[-1, 1]` float. Same xorshift-flavoured mixer
-/// as `crate::deform::cell_noise`; duplicated here so heightfield and the
-/// noise deformer can stay in their own modules but produce the same hashes
-/// when given the same seed and grid coords.
+/// Cheap integer-coords hash → `[-1, 1]` float. Mirrors the three-stage
+/// xorshift mixer in `crate::deform::cell_noise(x, y, z, seed)` exactly,
+/// applied with `y = z` and `z = 0`. The middle stage uses the `y`
+/// constant `0xC2B2AE35` and the third stage uses the `z` constant
+/// `0x27D4EB2F`, so a heightfield at `(x, z)` and a noise-deformed mesh
+/// hashed at `(x, z, 0)` with the same seed produce bit-identical
+/// values.
 fn hash2(x: i32, z: i32, seed: u32) -> f32 {
     let mut h: u32 = seed.wrapping_add(0x9E3779B9);
     h = h.wrapping_add(x as u32).wrapping_mul(0x85EBCA6B);
     h ^= h >> 13;
     h = h.wrapping_add(z as u32).wrapping_mul(0xC2B2AE35);
     h ^= h >> 16;
-    h = h.wrapping_mul(0x27D4EB2F);
+    h = h.wrapping_add(0u32).wrapping_mul(0x27D4EB2F);
     h ^= h >> 15;
     let bits = (h >> 8) & 0x00FF_FFFF;
     (bits as f32 / (1u32 << 24) as f32) * 2.0 - 1.0

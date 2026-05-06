@@ -5,7 +5,7 @@ module "scale_band" (count=12, ring_radius=0.06, scale_w=0.04, scale_h=0.06) {
       pos=[$ring_radius, 0, 0],
       rot=[0, 90, 0],
       size=[$scale_w, $scale_h],
-      bend_u=40, bend_v=0,
+      bend_u=0, bend_v=40,
       segments_u=4, segments_v=2
     )
   }

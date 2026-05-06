@@ -186,8 +186,10 @@ fn push_side_strip(
         let b = base + (i as u32) * 2 + 1; // top_i
         let c = base + (i as u32 + 1) * 2; // bottom_{i+1}
         let d = base + (i as u32 + 1) * 2 + 1; // top_{i+1}
-        // Quad order: a-c-d-b. Two triangles a,c,d and a,d,b.
-        mesh.indices.extend_from_slice(&[a, c, d, a, d, b]);
+        // Quad order: a-d-c-a-b-d. Two triangles a,d,c and a,b,d.
+        // For a CCW outer contour the resulting normal opposes (b-a)×(c-a),
+        // i.e. points outward away from the polygon's interior.
+        mesh.indices.extend_from_slice(&[a, d, c, a, b, d]);
     }
 }
 

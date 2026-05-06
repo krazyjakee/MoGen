@@ -154,9 +154,13 @@ pub fn sweep_mesh(
     }
 
     if caps {
-        cap_at(&mut mesh, profile, &frames[0], roll_at(0), scale_at(0), false, mode);
+        // Start cap normal opposes the path tangent (-T): flip the
+        // earcut output so its triangles wind opposite to the standard
+        // tangent-aligned direction. End cap normal aligns with +T, so
+        // the standard winding is correct there.
+        cap_at(&mut mesh, profile, &frames[0], roll_at(0), scale_at(0), true, mode);
         let last = frames.len() - 1;
-        cap_at(&mut mesh, profile, &frames[last], roll_at(last), scale_at(last), true, mode);
+        cap_at(&mut mesh, profile, &frames[last], roll_at(last), scale_at(last), false, mode);
     }
 
     recompute_normals(&mut mesh);
