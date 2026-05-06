@@ -1,7 +1,7 @@
 //! Apply user-requested deformation modifiers to a primitive's mesh. Reads
 //! `bend_x`/`bend_y`/`bend_z`/`twist_y`/`taper`/`droop`/`noise`/`jitter`/
-//! `faceted`/`seed`/`style` from a `Node`, expands any `style="..."` preset to
-//! fill in missing modifiers, then runs the geom kernel pipeline.
+//! `faceted`/`seed` (plus a matching `*_range=[a,b]` for each of the eight
+//! deformations) from a `Node` and runs the geom kernel pipeline.
 //!
 //! Lives between `primitive_mesh` and `apply_anchor_to_mesh` in the lowering
 //! path (see `lower/node.rs` and `lower/csg.rs`). Idempotent for nodes that
@@ -25,6 +25,19 @@ struct Modifiers {
     taper: Option<f32>,
     droop: Option<f32>,
     faceted: bool,
+    // Optional active-range overrides per deformation. `None` means "apply
+    // everywhere" — matches v1 behaviour (range_weight returns 1.0). When
+    // set, the kernel ramps the deformation in over `[a, b]` along its
+    // length axis (Y for taper/droop/twist/noise/jitter; the bend's
+    // length axis for bend_x/y/z) using a smoothstep curve.
+    bend_x_range: Option<[f32; 2]>,
+    bend_y_range: Option<[f32; 2]>,
+    bend_z_range: Option<[f32; 2]>,
+    twist_y_range: Option<[f32; 2]>,
+    taper_range: Option<[f32; 2]>,
+    droop_range: Option<[f32; 2]>,
+    noise_range: Option<[f32; 2]>,
+    jitter_range: Option<[f32; 2]>,
 }
 
 impl Modifiers {
@@ -58,27 +71,27 @@ pub(super) fn apply_deform(mesh: &mut Mesh, node: &Node) {
     // 1. Radial scale first: cheap, no topology change, gives later
     //    deformations a clean shape to work on.
     if let Some(r) = mods.taper {
-        taper(mesh, r.max(0.0));
+        taper(mesh, r.max(0.0), mods.taper_range);
     }
     // 2. Axis-coupled deformations. Order is bend → twist → droop; these
     //    don't commute with each other, but in practice users rarely combine
     //    more than one and the chosen order matches author intuition
     //    (bend the beam, then twist it, then let it sag).
     if let Some(deg) = mods.bend_x {
-        bend(mesh, 0, 1, deg.to_radians());
+        bend(mesh, 0, 1, deg.to_radians(), mods.bend_x_range);
     }
     if let Some(deg) = mods.bend_y {
         // Rotation axis Y; length axis X (the natural "horizontal extent").
-        bend(mesh, 1, 0, deg.to_radians());
+        bend(mesh, 1, 0, deg.to_radians(), mods.bend_y_range);
     }
     if let Some(deg) = mods.bend_z {
-        bend(mesh, 2, 1, deg.to_radians());
+        bend(mesh, 2, 1, deg.to_radians(), mods.bend_z_range);
     }
     if let Some(deg) = mods.twist_y {
-        twist_y(mesh, deg.to_radians());
+        twist_y(mesh, deg.to_radians(), mods.twist_y_range);
     }
     if let Some(amount) = mods.droop {
-        droop(mesh, amount);
+        droop(mesh, amount, mods.droop_range);
     }
 
     // 3. High-frequency displacement runs last so it perturbs already-bent
@@ -87,10 +100,10 @@ pub(super) fn apply_deform(mesh: &mut Mesh, node: &Node) {
     //    like "noise twice as strong" rather than two independent textures.
     let seed = mods.seed.unwrap_or(1);
     if let Some(amount) = mods.noise {
-        noise(mesh, amount, seed);
+        noise(mesh, amount, seed, mods.noise_range);
     }
     if let Some(amount) = mods.jitter {
-        jitter(mesh, amount, seed.wrapping_add(0x9E37_79B9));
+        jitter(mesh, amount, seed.wrapping_add(0x9E37_79B9), mods.jitter_range);
     }
 
     // 4. Cleanup: recompute normals once; weld only if stochastic kernels
@@ -113,8 +126,15 @@ pub(super) fn apply_deform(mesh: &mut Mesh, node: &Node) {
 fn collect_modifiers(node: &Node) -> Modifiers {
     let mut m = Modifiers::default();
     for (k, v) in &node.attrs {
-        if let Value::Number(n) = v {
-            set_modifier(&mut m, k, *n);
+        match v {
+            Value::Number(n) => set_modifier(&mut m, k, *n),
+            // 2-element lists are the only shape `*_range` accepts. Anything
+            // else (Vec3, ListVec3, …) is rejected by the validator before
+            // reaching here, so we don't bother with diagnostics.
+            Value::List(items) if items.len() == 2 => {
+                set_range(&mut m, k, [items[0], items[1]]);
+            }
+            _ => {}
         }
     }
     m
@@ -132,6 +152,24 @@ fn set_modifier(m: &mut Modifiers, name: &str, value: f32) {
         "taper" => m.taper = Some(value),
         "droop" => m.droop = Some(value),
         "faceted" => m.faceted = value != 0.0,
+        _ => {}
+    }
+}
+
+/// Sort the parsed `[a, b]` so `a <= b` (callers can write either order
+/// without tripping the kernel's `a >= b` hard-step branch when they
+/// meant a soft ramp), then stash on the matching `*_range` slot.
+fn set_range(m: &mut Modifiers, name: &str, raw: [f32; 2]) {
+    let pair = if raw[0] <= raw[1] { raw } else { [raw[1], raw[0]] };
+    match name {
+        "bend_x_range" => m.bend_x_range = Some(pair),
+        "bend_y_range" => m.bend_y_range = Some(pair),
+        "bend_z_range" => m.bend_z_range = Some(pair),
+        "twist_y_range" => m.twist_y_range = Some(pair),
+        "taper_range" => m.taper_range = Some(pair),
+        "droop_range" => m.droop_range = Some(pair),
+        "noise_range" => m.noise_range = Some(pair),
+        "jitter_range" => m.jitter_range = Some(pair),
         _ => {}
     }
 }

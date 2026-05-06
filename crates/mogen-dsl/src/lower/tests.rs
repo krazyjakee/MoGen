@@ -1231,3 +1231,135 @@ fn mirror_bakes_reflection_into_subtree_so_chain_stays_positive_det() {
 }
 
 
+#[test]
+fn bend_z_range_only_bends_tip() {
+    // Cylinder from y=-0.5 to y=0.5; bend_z bends along Y. With range
+    // [0.75, 1.0] the lower 75 % of the column stays at x≈0; only the upper
+    // 25 % gets perturbed. Compare against the unranged form so we can see
+    // the lower ring stayed put while the upper ring moved.
+    let baseline = lower_src(
+        r#"scene { cylinder "c" (radius=0.1, height=1.0, segments=8) }"#,
+    );
+    let ranged = lower_src(
+        r#"scene { cylinder "c" (radius=0.1, height=1.0, segments=8, bend_z=60, bend_z_range=[0.75, 1.0]) }"#,
+    );
+    let base_mesh = find_mesh_node(&baseline, "c").mesh.as_ref().unwrap();
+    let bent_mesh = find_mesh_node(&ranged, "c").mesh.as_ref().unwrap();
+    assert_eq!(base_mesh.positions.len(), bent_mesh.positions.len());
+    let mut max_base_shift = 0.0_f32;
+    let mut max_tip_shift = 0.0_f32;
+    for (b, p) in base_mesh.positions.iter().zip(bent_mesh.positions.iter()) {
+        let dx = p[0] - b[0];
+        let dy = p[1] - b[1];
+        let dz = p[2] - b[2];
+        let shift = (dx * dx + dy * dy + dz * dz).sqrt();
+        // Use the unbent y to bucket: vertices originally below the column
+        // midpoint are "base"; above are "tip". (After bending the tip
+        // slides downward, so post-bend `p[1]` would mis-bucket.)
+        if b[1] < 0.0 {
+            max_base_shift = max_base_shift.max(shift);
+        } else {
+            max_tip_shift = max_tip_shift.max(shift);
+        }
+    }
+    assert!(
+        max_base_shift < 1e-3,
+        "lower half should stay put with smoothstep ramp at 0.75 (got {max_base_shift})"
+    );
+    assert!(
+        max_tip_shift > 0.3,
+        "upper half should bend appreciably (got {max_tip_shift})"
+    );
+}
+
+#[test]
+fn taper_range_leaves_lower_half_unscaled() {
+    // Sphere has dense Y rings, so we can probe both the unranged taper=0.5
+    // result and the ranged form at the same y. With taper_range=[0.5, 1.0]
+    // the lower hemisphere stays pristine (weight=0) and the upper
+    // hemisphere ramps in via smoothstep.
+    let plain = lower_src(r#"scene { sphere "s" (radius=0.5) }"#);
+    let ranged = lower_src(
+        r#"scene { sphere "s" (radius=0.5, taper=0.5, taper_range=[0.5, 1.0]) }"#,
+    );
+    let p = find_mesh_node(&plain, "s").mesh.as_ref().unwrap();
+    let r = find_mesh_node(&ranged, "s").mesh.as_ref().unwrap();
+    assert_eq!(p.positions.len(), r.positions.len());
+
+    let mut max_lower_xz_diff = 0.0_f32;
+    let mut max_upper_xz_diff = 0.0_f32;
+    for (pl, ra) in p.positions.iter().zip(r.positions.iter()) {
+        let xz_diff = ((ra[0] - pl[0]).powi(2) + (ra[2] - pl[2]).powi(2)).sqrt();
+        if pl[1] < -0.05 {
+            max_lower_xz_diff = max_lower_xz_diff.max(xz_diff);
+        } else if pl[1] > 0.3 {
+            max_upper_xz_diff = max_upper_xz_diff.max(xz_diff);
+        }
+    }
+    assert!(
+        max_lower_xz_diff < 1e-4,
+        "lower hemisphere should match the un-tapered sphere (got {max_lower_xz_diff})"
+    );
+    assert!(
+        max_upper_xz_diff > 0.05,
+        "upper hemisphere should be tapered noticeably (got {max_upper_xz_diff})"
+    );
+}
+
+#[test]
+fn noise_range_only_roughens_top() {
+    // Tall box; with noise_range=[0.7, 1.0] only the top 30 % gets bumpy.
+    // The bottom face vertices lie at y=-0.5; their (x, z) should match the
+    // pristine box — within float noise of zero.
+    let g = lower_src(
+        r#"scene { box "b" (size=[1, 1, 1], noise=0.5, seed=11, noise_range=[0.7, 1.0]) }"#,
+    );
+    let mesh = find_mesh_node(&g, "b").mesh.as_ref().unwrap();
+    let mut max_base_dx = 0.0_f32;
+    let mut max_top_dx = 0.0_f32;
+    for p in &mesh.positions {
+        // Box default has corners at ±0.5 on every axis; subtracting the
+        // sign-aware nominal corner gives the displacement magnitude.
+        let dx = p[0].abs() - 0.5;
+        let dz = p[2].abs() - 0.5;
+        let max_xy = dx.abs().max(dz.abs());
+        if p[1] < -0.4 {
+            max_base_dx = max_base_dx.max(max_xy);
+        } else if p[1] > 0.4 {
+            max_top_dx = max_top_dx.max(max_xy);
+        }
+    }
+    assert!(
+        max_base_dx < 1e-3,
+        "bottom face should stay at exactly ±0.5 (got {max_base_dx})"
+    );
+    assert!(
+        max_top_dx > 0.01,
+        "top face should be perturbed by noise (got {max_top_dx})"
+    );
+}
+
+#[test]
+fn range_reversed_endpoints_are_normalised() {
+    // [1.0, 0.5] is a user typo for [0.5, 1.0]. set_range sorts the pair so
+    // the kernel sees a soft ramp instead of a hard step at 1.0 (which would
+    // give zero deformation everywhere because t < 1.0 everywhere except
+    // the topmost row).
+    let a = lower_src(
+        r#"scene { cylinder "c" (radius=0.1, height=1.0, segments=8, bend_z=60, bend_z_range=[0.5, 1.0]) }"#,
+    );
+    let b = lower_src(
+        r#"scene { cylinder "c" (radius=0.1, height=1.0, segments=8, bend_z=60, bend_z_range=[1.0, 0.5]) }"#,
+    );
+    let pa = find_mesh_node(&a, "c").mesh.as_ref().unwrap();
+    let pb = find_mesh_node(&b, "c").mesh.as_ref().unwrap();
+    assert_eq!(pa.positions.len(), pb.positions.len());
+    for (p, q) in pa.positions.iter().zip(pb.positions.iter()) {
+        for k in 0..3 {
+            assert!(
+                (p[k] - q[k]).abs() < 1e-5,
+                "swapped endpoints produced different geometry at axis {k}"
+            );
+        }
+    }
+}

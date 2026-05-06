@@ -285,6 +285,24 @@ reproducible. Two unnamed primitives with `noise=0.3` and no `seed` share the
 same `seed` default (1) and therefore the same surface — set distinct seeds
 when you want sibling rocks to differ.
 
+Each modifier accepts an optional `*_range=[a, b]` (`bend_x_range`,
+`bend_y_range`, `bend_z_range`, `twist_y_range`, `taper_range`,
+`droop_range`, `noise_range`, `jitter_range`) that gates the deformation
+to a normalised slice along its length axis. Vertices below `a` are
+unchanged, vertices inside `[a, b]` ramp in via smoothstep, and vertices
+above `b` get the full effect. Use it to bend the tip but not the base of
+a sword, twist only the upper half of a tower, or jitter just the top
+third of a column. Endpoints can be in either order; `[1.0, 0.5]` is
+normalised to `[0.5, 1.0]` automatically.
+
+```
+// Sword that bows toward its tip but keeps a straight grip.
+box "blade" (size=[0.06, 1.4, 0.01], bend_z=18, bend_z_range=[0.55, 1.0])
+// Tower that twists only above the cornice.
+cylinder "spire" (radius=0.4, height=4.0, twist_y=70, twist_y_range=[0.6, 1.0])
+// Cliff face that's smooth at the foot, jagged at the crown.
+box "cliff" (size=[3, 4, 1], jitter=0.4, jitter_range=[0.5, 1.0], seed=11)
+```
 Default tessellation auto-bumps (×2 segments / +1 icosphere subdivision) when
 a smooth deformer (`bend_*`, `twist_y`, `noise`, `droop`) is present so a
 bent cylinder doesn't read as faceted. Author's explicit `segments=`,
