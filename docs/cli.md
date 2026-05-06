@@ -21,6 +21,7 @@ same pipeline, see [`studio.md`](./studio.md).
 - [`repair`](#repair) — auto-fix validation errors with Gemini
 - [`textures`](#textures) — generate PBR textures with Gemini Flash Image
 - [`bench`](#bench) — run a prompt suite and report success rate
+- [`moghub`](#moghub) — browse, download, and publish to the MoGHub community
 - [Environment variables](#environment-variables)
 - [Exit codes](#exit-codes)
 
@@ -384,6 +385,172 @@ mogen bench [--prompts <file>] [common LLM flags]
 
 Used as a regression gate during development — the project targets ≥ 80%
 success rate on the bundled prompt suite.
+
+---
+
+## `moghub`
+
+Browse, download, like, comment on, and publish to MoGHub — the same
+community surface MoGen Studio's Community window exposes, driven from
+the terminal. Authentication reads `~/.mogen/moghub_auth.json` written
+by [`mogen auth moghub login`](#auth); read-only verbs
+(`discover`, `info`, `download`, `comments`) work without a session.
+The base URL is taken from the auth file (or `--server`); production
+defaults to `https://moghub.org`.
+
+Models are addressed by a `<user>/<slug>` reference (the leading `@` is
+optional), e.g. `krazyjakee/parametric-chair` or
+`@krazyjakee/parametric-chair`.
+
+Every verb accepts `--server <URL>` to target a self-hosted MoGHub
+instance instead of the URL stored in the on-disk session.
+
+```sh
+mogen moghub whoami                          # confirm the active session
+mogen moghub discover --query chair --kind model --tag furniture
+mogen moghub info     @user/cool-stool
+mogen moghub download @user/cool-stool --version 3 --out stool/
+mogen moghub like     @user/cool-stool
+mogen moghub comment  @user/cool-stool "great topology!"
+mogen moghub publish  examples/chair.mog --title "Parametric chair" --tags "chair,furniture"
+```
+
+### `moghub whoami`
+
+Print the signed-in user's handle and id. Exits non-zero with the
+message `anonymous` if no session is active.
+
+### `moghub discover`
+
+Walk the public discover feed.
+
+| flag | meaning |
+|---|---|
+| `--query`, `-q` | Free-text search. |
+| `--kind` | Filter by kind: `scene`, `model`, `module`, or `all`. |
+| `--tag` | Filter by a single tag. |
+| `--limit` / `--offset` | Pagination. |
+| `--json` | Emit the raw API response as JSON instead of the columnar summary. |
+
+The default human view prints one line per result:
+`@user/slug  title  [kind]  ♥like_count  #tag1 #tag2`. A featured pick,
+when the API returns one, is shown first prefixed with `★`.
+
+### `moghub info`
+
+Print full detail for a model: kind, license, like + fork counts, the
+latest version number, description, tags, and the file list (the entry
+`.mog` is marked with `→`).
+
+```sh
+mogen moghub info @user/cool-stool
+mogen moghub info @user/cool-stool --json
+```
+
+### `moghub download`
+
+Fetch a model's `.mog` files into a directory. Defaults to the latest
+version; pass `--version <N>` to pin one.
+
+| flag | meaning |
+|---|---|
+| `--version <N>` | Pin a specific version instead of the latest. |
+| `--out`, `-o` | Destination directory. Defaults to `<slug>-v<version>` in the working directory. |
+| `--entry-only` | Only fetch the entry `.mog`; skip imports and the thumbnail. |
+
+The thumbnail (`thumbnail.png`) is downloaded best-effort alongside the
+`.mog` files unless `--entry-only` is set; versions that were never
+thumbnailed silently skip it.
+
+### `moghub comments`
+
+List comments on a model. Soft-deleted comments are hidden. Body
+content can include MoGHub bbcode and is printed verbatim.
+
+### `moghub comment`
+
+Post a comment. Requires login. Body accepts MoGHub bbcode.
+
+```sh
+mogen moghub comment @user/cool-stool "great topology!"
+```
+
+### `moghub like` / `moghub unlike`
+
+Toggle a like on a model. Both verbs are idempotent and print the new
+`liked=` / `total=` state. Requires login.
+
+### `moghub notifications`
+
+List the signed-in user's notifications, newest first. Each line is
+prefixed with `•` for unread or a space for read entries. Pass
+`--mark-read` to mark every notification as read instead of just
+listing.
+
+### `moghub publish`
+
+Publish a `.mog` to MoGHub. Bundles the entry `.mog` plus every
+locally-imported `.mog` and every referenced PNG / JPG / JPEG / WebP
+texture into a single submission. Requires login.
+
+```sh
+mogen moghub publish <input.mog> [flags]
+```
+
+| flag | meaning |
+|---|---|
+| `--title` | Override `meta(name=…)` for this publish. Required if the source has no `meta(name=…)`. |
+| `--description` | Override `meta(description=…)`. |
+| `--tags "a,b,c"` | Comma-separated tag list. Lowercased and capped at 8. Overrides `meta(tags=[…])`. |
+| `--license` | SPDX-style license id. Defaults to `CC0-1.0`. |
+| `--visibility` | `public`, `unlisted`, or `private`. Defaults to `public`. |
+| `--message`, `-m` | Version changelog message. |
+| `--thumbnail` | Path to a PNG to attach as the model thumbnail. |
+| `--filename` | Override the published filename. Defaults to the input file's basename. |
+| `--module` | Publish as a registry-importable module. Mutually exclusive with `--scene`. |
+| `--scene` | Publish as a scene. Mutually exclusive with `--module`. |
+| `--new` | Force creation of a new model even if the source carries a prior MoGHub stamp. |
+| `--server` | Target a self-hosted MoGHub instance. |
+
+**Defaults from `meta(...)`.** When `--title`, `--description`, or
+`--tags` are omitted, `publish` reads the corresponding key from the
+source's top-level `meta(...)` block. Any locally-imported `.mog`
+(via `use "file.mog"`) is bundled automatically; their filenames must
+not collide with the entry filename.
+
+**Scene vs. module.** If neither `--module` nor `--scene` is passed,
+the source is published as a *module* when it has no `import`
+declarations and as a *scene* when it does. Pass an explicit flag to
+override.
+
+**Updates round-trip.** On success, `publish` writes three keys back
+into the source's `meta(...)` block:
+
+```mog
+meta (
+  ...
+  moghub_model_id = "…",
+  moghub_slug     = "…",
+  moghub_version  = "2",
+)
+```
+
+Subsequent `moghub publish` runs read those keys and append a new
+version (`moghub_version + 1`) to the same model. Pass `--new` to
+ignore the stamp and create a fresh model instead.
+
+**Texture bundling.** Every string attribute that ends in `.png`,
+`.jpg`, `.jpeg`, or `.webp` is resolved relative to the `.mog` it
+appears in (entry or import) and uploaded. All texture paths must
+resolve inside the entry's directory — references that point to a
+parent directory are rejected so the upload bundle stays
+self-contained.
+
+```sh
+mogen moghub publish examples/chair.mog --title "Parametric chair" --tags "chair,furniture"
+mogen moghub publish examples/chair.mog -m "added armrests"          # appends a new version
+mogen moghub publish examples/chair.mog --new --visibility unlisted  # forks off a fresh model
+```
 
 ---
 

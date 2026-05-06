@@ -18,6 +18,7 @@ mogen-llm = { workspace = true }
 mogen-moghub-client = { workspace = true, features = ["oauth"] }
 mogen-update = { workspace = true }
 anyhow = { workspace = true }
+base64 = "0.22"
 clap = { workspace = true }
 serde_json = { workspace = true }
 indicatif = "0.17"

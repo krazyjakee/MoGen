@@ -152,6 +152,7 @@ mogen modify   <file.mog> "make the legs taller"   # LLM edit of an existing .mo
 mogen animate  <file.mog> "spin the rotor at 120 rpm"  # LLM edit limited to animations
 mogen check    <file.mog>                          # validate a DSL file
 mogen inspect  <file.glb>                          # summarize a GLB
+mogen moghub   discover --query chair              # browse / download / publish to MoGHub
 ```
 
 `generate`, `modify`, and `animate` need an API key for the chosen provider. By

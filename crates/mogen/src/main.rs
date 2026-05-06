@@ -16,6 +16,10 @@ use commands::build::build;
 use commands::generate::{generate, GenerateArgs};
 use commands::inspect::{check, dump_scene, inspect, parse_cmd};
 use commands::modify::{modify, ModifyArgs};
+use commands::moghub::{
+    self as moghub_cmd, DiscoverArgs as MoghubDiscoverArgs, DownloadArgs as MoghubDownloadArgs,
+    PublishArgs as MoghubPublishArgs,
+};
 use commands::repair::{repair, RepairArgs};
 use commands::textures::textures_cmd;
 use commands::update::{update, UpdateArgs};
@@ -186,6 +190,145 @@ enum MoghubVerb {
     Logout,
 }
 
+/// Subcommands under `mogen moghub`. Read-only verbs work without a
+/// session; write verbs (`publish`, `comment`, `like`/`unlike`,
+/// `notifications`) require `mogen auth moghub login` to have stored
+/// a session token.
+#[derive(Subcommand)]
+enum MoghubCmd {
+    /// Print the signed-in user's handle and id. Exits non-zero if no
+    /// session is active.
+    Whoami {
+        #[arg(long)]
+        server: Option<String>,
+    },
+    /// Browse the public discover feed.
+    Discover {
+        /// Free-text search.
+        #[arg(short, long)]
+        query: Option<String>,
+        /// Filter by kind: `scene`, `model`, `module`, or `all`.
+        #[arg(long)]
+        kind: Option<String>,
+        /// Filter by tag.
+        #[arg(long)]
+        tag: Option<String>,
+        #[arg(long)]
+        limit: Option<u32>,
+        #[arg(long)]
+        offset: Option<u32>,
+        /// Emit the raw API response as JSON.
+        #[arg(long)]
+        json: bool,
+        #[arg(long)]
+        server: Option<String>,
+    },
+    /// Print full detail for a model. Reference is `<user>/<slug>`
+    /// (or `@<user>/<slug>`).
+    Info {
+        reference: String,
+        #[arg(long)]
+        json: bool,
+        #[arg(long)]
+        server: Option<String>,
+    },
+    /// Download a model's `.mog` files into a directory. Defaults to
+    /// the latest version unless `--version` is given.
+    Download {
+        reference: String,
+        #[arg(long)]
+        version: Option<i32>,
+        /// Destination directory. Defaults to `<slug>-v<version>` in
+        /// the working directory.
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+        /// Only fetch the entry `.mog`; skip imports and the
+        /// thumbnail.
+        #[arg(long)]
+        entry_only: bool,
+        #[arg(long)]
+        server: Option<String>,
+    },
+    /// List comments on a model.
+    Comments {
+        reference: String,
+        #[arg(long)]
+        server: Option<String>,
+    },
+    /// Post a comment. Body accepts MoGHub bbcode.
+    Comment {
+        reference: String,
+        body: String,
+        #[arg(long)]
+        server: Option<String>,
+    },
+    /// Like a model. Idempotent.
+    Like {
+        reference: String,
+        #[arg(long)]
+        server: Option<String>,
+    },
+    /// Remove a previously-set like.
+    Unlike {
+        reference: String,
+        #[arg(long)]
+        server: Option<String>,
+    },
+    /// List the signed-in user's notifications.
+    Notifications {
+        /// Mark every notification as read instead of just listing.
+        #[arg(long)]
+        mark_read: bool,
+        #[arg(long)]
+        server: Option<String>,
+    },
+    /// Publish a `.mog` file to MoGHub. Bundles every locally
+    /// imported `.mog` plus referenced PNG/JPG/JPEG/WebP textures.
+    /// Re-publishing a file that already carries a
+    /// `meta(moghub_model_id, moghub_slug, moghub_version)` stamp
+    /// appends a new version to that model unless `--new` is given.
+    Publish {
+        input: PathBuf,
+        /// Override `meta(name=…)` for this publish.
+        #[arg(long)]
+        title: Option<String>,
+        /// Override `meta(description=…)`.
+        #[arg(long)]
+        description: Option<String>,
+        /// Comma-separated tags. Overrides `meta(tags=[…])`.
+        #[arg(long)]
+        tags: Option<String>,
+        /// SPDX-style license id. Defaults to `CC0-1.0`.
+        #[arg(long)]
+        license: Option<String>,
+        /// `public`, `unlisted`, or `private`. Defaults to `public`.
+        #[arg(long)]
+        visibility: Option<String>,
+        /// Version changelog message.
+        #[arg(short, long)]
+        message: Option<String>,
+        /// Path to a PNG to attach as the model thumbnail.
+        #[arg(long)]
+        thumbnail: Option<PathBuf>,
+        /// Override the published filename. Defaults to the input
+        /// file's basename.
+        #[arg(long)]
+        filename: Option<String>,
+        /// Publish as a registry-importable module.
+        #[arg(long, conflicts_with = "scene")]
+        module: bool,
+        /// Publish as a scene (default when the file has imports).
+        #[arg(long, conflicts_with = "module")]
+        scene: bool,
+        /// Force creation of a new model even if `meta()` carries a
+        /// prior MoGHub stamp.
+        #[arg(long)]
+        new: bool,
+        #[arg(long)]
+        server: Option<String>,
+    },
+}
+
 impl From<AuthArg> for AuthCmd {
     fn from(a: AuthArg) -> Self {
         match a {
@@ -238,6 +381,89 @@ fn convert_moghub(verb: MoghubVerb) -> AuthCmd {
     }
 }
 
+fn dispatch_moghub(cmd: MoghubCmd) -> anyhow::Result<()> {
+    match cmd {
+        MoghubCmd::Whoami { server } => moghub_cmd::whoami(server),
+        MoghubCmd::Discover {
+            query,
+            kind,
+            tag,
+            limit,
+            offset,
+            json,
+            server,
+        } => moghub_cmd::discover(MoghubDiscoverArgs {
+            query,
+            kind,
+            tag,
+            limit,
+            offset,
+            json,
+            server,
+        }),
+        MoghubCmd::Info { reference, json, server } => moghub_cmd::info(reference, json, server),
+        MoghubCmd::Download {
+            reference,
+            version,
+            out,
+            entry_only,
+            server,
+        } => moghub_cmd::download(MoghubDownloadArgs {
+            reference,
+            version,
+            out,
+            entry_only,
+            server,
+        }),
+        MoghubCmd::Comments { reference, server } => moghub_cmd::comments(reference, server),
+        MoghubCmd::Comment { reference, body, server } => {
+            moghub_cmd::comment(reference, body, server)
+        }
+        MoghubCmd::Like { reference, server } => moghub_cmd::like(reference, false, server),
+        MoghubCmd::Unlike { reference, server } => moghub_cmd::like(reference, true, server),
+        MoghubCmd::Notifications { mark_read, server } => {
+            moghub_cmd::notifications(mark_read, server)
+        }
+        MoghubCmd::Publish {
+            input,
+            title,
+            description,
+            tags,
+            license,
+            visibility,
+            message,
+            thumbnail,
+            filename,
+            module,
+            scene,
+            new,
+            server,
+        } => {
+            let publish_as_module = if module {
+                Some(true)
+            } else if scene {
+                Some(false)
+            } else {
+                None
+            };
+            moghub_cmd::publish(MoghubPublishArgs {
+                input,
+                title,
+                description,
+                tags,
+                license,
+                visibility,
+                message,
+                thumbnail,
+                filename,
+                publish_as_module,
+                publish_as_new: new,
+                server,
+            })
+        }
+    }
+}
+
 #[derive(Subcommand)]
 enum Cmd {
     /// Sign in / out for every credential `mogen` persists under
@@ -254,6 +480,14 @@ enum Cmd {
     Auth {
         #[command(subcommand)]
         cmd: AuthArg,
+    },
+    /// Browse, download, like, comment on, and publish to MoGHub —
+    /// the same surface MoGen Studio's Community window exposes,
+    /// driven from the terminal. Reads the session token written by
+    /// `mogen auth moghub login`.
+    Moghub {
+        #[command(subcommand)]
+        cmd: MoghubCmd,
     },
     /// Compile a DSL file to GLB.
     Build {
@@ -615,6 +849,7 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.cmd {
         Cmd::Auth { cmd } => auth_dispatch(cmd.into()),
+        Cmd::Moghub { cmd } => dispatch_moghub(cmd),
         Cmd::Build { input, out } => {
             let out = out.unwrap_or_else(|| input.with_extension("glb"));
             build(input, out)
