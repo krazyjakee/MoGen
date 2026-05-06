@@ -122,6 +122,48 @@ impl Drop for LodOriginScaleGuard {
     }
 }
 
+/// RAII guard that multiplies `LOD_SCALE` by a per-node `lod=N` attribute for
+/// the duration of one `lower_into` call. Lets authors mark hero parts
+/// (`lod=2.0`) and background parts (`lod=0.5`) without touching the
+/// file-global `lod_scale (value=N)`.
+///
+/// The multiplier compounds with the active scale — a `lod=2.0` on a
+/// subtree inside a file with a top-level `lod_scale (value=0.5)` ends up
+/// at an effective scale of `1.0`, matching what an author would expect
+/// from a "double the detail of this part" override. Non-positive values
+/// are ignored (treated as no-op) so a malformed override can't silently
+/// destroy every mesh in the subtree.
+pub(super) enum LodMultiplierGuard {
+    /// Active multiplier applied; the previous LOD_SCALE is restored on drop.
+    Active(f32),
+    /// Either no `lod` attr present or its value was non-positive — no swap.
+    Inert,
+}
+
+impl LodMultiplierGuard {
+    pub(super) fn for_node(node: &Node) -> Self {
+        let Some(mult) = node.attr_number("lod") else {
+            return Self::Inert;
+        };
+        if !(mult > 0.0) {
+            return Self::Inert;
+        }
+        let prev = LOD_SCALE.with(|s| {
+            let cur = s.get();
+            s.replace(cur * mult)
+        });
+        Self::Active(prev)
+    }
+}
+
+impl Drop for LodMultiplierGuard {
+    fn drop(&mut self) {
+        if let Self::Active(prev) = *self {
+            LOD_SCALE.with(|s| s.set(prev));
+        }
+    }
+}
+
 /// Scale a default segment/ring count by the active LOD multiplier.
 /// Clamped to a sensible floor so circles still close.
 pub(super) fn scaled_default(default: u32, min: u32) -> u32 {

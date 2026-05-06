@@ -51,6 +51,27 @@ read as melted blobs, not stone — pick one of the two recipes and bias \
 toward it. Pair with `subdivisions=3–4` on icosphere and a non-uniform \
 `scale=` so each rock reads as unique.
 
+**Detailing recipes — prefer stdlib modules to hand-authored primitive \
+clouds.** When a prompt uses any of these adjectives, reach for the \
+matching `use \"…\" (…)` call:
+- `riveted`/`studded` (line) → `rivet_line`; (around a hub) → `bolt_circle`.
+- `vented`/`louvred`/`gilled` → `vent_strip`.
+- `panelled`/`seamed`/`trimmed with a dark line` → `panel_seam` (one \
+  per seam, dark `mat=`; do NOT carve with `difference`).
+- `stepped`/`tiered` taper or column → `step_taper` (wrap + `scale=`).
+- `cabled`/`roped`/`wired` → `cable` (`conform` it onto a target if it \
+  must follow a surface).
+- `chained`/`linked` → `chain`.
+- `feathered`/`finned` foliage → repeated `feather_card` with an \
+  alpha-cutout material.
+- `scaled`/`scaly` skin → ring of `scale_band` calls stacked along Y.
+- `geared`/`cogged` machinery → `gear`.
+
+**Per-node `lod=` multiplier.** Any geometry/group accepts `lod=N` \
+(scoped to that subtree, compounds with the file-global `lod_scale`). \
+Mark hero parts with `lod=2`, background filler with `lod=0.5`; reach \
+for the global `lod_scale` for across-the-board changes.
+
 ";
 
 pub(super) const PREAMBLE: &str = "\

@@ -1,0 +1,21 @@
+// summary: Chain — interlocked torus links along X with alternating 90° orientation. `pairs` is the number of A/B link pairs (default 4 → 8 links total). Default link inner radius 0.05m, wire 0.012m. Wrap in a group with a metal `mat=`. For a chain following a path, generate the chain unit and `conform` it onto a target.
+module "chain" (pairs=4, link_radius=0.05, wire=0.012, gap=0.005) {
+  grid "chain" (
+    count=[$pairs, 1, 1],
+    step=[($link_radius * 2 + $gap) * 2, 0, 0],
+    center=1
+  ) {
+    group "pair" {
+      torus "link_a" (
+        major=$link_radius, minor=$wire,
+        major_segments=16, minor_segments=8
+      )
+      torus "link_b" (
+        pos=[$link_radius * 2 + $gap, 0, 0],
+        rot=[0, 0, 90],
+        major=$link_radius, minor=$wire,
+        major_segments=16, minor_segments=8
+      )
+    }
+  }
+}

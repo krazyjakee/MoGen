@@ -49,6 +49,9 @@ pub const GEOMETRY_COMMON_ATTRS: &[&str] = &[
     // modifiers (`noise`, `jitter`) are seeded by `seed`.
     "seed", "noise", "jitter", "bend_x", "bend_y", "bend_z", "twist_y",
     "taper", "droop", "faceted",
+    // Per-node LOD multiplier — compounds with the file-global `lod_scale`
+    // for the duration of this node and its subtree (see lod.rs guards).
+    "lod",
 ];
 
 /// Transform-only subset. Used by `skeleton` (places the whole rig) and `bone`
@@ -240,7 +243,8 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         | (_, "taper")
         | (_, "droop")
         | (_, "faceted")
-        | (_, "cast_shadow") => "number",
+        | (_, "cast_shadow")
+        | (_, "lod") => "number",
         ("box", "size")
         | ("plane", "size")
         | ("quad", "size")

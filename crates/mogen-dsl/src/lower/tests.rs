@@ -893,6 +893,56 @@ fn lod_scale_default_keeps_existing_vertex_counts() {
 }
 
 #[test]
+fn per_node_lod_doubles_segment_count_on_marked_subtree() {
+    // `lod=2.0` on a single primitive doubles its default segment count
+    // (matches the behaviour of `lod_scale (value=2)` but scoped to that
+    // subtree only — see lod.rs::LodMultiplierGuard).
+    let baseline = lower_src(r#"scene { cylinder "c" (radius=0.5, height=1) }"#);
+    let scaled = lower_src(r#"scene { cylinder "c" (radius=0.5, height=1, lod=2) }"#);
+    let base_verts = find_mesh_node(&baseline, "c").mesh.as_ref().unwrap().positions.len();
+    let scaled_verts = find_mesh_node(&scaled, "c").mesh.as_ref().unwrap().positions.len();
+    assert!(
+        scaled_verts > base_verts,
+        "per-node lod=2 should increase cylinder vert count (base={base_verts}, scaled={scaled_verts})"
+    );
+}
+
+#[test]
+fn per_node_lod_does_not_leak_to_siblings() {
+    // The multiplier guard is RAII-scoped to the marked subtree. A `lod=2`
+    // group must not boost a sibling that lives outside it.
+    let g = lower_src(
+        r#"scene {
+            group "hi" (lod=2) { sphere "s" (radius=0.5) }
+            sphere "lo" (radius=0.5)
+        }"#,
+    );
+    let hi = find_mesh_node(&g, "s").mesh.as_ref().unwrap().positions.len();
+    let lo = find_mesh_node(&g, "lo").mesh.as_ref().unwrap().positions.len();
+    let baseline = lower_src(r#"scene { sphere "b" (radius=0.5) }"#);
+    let base = find_mesh_node(&baseline, "b").mesh.as_ref().unwrap().positions.len();
+    assert!(hi > base, "lod=2 group should boost child sphere (hi={hi}, base={base})");
+    assert_eq!(lo, base, "sibling outside the lod=2 group must use baseline detail");
+}
+
+#[test]
+fn per_node_lod_compounds_with_global_lod_scale() {
+    // `lod=2.0` on top of `lod_scale (value=0.5)` cancels out — effective
+    // multiplier is 1.0, so the marked subtree returns to the default
+    // vertex count even though the file's global setting is 0.5.
+    let baseline = lower_src(r#"scene { sphere "s" (radius=0.5) }"#);
+    let compound = lower_src(
+        r#"lod_scale (value=0.5) scene { sphere "s" (radius=0.5, lod=2) }"#,
+    );
+    let base_verts = find_mesh_node(&baseline, "s").mesh.as_ref().unwrap().positions.len();
+    let compound_verts = find_mesh_node(&compound, "s").mesh.as_ref().unwrap().positions.len();
+    assert_eq!(
+        base_verts, compound_verts,
+        "lod=2 should cancel a global lod_scale=0.5 (base={base_verts}, compound={compound_verts})"
+    );
+}
+
+#[test]
 fn light_directional_lowers_with_color_and_intensity() {
     let g = lower_src(
         r#"scene { light "sun" (kind=directional, color=[1, 0.95, 0.85], intensity=3) }"#,

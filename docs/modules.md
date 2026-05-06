@@ -321,3 +321,141 @@ No parameters. **Connectors:** `base` (trunk end), `tip`.
 For a fully procedural recursive tree (multiple levels of splits and
 auto-emitted leaves), use the `branch` *primitive* instead — see
 [`dsl.md` §Branch](./dsl.md#branch).
+
+---
+
+### Detailing modules
+
+Small parametric details for hard-surface, organic, and decorative parts.
+Each one collapses a frequently hand-authored "cloud of primitives" pattern
+into a single `use` call so the LLM can spend its token budget on the
+scene structure instead of re-deriving the same array of cylinders or
+cards.
+
+All ten modules expand into geometry the caller wraps with a `mat=`
+(usually via a parent `group`) — none of them carry a default material so
+the same module composes equally well into a steel rivet line, a brass
+bolt circle, or a copper vent strip.
+
+#### `bolt_circle`
+
+Ring of cylindrical bolt heads arranged around +Y. Heads sit on top of
+`y=0` (`anchor=bottom`) so the whole ring drops onto a flat host face.
+
+| parameter | default | meaning |
+|---|---|---|
+| `count` | `6` | number of bolt heads in the ring |
+| `ring_radius` | `0.1` | distance from origin to each head |
+| `head_radius` | `0.012` | radius of one cylindrical head |
+| `head_height` | `0.008` | head thickness along +Y |
+
+#### `vent_strip`
+
+Vertical stack of thin parallel slats (cooling vents, gills, louvers).
+Slats run along X; the stack grows along Y.
+
+| parameter | default | meaning |
+|---|---|---|
+| `count` | `6` | number of slats |
+| `length` | `0.4` | slat length along X |
+| `slat_thickness` | `0.005` | slat thickness along Y |
+| `slat_height` | `0.05` | slat depth along Z |
+| `gap` | `0.012` | spacing between slats |
+
+#### `panel_seam`
+
+Thin dark line for hard-surface panel joins (car body seams, robot armor
+splits, console trim). Sits with its top face at `y=0` (`anchor=top`) so
+it lies flush on the +Y face of a host.
+
+| parameter | default | meaning |
+|---|---|---|
+| `length` | `0.5` | seam length along X |
+| `width` | `0.002` | seam width along Z |
+| `depth` | `0.0005` | seam depth into the host |
+
+#### `rivet_line`
+
+Evenly spaced row of low hemispherical rivet heads along X. Each rivet's
+flat base sits on `y=0`, dome up to `y=+radius`.
+
+| parameter | default | meaning |
+|---|---|---|
+| `count` | `8` | number of rivets |
+| `length` | `0.4` | total span end-to-end along X |
+| `radius` | `0.006` | rivet head radius |
+
+#### `step_taper`
+
+Lathed column with four visible steps, base radius `0.5` → top radius
+`0.1` across height `1.0`. Use for rocket nozzles, tapered chimneys,
+segmented pillars. Wrap in a group + `scale=` (or per-axis `w/h/d`) to
+resize.
+
+No parameters — the profile is unitised so a single `scale` propagates
+uniformly.
+
+#### `cable`
+
+Thin spline_tube spanning `1m` along X with a gentle gravity dip at the
+centre. Use for power cables, ropes, hoses, wires.
+
+| parameter | default | meaning |
+|---|---|---|
+| `radius` | `0.008` | tube radius |
+
+**Connectors:** `start` (`-X` end), `end` (`+X` end). For a cable that
+runs between two specific anchor points, place this module via
+`pos=`/`scale=` or run `conform` to drape it along a target surface.
+
+#### `chain`
+
+Interlocked torus links along X with alternating 90° orientation. `pairs`
+is the number of A/B link pairs (default 4 → 8 links total).
+
+| parameter | default | meaning |
+|---|---|---|
+| `pairs` | `4` | number of A/B link pairs along X |
+| `link_radius` | `0.05` | inner radius of one torus link |
+| `wire` | `0.012` | tube radius of the link wire |
+| `gap` | `0.005` | spacing between links |
+
+#### `feather_card`
+
+Single curved-plane cupped along its length, like a feather or fish-fin
+ray. Pair with an alpha-cutout feather/fin material (`alpha_mode="mask",
+double_sided=1`).
+
+| parameter | default | meaning |
+|---|---|---|
+| `length` | `0.15` | feather length along Z |
+| `width` | `0.04` | feather width along X |
+
+**Connector:** `stem` at the base.
+
+#### `scale_band`
+
+Wraparound array of curved-plane scales for snake / fish / dragon skin.
+`count` scales encircle Y at `ring_radius`, each cupped outward (+X).
+Stack multiple bands along Y for a full body.
+
+| parameter | default | meaning |
+|---|---|---|
+| `count` | `12` | number of scales in the ring |
+| `ring_radius` | `0.06` | radius of the scale ring |
+| `scale_w` | `0.04` | scale width |
+| `scale_h` | `0.06` | scale height |
+
+#### `gear`
+
+Coarse Phase-A gear: cylindrical hub plus an array of rectangular teeth.
+Approximation only; once `extrude` (Phase B) lands, prefer it for proper
+involute gears.
+
+| parameter | default | meaning |
+|---|---|---|
+| `teeth` | `16` | number of teeth around the hub |
+| `hub_radius` | `0.1` | radius of the central disc |
+| `tooth_height` | `0.014` | radial extent of one tooth |
+| `tooth_width` | `0.014` | tangential width of one tooth |
+| `thickness` | `0.02` | gear thickness along Y |
