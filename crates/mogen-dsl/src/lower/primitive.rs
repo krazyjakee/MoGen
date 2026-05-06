@@ -4,11 +4,11 @@ use glam::{Mat4, Vec3};
 use mogen_core::{Mesh, UvMode};
 use mogen_geom::{
     box_mesh, capsule_mesh, clean_csg_output, cone_mesh, curved_plane_mesh, cylinder_mesh,
-    difference_many, disc_mesh, ellipsoid_mesh, frustum_mesh, half_cylinder_mesh, hemisphere_mesh,
-    icosphere_mesh, lathe_mesh, leaf_card_mesh, mesh_from_glb_bytes, plane_mesh, prism_mesh,
-    pyramid_mesh, quad_mesh, read_glb_bytes, rounded_box_mesh, sphere_mesh, spline_ribbon_mesh,
-    spline_tube_mesh, superellipsoid_mesh, torus_arc_mesh, torus_mesh, transform_mesh, tube_mesh,
-    wedge_mesh,
+    difference_many, disc_mesh, ellipsoid_mesh, extrude_mesh, frustum_mesh, half_cylinder_mesh,
+    hemisphere_mesh, icosphere_mesh, lathe_mesh, leaf_card_mesh, loft_mesh, mesh_from_glb_bytes,
+    plane_mesh, prism_mesh, pyramid_mesh, quad_mesh, read_glb_bytes, rounded_box_mesh, sphere_mesh,
+    spline_ribbon_mesh, spline_tube_mesh, superellipsoid_mesh, sweep_mesh, torus_arc_mesh,
+    torus_mesh, transform_mesh, tube_mesh, wedge_mesh, SweepModulation,
 };
 
 use crate::ast::Node;
@@ -291,6 +291,98 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
             // Author writes degrees (per the prompt), the mesh builder takes radians.
             let twist = node.attr_number("twist").unwrap_or(0.0).to_radians();
             spline_ribbon_mesh(&points, &widths, samples, twist, uv_mode)
+        }
+        "extrude" => {
+            let outer = node.attr_list_pair("points").unwrap_or_else(|| {
+                vec![[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]]
+            });
+            // Single optional inner contour (CW). Multi-hole support is
+            // gated on a future grammar change — three-level nested lists
+            // can't be expressed in the parser today, so authoring two or
+            // more holes today means stacking two `extrude` calls or
+            // following up with a `difference`.
+            let hole = node.attr_list_pair("hole").unwrap_or_default();
+            let holes: Vec<Vec<[f32; 2]>> = if hole.is_empty() {
+                Vec::new()
+            } else {
+                vec![hole]
+            };
+            let height = node.attr_number("height").unwrap_or(1.0);
+            let taper = node.attr_number("taper").unwrap_or(1.0);
+            let twist = node.attr_number("twist").unwrap_or(0.0).to_radians();
+            let caps = node.attr_number("caps").map(|n| n != 0.0).unwrap_or(true);
+            extrude_mesh(&outer, &holes, height, taper, twist, caps, uv_mode)
+        }
+        "sweep" => {
+            let profile = node.attr_list_pair("profile").unwrap_or_else(|| {
+                vec![[-0.05, -0.05], [0.05, -0.05], [0.05, 0.05], [-0.05, 0.05]]
+            });
+            let path = node
+                .attr_list_vec3("path")
+                .unwrap_or_else(|| vec![[-0.5, 0.0, 0.0], [0.5, 0.0, 0.0]]);
+            let samples = node
+                .attr_number("samples")
+                .map(|n| n as u32)
+                .unwrap_or_else(|| seg_default(8, 2));
+            let twist = node.attr_number("twist").unwrap_or(0.0).to_radians();
+            // Author-supplied per-control-point modulation lists. `roll` is
+            // in degrees per the prompt, converted to radians here so the
+            // kernel can stay in radians throughout.
+            let roll: Vec<f32> = node
+                .attr_list("roll")
+                .map(|s| s.iter().map(|d| d.to_radians()).collect())
+                .unwrap_or_default();
+            let scale: Vec<f32> = node.attr_list("scale_along")
+                .map(|s| s.to_vec())
+                .unwrap_or_default();
+            let modulation = SweepModulation { roll, scale };
+            let caps = node.attr_number("caps").map(|n| n != 0.0).unwrap_or(true);
+            sweep_mesh(&profile, &path, samples, twist, &modulation, caps, uv_mode)
+        }
+        "loft" => {
+            // Sections are flat-packed into one `points` list, in section
+            // order. `heights` lists the Y of each section. The number of
+            // points must be a multiple of `heights.len()` and the per-
+            // section vertex count must be ≥ 3.
+            let all_points = node.attr_list_pair("points").unwrap_or_default();
+            let heights: Vec<f32> = match node.attr("heights") {
+                Some(crate::ast::Value::List(v)) => v.to_vec(),
+                // 3-element heights parse as Vec3 (grammar prefers vec3
+                // over list when arity matches), so honour that shape too.
+                Some(crate::ast::Value::Vec3(v)) => v.to_vec(),
+                Some(crate::ast::Value::Number(n)) => vec![*n],
+                _ => Vec::new(),
+            };
+            if heights.len() < 2 {
+                return Some(Err(anyhow!(
+                    "`loft` requires at least 2 entries in `heights=`, got {}",
+                    heights.len(),
+                )));
+            }
+            if all_points.is_empty() || all_points.len() % heights.len() != 0 {
+                return Some(Err(anyhow!(
+                    "`loft` `points=` length ({}) must be a non-zero multiple of \
+                     `heights=` length ({}); pack each section's vertices in order \
+                     and they must all share the same vertex count",
+                    all_points.len(),
+                    heights.len(),
+                )));
+            }
+            let per_section = all_points.len() / heights.len();
+            if per_section < 3 {
+                return Some(Err(anyhow!(
+                    "`loft` sections must have at least 3 vertices, got {per_section}"
+                )));
+            }
+            let sections: Vec<Vec<[f32; 2]>> = (0..heights.len())
+                .map(|i| all_points[i * per_section..(i + 1) * per_section].to_vec())
+                .collect();
+            let samples = node
+                .attr_number("samples")
+                .map(|n| n as u32)
+                .unwrap_or_else(|| seg_default(4, 1));
+            let caps = node.attr_number("caps").map(|n| n != 0.0).unwrap_or(true);
+            return Some(loft_mesh(&sections, &heights, samples, caps, uv_mode));
         }
         "mesh" => {
             let src = match node.attr_string("src") {

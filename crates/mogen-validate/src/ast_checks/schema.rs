@@ -13,6 +13,7 @@ pub const KNOWN_KINDS: &[&str] = &[
     "prism", "pyramid", "disc", "icosphere", "rounded_box",
     "wedge", "frustum", "tube", "hemisphere", "half_cylinder", "torus_arc", "ellipsoid",
     "superellipsoid", "curved_plane", "lathe", "spline_tube", "spline_ribbon", "leaf_card", "mesh",
+    "extrude", "sweep", "loft",
     "slab", "post", "panel", "wall",
     "branch",
     "decal",
@@ -139,6 +140,11 @@ pub fn attrs_for_kind(kind: &str) -> &'static [&'static str] {
         ],
         "spline_ribbon" => &["points", "width", "widths", "samples", "twist"],
         "leaf_card" => &["size", "cards"],
+        "extrude" => &["points", "hole", "height", "taper", "twist", "caps"],
+        "sweep" => &[
+            "profile", "path", "samples", "twist", "roll", "scale_along", "caps",
+        ],
+        "loft" => &["points", "heights", "samples", "caps"],
         "mesh" => &["src"],
         "branch" => &[
             "length", "radius", "depth", "splits", "length_falloff", "radius_falloff",
@@ -269,6 +275,17 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         ("spline_tube", "radii") => "list",
         ("spline_ribbon", "points") => "list",
         ("spline_ribbon", "widths") => "list",
+        ("extrude", "points") => "list",
+        ("extrude", "hole") => "list",
+        ("extrude", "height") | ("extrude", "taper") | ("extrude", "twist") => "number",
+        ("extrude", "caps") => "number",
+        ("sweep", "profile") => "list",
+        ("sweep", "path") => "list",
+        ("sweep", "samples") | ("sweep", "twist") | ("sweep", "caps") => "number",
+        ("sweep", "roll") | ("sweep", "scale_along") => "list",
+        ("loft", "points") => "list",
+        ("loft", "heights") => "list of number",
+        ("loft", "samples") | ("loft", "caps") => "number",
         ("leaf_card", "size") => "number or vec3",
         ("leaf_card", "cards") => "number",
         ("decal", "size") => "list",
@@ -449,6 +466,12 @@ pub(super) fn value_matches(v: &Value, expected: &str) -> bool {
         (Value::String(_), "string") => true,
         (Value::Ident(_), "string") => true,
         (Value::List(_) | Value::ListExpr(_) | Value::ListVec3(_) | Value::ListPair(_) | Value::ListQuad(_), "list") => true,
+        // `list of number` attrs accept Vec3 as a 3-number list (the
+        // grammar prefers `vec3` over `list` for exactly 3 components, so
+        // `loft.heights=[0, 1, 2]` enters the type system as a Vec3 even
+        // though the schema declares it a list).
+        (Value::List(_) | Value::ListExpr(_), "list of number") => true,
+        (Value::Vec3(_) | Value::Vec3Expr(_), "list of number") => true,
         (Value::ListString(_), "list of string") => true,
         (Value::String(_) | Value::Ident(_), "list of string") => true,
         // Deferred expressions: accept as their natural type; evaluation errors
