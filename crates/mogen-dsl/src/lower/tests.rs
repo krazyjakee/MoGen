@@ -1023,6 +1023,35 @@ fn loft_rejects_inconsistent_section_lengths() {
     let ast = crate::parser::parse(src).unwrap();
     assert!(lower(&ast).is_err(), "loft must reject mismatched section lengths");
 }
+
+#[test]
+fn loft_rejects_single_section() {
+    // heights with fewer than 2 entries leaves nothing to interpolate
+    // between — must error rather than emit a degenerate mesh.
+    let src = r#"scene {
+        loft "bad" (
+            points=[[0, 0], [1, 0], [1, 1], [0, 1]],
+            heights=[0.0]
+        )
+    }"#;
+    let ast = crate::parser::parse(src).unwrap();
+    assert!(lower(&ast).is_err(), "loft must reject heights.len() < 2");
+}
+
+#[test]
+fn loft_rejects_section_with_fewer_than_three_vertices() {
+    // 2 sections × 2 verts per section → per_section=2 < 3 (a loft section
+    // needs to be a closed polygon with at least 3 vertices).
+    let src = r#"scene {
+        loft "bad" (
+            points=[[0, 0], [1, 0], [0, 1], [1, 1]],
+            heights=[0.0, 1.0]
+        )
+    }"#;
+    let ast = crate::parser::parse(src).unwrap();
+    assert!(lower(&ast).is_err(), "loft must reject per-section vertex count < 3");
+}
+
 #[test]
 fn light_directional_lowers_with_color_and_intensity() {
     let g = lower_src(
@@ -1507,6 +1536,36 @@ fn for_loop_step_zero_errors() {
 }
 
 #[test]
+fn for_loop_negative_step_iterates_downward() {
+    // Mirrors Python's `range(5, 1, -1)` → 5, 4, 3, 2 (open on the bound).
+    let g = lower_src(
+        r#"scene {
+            for (var="i", from=5, to=1, step=-1) {
+                box "down_$i" (size=[0.1, 0.1, 0.1])
+            }
+        }"#,
+    );
+    let names: Vec<_> = g.nodes.iter().filter(|n| n.name.starts_with("down_")).map(|n| n.name.clone()).collect();
+    assert_eq!(names.len(), 4, "from=5, to=1, step=-1 should emit 5,4,3,2");
+    assert!(names.contains(&"down_5".to_string()));
+    assert!(names.contains(&"down_2".to_string()));
+    assert!(!names.contains(&"down_1".to_string()), "to is exclusive");
+}
+
+#[test]
+fn for_loop_iteration_cap_protects_against_runaway_input() {
+    // A `for` loop with a million iterations would grind the host. The
+    // expand-time cap turns it into a friendly error instead.
+    let ast = parse(r#"scene { for (var="i", from=0, to=1000000) { box "b_$i" () } }"#).expect("parse");
+    let err = lower(&ast).expect_err("iteration cap must fire");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("iteration cap") || msg.contains("cap of"),
+        "expected cap error, got: {msg}"
+    );
+}
+
+#[test]
 fn if_truthy_cond_emits_then_branch() {
     let g = lower_src(
         r#"scene {
@@ -1688,13 +1747,14 @@ fn wave_deformer_displaces_dense_plane() {
 }
 
 #[test]
-fn wave_axis_rejects_invalid_string() {
-    // `wave_axis="diagonal"` is rejected by the schema's enum check at the
-    // attr_type layer (string but not in the allowed set). The validator
-    // emits a warning, not a hard error, because attribute strings are
-    // open in spirit. Lowering still accepts it (parse_axis returns None
-    // and the deformer falls back to X). End-to-end this means: it builds,
-    // it doesn't panic, and the validator surfaces the typo.
+fn wave_axis_string_attribute_lowers() {
+    // `wave_axis="x"` is the canonical valid case — confirms the deformer
+    // attribute is wired through the lowering path. The invalid-string
+    // case (e.g. `wave_axis="diagonal"`) is currently a validator warning
+    // rather than a lowering error: the deformer's `parse_axis` returns
+    // `None` and lowering falls back to X, so a typo builds and ships.
+    // If a future change tightens that to a hard error, add a separate
+    // test asserting `lower_src(...invalid...).is_err()` here.
     let g = lower_src(
         r#"scene { curved_plane "ok" (size=[2, 1], segments_u=16, segments_v=4,
             wave=0.05, wave_axis="x") }"#,

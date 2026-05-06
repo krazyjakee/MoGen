@@ -420,11 +420,13 @@ mod tests {
         // (`coil`/`heightfield`/`bezier_patch`/`metaball`/`wave`) added
         // KINDS_REFERENCE rows + allowlist entries totalling ~250 bytes; the
         // organic-shape stdlib wrappers (`spring`/`terrain_patch`/`blob`/
-        // `water_patch`) added ~530 bytes of Detailing-recipe entries.
+        // `water_patch`) added ~530 bytes of Detailing-recipe entries; PR
+        // review follow-up filled in `coil`/`heightfield`/`bezier_patch`/
+        // `metaball` KINDS_REFERENCE rows for direct LLM authoring (~770 B).
         let s = cacheable_block();
         assert!(
-            s.len() < 29_500,
-            "cacheable_block grew to {} bytes — cap is 29_500. Reference \
+            s.len() < 31_000,
+            "cacheable_block grew to {} bytes — cap is 31_000. Reference \
              material that grows without bound should be fetched on demand, \
              not pinned in the cache.",
             s.len()
