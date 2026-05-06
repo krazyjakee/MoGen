@@ -390,13 +390,14 @@ mod tests {
         // (walking + armored knight) added another ~1.5 KB net.
         //
         // After the cache split, grammar/kinds/allowlist (~17 KB) move to
-        // `cacheable_block()` and don't count against this budget. Today's
-        // inline portion sits around 22 KB; 25_000 leaves ~3 KB headroom
-        // for one more fewshot or a tightening pass.
+        // `cacheable_block()` and don't count against this budget. Two new
+        // fewshots demonstrating `extrude` (I-beam) and `loft` (boat hull)
+        // added ~1 KB to the inline portion; cap raised from 25_000 →
+        // 26_500 to keep headroom for one more fewshot.
         let s = inline_block(&StdlibIndex::default());
         assert!(
-            s.len() < 25_000,
-            "inline_block grew to {} bytes — cap is 25_000. Either tighten an \
+            s.len() < 26_500,
+            "inline_block grew to {} bytes — cap is 26_500. Either tighten an \
              existing section, drop a fewshot, or move a stable section into \
              cacheable_block.",
             s.len()
@@ -411,11 +412,11 @@ mod tests {
         // sneaking in. The deformation-modifier paragraph in
         // `ALLOWLIST_INTRO` added ~700 bytes vs the pre-modifier baseline;
         // the detailing-modules + per-node `lod=` recipes added another
-        // ~1.0 KB.
+        // ~1.0 KB; the extrude/sweep/loft KINDS_REFERENCE rows another ~1 KB.
         let s = cacheable_block();
         assert!(
-            s.len() < 24_500,
-            "cacheable_block grew to {} bytes — cap is 24_500. Reference \
+            s.len() < 25_700,
+            "cacheable_block grew to {} bytes — cap is 25_700. Reference \
              material that grows without bound should be fetched on demand, \
              not pinned in the cache.",
             s.len()

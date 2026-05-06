@@ -408,6 +408,9 @@ pub(super) const KINDS_REFERENCE: &str = "\
 | `lathe` | `profile=[[r,y], …]` (bottom→top) | `segments`, `cap_ends`; vases, gourds, bulbs, onions |
 | `spline_tube` | `points=[[x,y,z], …]` | `radius` or `radii=[…]`, `segments`, `samples`; bananas, stems, horns, handles |
 | `spline_ribbon` | `points=[[x,y,z], …]` | `width` or `widths=[…]`, `samples`, `twist` deg; flat double-sided strip — sashes, ribbons, straps |
+| `extrude` | `points=[[x,z], …]` (closed CCW outline) | `hole=[[x,z], …]` (one CW inner contour), `height` (Y span, 1.0), `taper` (top scale ratio, 1.0), `twist` deg (total roll), `caps=0\\|1` (1); push a 2D polygon to 3D for I-beams, gear teeth, custom pillars, picture-frame moulding (in fixed cross-section). Multi-hole authoring not yet supported — chain `extrude` + `difference` for now. |
+| `sweep` | `profile=[[x,y], …]` (closed CCW), `path=[[x,y,z], …]` (Catmull–Rom centreline) | `samples` (8), `twist` deg (uniform total roll), `roll=[deg, …]` (per-control-point roll), `scale_along=[s, …]` (per-control-point uniform scale), `caps=0\\|1`; generalises `spline_tube` (always circular) and `spline_ribbon` (flat) — square pipes, picture-frame moulding on a curved path, gun rails. |
+| `loft` | `points=[[x,z], …]` (all sections flat-packed, same vertex count each), `heights=[y, …]` (Y of each section) | `samples` (rings between adjacent sections, 4), `caps=0\\|1`; closes the gap that `frustum` (two rectangles only) and `lathe` (axisymmetric only) cannot reach — boat hulls, fuselages, shaped bottles. Section vertex counts MUST match. |
 | `leaf_card` | `size=[w,h]` | `cards` (2 cross / 3 fan); paired alpha-cutout planes for foliage — pair with `alpha_mode=\"mask\", double_sided=1` |
 | `decal` | name (acts as prompt fallback) | `size=[w,h]` (default `[0.5, 0.5]`), `prompt` (Gemini description), `image` (path; wins over `prompt`), `tint=[r,g,b]`, `roughness` (0.6), `offset` (+Z gap from surface, 0.001), **`on`/`at`/`up`/`lift`** (curved-surface shortcut — see below), `pos`, `rot`. Synthesizes its own transparent `alpha_mode=\"blend\"` material — DO NOT set `mat=`. Use for logos, labels, stickers, handwritten notes, patches: anything that's a transparent image overlaid on another surface. For flat hosts (a panel, a box face), parent the decal under the host and set `pos=`. For curved hosts (a bag, a bottle, a helmet), use `on=\"<host>\", at=\"<connector>\"` so the decal's vertices bend onto the surface — much better than floating a flat quad above curvature. |
 | `branch` | `length`, `radius`, `depth` | `splits`, `length_falloff`, `radius_falloff`, `branch_angle`, `roll`, `tropism`, `bend`, `seed`, `jitter`, `leaves`, `leaf_size`, `leaf_cards`, `leaf_mat`; **recursive procedural tree — one declaration becomes a whole tree** |
@@ -456,7 +459,8 @@ pub(super) const KINDS_REFERENCE: &str = "\
 | `tube` | `top`, `bottom`, `side` (at outer wall +X) |
 | `hemisphere` | `top` / `apex` (+Y), `bottom` / `base` (flat face at y=0, facing -Y) |
 | `half_cylinder` | `top`, `bottom`, `side` (+X curve peak), `flat` (x=0 face, -X) |
-| `torus_arc` | `top`, `bottom`, `start` (cap at phi=0, -Z), `end` (cap at phi=arc) |";
+| `torus_arc` | `top`, `bottom`, `start` (cap at phi=0, -Z), `end` (cap at phi=arc) |
+| `extrude`, `sweep`, `loft` | `top`, `bottom`, `left`, `right`, `front`, `back` (synthesized from the lowered mesh AABB — same as `group`) |";
 
 pub(super) const FEWSHOT: &str = "\
 Ten prompt / output pairs spanning mechanical, architectural, and organic \
@@ -719,6 +723,43 @@ scene {
     branch_angle=32, bend=12, tropism=-0.05, jitter=0.25, seed=7,
     leaves=1, leaf_size=0.32, leaf_cards=2, leaf_mat=\"oak_leaf\",
     mat=\"oak_bark\"
+  )
+}
+
+### Prompt: \"a steel I-beam\"
+### Output:
+meta (name = \"i_beam\", description = \"a 3-meter steel I-beam structural member\", tags = [\"structural\", \"steel\", \"i_beam\"])
+
+material \"steel\" (color=[0.6, 0.62, 0.65], metallic=0.85, roughness=0.35)
+
+scene {
+  extrude \"i_beam\" (
+    points=[
+      [-0.5, -0.05], [0.5, -0.05], [0.5, 0.05], [0.1, 0.05],
+      [0.1, 0.45], [0.5, 0.45], [0.5, 0.55], [-0.5, 0.55],
+      [-0.5, 0.45], [-0.1, 0.45], [-0.1, 0.05], [-0.5, 0.05]
+    ],
+    height=3.0,
+    mat=\"steel\"
+  )
+}
+
+### Prompt: \"a small wooden boat hull\"
+### Output:
+meta (name = \"boat_hull\", description = \"a 2-meter wooden boat hull lofted from three rectangular sections\", tags = [\"vehicle\", \"boat\", \"hull\", \"wood\"])
+
+material \"hull\" (color=[0.55, 0.4, 0.25], roughness=0.7)
+
+scene {
+  loft \"hull\" (
+    points=[
+      [-0.5, -0.2], [0.5, -0.2], [0.5, 0.2], [-0.5, 0.2],
+      [-1.0, -0.4], [1.0, -0.4], [1.0, 0.4], [-1.0, 0.4],
+      [-0.6, -0.1], [0.6, -0.1], [0.6, 0.1], [-0.6, 0.1]
+    ],
+    heights=[0.0, 1.0, 2.0],
+    samples=12,
+    mat=\"hull\"
   )
 }";
 

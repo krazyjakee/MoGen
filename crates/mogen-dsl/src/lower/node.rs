@@ -210,7 +210,15 @@ pub(super) fn lower_into(
     // synthesized from the subtree AABB. User-declared connectors with the
     // same name already took precedence via `add_connector`'s replace-by-name,
     // so we only push names that aren't present.
-    if node.kind == "group" || node.kind == "solid" {
+    if matches!(
+        node.kind.as_str(),
+        "group" | "solid" | "extrude" | "sweep" | "loft",
+    ) {
+        // Primitives whose geometry derives from arbitrary author-supplied
+        // 2D contours (extrude / sweep / loft) don't have a closed-form
+        // top/bottom/side connector layout the way `cylinder` or `box`
+        // does, so we mirror the group fallback: synthesize the six face
+        // connectors from the subtree AABB.
         add_aabb_connectors_if_missing(id, graph);
     }
 

@@ -345,6 +345,9 @@ All primitives accept the common attributes above (`pos`, `rot`, `scale`,
 | `lathe` | `profile=[[r,y], …]` | `segments` (24), `cap_ends` (1 = capped); profile authored bottom-to-top in `(radius, y)` pairs |
 | `spline_tube` | `points=[[x,y,z], …]` | `radius` (scalar) or `radii=[…]` (per-point), `segments` (12), `samples` (8), `cap_ends` (1) |
 | `spline_ribbon` | `points=[[x,y,z], …]` | `width` (scalar) or `widths=[…]` (per-point), `samples` (8), `twist` (degrees, default `0`); flat strip along a Catmull–Rom curve |
+| `extrude` | `points=[[x,z], …]` | closed CCW outline; `hole=[[x,z], …]` (one CW inner contour), `height` (Y span, 1.0), `taper` (top scale ratio, 1.0), `twist` (degrees, 0), `caps` (1). Push a 2D polygon up — I-beams, gear teeth, custom pillars. Multi-hole authoring not yet supported (chain `extrude` + `difference`). |
+| `sweep` | `profile=[[x,y], …]`, `path=[[x,y,z], …]` | closed CCW profile in the path's local XY plane; `samples` (8) per path segment, `twist` (degrees uniform), `roll=[deg, …]` and `scale_along=[s, …]` modulators (per-control-point), `caps` (1). Generalises `spline_tube` (always circular) and `spline_ribbon` (always flat). |
+| `loft` | `points=[[x,z], …]`, `heights=[y, …]` | sections flat-packed in `points` (each section's vertices in order; counts must match across sections); `samples` (rings between adjacent sections, 4), `caps` (1). Boat hulls, fuselages, shaped bottles. |
 | `leaf_card` | `size=[w,h]` | `cards` (default `2`); alpha-cutout foliage card cluster — one quad plus `cards-1` rotated copies sharing the same XY plane. Pair with a `mat="…"` whose `alpha_mode="mask"` and `double_sided=1` |
 | `mesh` | `src="path.glb"` | load and embed an external glTF binary as a single mesh. Path is relative to the calling `.mog`. Materials, skinning, and animations on the source GLB are dropped — set them in the DSL instead |
 | `branch` | — | procedural tree / vine / antler. See [Branch](#branch) below |
