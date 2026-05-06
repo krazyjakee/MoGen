@@ -1,0 +1,10 @@
+// summary: Bolt circle — ring of cylindrical bolt heads arranged around +Y. Heads sit on top of y=0 (anchor=bottom) so the whole ring drops onto a flat host face. Default 6 heads on a 0.1m ring radius. Wrap in a group to set `mat=` and place; for hex heads or domed rivets use `rivet_line` or extrude in Phase B.
+module "bolt_circle" (count=6, ring_radius=0.1, head_radius=0.012, head_height=0.008) {
+  array "bolt_circle" (count=$count, around=y) {
+    cylinder "head" (
+      pos=[$ring_radius, 0, 0],
+      radius=$head_radius, height=$head_height,
+      segments=8, anchor=bottom
+    )
+  }
+}

@@ -1,0 +1,6 @@
+// summary: Vent strip — vertical stack of thin parallel slats (cooling vents, gills, louvers). Slats run along X; stack along Y. Default 6 slats over 0.4m span, 0.012m gap, 0.05m deep. Wrap in a group with `mat=` (typically a dark metal) and `pos=`/`anchor=` to mount flush against a surface.
+module "vent_strip" (count=6, length=0.4, slat_thickness=0.005, slat_height=0.05, gap=0.012) {
+  grid "vent_strip" (count=[1, $count, 1], step=[0, $gap, 0], center=1) {
+    box "slat" (size=[$length, $slat_thickness, $slat_height])
+  }
+}

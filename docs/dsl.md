@@ -113,6 +113,30 @@ in place — drag it down to iterate quickly on big scenes, then drag back to
 `1.0` for export. The slider clears the directive when it returns to `1.0` so
 saved files stay clean by default.
 
+### Per-node `lod=` overrides
+
+Any geometry/group node accepts a `lod=N` attribute that **multiplies**
+the active LOD scale for the duration of that node and its subtree. Use
+it to mark hero parts (`lod=2`) and background filler (`lod=0.5`) without
+touching the file-global `lod_scale`. The override is RAII-scoped — it
+does not leak into siblings — and compounds with the global setting:
+`lod=2` on top of `lod_scale (value=0.5)` yields an effective multiplier
+of `1.0` for that subtree.
+
+```
+scene {
+  group "hero" (lod=2) {                  // boosted detail
+    sphere "face" (radius=0.12)
+  }
+  sphere "background_rock" (radius=0.4, lod=0.5)  // halved detail
+  sphere "default_rock" (radius=0.4)              // baseline
+}
+```
+
+Like `lod_scale`, explicit per-primitive `segments=` / `rings=` /
+`subdivisions=` win over the multiplier — the override only acts on
+defaults.
+
 ---
 
 ## Values and expressions

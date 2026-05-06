@@ -14,7 +14,7 @@ use super::helpers::{
 };
 use super::layout::{apply_relative_placement, expand_grid, expand_replicator, expand_stack};
 use super::light::lower_light;
-use super::lod::LodOriginScaleGuard;
+use super::lod::{LodMultiplierGuard, LodOriginScaleGuard};
 use super::primitive::primitive_mesh;
 
 pub(super) fn lower_into(
@@ -28,6 +28,12 @@ pub(super) fn lower_into(
     // top-level `LOD_SCALE`. The guard restores the previous scale on drop
     // so children with a different origin still get their own override.
     let _lod = LodOriginScaleGuard::for_origin(node.origin.as_deref());
+    // Stack a per-node `lod=N` multiplier on top of the origin scale so a
+    // `lod=2.0` group can boost detail in a hero subtree (and `lod=0.5`
+    // can drop background parts) without touching the file-global
+    // `lod_scale`. The multiplier guard compounds with whatever the
+    // origin guard set up; both restore previous values on drop.
+    let _lod_mul = LodMultiplierGuard::for_node(node);
     if node.kind == "mirror" || node.kind == "array" {
         return expand_replicator(node, parent, graph);
     }
