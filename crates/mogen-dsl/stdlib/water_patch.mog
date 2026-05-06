@@ -1,0 +1,9 @@
+// summary: Rippling flat water surface — `curved_plane` lying in the XZ plane with a low-amplitude `wave=` deformer for water, lava, jelly, or any rippling pool. Default `2m × 2m`, 64×64 segments, gentle wave along X. Wrap with a water-style `mat=` (e.g. `alpha=0.85, transmission=0.6` for water; `roughness=0.30, alpha=0.85` for jelly) and place via `pos=`. For a faster, choppier surface raise `frequency` to ~1.5 and `ripple` to ~0.12; for a calm pond lower both.
+module "water_patch" (size=2.0, segments=64, ripple=0.04, frequency=0.6) {
+  curved_plane "water" (
+    size=[$size, $size],
+    segments_u=$segments, segments_v=$segments,
+    bend_u=0, bend_v=0,
+    wave=$ripple, wave_frequency=$frequency, wave_axis="x"
+  )
+}
