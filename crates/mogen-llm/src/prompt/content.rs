@@ -34,9 +34,13 @@ length), `noise` (coherent blobby surface displacement, 0..1; good for \
 rocks/asteroids), `jitter` (per-vertex random displacement, 0..1; good for \
 jagged surfaces), `faceted` (0/1 — discard smooth normals for a low-poly \
 look), `seed` (integer to vary the random pattern). Stochastic modifiers \
-(`noise`, `jitter`) are deterministic for a given `seed`. Default \
-tessellation auto-bumps when a smooth modifier is present so a bent \
-cylinder doesn't read as faceted. \
+(`noise`, `jitter`) are deterministic for a given `seed`. Each modifier \
+accepts an optional `*_range=[a, b]` (e.g. `bend_z_range=[0.6, 1.0]`) \
+that gates the deformation to a normalised slice along its length axis \
+— smoothstep-ramped from `a` to `b`. Use it to bend the tip but not the \
+base of a sword, jitter only the top of a tower, or droop just the far \
+end of an awning. Default tessellation auto-bumps when a smooth modifier \
+is present so a bent cylinder doesn't read as faceted. \
 **`noise`/`jitter` reshape geometry — they are the wrong tool for flat \
 surface grain or fine-scale roughness (wood grain, stucco, brushed metal, \
 fabric weave, plaster, sand, leather pores).** That kind of micro-detail \
