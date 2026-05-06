@@ -1,14 +1,15 @@
 //! Apply user-requested deformation modifiers to a primitive's mesh. Reads
 //! `bend_x`/`bend_y`/`bend_z`/`twist_y`/`taper`/`droop`/`noise`/`jitter`/
-//! `faceted`/`seed` (plus a matching `*_range=[a,b]` for each of the eight
-//! deformations) from a `Node` and runs the geom kernel pipeline.
+//! `wave`/`faceted`/`seed` (plus matching `*_range=[a,b]` and the wave's
+//! axis/phase/frequency knobs) from a `Node` and runs the geom kernel
+//! pipeline.
 //!
 //! Lives between `primitive_mesh` and `apply_anchor_to_mesh` in the lowering
 //! path (see `lower/node.rs` and `lower/csg.rs`). Idempotent for nodes that
 //! carry no deformation attrs.
 
 use mogen_core::Mesh;
-use mogen_geom::{bend, droop, jitter, noise, split_for_facets, taper, twist_y};
+use mogen_geom::{bend, droop, jitter, noise, split_for_facets, taper, twist_y, wave};
 use mogen_geom::{recompute_normals, weld_vertices};
 
 use crate::ast::{Node, Value};
@@ -24,6 +25,12 @@ struct Modifiers {
     twist_y: Option<f32>,
     taper: Option<f32>,
     droop: Option<f32>,
+    // Periodic-wave deformer: amplitude, frequency (cycles/unit), axis
+    // (0/1/2 → X/Y/Z, default 0), phase (radians, default 0).
+    wave: Option<f32>,
+    wave_frequency: Option<f32>,
+    wave_axis: Option<usize>,
+    wave_phase: Option<f32>,
     faceted: bool,
     // Optional active-range overrides per deformation. `None` means "apply
     // everywhere" — matches v1 behaviour (range_weight returns 1.0). When
@@ -38,6 +45,7 @@ struct Modifiers {
     droop_range: Option<[f32; 2]>,
     noise_range: Option<[f32; 2]>,
     jitter_range: Option<[f32; 2]>,
+    wave_range: Option<[f32; 2]>,
 }
 
 impl Modifiers {
@@ -50,6 +58,7 @@ impl Modifiers {
             || self.twist_y.is_some()
             || self.taper.is_some()
             || self.droop.is_some()
+            || self.wave.is_some()
     }
 }
 
@@ -105,6 +114,12 @@ pub(super) fn apply_deform(mesh: &mut Mesh, node: &Node) {
     if let Some(amount) = mods.jitter {
         jitter(mesh, amount, seed.wrapping_add(0x9E37_79B9), mods.jitter_range);
     }
+    if let Some(amount) = mods.wave {
+        let frequency = mods.wave_frequency.unwrap_or(1.0);
+        let axis = mods.wave_axis.unwrap_or(0);
+        let phase = mods.wave_phase.unwrap_or(0.0);
+        wave(mesh, amount, frequency, axis, phase, mods.wave_range);
+    }
 
     // 4. Cleanup: recompute normals once; weld only if stochastic kernels
     //    ran (they can split seams when neighbouring verts displace
@@ -134,6 +149,10 @@ fn collect_modifiers(node: &Node) -> Modifiers {
             Value::List(items) if items.len() == 2 => {
                 set_range(&mut m, k, [items[0], items[1]]);
             }
+            // `wave_axis="x"|"y"|"z"` is the only string-valued deformer attr.
+            Value::String(s) | Value::Ident(s) if k == "wave_axis" => {
+                m.wave_axis = parse_axis(s);
+            }
             _ => {}
         }
     }
@@ -151,6 +170,9 @@ fn set_modifier(m: &mut Modifiers, name: &str, value: f32) {
         "twist_y" => m.twist_y = Some(value),
         "taper" => m.taper = Some(value),
         "droop" => m.droop = Some(value),
+        "wave" => m.wave = Some(value),
+        "wave_frequency" => m.wave_frequency = Some(value),
+        "wave_phase" => m.wave_phase = Some(value),
         "faceted" => m.faceted = value != 0.0,
         _ => {}
     }
@@ -170,6 +192,22 @@ fn set_range(m: &mut Modifiers, name: &str, raw: [f32; 2]) {
         "droop_range" => m.droop_range = Some(pair),
         "noise_range" => m.noise_range = Some(pair),
         "jitter_range" => m.jitter_range = Some(pair),
+        "wave_range" => m.wave_range = Some(pair),
         _ => {}
+    }
+}
+
+/// Parse `wave_axis="x"|"y"|"z"` into `0`/`1`/`2`. Lower-case aliases only
+/// (the DSL trims and lowercases via the validator/parser path; we still
+/// accept either case here for robustness). Unrecognised tokens fall back
+/// to `None`, which leaves `wave_axis` defaulting to X at the call site —
+/// the validator's per-attr type check rejects strings outside the set,
+/// so reaching here with an unknown token means the validator was bypassed.
+fn parse_axis(s: &str) -> Option<usize> {
+    match s.to_ascii_lowercase().as_str() {
+        "x" | "+x" | "-x" => Some(0),
+        "y" | "+y" | "-y" => Some(1),
+        "z" | "+z" | "-z" => Some(2),
+        _ => None,
     }
 }

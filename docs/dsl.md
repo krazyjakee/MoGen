@@ -266,6 +266,11 @@ melted candles, jelly blobs — using one or two extra attrs.
 | `jitter` | 0..1 | per-vertex random displacement along the normal. Higher-frequency than `noise`, looks "jagged". |
 | `faceted` | 0/1 | rebuild the mesh with three unique vertices per triangle and face-flat normals; reads as low-poly. |
 | `seed` | integer | RNG seed for the stochastic modifiers (`noise`, `jitter`); same seed always reproduces the same shape. |
+| `wave` | peak displacement (m) | sinusoidal displacement along the vertex normal — periodic ripples for water, jelly, ribbed metal, fabric. Pair with `wave_frequency`, `wave_axis`, `wave_phase`, `wave_range`. |
+| `wave_frequency` | cycles/unit, default `1.0` | spatial frequency along `wave_axis`. `0.5` puts a crest every 2 m. |
+| `wave_axis` | `"x"`/`"y"`/`"z"`, default `"x"` | axis the wave propagates along. |
+| `wave_phase` | radians, default `0.0` | phase offset; lets sibling waves desync without animation. |
+| `wave_range` | `[a, b]` | gates the wave to a normalised slice along `wave_axis` via smoothstep, matching `*_range` convention. |
 
 Common combinations:
 
@@ -365,6 +370,10 @@ All primitives accept the common attributes above (`pos`, `rot`, `scale`,
 | `lathe` | `profile=[[r,y], …]` | `segments` (24), `cap_ends` (1 = capped); profile authored bottom-to-top in `(radius, y)` pairs |
 | `spline_tube` | `points=[[x,y,z], …]` | `radius` (scalar) or `radii=[…]` (per-point), `segments` (12), `samples` (8), `cap_ends` (1) |
 | `spline_ribbon` | `points=[[x,y,z], …]` | `width` (scalar) or `widths=[…]` (per-point), `samples` (8), `twist` (degrees, default `0`); flat strip along a Catmull–Rom curve |
+| `coil` | — | `radius` (helix, 0.5), `height` (Y rise, 1.0), `turns` (revolutions, 3), `profile_radius` (cross-section, 0.05), `segments` (cross-section sides, 12), `samples` (per turn, 16), `cap_ends` (1), `handedness` (`"right"`/`"left"`, default `"right"`). Helical sweep — springs, screw threads, snail-shell ribs, twisted vines. Builds on `spline_tube` under the hood; the helix path is generated for you instead of authored point-by-point. |
+| `heightfield` | — | `size=[w,d]` (XZ extent, default `[1, 1]`), `segments_u`/`segments_v` (32 each), `amplitude` (peak Y, 0.5), `octaves` (1..=8, default 3), `frequency` (cycles/unit, 1.0), `persistence` (per-octave amplitude falloff, 0.5), `seed` (1). Tessellated XZ grid displaced by deterministic fBm value-noise — terrain patches, dunes, rooftops, bumpy stone slabs. Layer the `wave` deformer on top for water surfaces. |
+| `bezier_patch` | `points=[[x,y,z], …]` (exactly 16 control points, row-major u rows × v columns) | `segments_u`/`segments_v` (12 each). Bicubic Bézier surface — `points[0]`/`[3]`/`[12]`/`[15]` pin the patch corners, the inner four `points[5]/[6]/[9]/[10]` shape the bulge, and the eight edge points control curvature along each side. Use for organic skin panels: faces, hoods, fenders, pillows, sails, soft plates, leaves with controlled silhouette. |
+| `metaball` | `points=[[x,y,z], …]` (≥1) plus one of `radius=` (scalar) or `radii=[…]` (per-point) | `blend` (smooth-union radius in m, default `0`), `rings` (per-sphere, 12), `segments` (per-sphere, 16). N implicit-field spheres unioned with smooth blending — creature bodies (torso + thigh masses), slime, clouds, cell clusters, pumpkin lobes, soft ammo pouches, asymmetric organic props. Sugar over `union (smooth=k) { sphere … }`; reuses the same vertex-fillet kernel as `union`'s `smooth=`. |
 | `extrude` | `points=[[x,z], …]` | closed CCW outline; `hole=[[x,z], …]` (one CW inner contour), `height` (Y span, 1.0), `taper` (top scale ratio, 1.0), `twist` (degrees, 0), `caps` (1). Push a 2D polygon up — I-beams, gear teeth, custom pillars. Multi-hole authoring not yet supported (chain `extrude` + `difference`). |
 | `sweep` | `profile=[[x,y], …]`, `path=[[x,y,z], …]` | closed CCW profile in the path's local XY plane; `samples` (8) per path segment, `twist` (degrees uniform), `roll=[deg, …]` and `scale_along=[s, …]` modulators (per-control-point), `caps` (1). Generalises `spline_tube` (always circular) and `spline_ribbon` (always flat). |
 | `loft` | `points=[[x,z], …]`, `heights=[y, …]` | sections flat-packed in `points` (each section's vertices in order; counts must match across sections); `samples` (rings between adjacent sections, 4), `caps` (1). Boat hulls, fuselages, shaped bottles. |
