@@ -16,6 +16,14 @@ use super::ModuleRegistry;
 /// any node whose frame chain passes through U.
 pub type UseParents = HashMap<u32, Option<u32>>;
 
+/// Maximum number of iterations a single `for` loop may emit. Caps a
+/// user-supplied `from`/`to`/`step` combination so a stray
+/// `for (from=0, to=1000000000)` doesn't grind the lowering loop and the
+/// host. 100k is well over any plausible authored fan-out (a fence with
+/// 10k pickets is already extreme) while remaining well under the OOM
+/// threshold for sibling-allocated `Node` values.
+const FOR_LOOP_ITERATION_CAP: usize = 100_000;
+
 /// Remove every top-level `module` and `import` node and expand every `use`
 /// node against `reg`. Expansion is recursive: modules may invoke other modules.
 ///
@@ -421,11 +429,24 @@ fn expand_children_into(
             }
             "for" => {
                 let (var, start, end, step) = parse_for_attrs(c, scope)?;
-                let mut k = start;
                 // Iteration order matches Python's `range`: open-ended on
-                // `end`, signed step. Step==0 was rejected at parse_for_attrs
-                // so the loop always terminates.
-                while (step > 0.0 && k < end) || (step < 0.0 && k > end) {
+                // `end`, signed step. `step==0` was rejected at parse_for_attrs
+                // so the loop always terminates. Iteration variable is
+                // computed via `start + i * step` rather than accumulated, so
+                // a fractional `step` doesn't drift across many iterations.
+                let mut iter_count: usize = 0;
+                loop {
+                    let k = start + (iter_count as f32) * step;
+                    let in_range = (step > 0.0 && k < end) || (step < 0.0 && k > end);
+                    if !in_range {
+                        break;
+                    }
+                    if iter_count >= FOR_LOOP_ITERATION_CAP {
+                        bail!(
+                            "`for` loop exceeded iteration cap of {} (var=`{}`, from={}, to={}, step={}). Lower the range or use nested modules to fan out work.",
+                            FOR_LOOP_ITERATION_CAP, var, start, end, step
+                        );
+                    }
                     let mut child_scope = scope.clone();
                     child_scope.bindings.push((var.clone(), k));
                     let refs: Vec<&Node> = c.children.iter().collect();
@@ -439,7 +460,7 @@ fn expand_children_into(
                         next_use,
                         use_parents,
                     )?;
-                    k += step;
+                    iter_count += 1;
                 }
                 i += 1;
             }

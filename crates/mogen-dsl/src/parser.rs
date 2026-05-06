@@ -16,10 +16,10 @@ fn span_of(p: &Pair<Rule>) -> Span {
 struct DslParser;
 
 pub fn parse(source: &str) -> Result<Vec<Node>> {
-    // Strip a leading UTF-8 BOM if present. pest's WHITESPACE rule does
-    // not skip BOMs, so a BOM'd file would otherwise fail with E0001 at
-    // byte 0 — confusing for users whose editor silently inserts one.
-    let source = source.strip_prefix('\u{feff}').unwrap_or(source);
+    // BOM tolerance lives in the grammar (`bom_? ` in the `file` rule),
+    // not here — stripping the BOM in this function would shift all
+    // returned `Span` byte offsets by 3 vs the source the caller renders
+    // diagnostics against.
     let mut pairs = DslParser::parse(Rule::file, source).context("parse error")?;
     let file = pairs.next().ok_or_else(|| anyhow!("empty parse"))?;
     let mut nodes = Vec::new();
@@ -359,5 +359,12 @@ mod tests {
         let nodes = parse(src).expect("BOM-prefixed source should parse");
         assert_eq!(nodes.len(), 1);
         assert_eq!(nodes[0].kind, "meta");
+        // Spans must reference the *original* source (with BOM still in
+        // place) so that diagnostics rendered against `src` highlight the
+        // correct text. A previous implementation stripped the BOM in
+        // parse() and shifted every span 3 bytes early — the assertion
+        // below rejects that regression.
+        let s = nodes[0].kind_span;
+        assert_eq!(&src[s.start..s.end], "meta");
     }
 }

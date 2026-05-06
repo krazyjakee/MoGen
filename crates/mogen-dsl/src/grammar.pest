@@ -1,7 +1,8 @@
 WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
 COMMENT    = _{ "//" ~ (!"\n" ~ ANY)* }
 
-file = { SOI ~ node* ~ EOI }
+bom_ = _{ "\u{feff}" }
+file = { SOI ~ bom_? ~ node* ~ EOI }
 
 node = { ident ~ name? ~ attr_list? ~ block? }
 
