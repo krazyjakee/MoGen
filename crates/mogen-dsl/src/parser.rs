@@ -16,6 +16,10 @@ fn span_of(p: &Pair<Rule>) -> Span {
 struct DslParser;
 
 pub fn parse(source: &str) -> Result<Vec<Node>> {
+    // Strip a leading UTF-8 BOM if present. pest's WHITESPACE rule does
+    // not skip BOMs, so a BOM'd file would otherwise fail with E0001 at
+    // byte 0 — confusing for users whose editor silently inserts one.
+    let source = source.strip_prefix('\u{feff}').unwrap_or(source);
     let mut pairs = DslParser::parse(Rule::file, source).context("parse error")?;
     let file = pairs.next().ok_or_else(|| anyhow!("empty parse"))?;
     let mut nodes = Vec::new();
@@ -343,4 +347,17 @@ fn parse_cmp_op(s: &str) -> Result<BinOp> {
 
 fn unquote(s: &str) -> String {
     s.trim_matches('"').to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse;
+
+    #[test]
+    fn parses_source_with_leading_bom() {
+        let src = "\u{feff}meta (name=\"x\")\n";
+        let nodes = parse(src).expect("BOM-prefixed source should parse");
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].kind, "meta");
+    }
 }
