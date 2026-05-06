@@ -28,21 +28,20 @@ pub fn expand_modules(ast: &[Node], reg: &ModuleRegistry) -> Result<(Vec<Node>, 
     let mut out = Vec::with_capacity(ast.len());
     let mut next_use_id: u32 = 1;
     let mut use_parents: UseParents = HashMap::new();
-    for n in ast {
-        if n.kind == "module" || n.kind == "import" {
-            continue;
-        }
-        expand_node_into(
-            n,
-            reg,
-            &Scope::default(),
-            &mut Vec::new(),
-            &mut out,
-            None,
-            &mut next_use_id,
-            &mut use_parents,
-        )?;
-    }
+    let filtered: Vec<&Node> = ast
+        .iter()
+        .filter(|n| n.kind != "module" && n.kind != "import")
+        .collect();
+    expand_children_into(
+        &filtered,
+        reg,
+        &Scope::default(),
+        &mut Vec::new(),
+        &mut out,
+        None,
+        &mut next_use_id,
+        &mut use_parents,
+    )?;
     Ok((out, use_parents))
 }
 
@@ -75,7 +74,10 @@ fn expand_node_into(
     // Non-use: deep-clone with $-ref substitution, then recurse into children.
     let mut cloned = Node {
         kind: node.kind.clone(),
-        name: node.name.clone(),
+        name: match &node.name {
+            Some(s) => Some(interpolate_string(s, scope)?),
+            None => None,
+        },
         attrs: node
             .attrs
             .iter()
@@ -87,18 +89,17 @@ fn expand_node_into(
         use_id: current_use,
         origin: node.origin.clone(),
     };
-    for c in &node.children {
-        expand_node_into(
-            c,
-            reg,
-            scope,
-            stack,
-            &mut cloned.children,
-            current_use,
-            next_use,
-            use_parents,
-        )?;
-    }
+    let child_refs: Vec<&Node> = node.children.iter().collect();
+    expand_children_into(
+        &child_refs,
+        reg,
+        scope,
+        stack,
+        &mut cloned.children,
+        current_use,
+        next_use,
+        use_parents,
+    )?;
     out.push(cloned);
     Ok(())
 }
@@ -201,18 +202,17 @@ fn expand_use(
     };
 
     stack.push(module_name.clone());
-    for body_node in &def.body {
-        expand_node_into(
-            body_node,
-            reg,
-            &call_scope,
-            stack,
-            target,
-            body_use,
-            next_use,
-            use_parents,
-        )?;
-    }
+    let body_refs: Vec<&Node> = def.body.iter().collect();
+    expand_children_into(
+        &body_refs,
+        reg,
+        &call_scope,
+        stack,
+        target,
+        body_use,
+        next_use,
+        use_parents,
+    )?;
     stack.pop();
 
     if !wrapper_attrs.is_empty() {
@@ -262,13 +262,21 @@ fn substitute_value(value: &Value, scope: &Scope) -> Result<Value> {
     match value {
         Value::Number(_)
         | Value::Vec3(_)
-        | Value::String(_)
-        | Value::Ident(_)
         | Value::List(_)
         | Value::ListVec3(_)
         | Value::ListPair(_)
-        | Value::ListQuad(_)
-        | Value::ListString(_) => Ok(value.clone()),
+        | Value::ListQuad(_) => Ok(value.clone()),
+        // Strings and idents (and lists of strings) get scope-aware
+        // `$ident` / `${ident}` interpolation so authors can write
+        // `name "leg_$i"` inside a `for` body.
+        Value::String(s) => Ok(Value::String(interpolate_string(s, scope)?)),
+        Value::Ident(s) => Ok(Value::Ident(interpolate_string(s, scope)?)),
+        Value::ListString(items) => Ok(Value::ListString(
+            items
+                .iter()
+                .map(|s| interpolate_string(s, scope))
+                .collect::<Result<_>>()?,
+        )),
         Value::Expr(e) => Ok(substitute_expr(e, scope)?),
         Value::Vec3Expr(components) => {
             let resolved: Vec<Value> = components
@@ -355,5 +363,223 @@ fn scalar_value(v: &Value, scope: &Scope) -> Option<f32> {
         Value::Number(n) => Some(*n),
         Value::Expr(e) => e.eval(&|n| scope.lookup(n)),
         _ => None,
+    }
+}
+
+/// Walk a list of sibling nodes, expanding each one. Splits out from
+/// `expand_node_into` so control-flow constructs (`if`/`else`, `for`) can
+/// peek at the surrounding sibling list — `if` needs to consume a following
+/// `else`, and `for` needs to expand its body N times. Plain non-control
+/// nodes route to `expand_node_into` unchanged.
+#[allow(clippy::too_many_arguments)]
+fn expand_children_into(
+    children: &[&Node],
+    reg: &ModuleRegistry,
+    scope: &Scope,
+    stack: &mut Vec<String>,
+    out: &mut Vec<Node>,
+    current_use: Option<u32>,
+    next_use: &mut u32,
+    use_parents: &mut UseParents,
+) -> Result<()> {
+    let mut i = 0;
+    while i < children.len() {
+        let c = children[i];
+        match c.kind.as_str() {
+            "if" => {
+                let cond = eval_cond(c, scope)?;
+                let next_is_else = children
+                    .get(i + 1)
+                    .map(|n| n.kind == "else")
+                    .unwrap_or(false);
+                let chosen_children: &Vec<Node> = if cond {
+                    &c.children
+                } else if next_is_else {
+                    &children[i + 1].children
+                } else {
+                    // No else and cond was false — emit nothing, advance.
+                    i += 1;
+                    continue;
+                };
+                let refs: Vec<&Node> = chosen_children.iter().collect();
+                expand_children_into(
+                    &refs,
+                    reg,
+                    scope,
+                    stack,
+                    out,
+                    current_use,
+                    next_use,
+                    use_parents,
+                )?;
+                i += 1 + (next_is_else as usize);
+            }
+            "else" => {
+                bail!(
+                    "`else` must immediately follow an `if` block (got `else` at top level or after a non-`if` sibling)"
+                );
+            }
+            "for" => {
+                let (var, start, end, step) = parse_for_attrs(c, scope)?;
+                let mut k = start;
+                // Iteration order matches Python's `range`: open-ended on
+                // `end`, signed step. Step==0 was rejected at parse_for_attrs
+                // so the loop always terminates.
+                while (step > 0.0 && k < end) || (step < 0.0 && k > end) {
+                    let mut child_scope = scope.clone();
+                    child_scope.bindings.push((var.clone(), k));
+                    let refs: Vec<&Node> = c.children.iter().collect();
+                    expand_children_into(
+                        &refs,
+                        reg,
+                        &child_scope,
+                        stack,
+                        out,
+                        current_use,
+                        next_use,
+                        use_parents,
+                    )?;
+                    k += step;
+                }
+                i += 1;
+            }
+            _ => {
+                expand_node_into(
+                    c,
+                    reg,
+                    scope,
+                    stack,
+                    out,
+                    current_use,
+                    next_use,
+                    use_parents,
+                )?;
+                i += 1;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Evaluate the `cond=` attribute of an `if` block in the given scope.
+/// Truthy = non-zero. Missing/non-numeric/unbound `cond` is a hard error
+/// — silent falsy interpretation would mask typos.
+fn eval_cond(node: &Node, scope: &Scope) -> Result<bool> {
+    let v = node
+        .attr("cond")
+        .ok_or_else(|| anyhow!("`if` block requires a `cond=` attribute"))?;
+    let n = scalar_value(v, scope)
+        .ok_or_else(|| anyhow!("`if` cond must evaluate to a number"))?;
+    Ok(n != 0.0)
+}
+
+/// Read the four control attributes from a `for` block, validate, and
+/// return `(var, start, end, step)`. `var` accepts both quoted strings
+/// (`var="i"`) and bare idents (`var=i`); `from`/`to`/`step` must resolve
+/// to numbers in the current scope.
+fn parse_for_attrs(node: &Node, scope: &Scope) -> Result<(String, f32, f32, f32)> {
+    let var = node
+        .attr("var")
+        .ok_or_else(|| anyhow!("`for` requires a `var=` attribute naming the loop binding"))?;
+    let var = match var {
+        Value::String(s) | Value::Ident(s) => s.clone(),
+        _ => bail!("`for` var must be a string or identifier (e.g. `var=\"i\"` or `var=i`)"),
+    };
+    if var.is_empty() || var.contains(|c: char| !(c.is_ascii_alphanumeric() || c == '_')) {
+        bail!("`for` var must be alphanumeric/underscore identifier characters (got `{var}`)");
+    }
+    let from = node
+        .attr("from")
+        .ok_or_else(|| anyhow!("`for` requires a `from=` attribute"))?;
+    let from = scalar_value(from, scope)
+        .ok_or_else(|| anyhow!("`for` from must evaluate to a number"))?;
+    let to = node
+        .attr("to")
+        .ok_or_else(|| anyhow!("`for` requires a `to=` attribute"))?;
+    let to = scalar_value(to, scope)
+        .ok_or_else(|| anyhow!("`for` to must evaluate to a number"))?;
+    let step = match node.attr("step") {
+        Some(v) => scalar_value(v, scope)
+            .ok_or_else(|| anyhow!("`for` step must evaluate to a number"))?,
+        None => 1.0,
+    };
+    if step == 0.0 {
+        bail!("`for` step must not be zero — would loop forever");
+    }
+    Ok((var, from, to, step))
+}
+
+/// Replace `$name` and `${name}` with their scope value formatted as a
+/// short string. Integer-valued bindings render without a decimal point;
+/// non-integer bindings use Rust's default float-to-string. Unrecognised
+/// `$names` are left literal so authors can include the dollar sign in
+/// names that don't reference scope variables.
+fn interpolate_string(s: &str, scope: &Scope) -> Result<String> {
+    if !s.contains('$') {
+        return Ok(s.to_string());
+    }
+    let bytes = s.as_bytes();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b != b'$' {
+            out.push(b as char);
+            i += 1;
+            continue;
+        }
+        // Either `${name}` or `$name`.
+        let (name, consumed) = if i + 1 < bytes.len() && bytes[i + 1] == b'{' {
+            // Walk to the matching `}`. Missing `}` is an error.
+            let start = i + 2;
+            let mut end = start;
+            while end < bytes.len() && bytes[end] != b'}' {
+                end += 1;
+            }
+            if end >= bytes.len() {
+                bail!("unterminated `${{` in string literal: \"{s}\"");
+            }
+            (&s[start..end], end + 1 - i)
+        } else {
+            // Walk while the next byte is an ident-continuation char.
+            let start = i + 1;
+            let mut end = start;
+            while end < bytes.len() {
+                let c = bytes[end];
+                if c.is_ascii_alphanumeric() || c == b'_' {
+                    end += 1;
+                } else {
+                    break;
+                }
+            }
+            if end == start {
+                // Bare `$` not followed by an identifier — leave it literal.
+                out.push('$');
+                i += 1;
+                continue;
+            }
+            (&s[start..end], end - i)
+        };
+        match scope.lookup(name) {
+            Some(v) => out.push_str(&format_scope_value(v)),
+            None => {
+                // Leave unrecognised refs literal so a `$` that doesn't
+                // reference a binding (e.g. printing instructions) survives.
+                out.push_str(&s[i..i + consumed]);
+            }
+        }
+        i += consumed;
+    }
+    Ok(out)
+}
+
+fn format_scope_value(v: f32) -> String {
+    if v.is_finite() && v.fract() == 0.0 && v.abs() < 1.0e9 {
+        // Integer-valued binding (the typical `for` loop var) — render
+        // without trailing `.0` so `"leg_$i"` becomes `"leg_3"` not
+        // `"leg_3.0"`.
+        format!("{}", v as i64)
+    } else {
+        format!("{v}")
     }
 }

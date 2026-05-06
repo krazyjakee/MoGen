@@ -1446,3 +1446,177 @@ fn inset_box_minus_x_face_sinks_along_negative_x() {
     }
     assert!(floor_x_seen, "expected vertex at sunken X=-0.4");
 }
+// ─── Phase C3: control flow + string interpolation ──────────────────────
+
+#[test]
+fn for_loop_emits_n_copies_with_loop_var_in_pos() {
+    // Outside of a module, `for` still works because expand_modules walks
+    // the top-level child list through expand_children_into.
+    let g = lower_src(
+        r#"scene {
+            for (var="i", from=0, to=4) {
+                box "leg" (size=[0.05, 0.5, 0.05], pos=[$i * 0.3, 0, 0])
+            }
+        }"#,
+    );
+    let legs: Vec<_> = g.nodes.iter().filter(|n| n.name == "leg").collect();
+    assert_eq!(legs.len(), 4, "for(0..4) should emit 4 nodes");
+    let xs: Vec<f32> = legs.iter().map(|n| n.transform.translation.x).collect();
+    let mut want = vec![0.0, 0.3, 0.6, 0.9];
+    let mut got = xs.clone();
+    want.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    got.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    for (a, b) in want.iter().zip(got.iter()) {
+        assert!((a - b).abs() < 1e-5, "expected x={a}, got {b}");
+    }
+}
+
+#[test]
+fn for_loop_step_2_skips_odd_indices() {
+    let g = lower_src(
+        r#"scene {
+            for (var="i", from=0, to=6, step=2) {
+                box "even_$i" (size=[0.1, 0.1, 0.1])
+            }
+        }"#,
+    );
+    let names: Vec<_> = g.nodes.iter().filter(|n| n.name.starts_with("even_")).map(|n| n.name.clone()).collect();
+    assert_eq!(names.len(), 3, "0,2,4 = 3 iterations");
+    assert!(names.contains(&"even_0".to_string()));
+    assert!(names.contains(&"even_2".to_string()));
+    assert!(names.contains(&"even_4".to_string()));
+}
+
+#[test]
+fn for_loop_zero_iterations_when_from_eq_to() {
+    let g = lower_src(
+        r#"scene {
+            for (var="i", from=3, to=3) {
+                box "shouldnt_appear" ()
+            }
+        }"#,
+    );
+    assert!(g.nodes.iter().all(|n| n.name != "shouldnt_appear"));
+}
+
+#[test]
+fn for_loop_step_zero_errors() {
+    let ast = parse(r#"scene { for (var="i", from=0, to=5, step=0) { box "b" () } }"#).expect("parse");
+    let err = lower(&ast).expect_err("step=0 must error");
+    assert!(format!("{err}").contains("step must not be zero"));
+}
+
+#[test]
+fn if_truthy_cond_emits_then_branch() {
+    let g = lower_src(
+        r#"scene {
+            if (cond=1) {
+                box "yes" (size=[1, 1, 1])
+            }
+        }"#,
+    );
+    assert!(g.nodes.iter().any(|n| n.name == "yes"));
+}
+
+#[test]
+fn if_falsy_cond_skips_then_branch() {
+    let g = lower_src(
+        r#"scene {
+            if (cond=0) {
+                box "no" (size=[1, 1, 1])
+            }
+            box "after" (size=[1, 1, 1])
+        }"#,
+    );
+    assert!(g.nodes.iter().all(|n| n.name != "no"));
+    assert!(g.nodes.iter().any(|n| n.name == "after"));
+}
+
+#[test]
+fn if_else_picks_else_branch_when_falsy() {
+    let g = lower_src(
+        r#"scene {
+            if (cond=0) {
+                box "then_branch" ()
+            }
+            else {
+                box "else_branch" ()
+            }
+        }"#,
+    );
+    assert!(g.nodes.iter().all(|n| n.name != "then_branch"));
+    assert!(g.nodes.iter().any(|n| n.name == "else_branch"));
+}
+
+#[test]
+fn else_without_preceding_if_errors() {
+    let ast = parse(r#"scene { else { box "lonely" () } }"#).expect("parse");
+    let err = lower(&ast).expect_err("else without if must error");
+    assert!(format!("{err}").contains("`else` must immediately follow"));
+}
+
+#[test]
+fn comparison_operator_in_cond_works() {
+    // `cond=$n > 1` is the canonical authoring shape for "draw extras only
+    // when there's more than one of something".
+    let make = |n: i32| {
+        let src = format!(
+            r#"module "demo" (n=1) {{
+                box "always" ()
+                if (cond=$n > 1) {{ box "many" () }}
+            }}
+            scene {{ use "demo" (n={n}) }}"#
+        );
+        lower_src(&src)
+    };
+    let one = make(1);
+    let two = make(2);
+    assert!(one.nodes.iter().all(|n| n.name != "many"));
+    assert!(two.nodes.iter().any(|n| n.name == "many"));
+}
+
+#[test]
+fn string_interpolation_in_node_name() {
+    let g = lower_src(
+        r#"scene {
+            for (var="i", from=0, to=3) {
+                box "leg_$i" (size=[0.05, 0.5, 0.05])
+            }
+        }"#,
+    );
+    let names: Vec<_> = g.nodes.iter().map(|n| n.name.clone()).collect();
+    assert!(names.contains(&"leg_0".to_string()));
+    assert!(names.contains(&"leg_1".to_string()));
+    assert!(names.contains(&"leg_2".to_string()));
+    // Integer-valued var should NOT render as "leg_0.0".
+    assert!(!names.contains(&"leg_0.0".to_string()));
+}
+
+#[test]
+fn string_interpolation_with_braces() {
+    // ${name} form delimits the binding so authors can compose names like
+    // "${prefix}_panel" without the parser mistaking the underscore for
+    // part of the binding name.
+    let g = lower_src(
+        r#"module "panel" (i=0) {
+            box "${i}_panel" (size=[0.5, 0.1, 0.5])
+        }
+        scene { use "panel" (i=7) }"#,
+    );
+    assert!(g.nodes.iter().any(|n| n.name == "7_panel"));
+}
+
+#[test]
+fn module_with_for_inside_expands_per_use() {
+    // `for` inside a module body should expand against the call's params.
+    let g = lower_src(
+        r#"module "fence" (posts=1) {
+            for (var="i", from=0, to=$posts) {
+                box "post_$i" (size=[0.05, 0.6, 0.05], pos=[$i * 0.4, 0, 0])
+            }
+        }
+        scene { use "fence" (posts=3) }"#,
+    );
+    let posts: Vec<_> = g.nodes.iter().filter(|n| n.name.starts_with("post_")).collect();
+    assert_eq!(posts.len(), 3);
+}

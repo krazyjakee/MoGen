@@ -248,6 +248,15 @@ A `.mog` file is a sequence of nodes. Each node is:
   (perpendicular walls meeting at a corner).
 - `module \"name\" (param=default, ...) { body }` + `use \"name\" (arg=value, ...)` \
   parameterises a sub-graph. `$param` inside the body substitutes the arg.
+- **Inside any `{ ... }` body** (scenes, groups, modules), `if (cond=<expr>) \
+  { ... }` emits its children only when the cond is non-zero, and an \
+  immediately-following `else { ... }` covers the false branch. `for \
+  (var=\"i\", from=<a>, to=<b>) { ... }` emits the body once per integer step \
+  in `[a, b)`, binding `$i`. Comparisons (`$n > 1`, `$x == 0`, `$count != 3`) \
+  evaluate to 1.0/0.0 and chain into expressions: `cond=$count > 0` is the \
+  canonical author shape. Inside any string literal (including node names), \
+  `$name` and `${name}` interpolate the binding; integer-valued bindings \
+  render without a decimal so `\"leg_$i\"` becomes `\"leg_3\"` not `\"leg_3.0\"`.
 - `import \"path/to/file.mog\" [(as=<ident>)]` is a top-level directive that \
   pulls another `.mog` file's `module`s and `material`s into this file, and \
   synthesises a module named after the file stem (or `as=`) from its \
@@ -431,6 +440,9 @@ pub(super) const KINDS_REFERENCE: &str = "\
 | `array` | `count`, `around=x|y|z` | `start_angle`, children |
 | `module` | name, optional params | body |
 | `use` | module name | args |
+| `if` | `cond=<expr>` | body emitted only when `cond` is non-zero. Pair with a sibling `else { … }` (immediately following) for the false branch. Use comparisons (`$n > 1`, `$role == 1`) — they evaluate to 1.0/0.0. |
+| `else` | — | body for the immediately-preceding `if`'s false branch. Standalone `else` (no `if` in front of it) errors at expand time. |
+| `for` | `var=\"i\"` (or `var=i`), `from=<expr>`, `to=<expr>` | optional `step=<expr>` (default 1, must be non-zero). Emits the body once per integer step in `[from, to)` with `$i` (or whatever name `var` chose) bound. Use for fence posts, regular grids, repeating modules: `for (var=\"i\", from=0, to=$count) { use \"post\" (i=$i, x=$i * 0.5) }`. Inside the body, `\"name_$i\"` interpolates the loop var into node names. |
 | `import` | quoted `\"path/to/file.mog\"` | optional `(as=<ident>)`; top-level only — pulls another `.mog` file's `module`s + `material`s and synthesises a module from its `scene { ... }`. **Preserve verbatim when editing — never rewrite as `module \"X\" {}`.** |
 | `union`, `difference`, `intersect` | — | children are operands |
 | `joint` | name, `type`, `pivot` | `axis`, `limits=[lo,hi]` |

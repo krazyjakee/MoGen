@@ -1188,6 +1188,91 @@ Rules:
 - Modules may call other modules. Recursion is detected and rejected.
 - Expansion is lexically scoped — `$param` references outside a module body are rejected.
 
+## Control flow: `if`, `else`, `for`, string interpolation
+
+Inside any `{ … }` body — including `scene`, `group`, `solid`, and `module`
+bodies — three control-flow constructs let you branch and repeat at
+module-expansion time. They run before lowering, so the resulting scene
+graph never sees `if` or `for`; only the geometry they emit.
+
+### `if (cond=…)` and `else`
+
+```
+module "switch" (has_label=0) {
+  cylinder "shaft" (radius=0.02, height=0.05)
+  if (cond=$has_label) {
+    box "label" (size=[0.04, 0.005, 0.02])
+  }
+}
+scene {
+  use "switch" (has_label=0)            // no label
+  use "switch" (has_label=1, x=0.10)    // with label
+}
+```
+
+`cond=` accepts any expression. Comparisons (`<`, `<=`, `>`, `>=`, `==`,
+`!=`) evaluate to `1.0` (true) or `0.0` (false), so `cond=$count > 1`
+works directly. An immediately-following sibling `else { … }` covers the
+false branch:
+
+```
+if (cond=$is_glass) {
+  box "pane" (size=[0.6, 1.0, 0.01], mat="glass")
+}
+else {
+  box "panel" (size=[0.6, 1.0, 0.04], mat="oak")
+}
+```
+
+A standalone `else` with no preceding `if` is rejected at expansion time.
+
+### `for (var=…, from=…, to=…[, step=…])`
+
+```
+for (var="i", from=0, to=4) {
+  box "fence_post_$i" (size=[0.04, 0.6, 0.04],
+                       pos=[$i * 0.30, 0, 0],
+                       mat="oak")
+}
+```
+
+- `var` is the loop binding name (string or bare identifier).
+- `from`/`to` are the bounds; iteration covers `[from, to)` like Python's
+  `range`. `from == to` produces zero iterations.
+- `step` defaults to `1.0`. Must be non-zero. Negative `step` walks
+  downward as long as `from > to`.
+- Inside the body, `$<var>` resolves to the current loop value.
+- `for` blocks inside module bodies see both module parameters and the
+  loop variable in scope; nested `for` loops compose normally.
+
+### String interpolation
+
+Inside any string literal (including node names), `$name` and `${name}`
+are replaced with the named binding's value at expansion time:
+
+```
+for (var="i", from=0, to=3) {
+  cylinder "leg_$i" (radius=0.05, height=0.6, pos=[$i * 0.4, 0, 0])
+}
+// Names: leg_0, leg_1, leg_2
+```
+
+- Integer-valued bindings render without a decimal: `leg_$i` becomes
+  `leg_3`, not `leg_3.0`.
+- The `${name}` form delimits the binding explicitly so `${prefix}_panel`
+  is unambiguous when followed by underscore characters.
+- A `$` not followed by an identifier (or referencing an unbound name)
+  is left literal — handy for prompts that include the dollar sign.
+
+Limitations (deliberate, demand-driven):
+
+- Comparisons can't be chained: `a < b < c` does not parse. Combine with
+  multiplication for AND (`($a > 0) * ($b > 0)`) or addition for OR
+  (`($a > 0) + ($b > 0)`).
+- No boolean `&&` / `||` / `!` operators yet.
+- Expressions remain numeric; there are no string concatenation operators
+  beyond interpolation.
+
 ---
 
 ## Imports: `import`

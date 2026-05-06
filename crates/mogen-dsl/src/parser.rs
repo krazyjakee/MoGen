@@ -272,6 +272,21 @@ fn build_list(val_pair: Pair<Rule>) -> Result<Value> {
 fn build_expr(pair: Pair<Rule>) -> Result<Expr> {
     debug_assert_eq!(pair.as_rule(), Rule::expr);
     let mut inner = pair.into_inner();
+    let lhs = build_sum(inner.next().unwrap())?;
+    if let Some(op_pair) = inner.next() {
+        // The single optional comparison: `lhs <op> rhs`. The grammar
+        // forbids chained comparisons (`a < b < c` won't parse) — keep
+        // the C-vs-Python ambiguity out of v1.
+        let op = parse_cmp_op(op_pair.as_str())?;
+        let rhs = build_sum(inner.next().unwrap())?;
+        return Ok(Expr::Bin(Box::new(lhs), op, Box::new(rhs)));
+    }
+    Ok(lhs)
+}
+
+fn build_sum(pair: Pair<Rule>) -> Result<Expr> {
+    debug_assert_eq!(pair.as_rule(), Rule::sum);
+    let mut inner = pair.into_inner();
     let mut lhs = build_term(inner.next().unwrap())?;
     while let Some(op_pair) = inner.next() {
         let op = parse_op(op_pair.as_str())?;
@@ -311,6 +326,18 @@ fn parse_op(s: &str) -> Result<BinOp> {
         "*" => Ok(BinOp::Mul),
         "/" => Ok(BinOp::Div),
         other => Err(anyhow!("unknown operator {other}")),
+    }
+}
+
+fn parse_cmp_op(s: &str) -> Result<BinOp> {
+    match s {
+        "<"  => Ok(BinOp::Lt),
+        "<=" => Ok(BinOp::Le),
+        ">"  => Ok(BinOp::Gt),
+        ">=" => Ok(BinOp::Ge),
+        "==" => Ok(BinOp::Eq),
+        "!=" => Ok(BinOp::Ne),
+        other => Err(anyhow!("unknown comparison operator {other}")),
     }
 }
 
