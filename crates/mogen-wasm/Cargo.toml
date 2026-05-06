@@ -14,12 +14,14 @@ crate-type = ["cdylib", "rlib"]
 #
 # CSG works on wasm via `manifold-csg`'s provisional `unstable-wasm-uu`
 # feature, forwarded through `mogen-dsl`. That requires LLVM 20+ on the
-# build host (see workspace README). The `oxipng`/`image` PNG-encoding
-# stack still can't cross-compile, so the `textures` feature stays off.
+# build host (see workspace README). The base `textures` feature on
+# `mogen-export` is on (pass-through path: read bytes from a caller-
+# supplied in-memory map and embed as-is); `textures-optimize` stays off
+# because `image` + `oxipng` can't cross-compile to wasm32.
 mogen-core = { path = "../mogen-core" }
 mogen-dsl = { path = "../mogen-dsl", default-features = false, features = ["unstable-wasm-uu"] }
 mogen-validate = { path = "../mogen-validate", default-features = false }
-mogen-export = { path = "../mogen-export", default-features = false, features = ["merge"] }
+mogen-export = { path = "../mogen-export", default-features = false, features = ["merge", "textures"] }
 
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"

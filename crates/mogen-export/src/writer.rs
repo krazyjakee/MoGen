@@ -17,7 +17,7 @@ use crate::material::{collect_material_extensions, emit_material};
 #[cfg(feature = "merge")]
 use crate::merge;
 use crate::skin::emit_skin;
-use crate::texture::{pack_textures, TextureTable};
+use crate::texture::{pack_textures, FsTextureSource, TextureSource, TextureTable};
 use crate::{
     pad_to_4, Accessor, BufferView, ExportOptions, CHUNK_BIN, CHUNK_JSON, GLB_MAGIC,
 };
@@ -42,12 +42,27 @@ pub fn write_glb_with_options<F: Fn(&str)>(
     Ok(())
 }
 
-/// Build a GLB into a `Vec<u8>` instead of writing to disk. Same pipeline as
-/// `write_glb_with_options` — used by the wasm bindings (no filesystem) and
-/// by anywhere else that wants the bytes directly.
+/// Build a GLB into a `Vec<u8>` using the filesystem to load any textures
+/// referenced by the scene's materials. Convenience wrapper around
+/// [`build_glb_with_options_and_source`] for desktop callers — wasm callers
+/// (no filesystem) construct a [`MapTextureSource`](crate::MapTextureSource)
+/// and call the underlying function directly.
 pub fn build_glb_with_options<F: Fn(&str)>(
     scene: &SceneGraph,
     opts: &ExportOptions,
+    progress: F,
+) -> Result<Vec<u8>> {
+    build_glb_with_options_and_source(scene, opts, &FsTextureSource, progress)
+}
+
+/// Build a GLB into a `Vec<u8>` with a caller-supplied [`TextureSource`].
+/// The wasm preview uses this with a [`MapTextureSource`](crate::MapTextureSource)
+/// of in-memory PNG bytes; desktop callers go through
+/// [`build_glb_with_options`] which plugs in [`FsTextureSource`].
+pub fn build_glb_with_options_and_source<F: Fn(&str)>(
+    scene: &SceneGraph,
+    opts: &ExportOptions,
+    texture_source: &dyn TextureSource,
     progress: F,
 ) -> Result<Vec<u8>> {
     // Two-stage merge. First, the scoped `solid` pass runs whenever the scene
@@ -105,7 +120,7 @@ pub fn build_glb_with_options<F: Fn(&str)>(
     // `*Texture` slot and the materials export as pure PBR factors.
     let texture_table = if opts.include_textures {
         progress("packing textures");
-        pack_textures(&scene.materials, &mut bin, &mut buffer_views)?
+        pack_textures(&scene.materials, &mut bin, &mut buffer_views, texture_source)?
     } else {
         TextureTable::default()
     };

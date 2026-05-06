@@ -27,12 +27,18 @@
 //! same input — no BSP-vs-Manifold divergence. Build host requires LLVM
 //! 20+ (see workspace README for setup).
 //!
+//! ## Texture support
+//!
+//! `compile_files` takes a second `Map<string, Uint8Array>` of texture
+//! bytes keyed by the path the `.mog` source references (e.g.
+//! `"textures/wood/albedo.png"`). The exporter embeds those bytes as-is —
+//! no `image` / `oxipng` linkage, so the wasm artifact stays small and
+//! avoids C deps that don't cross-compile. Desktop builds re-encode +
+//! oxipng-shrink via the `textures-optimize` feature, but that's gated off
+//! here, so authors should publish PNG/JPEG already sized for the web.
+//!
 //! ## Still disabled
 //!
-//! - **Textures**: `mogen-export`'s `textures` feature pulls in `image` and
-//!   `oxipng` (libdeflate-sys), which don't cross-compile to wasm32. The
-//!   GLB ships with PBR factors only — no embedded baseColor / normal /
-//!   metallic-roughness images.
 //! - **`mogen-llm`**: not linked into the wasm crate. Generation / repair
 //!   loops stay on the desktop CLI.
 //!
@@ -49,7 +55,9 @@ use anyhow::Result;
 use js_sys::{Function, Map, Promise};
 use mogen_core::{Diagnostic, Severity};
 use mogen_dsl::{LoadedFile, Loader};
-use mogen_export::{build_glb_with_options, ExportOptions};
+use mogen_export::{
+    build_glb_with_options_and_source, ExportOptions, MapTextureSource,
+};
 use mogen_validate::{render_json, validate_ast, validate_graph};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
@@ -104,7 +112,7 @@ pub fn compile(source: &str) -> CompileOutcome {
     let entry = "scene.mog";
     let mut files: HashMap<String, String> = HashMap::new();
     files.insert(entry.to_string(), source.to_string());
-    compile_with_cache(entry, files)
+    compile_with_cache(entry, files, HashMap::new())
 }
 
 /// Multi-file compile. Drives `parse → validate → lower → validate → export`
@@ -116,6 +124,12 @@ pub fn compile(source: &str) -> CompileOutcome {
 /// Diagnostics carry per-file routing so the editor can surface errors on
 /// the tab that caused them rather than always against the entry tab.
 ///
+/// `textures` is a `Map<string, Uint8Array>` of binary assets, keyed by
+/// the path the `.mog` source uses (e.g. `"textures/wood/albedo.png"`).
+/// Pass an empty `Map` (or `null`/`undefined` from JS) when the scene has
+/// no textures. Bytes are embedded into the GLB as-is — `image` and
+/// `oxipng` aren't linked into the wasm artifact.
+///
 /// Async because `fetch_dep` returns a `Promise`; the implementation walks
 /// the import graph BFS-style and awaits each missing spec before recursing
 /// so that the synchronous resolver inside `mogen-dsl` can read every
@@ -125,6 +139,7 @@ pub async fn compile_files(
     entry: String,
     files: Map,
     fetch_dep: Function,
+    textures: JsValue,
 ) -> Result<CompileOutcome, JsValue> {
     let mut cache = drain_files(&files)?;
     if !cache.contains_key(&entry) {
@@ -134,13 +149,20 @@ pub async fn compile_files(
         )));
     }
     prefetch_imports(&entry, &mut cache, &fetch_dep).await?;
-    Ok(compile_with_cache(&entry, cache))
+    let textures = drain_textures(&textures)?;
+    Ok(compile_with_cache(&entry, cache, textures))
 }
 
 /// Run the full compile pipeline against an already-populated file cache.
 /// Shared by [`compile`] (single-file) and [`compile_files`] (multi-file
-/// after async prefetch).
-fn compile_with_cache(entry: &str, cache: HashMap<String, String>) -> CompileOutcome {
+/// after async prefetch). `textures` is keyed by the path each
+/// `texture = "..."` attribute references; an empty map means the export
+/// pipeline only emits PBR-factor materials.
+fn compile_with_cache(
+    entry: &str,
+    cache: HashMap<String, String>,
+    textures: HashMap<PathBuf, Vec<u8>>,
+) -> CompileOutcome {
     let mut loader = JsLoader { cache: &cache };
 
     // Parse the entry.
@@ -212,13 +234,15 @@ fn compile_with_cache(entry: &str, cache: HashMap<String, String>) -> CompileOut
         return fail(entry, "validate_graph", diags);
     }
 
-    // Export. Textures still off (no fs, no oxipng); CSG-backed merge is on.
+    // Export. Textures embed bytes from the in-memory map (oxipng/image
+    // stay off in the wasm build); CSG-backed merge is on.
     let opts = ExportOptions {
         include_animations: true,
-        include_textures: false,
+        include_textures: true,
         merge_sibling_meshes: true,
     };
-    match build_glb_with_options(&scene, &opts, |_| {}) {
+    let texture_source = MapTextureSource::new(textures);
+    match build_glb_with_options_and_source(&scene, &opts, &texture_source, |_| {}) {
         Ok(bytes) => CompileOutcome {
             glb: Some(bytes),
             diagnostics: render_json(entry, &diags),
@@ -266,6 +290,46 @@ impl<'a> Loader for JsLoader<'a> {
             )),
         }
     }
+}
+
+/// Drain a JS `Map<string, Uint8Array>` of texture bytes into a Rust
+/// `HashMap<PathBuf, Vec<u8>>`. Accepts `null`/`undefined` (no textures)
+/// for callers that want to skip the argument; otherwise the value must
+/// be a `Map`, with string keys and `Uint8Array`/`ArrayBuffer` values.
+fn drain_textures(value: &JsValue) -> Result<HashMap<PathBuf, Vec<u8>>, JsValue> {
+    let mut out = HashMap::new();
+    if value.is_null() || value.is_undefined() {
+        return Ok(out);
+    }
+    let map: &Map = value.dyn_ref::<Map>().ok_or_else(|| {
+        JsValue::from_str(
+            "compile_files: textures must be a Map<string, Uint8Array> (or null)",
+        )
+    })?;
+    let entries = map.entries();
+    loop {
+        let next = entries.next()?;
+        if next.done() {
+            break;
+        }
+        let pair: js_sys::Array = next.value().dyn_into()?;
+        let k = pair.get(0).as_string().ok_or_else(|| {
+            JsValue::from_str("compile_files: texture map keys must be strings")
+        })?;
+        let raw = pair.get(1);
+        let bytes = if let Some(arr) = raw.dyn_ref::<js_sys::Uint8Array>() {
+            arr.to_vec()
+        } else if let Some(buf) = raw.dyn_ref::<js_sys::ArrayBuffer>() {
+            js_sys::Uint8Array::new(buf).to_vec()
+        } else {
+            return Err(JsValue::from_str(&format!(
+                "compile_files: texture '{}' value must be a Uint8Array or ArrayBuffer",
+                k
+            )));
+        };
+        out.insert(PathBuf::from(k), bytes);
+    }
+    Ok(out)
 }
 
 /// Drain a JS `Map<string, string>` into a Rust `HashMap`. Non-string keys

@@ -4,12 +4,23 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-default = ["textures", "merge"]
-# Texture packing (`pack_textures`) reads PNG/JPEG files from disk via
-# `std::fs` and re-encodes them with `image` + `oxipng`. Disabling this
-# feature stubs `pack_textures` to return an empty texture table — useful for
-# wasm where there is no filesystem and no parallel/zopfli toolchain.
-textures = ["dep:image", "dep:oxipng"]
+default = ["textures", "textures-optimize", "merge"]
+# Texture packing. Splits cleanly across two layers so wasm builds can
+# embed images without pulling in `image`/`oxipng` (which depend on C libs
+# that don't cross-compile to wasm32):
+#
+# - `textures`          — base path: read bytes through the supplied
+#                         `TextureSource` and embed them as-is. MIME comes
+#                         from the file extension; no decode, no re-encode.
+#                         This is what the wasm preview uses.
+# - `textures-optimize` — desktop add-on: pulls in `image` + `oxipng` so
+#                         colour slots transcode to JPEG q=90 (when alpha
+#                         allows) and linear slots get oxipng-shrunk.
+#
+# With neither feature enabled, `pack_textures` returns an empty table
+# and materials export with PBR factors only.
+textures = []
+textures-optimize = ["textures", "dep:image", "dep:oxipng"]
 # Sibling-mesh merge module. The merge pass calls into `mogen-geom`'s CSG
 # `union_many`; whichever crate enables the `csg` (desktop) or
 # `unstable-wasm-uu` (wasm) flavor of `mogen-geom` is responsible for

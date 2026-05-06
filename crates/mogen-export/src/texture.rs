@@ -1,11 +1,7 @@
 use std::collections::HashMap;
-#[cfg(feature = "textures")]
-use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use anyhow::Result;
-#[cfg(feature = "textures")]
-use anyhow::Context;
+use anyhow::{Context, Result};
 use serde_json::Value;
 #[cfg(feature = "textures")]
 use serde_json::json;
@@ -15,6 +11,54 @@ use mogen_core::{Material, TextureRef};
 #[cfg(feature = "textures")]
 use crate::align_up;
 use crate::BufferView;
+
+/// Where the exporter pulls texture bytes from. Desktop builds use
+/// [`FsTextureSource`] (reads from the filesystem); wasm builds plug in an
+/// in-memory map populated by the JS caller. The split keeps `mogen-export`
+/// portable to environments without `std::fs` access.
+pub trait TextureSource {
+    fn read(&self, path: &Path) -> Result<Vec<u8>>;
+}
+
+/// Reads textures off the filesystem via `std::fs::read`. Always available so
+/// the desktop CLI / Studio path stays a one-liner; on wasm32 it compiles
+/// fine but every read returns an `Unsupported` error — wasm callers
+/// construct a [`MapTextureSource`] (or their own impl) instead.
+pub struct FsTextureSource;
+
+impl TextureSource for FsTextureSource {
+    fn read(&self, path: &Path) -> Result<Vec<u8>> {
+        std::fs::read(path)
+            .with_context(|| format!("reading texture file {}", path.display()))
+    }
+}
+
+/// In-memory `path → bytes` map. The wasm bridge populates this from the
+/// `Map<string, Uint8Array>` of binary assets the JS caller supplies, so
+/// every `texture = "albedo.png"` reference in the `.mog` source resolves
+/// to bytes the host already has in scope.
+pub struct MapTextureSource {
+    pub assets: HashMap<PathBuf, Vec<u8>>,
+}
+
+impl MapTextureSource {
+    pub fn new(assets: HashMap<PathBuf, Vec<u8>>) -> Self {
+        Self { assets }
+    }
+}
+
+impl TextureSource for MapTextureSource {
+    fn read(&self, path: &Path) -> Result<Vec<u8>> {
+        self.assets.get(path).cloned().ok_or_else(|| {
+            anyhow::anyhow!(
+                "texture \"{}\" not present in the asset map (wasm callers \
+                 must include every texture path referenced from `.mog` \
+                 source under the same key)",
+                path.display()
+            )
+        })
+    }
+}
 
 /// Whether a texture carries colour data (displayed to a human and safe to
 /// store as lossy JPEG) or linear numeric data packed into RGB channels
@@ -43,36 +87,44 @@ impl TextureTable {
         self.by_key.get(&(t.path.clone(), kind)).copied()
     }
 
-    /// Test-only: register a path → texture-index mapping without a real PNG
-    /// on disk. Lets material-emission tests exercise the slot wiring against
-    /// a populated table.
     #[cfg(test)]
     pub(crate) fn insert_for_test(&mut self, path: PathBuf, kind: SlotKind, idx: usize) {
         self.by_key.insert((path, kind), idx);
     }
 }
 
-/// Stub used when the `textures` feature is disabled (e.g. wasm builds with
-/// no filesystem). Returns an empty table; downstream emit_material will then
-/// omit every `*Texture` slot and the materials export as pure PBR factors.
+/// Stub used when the `textures` feature is disabled entirely. Returns an
+/// empty table; downstream `emit_material` then omits every `*Texture` slot
+/// and the materials export as pure PBR factors.
 #[cfg(not(feature = "textures"))]
 pub(crate) fn pack_textures(
     _materials: &[Material],
     _bin: &mut Vec<u8>,
     _buffer_views: &mut Vec<BufferView>,
+    _source: &dyn TextureSource,
 ) -> Result<TextureTable> {
     Ok(TextureTable::default())
 }
 
-/// Read every unique texture file referenced by materials, re-encode it for
-/// its slot kind (colour → JPEG when alpha permits; linear or alpha-bearing
-/// → optimized PNG), embed the resulting bytes into the BIN chunk, and fill
-/// out the glTF image / texture / sampler tables.
+/// Read every unique texture file referenced by materials, encode it for its
+/// slot kind, embed the resulting bytes into the BIN chunk, and fill out the
+/// glTF image / texture / sampler tables.
+///
+/// The encoding policy depends on which sub-features are enabled:
+///
+/// - `textures-optimize` on (desktop default): colour slots transcode to
+///   JPEG q=90 when alpha permits, linear slots run through oxipng for
+///   lossless shrink. Matches the historic desktop behaviour bit-for-bit.
+/// - `textures-optimize` off (wasm): bytes are embedded as-is and the MIME
+///   type is inferred from the file extension. No `image` / `oxipng`
+///   linkage — keeps the wasm artifact small and avoids C deps that don't
+///   cross-compile.
 #[cfg(feature = "textures")]
 pub(crate) fn pack_textures(
     materials: &[Material],
     bin: &mut Vec<u8>,
     buffer_views: &mut Vec<BufferView>,
+    source: &dyn TextureSource,
 ) -> Result<TextureTable> {
     let mut table = TextureTable::default();
 
@@ -111,12 +163,11 @@ pub(crate) fn pack_textures(
         if table.by_key.contains_key(&key) {
             continue;
         }
-        let source = fs::read(&t.path).with_context(|| {
-            format!("reading texture file {}", t.path.display())
-        })?;
-        let (bytes, mime) = encode_for_slot(&source, kind).with_context(|| {
-            format!("encoding texture {}", t.path.display())
-        })?;
+        let raw = source
+            .read(&t.path)
+            .with_context(|| format!("reading texture {}", t.path.display()))?;
+        let (bytes, mime) = encode_for_slot(&raw, &t.path, kind)
+            .with_context(|| format!("encoding texture {}", t.path.display()))?;
 
         let offset = align_up(bin, 4);
         let byte_length = bytes.len();
@@ -146,20 +197,15 @@ pub(crate) fn pack_textures(
     Ok(table)
 }
 
-/// Produce the bytes to embed for a texture, plus its glTF mime type.
-///
-/// - Colour slots (base_color, emissive) transcode to JPEG q=90 when the
-///   source has no meaningful alpha; if alpha is present and variable the
-///   image stays PNG (JPEG has no alpha channel). Most PBR albedo maps are
-///   fully opaque, so in practice this is a large file-size win.
-/// - Linear slots (normal, metallic-roughness, occlusion) must stay lossless
-///   — JPEG chroma subsampling and DCT ringing would corrupt the numeric
-///   values packed into the channels. We run oxipng over PNG sources to
-///   shrink them losslessly (re-pick filters, re-deflate with zopfli). JPEG
-///   sources for linear slots are passed through as-is; the user opted in to
-///   lossy data there and we don't second-guess them.
-#[cfg(feature = "textures")]
-fn encode_for_slot(source: &[u8], kind: SlotKind) -> Result<(Vec<u8>, &'static str)> {
+/// Pick the embed bytes + MIME for a texture given its source bytes, path,
+/// and slot kind. With `textures-optimize` on this re-encodes; without it
+/// the bytes pass through and only the extension determines the MIME.
+#[cfg(all(feature = "textures", feature = "textures-optimize"))]
+fn encode_for_slot(
+    source: &[u8],
+    _path: &Path,
+    kind: SlotKind,
+) -> Result<(Vec<u8>, &'static str)> {
     let fmt = image::guess_format(source).context("detecting texture image format")?;
     match kind {
         SlotKind::Color => encode_color_slot(source, fmt),
@@ -167,7 +213,39 @@ fn encode_for_slot(source: &[u8], kind: SlotKind) -> Result<(Vec<u8>, &'static s
     }
 }
 
-#[cfg(feature = "textures")]
+/// Pass-through path: embed the source bytes as-is and pick the MIME type
+/// from the file extension. PNG, JPEG, and WebP are recognised; anything
+/// else is rejected so the GLB stays valid (glTF only specifies these
+/// three image MIME types).
+#[cfg(all(feature = "textures", not(feature = "textures-optimize")))]
+fn encode_for_slot(
+    source: &[u8],
+    path: &Path,
+    _kind: SlotKind,
+) -> Result<(Vec<u8>, &'static str)> {
+    let mime = mime_from_extension(path)?;
+    Ok((source.to_vec(), mime))
+}
+
+#[cfg(all(feature = "textures", not(feature = "textures-optimize")))]
+fn mime_from_extension(path: &Path) -> Result<&'static str> {
+    let ext = path
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_ascii_lowercase());
+    match ext.as_deref() {
+        Some("png") => Ok("image/png"),
+        Some("jpg") | Some("jpeg") => Ok("image/jpeg"),
+        Some("webp") => Ok("image/webp"),
+        _ => anyhow::bail!(
+            "unsupported texture extension on {} \
+             (only .png/.jpg/.jpeg/.webp are embeddable without re-encode)",
+            path.display()
+        ),
+    }
+}
+
+#[cfg(all(feature = "textures", feature = "textures-optimize"))]
 fn encode_color_slot(source: &[u8], fmt: image::ImageFormat) -> Result<(Vec<u8>, &'static str)> {
     let img = image::load_from_memory_with_format(source, fmt)
         .context("decoding colour texture")?;
@@ -195,7 +273,7 @@ fn encode_color_slot(source: &[u8], fmt: image::ImageFormat) -> Result<(Vec<u8>,
     }
 }
 
-#[cfg(feature = "textures")]
+#[cfg(all(feature = "textures", feature = "textures-optimize"))]
 fn encode_linear_slot(source: &[u8], fmt: image::ImageFormat) -> Result<(Vec<u8>, &'static str)> {
     match fmt {
         image::ImageFormat::Png => Ok(optimize_png_bytes(source)),
@@ -211,7 +289,7 @@ fn encode_linear_slot(source: &[u8], fmt: image::ImageFormat) -> Result<(Vec<u8>
 /// size — it re-picks per-row filters and re-deflates, typically 10–30%
 /// smaller on un-optimized generator output. If oxipng fails or produces a
 /// larger file, keep the original.
-#[cfg(feature = "textures")]
+#[cfg(all(feature = "textures", feature = "textures-optimize"))]
 fn optimize_png_bytes(bytes: &[u8]) -> (Vec<u8>, &'static str) {
     let opts = oxipng::Options::from_preset(2);
     match oxipng::optimize_from_memory(bytes, &opts) {
