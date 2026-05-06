@@ -3,13 +3,14 @@ use glam::{Mat4, Vec3};
 
 use mogen_core::{Mesh, UvMode};
 use mogen_geom::{
-    box_mesh, capsule_mesh, chamfered_box_mesh, clean_csg_output, cone_mesh, curved_plane_mesh,
-    cylinder_mesh, difference_many, disc_mesh, ellipsoid_mesh, extrude_mesh, frustum_mesh,
-    half_cylinder_mesh, hemisphere_mesh, icosphere_mesh, inset_box_mesh, lathe_mesh,
-    leaf_card_mesh, loft_mesh, mesh_from_glb_bytes, plane_mesh, prism_mesh, pyramid_mesh,
-    quad_mesh, read_glb_bytes, rounded_box_mesh, sphere_mesh, spline_ribbon_mesh, spline_tube_mesh,
-    superellipsoid_mesh, sweep_mesh, torus_arc_mesh, torus_mesh, transform_mesh, tube_mesh,
-    wedge_mesh, InsetFace, SweepModulation,
+    bezier_patch_mesh, box_mesh, capsule_mesh, chamfered_box_mesh, clean_csg_output, coil_mesh,
+    cone_mesh, curved_plane_mesh, cylinder_mesh, difference_many, disc_mesh, ellipsoid_mesh,
+    extrude_mesh, frustum_mesh, half_cylinder_mesh, heightfield_mesh, hemisphere_mesh,
+    icosphere_mesh, inset_box_mesh, lathe_mesh, leaf_card_mesh, loft_mesh, mesh_from_glb_bytes,
+    metaball_mesh, plane_mesh, prism_mesh, pyramid_mesh, quad_mesh, read_glb_bytes,
+    rounded_box_mesh, sphere_mesh, spline_ribbon_mesh, spline_tube_mesh, superellipsoid_mesh,
+    sweep_mesh, torus_arc_mesh, torus_mesh, transform_mesh, tube_mesh, wedge_mesh,
+    CoilHandedness, InsetFace, SweepModulation,
 };
 
 use crate::ast::Node;
@@ -29,7 +30,8 @@ fn deform_density(node: &Node) -> u32 {
         || node.attr("bend_z").is_some()
         || node.attr("twist_y").is_some()
         || node.attr("noise").is_some()
-        || node.attr("droop").is_some();
+        || node.attr("droop").is_some()
+        || node.attr("wave").is_some();
     if needs_dense {
         2
     } else {
@@ -57,6 +59,29 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
         "plane" => {
             let s = resolve_size_xz(node, [1.0, 1.0]);
             plane_mesh(s, uv_mode)
+        }
+        "heightfield" => {
+            let s = resolve_size_xz(node, [1.0, 1.0]);
+            let segments_u = node
+                .attr_number("segments_u")
+                .map(|n| n as u32)
+                .unwrap_or_else(|| seg_default(32, 1));
+            let segments_v = node
+                .attr_number("segments_v")
+                .map(|n| n as u32)
+                .unwrap_or_else(|| seg_default(32, 1));
+            let amplitude = node.attr_number("amplitude").unwrap_or(0.5);
+            let octaves = node
+                .attr_number("octaves")
+                .map(|n| (n as u32).clamp(1, 8))
+                .unwrap_or(3);
+            let frequency = node.attr_number("frequency").unwrap_or(1.0);
+            let persistence = node.attr_number("persistence").unwrap_or(0.5);
+            let seed = node.attr_number("seed").map(|n| n as u32).unwrap_or(1);
+            heightfield_mesh(
+                s, segments_u, segments_v, amplitude,
+                octaves, frequency, persistence, seed, uv_mode,
+            )
         }
         "quad" => {
             let s = resolve_size_xy(node, [1.0, 1.0]);
@@ -239,6 +264,60 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
                 .unwrap_or_else(|| seg_default(12, 1));
             curved_plane_mesh(s, bend_u, bend_v, segments_u, segments_v, uv_mode)
         }
+        "bezier_patch" => {
+            // Author supplies exactly 16 vec3 control points, row-major.
+            let points = node.attr_list_vec3("points").unwrap_or_default();
+            if points.len() != 16 {
+                return Some(Err(anyhow!(
+                    "`bezier_patch` requires exactly 16 vec3 control points in `points=`, got {}",
+                    points.len(),
+                )));
+            }
+            let segments_u = node
+                .attr_number("segments_u")
+                .map(|n| n as u32)
+                .unwrap_or_else(|| seg_default(12, 1));
+            let segments_v = node
+                .attr_number("segments_v")
+                .map(|n| n as u32)
+                .unwrap_or_else(|| seg_default(12, 1));
+            bezier_patch_mesh(&points, segments_u, segments_v, uv_mode)
+        }
+        "metaball" => {
+            let points = node.attr_list_vec3("points").unwrap_or_default();
+            if points.is_empty() {
+                return Some(Err(anyhow!(
+                    "`metaball` requires at least one point in `points=[[x,y,z], …]`",
+                )));
+            }
+            // `radii` (per-point list) takes precedence; else fall back to
+            // scalar `radius`. One of the two is required so the author
+            // can't accidentally request a metaball with no radii.
+            // The grammar parses 3-element lists as `Vec3`, so accept that
+            // shape too — same fallback `loft.heights` uses.
+            let radii: Vec<f32> = match node.attr("radii") {
+                Some(crate::ast::Value::List(v)) => v.to_vec(),
+                Some(crate::ast::Value::Vec3(v)) => v.to_vec(),
+                _ => match node.attr_number("radius") {
+                    Some(r) => vec![r],
+                    None => {
+                        return Some(Err(anyhow!(
+                            "`metaball` requires either a scalar `radius=` or a per-point `radii=[…]`",
+                        )));
+                    }
+                },
+            };
+            let blend = node.attr_number("blend").unwrap_or(0.0);
+            let rings = node
+                .attr_number("rings")
+                .map(|n| n as u32)
+                .unwrap_or_else(|| seg_default(12, 2));
+            let segments = node
+                .attr_number("segments")
+                .map(|n| n as u32)
+                .unwrap_or_else(|| seg_default(16, 3));
+            metaball_mesh(&points, &radii, blend, rings, segments, uv_mode)
+        }
         "wall" => {
             // Box cut through along Z by any number of rectangular holes
             // declared as [x, y, w, h] in the wall's local frame.
@@ -291,6 +370,37 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
                 .unwrap_or_else(|| seg_default(8, 2));
             let cap_ends = node.attr_number("cap_ends").map(|n| n != 0.0).unwrap_or(true);
             spline_tube_mesh(&points, &radii, segments, samples, cap_ends, uv_mode)
+        }
+        "coil" => {
+            let radius = node.attr_number("radius").unwrap_or(0.5);
+            let height = node.attr_number("height").unwrap_or(1.0);
+            let turns = node.attr_number("turns").unwrap_or(3.0);
+            let profile_radius = node.attr_number("profile_radius").unwrap_or(0.05);
+            let segments = node
+                .attr_number("segments")
+                .map(|n| n as u32)
+                .unwrap_or_else(|| seg_default(12, 3));
+            let samples = node
+                .attr_number("samples")
+                .map(|n| n as u32)
+                .unwrap_or_else(|| seg_default(16, 4));
+            let cap_ends = node.attr_number("cap_ends").map(|n| n != 0.0).unwrap_or(true);
+            let handedness = match node.attr_string("handedness") {
+                Some(s) => match s.to_ascii_lowercase().as_str() {
+                    "right" | "rh" | "ccw" => CoilHandedness::Right,
+                    "left"  | "lh" | "cw"  => CoilHandedness::Left,
+                    other => {
+                        return Some(Err(anyhow!(
+                            "coil.handedness: expected \"right\" or \"left\", got \"{other}\""
+                        )));
+                    }
+                },
+                None => CoilHandedness::Right,
+            };
+            coil_mesh(
+                radius, height, turns, profile_radius,
+                segments, samples, cap_ends, handedness, uv_mode,
+            )
         }
         "spline_ribbon" => {
             let points = node

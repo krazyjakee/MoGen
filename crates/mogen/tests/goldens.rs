@@ -141,6 +141,14 @@ golden_test!(table, "table", Source::Example);
 golden_test!(sword, "sword", Source::Example);
 golden_test!(drone, "drone", Source::Example);
 golden_test!(simple_house, "simple_house", Source::Example);
+// Organic-shape primitives showcase examples — locked as goldens so a
+// regression in `coil`/`wave`/`heightfield`/`bezier_patch`/`metaball`
+// surfaces immediately.
+golden_test!(coil_spring, "coil_spring", Source::Example);
+golden_test!(wave_water, "wave_water", Source::Example);
+golden_test!(heightfield_terrain, "heightfield_terrain", Source::Example);
+golden_test!(bezier_fender, "bezier_fender", Source::Example);
+golden_test!(metaball_blob, "metaball_blob", Source::Example);
 
 // Test-only fixtures: minimal scenes that lock specific compiler behaviours.
 golden_test!(hierarchy_test, "hierarchy_test", Source::Fixture);
