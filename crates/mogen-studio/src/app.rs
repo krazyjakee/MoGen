@@ -27,6 +27,7 @@ mod indent;
 mod line_ops;
 mod llm;
 mod moghub;
+mod moghub_open;
 mod multi_caret;
 mod oauth_ui;
 mod onboarding;
@@ -358,6 +359,11 @@ pub struct MogenStudioApp {
     /// since the active file already owns the source-of-truth scene Arc.
     pub(in crate::app) picker_prev_camera:
         Option<crate::viewer::CameraSnapshot>,
+
+    /// Pending / in-flight `mogen://` action. Set by
+    /// [`Self::queue_protocol_url`] when launched with a URL on argv,
+    /// or by future in-app deep-link surfaces. `None` at steady state.
+    moghub_protocol: Option<moghub_open::Flow>,
 }
 
 impl MogenStudioApp {
@@ -504,7 +510,15 @@ impl MogenStudioApp {
             picker: None,
             thumbnail_mgr: thumbnail::ThumbnailManager::new(cc.egui_ctx.clone()),
             picker_prev_camera: None,
+            moghub_protocol: None,
         }
+    }
+
+    /// Queue a `mogen://` URL captured from argv. Acted on after the
+    /// splash drains so the user isn't ambushed by a folder picker
+    /// during the welcome animation.
+    pub fn queue_protocol_url(&mut self, url: crate::protocol::MogenUrl) {
+        self.moghub_protocol = Some(moghub_open::Flow::Pending(url));
     }
 
     /// Advance the splash one step. Caller has already confirmed `init` is
@@ -628,6 +642,90 @@ impl MogenStudioApp {
         }
     }
 
+    /// Drive the `mogen://` protocol flow one frame: while the splash
+    /// is still up we leave the URL pending; once init drains we raise
+    /// the folder picker, spawn a download/unzip worker, and on
+    /// completion route the entry `.mog` through `open_path`.
+    fn drive_moghub_protocol(&mut self, ctx: &egui::Context) {
+        if self.init.is_some() {
+            return;
+        }
+        // Take the current state out so we can mutate `self` in match
+        // arms without fighting the borrow checker; whatever the arm
+        // wants to keep is written back at the end.
+        let Some(flow) = self.moghub_protocol.take() else {
+            return;
+        };
+        match flow {
+            moghub_open::Flow::Pending(url) => {
+                let label = match &url {
+                    crate::protocol::MogenUrl::MoghubOpen { user, slug, .. } => {
+                        format!("@{user}/{slug}")
+                    }
+                };
+                // Native folder picker. Blocks the UI thread but matches
+                // the rest of Studio's Save-As flow; users expect a
+                // dialog to take focus.
+                let initial = self.project_root.clone();
+                let dest_root = rfd::FileDialog::new()
+                    .set_title(&format!("Choose folder for {label}"))
+                    .set_directory(initial)
+                    .pick_folder();
+                let Some(dest_root) = dest_root else {
+                    // User cancelled — drop the action; status reflects it.
+                    self.active_mut().status = format!("cancelled opening {label}");
+                    return;
+                };
+                let base_url = self.settings.moghub_url.clone();
+                let token = self.settings.moghub_session.clone();
+                let rx = moghub_open::spawn(base_url, token, ctx.clone(), url, dest_root);
+                self.active_mut().status = format!("downloading {label}…");
+                self.moghub_protocol = Some(moghub_open::Flow::Working {
+                    label,
+                    rx,
+                });
+            }
+            moghub_open::Flow::Working { label, rx } => {
+                match rx.try_recv() {
+                    Ok(outcome) => match outcome.result {
+                        Ok(entry_path) => {
+                            self.open_path(&entry_path);
+                            self.active_mut().status = format!("opened {label}");
+                            // Flow done — leave moghub_protocol = None.
+                        }
+                        Err(msg) => {
+                            self.active_mut().status =
+                                format!("opening {label} failed: {msg}");
+                            self.moghub_protocol =
+                                Some(moghub_open::Flow::Failed(msg));
+                        }
+                    },
+                    Err(std::sync::mpsc::TryRecvError::Empty) => {
+                        // Still working — put it back.
+                        self.moghub_protocol = Some(moghub_open::Flow::Working {
+                            label,
+                            rx,
+                        });
+                        ctx.request_repaint_after(std::time::Duration::from_millis(120));
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        let msg = "download worker exited unexpectedly".to_string();
+                        self.active_mut().status =
+                            format!("opening {label} failed: {msg}");
+                        self.moghub_protocol =
+                            Some(moghub_open::Flow::Failed(msg));
+                    }
+                }
+            }
+            moghub_open::Flow::Failed(msg) => {
+                // Sticky until cleared. Keep the state so a future
+                // surface can show it (no toast yet); status bar
+                // already carries the message.
+                self.moghub_protocol = Some(moghub_open::Flow::Failed(msg));
+            }
+        }
+    }
+
     /// Mint the next stable per-tab id. Every fresh `FileState` should pull
     /// from here so the editor's `egui::Id` never collides with one belonging
     /// to a now-closed tab.
@@ -681,6 +779,7 @@ impl eframe::App for MogenStudioApp {
         self.poll_oauth_login();
         self.poll_update();
         self.poll_generate(ctx);
+        self.drive_moghub_protocol(ctx);
         self.drive_compile_debounce(ctx);
         self.check_external_changes(ctx);
 

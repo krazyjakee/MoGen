@@ -318,6 +318,20 @@ impl MoghubClient {
         self.get_text(&path)
     }
 
+    /// `GET /api/m/:user/:slug/download.zip` — server-built archive of the
+    /// latest version: entry `.mog` + sibling imports + uploaded textures
+    /// at the root, with transitive registry dependencies under
+    /// `modules/<user>/<slug>@v<n>/`. Caller writes the bytes to disk and
+    /// unzips with the [`zip`](https://crates.io/crates/zip) crate.
+    pub fn download_zip(&self, user: &str, slug: &str) -> Result<Vec<u8>, MoghubError> {
+        let path = format!(
+            "/api/m/{}/{}/download.zip",
+            urlencode_segment(user),
+            urlencode_segment(slug)
+        );
+        self.get_bytes(&path)
+    }
+
     /// `GET /api/m/:user/:slug/versions/:version_id/thumbnail.png` —
     /// the published thumbnail.
     pub fn thumbnail_png(
