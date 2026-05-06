@@ -1030,4 +1030,73 @@ fn deform_taper_shrinks_top_of_cylinder() {
     assert!((bot_max - 0.5).abs() < 1e-3, "bottom radius should be ~0.5, got {bot_max}");
 }
 
+#[test]
+fn mirror_bakes_reflection_into_subtree_so_chain_stays_positive_det() {
+    // Regression: a `mirror (axis=x)` used to leave its second instance with
+    // a `scale=(-1,1,1)` on the wrapper, which gave it a negative-determinant
+    // world transform. Renderers that don't reverse front-face winding for
+    // negative-det chains (and most glTF importers in practice) drew the
+    // mirrored copy backface-culled — the `gaming_chair.mog` armpad bug.
+    let g = lower_src(
+        r#"
+        scene {
+          mirror "pair" (axis=x) {
+            box "leaf" (pos=[0.5, 0.0, 0.0], size=[0.2, 0.2, 0.2])
+          }
+        }
+        "#,
+    );
+
+    // Every node's local scale must be positive after the bake.
+    for n in &g.nodes {
+        let s = n.transform.scale;
+        assert!(
+            s.x * s.y * s.z > 0.0,
+            "node `{}` has non-positive-det scale {:?} after mirror bake",
+            n.name,
+            s
+        );
+    }
+
+    // Find the original (`pair_0`) and mirrored (`pair_1`) leaves and confirm
+    // the second one has its translation flipped on x and its mesh winding
+    // reversed relative to the first.
+    let pair_0_leaf = g
+        .nodes
+        .iter()
+        .find(|n| n.name == "leaf"
+            && n.parent.is_some()
+            && g.nodes[n.parent.unwrap().0 as usize].name == "pair_0")
+        .expect("pair_0/leaf");
+    let pair_1_leaf = g
+        .nodes
+        .iter()
+        .find(|n| n.name == "leaf"
+            && n.parent.is_some()
+            && g.nodes[n.parent.unwrap().0 as usize].name == "pair_1")
+        .expect("pair_1/leaf");
+
+    assert!((pair_0_leaf.transform.translation.x - 0.5).abs() < 1e-5);
+    assert!((pair_1_leaf.transform.translation.x + 0.5).abs() < 1e-5);
+
+    let m0 = pair_0_leaf.mesh.as_ref().unwrap();
+    let m1 = pair_1_leaf.mesh.as_ref().unwrap();
+    assert_eq!(m0.indices.len(), m1.indices.len());
+    // Per-triangle winding flipped: m1 swaps indices 1 and 2 of every tri
+    // (and x-flips positions/normals).
+    for (a, b) in m0.indices.chunks_exact(3).zip(m1.indices.chunks_exact(3)) {
+        assert_eq!(a[0], b[0]);
+        assert_eq!(a[1], b[2]);
+        assert_eq!(a[2], b[1]);
+    }
+    for (p0, p1) in m0.positions.iter().zip(m1.positions.iter()) {
+        assert!((p0[0] + p1[0]).abs() < 1e-5, "x should be negated");
+        assert!((p0[1] - p1[1]).abs() < 1e-5);
+        assert!((p0[2] - p1[2]).abs() < 1e-5);
+    }
+    for (n0, n1) in m0.normals.iter().zip(m1.normals.iter()) {
+        assert!((n0[0] + n1[0]).abs() < 1e-5, "normal x should be negated");
+    }
+}
+
 

@@ -3,7 +3,7 @@ use std::f32::consts::TAU;
 use anyhow::{anyhow, bail, Result};
 use glam::{Quat, Vec3};
 
-use mogen_core::{subtree_local_aabb, Aabb, NodeId, SceneGraph, Transform};
+use mogen_core::{subtree_local_aabb, Aabb, Mesh, NodeId, SceneGraph, Transform};
 
 use crate::ast::{Node, Value};
 use crate::attach::resolve_attaches_in_scope;
@@ -420,6 +420,17 @@ pub(super) fn expand_replicator(
         // resolve parent/child against the first instance's nodes (name collision).
         resolve_attaches_in_scope(&node.children, graph, iid)?;
         resolve_conforms_in_scope(&node.children, graph, iid)?;
+        // Mirror instances are created with a negative-axis scale on the
+        // wrapper. Renderers and most glTF importers don't reliably flip the
+        // front-face winding for negative-determinant transforms, so the
+        // mirrored side ends up backface-culled. Bake the reflection into the
+        // subtree (descendant TRS, connectors, mesh positions/normals + index
+        // winding) and reset the instance to identity so every node downstream
+        // sees a positive-determinant chain.
+        if t.scale.x * t.scale.y * t.scale.z < 0.0 {
+            bake_mirror_into_subtree(iid, t.scale, graph);
+            graph.nodes[iid.0 as usize].transform = Transform::IDENTITY;
+        }
         add_aabb_connectors_if_missing(iid, graph);
     }
     // Each replicator instance is a synthetic copy — multiple scene nodes can
@@ -432,4 +443,60 @@ pub(super) fn expand_replicator(
     add_aabb_connectors_if_missing(wrapper_id, graph);
 
     Ok(wrapper_id)
+}
+
+/// Walk every descendant of `root` and conjugate its local TRS, connectors,
+/// and mesh data by the diagonal mirror matrix `S = diag(scale)` (each
+/// component ±1, exactly one negative). The math is `T_i' = S T_i S` for
+/// each descendant transform plus `mesh' = S * mesh` at the leaves, so the
+/// world geometry of every point is unchanged after the caller resets
+/// `root.transform` to identity. The reflection is absorbed into the leaf
+/// vertex stream — flipping mesh positions/normals along the mirror axis and
+/// reversing triangle winding — which keeps the subsequent chain
+/// positive-determinant for downstream renderers.
+fn bake_mirror_into_subtree(root: NodeId, scale: Vec3, graph: &mut SceneGraph) {
+    let mut stack: Vec<NodeId> = graph.nodes[root.0 as usize].children.clone();
+    while let Some(id) = stack.pop() {
+        let children = graph.nodes[id.0 as usize].children.clone();
+        let n = &mut graph.nodes[id.0 as usize];
+        n.transform.translation = scale * n.transform.translation;
+        n.transform.rotation = mirror_quat(n.transform.rotation, scale);
+        // n.transform.scale is unchanged: S diag(s) S = diag(s) for diagonal S
+        // with components ±1.
+        for c in &mut n.connectors {
+            c.pos = scale * c.pos;
+            c.rotation = mirror_quat(c.rotation, scale);
+        }
+        if let Some(mesh) = &mut n.mesh {
+            mirror_mesh_in_place(mesh, scale);
+        }
+        stack.extend(children);
+    }
+}
+
+/// Conjugate quaternion `q` by `S = diag(scale)` (mirror across the negative
+/// component's axis). For axis-angle `(axis, θ)`, mirroring negates the axis
+/// components perpendicular to the mirror axis and leaves the parallel
+/// component intact, so the new quaternion's xyz parts pick up the sign
+/// pattern `-S`. The scalar (w) part stays the same.
+fn mirror_quat(q: Quat, scale: Vec3) -> Quat {
+    Quat::from_xyzw(-scale.x * q.x, -scale.y * q.y, -scale.z * q.z, q.w)
+}
+
+fn mirror_mesh_in_place(mesh: &mut Mesh, scale: Vec3) {
+    for p in &mut mesh.positions {
+        p[0] *= scale.x;
+        p[1] *= scale.y;
+        p[2] *= scale.z;
+    }
+    for n in &mut mesh.normals {
+        n[0] *= scale.x;
+        n[1] *= scale.y;
+        n[2] *= scale.z;
+    }
+    // A reflection flips triangle winding. Swap two indices per triangle so
+    // CCW stays CCW after the position flip.
+    for tri in mesh.indices.chunks_exact_mut(3) {
+        tri.swap(1, 2);
+    }
 }
