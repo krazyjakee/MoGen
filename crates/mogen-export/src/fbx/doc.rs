@@ -66,7 +66,7 @@ pub(super) fn build_tree<F: Fn(&str)>(
     let model_ids = super::nodes::emit_models(scene, &mut ids, &mut emit);
 
     // 2. Geometry per (skinned mesh OR per unique non-skinned mesh-key).
-    let mesh_table = super::mesh::emit_geometries(scene, &model_ids, &mut ids, &mut emit);
+    let mesh_table = super::mesh::emit_geometries(scene, &model_ids, &mut ids, &mut emit)?;
 
     // 3. Lights.
     super::light::emit_lights(scene, &model_ids, &mut ids, &mut emit);
@@ -78,12 +78,11 @@ pub(super) fn build_tree<F: Fn(&str)>(
         &mut ids,
         &mut emit,
         opts,
-        texture_source,
     )?;
 
     // 5. Textures + Videos. Only when textures are enabled — the table just
     //    above is empty otherwise.
-    super::texture::emit_textures_and_videos(scene, &texture_indices, &mut ids, &mut emit);
+    super::texture::emit_textures_and_videos(&texture_indices, texture_source, &mut ids, &mut emit)?;
 
     // 6. Skin deformers + clusters.
     super::skin::emit_skins(scene, &model_ids, &mesh_table, &mut ids, &mut emit);
@@ -246,14 +245,17 @@ fn write_global_settings(tree: &mut Tree, root: NodeId) {
         push_prop(t, props, "UpAxis", "int", "Integer", "", AttributeValue::I32(1));
         push_prop(t, props, "UpAxisSign", "int", "Integer", "", AttributeValue::I32(1));
         push_prop(t, props, "FrontAxis", "int", "Integer", "", AttributeValue::I32(2));
-        push_prop(t, props, "FrontAxisSign", "int", "Integer", "", AttributeValue::I32(1));
+        // FrontAxisSign = -1 because we declare -Z forward (CoordAxis=0,
+        // FrontAxis=2). Blender's exporter emits the same value for the
+        // Y-up / -Z-forward / right-handed configuration.
+        push_prop(t, props, "FrontAxisSign", "int", "Integer", "", AttributeValue::I32(-1));
         push_prop(t, props, "CoordAxis", "int", "Integer", "", AttributeValue::I32(0));
         push_prop(t, props, "CoordAxisSign", "int", "Integer", "", AttributeValue::I32(1));
         push_prop(t, props, "OriginalUpAxis", "int", "Integer", "", AttributeValue::I32(1));
         push_prop(t, props, "OriginalUpAxisSign", "int", "Integer", "", AttributeValue::I32(1));
         push_prop(t, props, "UnitScaleFactor", "double", "Number", "", AttributeValue::F64(1.0));
         push_prop(t, props, "OriginalUnitScaleFactor", "double", "Number", "", AttributeValue::F64(1.0));
-        push_prop(t, props, "AmbientColor", "ColorRGB", "Color", "", AttributeValue::F64(0.0));
+        push_prop_vec3(t, props, "AmbientColor", "ColorRGB", "Color", "", [0.0, 0.0, 0.0]);
         push_prop(t, props, "DefaultCamera", "KString", "", "", AttributeValue::String("Producer Perspective".into()));
         push_prop(t, props, "TimeMode", "enum", "", "", AttributeValue::I32(11));
         push_prop(t, props, "TimeProtocol", "enum", "", "", AttributeValue::I32(2));

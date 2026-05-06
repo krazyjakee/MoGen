@@ -29,7 +29,6 @@ use mogen_core::{AlphaMode, Material, SceneGraph, UvMode};
 
 use super::doc::{push_prop, push_prop_vec3, write_properties70, ObjectEmitter};
 use super::ids::IdAllocator;
-use crate::texture::TextureSource;
 use crate::ExportOptions;
 
 /// FBX `Texture` slot names used for OP-connection from a Texture object
@@ -67,31 +66,26 @@ pub(super) struct MaterialTexturePaths {
 
 pub(super) fn emit_materials(
     scene: &SceneGraph,
-    _model_ids: &[i64],
+    model_ids: &[i64],
     ids: &mut IdAllocator,
     emit: &mut ObjectEmitter,
     opts: &ExportOptions,
-    _texture_source: &dyn TextureSource,
 ) -> Result<TextureIndices> {
     let mut material_ids: Vec<i64> = Vec::with_capacity(scene.materials.len());
     let mut texture_paths: Vec<MaterialTexturePaths> = Vec::with_capacity(scene.materials.len());
 
-    // Reverse the material→models map produced by `mesh::emit_geometries`.
-    // We need it from the freshly-built emitter, so re-scan instead — the
-    // mesh table is private to that module's return value, threaded
-    // through doc::build_tree. To keep this module independent of mesh's
-    // table we re-derive the binding here.
+    // Reverse-derive the material→models binding by re-walking
+    // the scene. We only need it for the OO connection from each
+    // Material to every Model that referenced it; doing this here
+    // keeps the material module independent of `MeshTable`.
     let mut material_to_models: HashMap<u32, Vec<i64>> = HashMap::new();
     {
-        // Re-allocate model ids? No — the doc-level orchestrator owns
-        // them. We instead let the doc orchestrator pass them in
-        // implicitly by walking the scene with `_model_ids`.
         for (i, n) in scene.nodes.iter().enumerate() {
             if let (Some(mat), Some(_mesh)) = (n.material, n.mesh.as_ref()) {
                 material_to_models
                     .entry(mat.0)
                     .or_default()
-                    .push(_model_ids[i]);
+                    .push(model_ids[i]);
             }
         }
     }
@@ -206,8 +200,12 @@ impl From<&Material> for MaterialSnapshot {
 impl MaterialSnapshot {
     fn emit_properties(&self, tree: &mut fbxcel::tree::v7400::Tree, parent: fbxcel::tree::v7400::NodeId) {
         write_properties70(tree, parent, |t, props| {
-            // Phong-approximated PBR. Diffuse colour gets the RGB; alpha
-            // rides on `DiffuseFactor`. Specular is left at the FBX
+            // Phong-approximated PBR. Diffuse colour gets the RGB.
+            // `DiffuseFactor` stays at 1.0 (the FBX default — it scales
+            // DiffuseColor brightness, not opacity). Alpha rides on
+            // `TransparencyFactor` (FBX convention: 0 = opaque,
+            // 1 = fully transparent), so an alpha of 1.0 produces a
+            // transparency factor of 0.0. Specular is left at the FBX
             // default `(0.2, 0.2, 0.2)` because Phong specular is
             // perceptually orthogonal to PBR roughness.
             push_prop_vec3(
@@ -226,7 +224,16 @@ impl MaterialSnapshot {
                 "Number",
                 "",
                 "A",
-                AttributeValue::F64(self.base_color[3] as f64),
+                AttributeValue::F64(1.0),
+            );
+            push_prop(
+                t,
+                props,
+                "TransparencyFactor",
+                "Number",
+                "",
+                "A",
+                AttributeValue::F64((1.0 - self.base_color[3]).clamp(0.0, 1.0) as f64),
             );
             push_prop_vec3(
                 t,

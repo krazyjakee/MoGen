@@ -514,7 +514,8 @@ enum Cmd {
     /// extension (`.fbx` selects FBX). Pass `--format` to override.
     Build {
         input: PathBuf,
-        /// Output path. Defaults to `<input>.glb` alongside the DSL file.
+        /// Output path. Defaults to `<input>.glb` alongside the DSL file
+        /// (or `<input>.fbx` when `--format fbx` is set).
         #[arg(short, long)]
         out: Option<PathBuf>,
         /// Force a specific output container, ignoring the extension hint.

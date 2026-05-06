@@ -80,7 +80,7 @@ pub(super) fn emit_models(
                 write_properties70(tree, m, |t, props| {
                     push_prop(t, props, "RotationActive", "bool", "", "", AttributeValue::I32(1));
                     push_prop(t, props, "InheritType", "enum", "", "", AttributeValue::I32(0));
-                    push_prop(t, props, "ScalingMax", "Vector3D", "Vector", "", AttributeValue::F64(0.0));
+                    push_prop_vec3(t, props, "ScalingMax", "Vector3D", "Vector", "", [0.0, 0.0, 0.0]);
                     push_prop(t, props, "DefaultAttributeIndex", "int", "Integer", "", AttributeValue::I32(0));
                     push_prop_vec3(
                         t,

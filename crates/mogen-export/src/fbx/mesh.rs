@@ -36,7 +36,7 @@ pub(super) fn emit_geometries(
     model_ids: &[i64],
     ids: &mut IdAllocator,
     emit: &mut ObjectEmitter,
-) -> MeshTable {
+) -> anyhow::Result<MeshTable> {
     let mut geometry_id_for_node: Vec<Option<i64>> = vec![None; scene.nodes.len()];
 
     for (i, n) in scene.nodes.iter().enumerate() {
@@ -58,10 +58,26 @@ pub(super) fn emit_geometries(
             .collect();
 
         // `PolygonVertexIndex` runs per-polygon, with the last index of
-        // each polygon negate-and-decremented. For our triangle lists
-        // that means every third entry.
+        // each polygon negate-and-decremented (`!idx`). For our triangle
+        // lists that means every third entry.
+        //
+        // The negate-and-decrement encoding requires the index to fit in
+        // a positive i32 (the high bit is what marks "polygon end"). If
+        // any vertex index doesn't fit, we surface a clear error rather
+        // than silently corrupting the polygon stream — mogen-core's
+        // `Mesh.indices` is `Vec<u32>`, so values ≥ 2³¹ are legal at the
+        // type level but would alias to negative i32 here.
         let mut polygon_vertex_index: Vec<i32> = Vec::with_capacity(mesh.indices.len());
         for tri in mesh.indices.chunks_exact(3) {
+            for raw in [tri[0], tri[1], tri[2]] {
+                if raw > i32::MAX as u32 {
+                    return Err(anyhow::anyhow!(
+                        "fbx export: vertex index {raw} on geometry {:?} exceeds i32::MAX; \
+                         FBX `PolygonVertexIndex` cannot represent indices ≥ 2^31",
+                        n.name,
+                    ));
+                }
+            }
             let a = tri[0] as i32;
             let b = tri[1] as i32;
             let c = tri[2] as i32;
@@ -77,18 +93,24 @@ pub(super) fn emit_geometries(
             .flat_map(|n| [n[0] as f64, n[1] as f64, n[2] as f64])
             .collect();
 
-        // UV layer is optional — empty `uvs` skips the LayerElementUV
-        // emission entirely. Note this passes the raw UVs through; the
-        // `uv_scale` material multiplier is *not* applied here, matching
-        // the FBX convention that material UV transforms live on the
-        // material, not baked into vertex data. The GLB exporter bakes it
+        // UV layer is optional. Use `Mesh::has_uvs()` rather than just
+        // checking emptiness — the canonical predicate also requires the
+        // UV row count to match the position count, so a partial / stale
+        // UV array won't be emitted as a malformed FBX layer.
+        //
+        // Note we pass UVs through unchanged; the material's `uv_scale`
+        // multiplier is *not* applied here. FBX convention is to put UV
+        // transforms on the material side. The GLB exporter bakes it
         // because glTF's KHR_texture_transform support is uneven.
-        let uvs: Vec<f64> = mesh
-            .uvs
-            .iter()
-            .flat_map(|uv| [uv[0] as f64, uv[1] as f64])
-            .collect();
-        let has_uvs = !uvs.is_empty();
+        let has_uvs = mesh.has_uvs();
+        let uvs: Vec<f64> = if has_uvs {
+            mesh.uvs
+                .iter()
+                .flat_map(|uv| [uv[0] as f64, uv[1] as f64])
+                .collect()
+        } else {
+            Vec::new()
+        };
 
         let geom_name = n.name.clone();
 
@@ -163,7 +185,7 @@ pub(super) fn emit_geometries(
         emit.connect_oo(geom_id, model_id);
     }
 
-    MeshTable {
+    Ok(MeshTable {
         geometry_id_for_node,
-    }
+    })
 }

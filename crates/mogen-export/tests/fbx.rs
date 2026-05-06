@@ -395,8 +395,6 @@ fn directional_point_and_spot_lights_emit_node_attributes() {
 
 #[test]
 fn skin_emits_one_skin_deformer_with_per_joint_clusters() {
-    use glam::Mat4;
-
     // Tiny 4-vertex skinned mesh bound to two joints.
     let mut scene = SceneGraph::new();
 
@@ -412,10 +410,16 @@ fn skin_emits_one_skin_deformer_with_per_joint_clusters() {
     mesh.weights = vec![[1.0, 0.0, 0.0, 0.0]; 4];
     scene.set_mesh(mesh_node, mesh);
 
+    // Use non-identity inverse-bind matrices so a regression that swaps
+    // `Transform` and `TransformLink` (or accidentally sets both to the
+    // same value) shows up. With a non-trivial IBM, Transform = IBM and
+    // TransformLink = inverse(IBM) end up with different first elements.
+    let ibm_a = glam::Mat4::from_translation(glam::Vec3::new(1.0, 2.0, 3.0));
+    let ibm_b = glam::Mat4::from_translation(glam::Vec3::new(-4.0, 5.0, -6.0));
     let skin = Skin {
         name: "rig".into(),
         joints: vec![joint_a, joint_b],
-        inverse_bind_matrices: vec![Mat4::IDENTITY.to_cols_array_2d(); 2],
+        inverse_bind_matrices: vec![ibm_a.to_cols_array_2d(), ibm_b.to_cols_array_2d()],
         envelopes: Vec::new(),
         skeleton_root: None,
         origin: None,
@@ -465,9 +469,70 @@ fn skin_emits_one_skin_deformer_with_per_joint_clusters() {
             .attributes()[0]
             .get_arr_f64()
             .expect("f64 array");
+        // Transform = IBM (translation embedded in row 3 / cols 12..15
+        // in column-major), TransformLink = inverse(IBM) (negated
+        // translation). They MUST differ; equality would mean we
+        // accidentally emitted the same value into both.
         assert_eq!(t.len(), 16);
         assert_eq!(tl.len(), 16);
+        let t_translation = [t[12], t[13], t[14]];
+        let tl_translation = [tl[12], tl[13], tl[14]];
+        for ax in 0..3 {
+            assert!(
+                (t_translation[ax] + tl_translation[ax]).abs() < 1e-6,
+                "Transform translation {:?} should be the negation of TransformLink translation {:?}",
+                t_translation,
+                tl_translation,
+            );
+        }
+        assert!(
+            t_translation.iter().any(|v| v.abs() > 1e-6),
+            "test fixture should use non-identity IBM",
+        );
     }
+
+    // Connection direction sanity: every Cluster must be the source of
+    // an OO edge to a joint Model. A regression that swapped the
+    // direction would put the joint Model as the source.
+    let cluster_ids: Vec<i64> = clusters
+        .iter()
+        .map(|c| c.attributes()[0].get_i64().expect("cluster id"))
+        .collect();
+    let joint_model_names = ["jointA", "jointB"];
+    let joint_model_ids: Vec<i64> = objects_named(&tree, "Model")
+        .iter()
+        .filter(|m| {
+            let n = m.attributes()[1].get_string().unwrap_or("");
+            joint_model_names.iter().any(|jn| n.starts_with(jn))
+        })
+        .map(|m| m.attributes()[0].get_i64().unwrap())
+        .collect();
+    assert_eq!(joint_model_ids.len(), 2, "found both joint Models");
+    let conns = tree.root().first_child_by_name("Connections").unwrap();
+    let mut cluster_to_joint_count = 0;
+    let mut joint_to_cluster_count = 0;
+    for conn in conns.children_by_name("C") {
+        let attrs = conn.attributes();
+        if attrs[0].get_string() != Some("OO") {
+            continue;
+        }
+        let src = attrs[1].get_i64().unwrap();
+        let dst = attrs[2].get_i64().unwrap();
+        if cluster_ids.contains(&src) && joint_model_ids.contains(&dst) {
+            cluster_to_joint_count += 1;
+        }
+        if joint_model_ids.contains(&src) && cluster_ids.contains(&dst) {
+            joint_to_cluster_count += 1;
+        }
+    }
+    assert_eq!(
+        cluster_to_joint_count, 2,
+        "each Cluster must OO-connect (as source) to its joint Model",
+    );
+    assert_eq!(
+        joint_to_cluster_count, 0,
+        "joint Model must NOT be the source of an OO edge to a Cluster (direction is reversed)",
+    );
 }
 
 #[test]
@@ -519,15 +584,34 @@ fn translation_animation_emits_stack_layer_curve_node_and_three_axes() {
         assert_eq!(times.len(), 3);
         assert_eq!(values.len(), 3);
 
-        // KTime tick 1.0s == FBX_TICKS_PER_SECOND. We don't reach into the
-        // private constant; just confirm the last tick matches `1 second`
-        // at 46_186_158_000 ticks/sec within ±1 tick.
-        let expected_last = 46_186_158_000_i64;
-        assert!(
-            (times[2] - expected_last).abs() <= 1,
-            "last KeyTime tick {} not within ±1 of {}",
-            times[2],
-            expected_last,
+        // Verify every keyframe tick. The fixture clip has keys at
+        // t = 0, 0.5, 1.0 seconds. FBX uses 46_186_158_000 ticks/sec, so
+        // expected ticks are 0, 23_093_079_000, 46_186_158_000.
+        let tps = 46_186_158_000_i64;
+        let expected = [0_i64, tps / 2, tps];
+        for (i, exp) in expected.iter().enumerate() {
+            assert!(
+                (times[i] - exp).abs() <= 1,
+                "KeyTime[{i}] = {} not within ±1 of {}",
+                times[i],
+                exp,
+            );
+        }
+
+        // Linear interpolation flag must land in `KeyAttrFlags`. The
+        // FBX SDK reserves 0x4 for Linear (0x2 is Constant); a regression
+        // that swapped the constants would put 0x2 here.
+        let flags = c
+            .first_child_by_name("KeyAttrFlags")
+            .unwrap()
+            .attributes()[0]
+            .get_arr_i32()
+            .unwrap();
+        assert_eq!(
+            flags,
+            &[0x4_i32],
+            "Linear interpolation should map to KeyAttrFlags=0x4, got {:?}",
+            flags,
         );
     }
 
@@ -553,6 +637,138 @@ fn translation_animation_emits_stack_layer_curve_node_and_three_axes() {
 
 // Silence the otherwise-unused helper warning if a future test removal makes
 // `read_i32`/`read_f64` orphaned.
+#[test]
+fn step_interpolation_emits_constant_key_attr_flag() {
+    let mut scene = SceneGraph::new();
+    let id = scene.add_root("body", "group", Transform::IDENTITY);
+    scene.clips.push(Clip {
+        name: "step_clip".into(),
+        duration: 1.0,
+        tracks: vec![Track {
+            node: id,
+            property: TrackProperty::Translation,
+            interpolation: Interpolation::Step,
+            times: vec![0.0, 1.0],
+            values: vec![[0.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]],
+        }],
+        origin: None,
+    });
+
+    let (tree, _) = round_trip(&scene);
+    let curves = objects_named(&tree, "AnimationCurve");
+    assert_eq!(curves.len(), 3);
+    for c in &curves {
+        let flags = c
+            .first_child_by_name("KeyAttrFlags")
+            .unwrap()
+            .attributes()[0]
+            .get_arr_i32()
+            .unwrap();
+        // Step interpolation must encode as 0x2 (KFCURVE_INTERPOLATION_CONSTANT
+        // in the FBX SDK). 0x4 = Linear. Swapping these would let "Linear"
+        // play back as steps in importers and vice versa.
+        assert_eq!(
+            flags,
+            &[0x2_i32],
+            "Step interpolation should map to KeyAttrFlags=0x2, got {:?}",
+            flags,
+        );
+    }
+}
+
+#[test]
+fn rotation_track_emits_euler_degrees() {
+    // Rotate 90° around Y. glam quat for 90° Y is (0, sin(45°), 0, cos(45°)).
+    // Euler XYZ degrees recovered should be approximately (0, 90, 0).
+    let mut scene = SceneGraph::new();
+    let id = scene.add_root("body", "group", Transform::IDENTITY);
+    let q = glam::Quat::from_rotation_y(90f32.to_radians());
+    scene.clips.push(Clip {
+        name: "rot".into(),
+        duration: 0.0,
+        tracks: vec![Track {
+            node: id,
+            property: TrackProperty::Rotation,
+            interpolation: Interpolation::Linear,
+            times: vec![0.0],
+            values: vec![[q.x, q.y, q.z, q.w]],
+        }],
+        origin: None,
+    });
+
+    let (tree, _) = round_trip(&scene);
+    let curves = objects_named(&tree, "AnimationCurve");
+    assert_eq!(curves.len(), 3);
+
+    // The Y curve should hold ~90.0; X and Z should be ~0.0. We rely on
+    // the OP connection name to disambiguate axis order.
+    let curve_node = objects_named(&tree, "AnimationCurveNode")[0];
+    let curve_node_id = curve_node.attributes()[0].get_i64().unwrap();
+
+    // Map curve_id → axis (d|X / d|Y / d|Z) via the OP connections from
+    // CurveNode to AnimationCurves.
+    let conns = tree.root().first_child_by_name("Connections").unwrap();
+    let mut axis_for_curve = std::collections::HashMap::<i64, String>::new();
+    for c in conns.children_by_name("C") {
+        let attrs = c.attributes();
+        if attrs[0].get_string() != Some("OP") {
+            continue;
+        }
+        let src = attrs[1].get_i64().unwrap();
+        let dst = attrs[2].get_i64().unwrap();
+        if dst == curve_node_id {
+            if let Some(prop) = attrs[3].get_string() {
+                axis_for_curve.insert(src, prop.to_string());
+            }
+        }
+    }
+
+    let mut x_val = None;
+    let mut y_val = None;
+    let mut z_val = None;
+    for c in &curves {
+        let id = c.attributes()[0].get_i64().unwrap();
+        let v = c
+            .first_child_by_name("KeyValueFloat")
+            .unwrap()
+            .attributes()[0]
+            .get_arr_f32()
+            .unwrap();
+        match axis_for_curve.get(&id).map(String::as_str) {
+            Some("d|X") => x_val = Some(v[0]),
+            Some("d|Y") => y_val = Some(v[0]),
+            Some("d|Z") => z_val = Some(v[0]),
+            _ => {}
+        }
+    }
+    let x_val = x_val.expect("X curve");
+    let y_val = y_val.expect("Y curve");
+    let z_val = z_val.expect("Z curve");
+    assert!(x_val.abs() < 1e-3, "X Euler should be ~0, got {x_val}");
+    assert!((y_val - 90.0).abs() < 1e-3, "Y Euler should be ~90, got {y_val}");
+    assert!(z_val.abs() < 1e-3, "Z Euler should be ~0, got {z_val}");
+}
+
+#[test]
+fn empty_scene_produces_valid_fbx() {
+    let scene = SceneGraph::new();
+    let (tree, _) = round_trip(&scene);
+    // Just hitting `round_trip` proves the writer doesn't panic on an
+    // empty scene; the AnyTree load proves the result is structurally
+    // valid. Spot-check the top-level shape.
+    let names: Vec<&str> = tree.root().children().map(|c| c.name()).collect();
+    for required in [
+        "FBXHeaderExtension",
+        "GlobalSettings",
+        "Documents",
+        "Definitions",
+        "Objects",
+        "Connections",
+        "Takes",
+    ] {
+        assert!(names.iter().any(|n| *n == required), "missing {required}");
+    }
+}
 #[allow(dead_code)]
 fn _used(t: NodeHandle<'_>) {
     let _ = read_i32(t, "x");

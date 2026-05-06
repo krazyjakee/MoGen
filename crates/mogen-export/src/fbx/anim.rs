@@ -22,9 +22,12 @@ pub(super) fn seconds_to_ktime(seconds: f32) -> i64 {
     (seconds as f64 * FBX_TICKS_PER_SECOND as f64).round() as i64
 }
 
-// `KeyAttrFlags` constants from the FBX SDK (`kfbxnodeshape.h`).
-const KEY_ATTR_FLAGS_LINEAR: i32 = 0x00000002;
-const KEY_ATTR_FLAGS_CONSTANT: i32 = 0x00000004;
+// `KeyAttrFlags` constants from the FBX SDK (`kfcurve.h` /
+// `kfbxnodeshape.h`). The values are deliberately laid out so that
+// 0x2 = Constant and 0x4 = Linear (and 0x8 = Cubic). Blender's FBX
+// exporter (`io_scene_fbx/export_fbx_bin.py`) uses the same values.
+const KEY_ATTR_FLAGS_CONSTANT: i32 = 0x00000002;
+const KEY_ATTR_FLAGS_LINEAR: i32 = 0x00000004;
 
 pub(super) fn emit_animations(
     scene: &SceneGraph,

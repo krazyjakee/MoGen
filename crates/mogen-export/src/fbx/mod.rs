@@ -38,9 +38,11 @@ pub fn write_fbx(scene: &SceneGraph, out: &Path) -> Result<()> {
     write_fbx_with_options(scene, out, &ExportOptions::default(), |_| {})
 }
 
-/// Build an FBX into the given file. Streams the resulting bytes through
-/// `fbxcel`'s writer directly into a `BufWriter` so we don't double-buffer
-/// the (potentially large) document.
+/// Build an FBX into the given file via [`build_fbx_with_options`] and
+/// stream the resulting bytes to disk through a `BufWriter`. The FBX
+/// node tree is materialised in memory first because `fbxcel`'s writer
+/// needs random-access seeks (it back-patches end offsets on every
+/// node), so true write-through streaming isn't viable.
 pub fn write_fbx_with_options<F: Fn(&str)>(
     scene: &SceneGraph,
     out: &Path,
