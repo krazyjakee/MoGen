@@ -66,6 +66,14 @@ pub enum BinOp {
     Sub,
     Mul,
     Div,
+    /// Comparisons evaluate to 1.0 (true) or 0.0 (false). They have lower
+    /// precedence than arithmetic so `$a + 1 > 0` parses as `($a + 1) > 0`.
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    Eq,
+    Ne,
 }
 
 impl Expr {
@@ -114,6 +122,12 @@ fn apply(op: &BinOp, a: f32, b: f32) -> f32 {
         BinOp::Sub => a - b,
         BinOp::Mul => a * b,
         BinOp::Div => a / b,
+        BinOp::Lt => if a <  b { 1.0 } else { 0.0 },
+        BinOp::Le => if a <= b { 1.0 } else { 0.0 },
+        BinOp::Gt => if a >  b { 1.0 } else { 0.0 },
+        BinOp::Ge => if a >= b { 1.0 } else { 0.0 },
+        BinOp::Eq => if a == b { 1.0 } else { 0.0 },
+        BinOp::Ne => if a != b { 1.0 } else { 0.0 },
     }
 }
 
