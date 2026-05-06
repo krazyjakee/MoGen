@@ -459,3 +459,71 @@ involute gears.
 | `tooth_height` | `0.014` | radial extent of one tooth |
 | `tooth_width` | `0.014` | tangential width of one tooth |
 | `thickness` | `0.02` | gear thickness along Y |
+
+---
+
+### Organic shape wrappers
+
+Sensible-default wrappers over the Phase D organic primitives (`coil`,
+`heightfield`, `metaball`, `wave`-deformed `curved_plane`). Each one
+collapses the parameter sprawl of the underlying primitive into a small
+set of intent-shaped knobs so the LLM can reach for the right shape
+without re-tuning fbm octaves or metaball blend factors from scratch.
+
+Like the detailing modules, none of these carry a default `mat=` — wrap
+in a parent `group` with a steel/water/earth/slime material as needed.
+
+#### `spring`
+
+Tight helical compression spring along +Y, centred on origin. Wraps
+`coil` with spring-typical defaults (small radius, short height, many
+turns, thin wire). Wrap with a metal `mat=` (`steel`/`brass`).
+
+| parameter | default | meaning |
+|---|---|---|
+| `radius` | `0.025` | helix radius (distance from spring axis to wire centre) |
+| `length` | `0.1` | total height along Y |
+| `turns` | `8` | number of full revolutions over the height |
+| `wire_radius` | `0.004` | tube radius of the wire |
+
+#### `terrain_patch`
+
+Square terrain patch using `heightfield` with natural-fbm defaults baked
+in (4 octaves, mid-frequency, 0.5 persistence). Reads as rolling hills
+out of the box. Bump `amplitude` to ~1.4 + `segments` to ~96 for craggy
+peaks; lower `amplitude` to ~0.3 for sandy dunes.
+
+| parameter | default | meaning |
+|---|---|---|
+| `size` | `4.0` | side length of the square patch (XZ) |
+| `segments` | `64` | grid resolution along U and V |
+| `amplitude` | `0.6` | peak-to-peak relief along Y |
+| `seed` | `1` | noise seed; change for variation |
+
+#### `blob`
+
+Three slightly-offset metaballs unioned with smooth blending. One
+`radius` controls per-ball size, `blend=` controls how much the
+spheres merge. Reads as a slime, soft-creature mass, or jellyfish
+body. Wrap with an organic `mat=` (`alpha=0.85` for slime; opaque
+flesh-tone for creatures); follow with `scale=[1.6, 0.9, 0.9]` for an
+elongated body.
+
+| parameter | default | meaning |
+|---|---|---|
+| `radius` | `0.30` | per-sphere radius (all three the same) |
+| `blend` | `0.15` | smooth-union blend distance — 0 is a hard union, larger numbers melt the spheres further |
+
+#### `water_patch`
+
+Flat XZ surface with low-amplitude `wave=` deformer for water, lava,
+jelly, or any rippling pool. Wrap with a transparent water-style
+`mat=` (`alpha=0.85, transmission=0.6` for water; opaque green
+`alpha=0.85` for jelly).
+
+| parameter | default | meaning |
+|---|---|---|
+| `size` | `2.0` | side length of the square patch (XZ) |
+| `segments` | `64` | grid resolution along U and V — keep dense so the wave reads smoothly |
+| `ripple` | `0.04` | wave amplitude along the surface normal |
+| `frequency` | `0.6` | wave spatial frequency along X — raise to ~1.5 for choppy, lower for calm |

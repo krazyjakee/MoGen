@@ -1,0 +1,13 @@
+// summary: Quick organic blob — three slightly-offset metaballs unioned with smooth blending. One `radius` controls per-ball size, `blend=` controls how much the spheres merge. Reads as a slime, soft creature mass, or jellyfish body. Centred on origin; wrap in a group + `scale=`/`pos=` to place. Wrap with an organic `mat=` (`alpha=0.85` for slime, opaque flesh-tone for creatures). For an elongated body, follow with `scale=[1.6, 0.9, 0.9]`.
+module "blob" (radius=0.30, blend=0.15) {
+  metaball "blob" (
+    points = [
+      [-0.22,  0.00,  0.00],
+      [ 0.05,  0.08,  0.05],
+      [ 0.22, -0.04, -0.05],
+    ],
+    radius = $radius,
+    blend = $blend,
+    rings = 16, segments = 24
+  )
+}
