@@ -17,7 +17,20 @@ use mogen_core::Mesh;
 /// total subtended angle is `total_rad`. The third axis (perpendicular to
 /// both) is the direction the column tilts toward; the bend's sign follows
 /// `bend_axis × length_axis` (right-hand rule).
-pub fn bend(mesh: &mut Mesh, bend_axis: usize, length_axis: usize, total_rad: f32) {
+///
+/// `range` optionally restricts the bend to a normalised span along the
+/// length axis: vertices below `range[0]` stay put, vertices inside the
+/// span ramp via smoothstep from 0 to `total_rad`, and vertices above
+/// `range[1]` are bent by the full angle (so the upper portion behaves
+/// like a rigid lever pivoting on the rest of the column). Pass `None`
+/// to bend the whole length, matching the v1 behaviour.
+pub fn bend(
+    mesh: &mut Mesh,
+    bend_axis: usize,
+    length_axis: usize,
+    total_rad: f32,
+    range: Option<[f32; 2]>,
+) {
     if total_rad.abs() < 1e-6 || mesh.positions.is_empty() {
         return;
     }
@@ -30,22 +43,43 @@ pub fn bend(mesh: &mut Mesh, bend_axis: usize, length_axis: usize, total_rad: f3
 
     for p in mesh.positions.iter_mut() {
         let h = p[length_axis] - lmin;
+        let t = h / length_extent;
+        let weight = range_weight(t, range);
+        // Compute the position the original (uniform) bend would put this
+        // vertex at, then lerp from the original position by `weight`.
+        // weight=0 keeps the vertex put; weight=1 reproduces the v1 bend.
+        // Smoothstep weighting between makes the transition smooth and
+        // avoids the kink an axis-aligned hard cut would introduce.
         let phi = total_rad * h / length_extent;
         let sin_p = phi.sin();
         let cos_p = phi.cos();
-        // Slice centerline position in the (length, perp) plane:
-        let center_along = r * sin_p;
-        let center_perp = r * (1.0 - cos_p);
-        // Local perp direction at this slice (perpendicular to the bent
-        // tangent), in the (length, perp) plane:
-        let local_perp_along = -sin_p;
-        let local_perp_perp = cos_p;
         let perp_orig = p[perp_axis];
-        let new_along = center_along + perp_orig * local_perp_along;
-        let new_perp = center_perp + perp_orig * local_perp_perp;
+        let bent_along = r * sin_p + perp_orig * -sin_p;
+        let bent_perp = r * (1.0 - cos_p) + perp_orig * cos_p;
+        let orig_along = h;
+        let orig_perp = perp_orig;
+        let new_along = orig_along + (bent_along - orig_along) * weight;
+        let new_perp = orig_perp + (bent_perp - orig_perp) * weight;
         p[length_axis] = lmin + new_along;
         p[perp_axis] = new_perp;
         // p[bend_axis] is preserved by the rotation around bend_axis.
+    }
+}
+
+/// Smoothstep-style weight in [0, 1] for a normalised position `t` and an
+/// optional active range. With `None`, returns `1.0` (full deformation
+/// everywhere — matches v1 behaviour). With `Some([a, b])` and `a < b`,
+/// returns 0 below `a`, the smoothstep S(t) inside the span, and 1 above
+/// `b`. `a >= b` collapses to a hard step at `a`.
+pub(crate) fn range_weight(t: f32, range: Option<[f32; 2]>) -> f32 {
+    match range {
+        None => 1.0,
+        Some([a, b]) if a < b => {
+            let u = ((t - a) / (b - a)).clamp(0.0, 1.0);
+            // 3u² − 2u³  — the classic GLSL smoothstep curve.
+            u * u * (3.0 - 2.0 * u)
+        }
+        Some([a, _]) => if t < a { 0.0 } else { 1.0 },
     }
 }
 
@@ -53,15 +87,16 @@ pub fn bend(mesh: &mut Mesh, bend_axis: usize, length_axis: usize, total_rad: f3
 /// to their height (y - y_min) / length: 0 at the base, `total_rad` at the
 /// top. Other axes follow the same pattern by permuting indices, but v1 only
 /// exposes the Y form because that's the dominant case.
-pub fn twist_y(mesh: &mut Mesh, total_rad: f32) {
+pub fn twist_y(mesh: &mut Mesh, total_rad: f32, range: Option<[f32; 2]>) {
     if total_rad.abs() < 1e-6 || mesh.positions.is_empty() {
         return;
     }
     let (lmin, lmax) = axis_range(&mesh.positions, 1);
     let length_extent = (lmax - lmin).max(1e-6);
     for p in mesh.positions.iter_mut() {
-        let h = (p[1] - lmin) / length_extent;
-        let phi = total_rad * h;
+        let t = (p[1] - lmin) / length_extent;
+        let weight = range_weight(t, range);
+        let phi = total_rad * t * weight;
         let s = phi.sin();
         let c = phi.cos();
         let x = p[0];
@@ -73,7 +108,7 @@ pub fn twist_y(mesh: &mut Mesh, total_rad: f32) {
 
 /// Linear taper along Y. Scale of XZ varies from 1.0 at y_min to `ratio` at
 /// y_max. `ratio < 1` shrinks toward the top (cone-like); `ratio > 1` flares.
-pub fn taper(mesh: &mut Mesh, ratio: f32) {
+pub fn taper(mesh: &mut Mesh, ratio: f32, range: Option<[f32; 2]>) {
     if (ratio - 1.0).abs() < 1e-6 || mesh.positions.is_empty() {
         return;
     }
@@ -81,8 +116,13 @@ pub fn taper(mesh: &mut Mesh, ratio: f32) {
     let (lmin, lmax) = axis_range(&mesh.positions, 1);
     let length_extent = (lmax - lmin).max(1e-6);
     for p in mesh.positions.iter_mut() {
-        let h = (p[1] - lmin) / length_extent;
-        let s = 1.0 + (r - 1.0) * h;
+        let t = (p[1] - lmin) / length_extent;
+        let weight = range_weight(t, range);
+        // Linear taper at this slice would scale by (1 + (r-1)*t). Lerp
+        // from no-scale (1.0) by `weight` so a partial range gives a
+        // partial taper.
+        let target_s = 1.0 + (r - 1.0) * t;
+        let s = 1.0 + (target_s - 1.0) * weight;
         p[0] *= s;
         p[2] *= s;
     }
@@ -91,15 +131,16 @@ pub fn taper(mesh: &mut Mesh, ratio: f32) {
 /// Quadratic gravity-style sag along -Y. Vertex `y` drops by
 /// `amount * length * h^2` where `h = (y - y_min) / length`. The base stays
 /// fixed; the top sinks by `amount * length`.
-pub fn droop(mesh: &mut Mesh, amount: f32) {
+pub fn droop(mesh: &mut Mesh, amount: f32, range: Option<[f32; 2]>) {
     if amount.abs() < 1e-6 || mesh.positions.is_empty() {
         return;
     }
     let (lmin, lmax) = axis_range(&mesh.positions, 1);
     let length_extent = (lmax - lmin).max(1e-6);
     for p in mesh.positions.iter_mut() {
-        let h = (p[1] - lmin) / length_extent;
-        p[1] -= amount * length_extent * h * h;
+        let t = (p[1] - lmin) / length_extent;
+        let weight = range_weight(t, range);
+        p[1] -= amount * length_extent * t * t * weight;
     }
 }
 
@@ -107,7 +148,7 @@ pub fn droop(mesh: &mut Mesh, amount: f32) {
 /// same cell of a quantization grid share a random value, producing blobby
 /// "rock"-style bumps. Frequency is derived from the mesh's smallest AABB
 /// extent so a small mesh doesn't get over-detailed.
-pub fn noise(mesh: &mut Mesh, amount: f32, seed: u32) {
+pub fn noise(mesh: &mut Mesh, amount: f32, seed: u32, range: Option<[f32; 2]>) {
     if amount.abs() < 1e-6 || mesh.positions.is_empty() {
         return;
     }
@@ -118,12 +159,16 @@ pub fn noise(mesh: &mut Mesh, amount: f32, seed: u32) {
     // don't get a per-vertex pattern from quantization aliasing.
     let frequency = 5.0 / min_extent;
     let displacement_scale = min_extent * 0.5;
+    let (lmin, lmax) = axis_range(&mesh.positions, 1);
+    let length_extent = (lmax - lmin).max(1e-6);
     for (p, n) in mesh.positions.iter_mut().zip(mesh.normals.iter()) {
+        let t = (p[1] - lmin) / length_extent;
+        let weight = range_weight(t, range);
         let qx = (p[0] * frequency).round() as i32;
         let qy = (p[1] * frequency).round() as i32;
         let qz = (p[2] * frequency).round() as i32;
         let r = cell_noise(qx, qy, qz, seed);
-        let d = amount.clamp(0.0, 1.0) * displacement_scale * r;
+        let d = amount.clamp(0.0, 1.0) * displacement_scale * r * weight;
         p[0] += n[0] * d;
         p[1] += n[1] * d;
         p[2] += n[2] * d;
@@ -133,7 +178,7 @@ pub fn noise(mesh: &mut Mesh, amount: f32, seed: u32) {
 /// Per-vertex random displacement along the vertex normal. Unlike `noise`,
 /// nearby vertices get uncorrelated values, producing high-frequency "jagged"
 /// detail. Magnitude is scaled by the smallest AABB extent.
-pub fn jitter(mesh: &mut Mesh, amount: f32, seed: u32) {
+pub fn jitter(mesh: &mut Mesh, amount: f32, seed: u32, range: Option<[f32; 2]>) {
     if amount.abs() < 1e-6 || mesh.positions.is_empty() {
         return;
     }
@@ -142,9 +187,13 @@ pub fn jitter(mesh: &mut Mesh, amount: f32, seed: u32) {
     let min_extent = extent.x.min(extent.y).min(extent.z).max(1e-4);
     let displacement_scale = min_extent * 0.25;
     let mut rng = seed.max(1);
+    let (lmin, lmax) = axis_range(&mesh.positions, 1);
+    let length_extent = (lmax - lmin).max(1e-6);
     for (p, n) in mesh.positions.iter_mut().zip(mesh.normals.iter()) {
+        let t = (p[1] - lmin) / length_extent;
+        let weight = range_weight(t, range);
         let r = rand_pm(&mut rng);
-        let d = amount.clamp(0.0, 1.0) * displacement_scale * r;
+        let d = amount.clamp(0.0, 1.0) * displacement_scale * r * weight;
         p[0] += n[0] * d;
         p[1] += n[1] * d;
         p[2] += n[2] * d;
@@ -258,7 +307,7 @@ mod tests {
     fn bend_zero_is_noop() {
         let mut a = cylinder_mesh(0.1, 1.0, 12, UvMode::Fit);
         let before = a.positions.clone();
-        bend(&mut a, 0, 1, 0.0);
+        bend(&mut a, 0, 1, 0.0, None);
         assert_eq!(a.positions, before);
     }
 
@@ -276,7 +325,7 @@ mod tests {
             .map(|(i, _)| i)
             .collect();
         let base_before: Vec<[f32; 3]> = base_indices.iter().map(|&i| m.positions[i]).collect();
-        bend(&mut m, 0, 1, std::f32::consts::FRAC_PI_4);
+        bend(&mut m, 0, 1, std::f32::consts::FRAC_PI_4, None);
         for (i, &orig) in base_indices.iter().zip(base_before.iter()) {
             let now = m.positions[*i];
             for k in 0..3 {
@@ -294,7 +343,7 @@ mod tests {
     fn twist_zero_is_noop() {
         let mut a = cylinder_mesh(0.1, 1.0, 12, UvMode::Fit);
         let before = a.positions.clone();
-        twist_y(&mut a, 0.0);
+        twist_y(&mut a, 0.0, None);
         assert_eq!(a.positions, before);
     }
 
@@ -302,14 +351,14 @@ mod tests {
     fn taper_one_is_noop() {
         let mut a = cylinder_mesh(0.5, 1.0, 12, UvMode::Fit);
         let before = a.positions.clone();
-        taper(&mut a, 1.0);
+        taper(&mut a, 1.0, None);
         assert_eq!(a.positions, before);
     }
 
     #[test]
     fn taper_half_shrinks_top() {
         let mut a = cylinder_mesh(0.5, 1.0, 12, UvMode::Fit);
-        taper(&mut a, 0.5);
+        taper(&mut a, 0.5, None);
         // The top ring (y ≈ 0.5) should have radius ~0.25; the bottom ~0.5.
         let mut top_r = 0.0_f32;
         let mut bot_r = 0.0_f32;
@@ -329,7 +378,7 @@ mod tests {
     fn droop_pulls_top_down() {
         let mut a = cylinder_mesh(0.1, 1.0, 12, UvMode::Fit);
         let (_, mx_before) = aabb(&a.positions);
-        droop(&mut a, 0.4);
+        droop(&mut a, 0.4, None);
         let (_, mx_after) = aabb(&a.positions);
         assert!(
             mx_after.y < mx_before.y - 0.3,
@@ -344,8 +393,8 @@ mod tests {
         let m = box_mesh([1.0, 1.0, 1.0], UvMode::Fit);
         let mut a = m.clone();
         let mut b = m.clone();
-        noise(&mut a, 0.3, 7);
-        noise(&mut b, 0.3, 7);
+        noise(&mut a, 0.3, 7, None);
+        noise(&mut b, 0.3, 7, None);
         assert_eq!(a.positions, b.positions);
     }
 
@@ -354,8 +403,8 @@ mod tests {
         let m = box_mesh([1.0, 1.0, 1.0], UvMode::Fit);
         let mut a = m.clone();
         let mut b = m.clone();
-        noise(&mut a, 0.3, 1);
-        noise(&mut b, 0.3, 2);
+        noise(&mut a, 0.3, 1, None);
+        noise(&mut b, 0.3, 2, None);
         assert_ne!(a.positions, b.positions);
     }
 
@@ -363,7 +412,7 @@ mod tests {
     fn jitter_zero_is_noop() {
         let mut a = box_mesh([1.0, 1.0, 1.0], UvMode::Fit);
         let before = a.positions.clone();
-        jitter(&mut a, 0.0, 5);
+        jitter(&mut a, 0.0, 5, None);
         assert_eq!(a.positions, before);
     }
 

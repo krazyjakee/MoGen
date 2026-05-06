@@ -47,9 +47,14 @@ pub const GEOMETRY_COMMON_ATTRS: &[&str] = &[
     // Deformation modifiers — composable variety knobs that work on any
     // primitive. Apply between primitive construction and anchor shift, so
     // the deformed mesh is what attach/connector logic sees. Stochastic
-    // modifiers (`noise`, `jitter`) are seeded by `seed`.
+    // modifiers (`noise`, `jitter`) are seeded by `seed`. The matching
+    // `*_range=[a,b]` attrs gate each deformation to a normalised slice
+    // along its length axis (smoothstep ramp from `a` to `b`).
     "seed", "noise", "jitter", "bend_x", "bend_y", "bend_z", "twist_y",
     "taper", "droop", "faceted",
+    "noise_range", "jitter_range",
+    "bend_x_range", "bend_y_range", "bend_z_range", "twist_y_range",
+    "taper_range", "droop_range",
     // Per-node LOD multiplier — compounds with the file-global `lod_scale`
     // for the duration of this node and its subtree (see lod.rs guards).
     "lod",
@@ -251,6 +256,15 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         | (_, "faceted")
         | (_, "cast_shadow")
         | (_, "lod") => "number",
+        // 2-element `[start, end]` ranges along the deformation's length axis.
+        (_, "bend_x_range")
+        | (_, "bend_y_range")
+        | (_, "bend_z_range")
+        | (_, "twist_y_range")
+        | (_, "taper_range")
+        | (_, "droop_range")
+        | (_, "noise_range")
+        | (_, "jitter_range") => "list",
         ("box", "size")
         | ("plane", "size")
         | ("quad", "size")
