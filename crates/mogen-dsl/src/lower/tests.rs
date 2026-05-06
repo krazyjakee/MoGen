@@ -1363,3 +1363,86 @@ fn range_reversed_endpoints_are_normalised() {
         }
     }
 }
+#[test]
+fn chamfered_box_lowers_with_default_attrs() {
+    let g = lower_src(r#"scene { chamfered_box "b" () }"#);
+    let m = find_mesh_node(&g, "b").mesh.as_ref().unwrap();
+    // 6 face rects (12 tris) + 12 bevel quads (24 tris) + 8 corner tris (8) = 44.
+    assert_eq!(m.indices.len() / 3, 44);
+    // Default size is 1×1×1 so the AABB sits in [-0.5, 0.5] on every axis.
+    let mut mn = [f32::INFINITY; 3];
+    let mut mx = [f32::NEG_INFINITY; 3];
+    for p in &m.positions {
+        for k in 0..3 {
+            mn[k] = mn[k].min(p[k]);
+            mx[k] = mx[k].max(p[k]);
+        }
+    }
+    for k in 0..3 {
+        assert!((mx[k] - 0.5).abs() < 1e-5, "axis {k} mx {} not 0.5", mx[k]);
+        assert!((mn[k] + 0.5).abs() < 1e-5, "axis {k} mn {} not -0.5", mn[k]);
+    }
+}
+
+#[test]
+fn chamfered_box_radius_zero_matches_plain_box() {
+    let chamfered = lower_src(r#"scene { chamfered_box "b" (radius=0) }"#);
+    let plain = lower_src(r#"scene { box "b" () }"#);
+    let cm = find_mesh_node(&chamfered, "b").mesh.as_ref().unwrap();
+    let pm = find_mesh_node(&plain, "b").mesh.as_ref().unwrap();
+    assert_eq!(cm.positions.len(), pm.positions.len());
+    assert_eq!(cm.indices.len(), pm.indices.len());
+}
+
+#[test]
+fn inset_box_lowers_with_default_face() {
+    let g = lower_src(r#"scene { inset_box "b" (size=[1, 1, 1]) }"#);
+    let m = find_mesh_node(&g, "b").mesh.as_ref().unwrap();
+    // Default face is +y; the sunken floor should sit at y = 0.5 - 0.05 = 0.45.
+    let mut floor_y_seen = false;
+    for p in &m.positions {
+        if (p[1] - 0.45).abs() < 1e-5 {
+            floor_y_seen = true;
+            break;
+        }
+    }
+    assert!(floor_y_seen, "expected a vertex at the default sunken Y=0.45");
+}
+
+#[test]
+fn inset_box_face_aliases_resolve() {
+    // "top" must resolve to +y; the resulting mesh should be identical
+    // to the canonical "+y" form vertex-for-vertex.
+    let a = lower_src(r#"scene { inset_box "b" (face="+y", amount=0.2, depth=0.1) }"#);
+    let b = lower_src(r#"scene { inset_box "b" (face="top", amount=0.2, depth=0.1) }"#);
+    let pa = find_mesh_node(&a, "b").mesh.as_ref().unwrap();
+    let pb = find_mesh_node(&b, "b").mesh.as_ref().unwrap();
+    assert_eq!(pa.positions, pb.positions);
+    assert_eq!(pa.indices, pb.indices);
+}
+
+#[test]
+fn inset_box_unknown_face_errors() {
+    let ast = parse(r#"scene { inset_box "b" (face="diagonal") }"#).expect("parse");
+    let err = lower(&ast).expect_err("unknown face must error");
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("inset_box.face") && msg.contains("diagonal"),
+        "error should name the bad face value, got: {msg}"
+    );
+}
+
+#[test]
+fn inset_box_minus_x_face_sinks_along_negative_x() {
+    // face="-x" should produce a sunken floor at x = -hx + depth = -0.5 + 0.1 = -0.4.
+    let g = lower_src(r#"scene { inset_box "b" (face="-x", amount=0.2, depth=0.1) }"#);
+    let m = find_mesh_node(&g, "b").mesh.as_ref().unwrap();
+    let mut floor_x_seen = false;
+    for p in &m.positions {
+        if (p[0] + 0.4).abs() < 1e-5 {
+            floor_x_seen = true;
+            break;
+        }
+    }
+    assert!(floor_x_seen, "expected vertex at sunken X=-0.4");
+}
