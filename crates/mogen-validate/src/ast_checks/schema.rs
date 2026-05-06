@@ -11,8 +11,8 @@ pub const KNOWN_KINDS: &[&str] = &[
     "meta",
     "box", "plane", "quad", "cylinder", "cone", "sphere", "capsule", "torus",
     "prism", "pyramid", "disc", "icosphere", "rounded_box", "chamfered_box", "inset_box",
-    "wedge", "frustum", "tube", "hemisphere", "half_cylinder", "torus_arc", "ellipsoid",
-    "superellipsoid", "curved_plane", "lathe", "spline_tube", "spline_ribbon", "leaf_card", "mesh",
+    "wedge", "frustum", "tube", "hemisphere", "half_cylinder", "torus_arc", "ellipsoid", "heightfield", "bezier_patch", "metaball",
+    "superellipsoid", "curved_plane", "lathe", "spline_tube", "spline_ribbon", "coil", "leaf_card", "mesh",
     "extrude", "sweep", "loft",
     "slab", "post", "panel", "wall",
     "branch",
@@ -53,9 +53,12 @@ pub const GEOMETRY_COMMON_ATTRS: &[&str] = &[
     // along its length axis (smoothstep ramp from `a` to `b`).
     "seed", "noise", "jitter", "bend_x", "bend_y", "bend_z", "twist_y",
     "taper", "droop", "faceted",
+    // Periodic-wave deformer (sinusoidal displacement along the vertex
+    // normal). Composes with the other modifiers; see deform.rs::wave.
+    "wave", "wave_frequency", "wave_axis", "wave_phase",
     "noise_range", "jitter_range",
     "bend_x_range", "bend_y_range", "bend_z_range", "twist_y_range",
-    "taper_range", "droop_range",
+    "taper_range", "droop_range", "wave_range",
     // Per-node LOD multiplier — compounds with the file-global `lod_scale`
     // for the duration of this node and its subtree (see lod.rs guards).
     "lod",
@@ -150,6 +153,16 @@ pub fn attrs_for_kind(kind: &str) -> &'static [&'static str] {
             "points", "radius", "radii", "segments", "samples", "cap_ends",
         ],
         "spline_ribbon" => &["points", "width", "widths", "samples", "twist"],
+        "coil" => &[
+            "radius", "height", "turns", "profile_radius",
+            "segments", "samples", "cap_ends", "handedness",
+        ],
+        "heightfield" => &[
+            "size", "segments_u", "segments_v",
+            "amplitude", "octaves", "frequency", "persistence", "seed",
+        ],
+        "bezier_patch" => &["points", "segments_u", "segments_v"],
+        "metaball" => &["points", "radius", "radii", "blend", "rings", "segments"],
         "leaf_card" => &["size", "cards"],
         "extrude" => &["points", "hole", "height", "taper", "twist", "caps"],
         "sweep" => &[
@@ -265,11 +278,15 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         | (_, "twist_y")
         | (_, "taper")
         | (_, "droop")
+        | (_, "wave")
+        | (_, "wave_frequency")
+        | (_, "wave_phase")
         | (_, "faceted")
         | (_, "cast_shadow")
         | (_, "lod") => "number",
         ("chamfered_box", "radius") => "number",
         ("inset_box", "face") => "string",
+        (_, "wave_axis") => "string",
         ("inset_box", "amount") | ("inset_box", "depth") => "number",
         // 2-element `[start, end]` ranges along the deformation's length axis.
         (_, "bend_x_range")
@@ -279,7 +296,8 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         | (_, "taper_range")
         | (_, "droop_range")
         | (_, "noise_range")
-        | (_, "jitter_range") => "list",
+        | (_, "jitter_range")
+        | (_, "wave_range") => "list",
         ("box", "size")
         | ("plane", "size")
         | ("quad", "size")
@@ -301,6 +319,10 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         ("grid", "center") => "number",
         ("curved_plane", "size") => "list",
         ("frustum", "bottom") | ("frustum", "top") => "list",
+        ("heightfield", "size") => "list",
+        ("bezier_patch", "points") => "list",
+        ("metaball", "points") => "list",
+        ("metaball", "radii") => "list of number",
         ("lathe", "profile") => "list",
         ("spline_tube", "points") => "list",
         ("spline_tube", "radii") => "list",
@@ -405,6 +427,25 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         | ("spline_ribbon", "width")
         | ("spline_ribbon", "samples")
         | ("spline_ribbon", "twist")
+        | ("coil", "radius")
+        | ("coil", "height")
+        | ("coil", "turns")
+        | ("coil", "profile_radius")
+        | ("coil", "segments")
+        | ("coil", "samples")
+        | ("coil", "cap_ends")
+        | ("heightfield", "segments_u")
+        | ("heightfield", "segments_v")
+        | ("heightfield", "amplitude")
+        | ("heightfield", "octaves")
+        | ("heightfield", "frequency")
+        | ("heightfield", "persistence")
+        | ("bezier_patch", "segments_u")
+        | ("bezier_patch", "segments_v")
+        | ("metaball", "radius")
+        | ("metaball", "blend")
+        | ("metaball", "rings")
+        | ("metaball", "segments")
         | ("frustum", "height")
         | ("union", "smooth")
         | ("material", "alpha")
@@ -416,6 +457,7 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         | ("material", "emissive_strength")
         | ("material", "transmission")
         | ("material", "double_sided") => "number",
+        ("coil", "handedness") => "string",
         ("material", "color") | ("material", "emissive") => "vec3",
         ("material", "alpha_mode") | ("material", "uv_mode") | ("material", "shader") => "string",
         ("material", "uv_scale") => "number or vec2",

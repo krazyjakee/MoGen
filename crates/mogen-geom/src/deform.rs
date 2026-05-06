@@ -200,6 +200,47 @@ pub fn jitter(mesh: &mut Mesh, amount: f32, seed: u32, range: Option<[f32; 2]>) 
     }
 }
 
+/// Sinusoidal displacement along the vertex normal — periodic ripples for
+/// water surfaces, jelly bodies, ribbed metal, sound-wave panels, fabric
+/// ripples. Unlike `noise` (stochastic), the wave is fully deterministic:
+/// vertices at the same position on the wave's axis displace by the same
+/// amount.
+///
+/// `amount` is the peak displacement (m). `frequency` is cycles per unit
+/// along `wave_axis` (0=X, 1=Y, 2=Z) — `frequency=0.5` puts a crest every
+/// 2 m along the chosen axis. `phase` is in radians and lets sibling
+/// `wave`s desync without animation. `range` matches the existing `*_range`
+/// smoothstep convention along the wave axis.
+pub fn wave(
+    mesh: &mut Mesh,
+    amount: f32,
+    frequency: f32,
+    wave_axis: usize,
+    phase: f32,
+    range: Option<[f32; 2]>,
+) {
+    if amount.abs() < 1e-6 || mesh.positions.is_empty() {
+        return;
+    }
+    debug_assert_eq!(mesh.positions.len(), mesh.normals.len());
+    use std::f32::consts::TAU;
+    // Clamp invalid axis indices to Z; lowering already validates the
+    // string form, but downstream callers passing this directly should
+    // not panic on a typo.
+    let axis = wave_axis.min(2);
+    let (lmin, lmax) = axis_range(&mesh.positions, axis);
+    let length_extent = (lmax - lmin).max(1e-6);
+    for (p, n) in mesh.positions.iter_mut().zip(mesh.normals.iter()) {
+        let t = (p[axis] - lmin) / length_extent;
+        let weight = range_weight(t, range);
+        let s = (TAU * frequency * p[axis] + phase).sin();
+        let d = amount * s * weight;
+        p[0] += n[0] * d;
+        p[1] += n[1] * d;
+        p[2] += n[2] * d;
+    }
+}
+
 /// Rebuild the mesh so each triangle has its own three vertices with the
 /// face's flat normal — produces a faceted, low-poly look. UVs are preserved
 /// per-corner. Joints/weights are dropped; faceted shading on a skinned mesh
@@ -414,6 +455,52 @@ mod tests {
         let before = a.positions.clone();
         jitter(&mut a, 0.0, 5, None);
         assert_eq!(a.positions, before);
+    }
+
+    #[test]
+    fn wave_zero_amplitude_is_noop() {
+        let mut a = box_mesh([1.0, 1.0, 1.0], UvMode::Fit);
+        let before = a.positions.clone();
+        wave(&mut a, 0.0, 1.0, 0, 0.0, None);
+        assert_eq!(a.positions, before);
+    }
+
+    #[test]
+    fn wave_displaces_some_vertices() {
+        // Pick a frequency that doesn't put every box vertex (x ∈ ±0.5)
+        // at a sine zero — `f=0.25` gives sin(π/4)≈0.707 at the corners.
+        let mut m = box_mesh([1.0, 0.5, 1.0], UvMode::Fit);
+        let before = m.positions.clone();
+        wave(&mut m, 0.2, 0.25, 0, 0.0, None);
+        let moved = m
+            .positions
+            .iter()
+            .zip(before.iter())
+            .any(|(a, b)| (a[0] - b[0]).abs() > 1e-3
+                || (a[1] - b[1]).abs() > 1e-3
+                || (a[2] - b[2]).abs() > 1e-3);
+        assert!(moved, "wave should have displaced some vertices");
+    }
+
+    #[test]
+    fn wave_phase_shifts_pattern() {
+        // phase=0 and phase=π displace in opposite directions; the per-
+        // vertex positions must therefore differ. Box corners aren't at
+        // sine zeros for `f=0.25`, so the difference is detectable.
+        use std::f32::consts::PI;
+        let m = box_mesh([1.0, 0.5, 1.0], UvMode::Fit);
+        let mut a = m.clone();
+        let mut b = m.clone();
+        wave(&mut a, 0.2, 0.25, 0, 0.0, None);
+        wave(&mut b, 0.2, 0.25, 0, PI, None);
+        let differs = a
+            .positions
+            .iter()
+            .zip(b.positions.iter())
+            .any(|(pa, pb)| (pa[0] - pb[0]).abs() > 1e-3
+                || (pa[1] - pb[1]).abs() > 1e-3
+                || (pa[2] - pb[2]).abs() > 1e-3);
+        assert!(differs, "phase=0 and phase=π must produce different shapes");
     }
 
     #[test]

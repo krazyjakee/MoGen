@@ -1,5 +1,9 @@
 mod common;
 mod cone;
+mod coil;
+mod heightfield;
+mod bezier_patch;
+mod metaball;
 mod cuboid;
 mod cylinder;
 mod disc;
@@ -20,6 +24,10 @@ mod spline_ribbon;
 mod torus;
 
 pub use cone::{cone_mesh, frustum_mesh};
+pub use coil::{coil_mesh, Handedness as CoilHandedness};
+pub use heightfield::heightfield_mesh;
+pub use bezier_patch::bezier_patch_mesh;
+pub use metaball::metaball_mesh;
 pub use cuboid::box_mesh;
 pub use cylinder::{cylinder_mesh, half_cylinder_mesh, tube_mesh};
 pub use disc::disc_mesh;
