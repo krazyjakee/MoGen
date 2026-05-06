@@ -78,6 +78,25 @@ impl From<ProviderArg> for Provider {
     }
 }
 
+/// CLI-facing mirror of [`commands::build::BuildFormat`]. Kept here so
+/// `clap::ValueEnum` doesn't leak into the command module.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum BuildFormatArg {
+    /// Binary glTF 2.0 (default).
+    Glb,
+    /// Autodesk FBX 7.4 binary.
+    Fbx,
+}
+
+impl From<BuildFormatArg> for commands::build::BuildFormat {
+    fn from(f: BuildFormatArg) -> Self {
+        match f {
+            BuildFormatArg::Glb => commands::build::BuildFormat::Glb,
+            BuildFormatArg::Fbx => commands::build::BuildFormat::Fbx,
+        }
+    }
+}
+
 #[derive(Parser)]
 #[command(name = "mogen", version, about = "Procedural 3D model generator")]
 struct Cli {
@@ -489,12 +508,18 @@ enum Cmd {
         #[command(subcommand)]
         cmd: MoghubCmd,
     },
-    /// Compile a DSL file to GLB.
+    /// Compile a DSL file to a binary scene container.
+    ///
+    /// Output format defaults to GLB but is auto-detected from the output
+    /// extension (`.fbx` selects FBX). Pass `--format` to override.
     Build {
         input: PathBuf,
-        /// Output GLB path. Defaults to `<input>.glb` alongside the DSL file.
+        /// Output path. Defaults to `<input>.glb` alongside the DSL file.
         #[arg(short, long)]
         out: Option<PathBuf>,
+        /// Force a specific output container, ignoring the extension hint.
+        #[arg(long, value_enum)]
+        format: Option<BuildFormatArg>,
     },
     /// Parse a DSL file and print the AST.
     Parse { input: PathBuf },
@@ -850,9 +875,18 @@ fn main() -> ExitCode {
     let result = match cli.cmd {
         Cmd::Auth { cmd } => auth_dispatch(cmd.into()),
         Cmd::Moghub { cmd } => dispatch_moghub(cmd),
-        Cmd::Build { input, out } => {
-            let out = out.unwrap_or_else(|| input.with_extension("glb"));
-            build(input, out)
+        Cmd::Build { input, out, format } => {
+            // Default extension follows the chosen format. When no
+            // `--format` is given and `--out` is omitted, fall back to
+            // `.glb` to preserve the historical default; users wanting
+            // FBX must either pass `-o foo.fbx` or `--format fbx` (which
+            // then triggers the `.fbx` default extension).
+            let default_ext = match format {
+                Some(BuildFormatArg::Fbx) => "fbx",
+                _ => "glb",
+            };
+            let out = out.unwrap_or_else(|| input.with_extension(default_ext));
+            build(input, out, format.map(Into::into))
         }
         Cmd::Parse { input } => parse_cmd(input),
         Cmd::Check { input, json } => check(input, json),

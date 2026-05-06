@@ -121,15 +121,18 @@ out of MoGHub on the web.
 
 ## `build`
 
-Compile a DSL file to a GLB.
+Compile a DSL file to a binary scene container — GLB by default, or FBX
+7.4 binary when the output path ends in `.fbx` or `--format fbx` is
+passed.
 
 ```sh
-mogen build <input.mog> [--out <output.glb>]
+mogen build <input.mog> [--out <output>] [--format glb|fbx]
 ```
 
 | flag | meaning |
 |---|---|
-| `--out`, `-o` | Output GLB path. Defaults to `<input>.glb` alongside the source file. |
+| `--out`, `-o` | Output path. Defaults to `<input>.glb` (or `<input>.fbx` when `--format fbx` is set). |
+| `--format` | Force a specific container, ignoring the extension hint. One of `glb` (default) or `fbx`. |
 
 **Pipeline.** `build` runs the canonical front-to-back pipeline:
 
@@ -137,7 +140,7 @@ mogen build <input.mog> [--out <output.glb>]
 2. AST validation — referential and typing errors with source spans.
 3. Lower to `SceneGraph` — module expansion, placement shortcuts, attach solver, animation/skinning lowering.
 4. Graph validation — topological invariants (skeleton ancestry, weight sums, …).
-5. Export GLB — PBR materials, embedded textures, animation channels, optional skin data, optional sibling-mesh merge.
+5. Export — PBR materials, embedded textures, animation channels, optional skin data, optional sibling-mesh merge. The format is picked from `--format` (when supplied) or sniffed from the output extension; `.fbx` (case-insensitive) selects FBX, anything else selects GLB.
 
 `generate`, `modify`, `animate`, `repair`, and `textures` all converge on
 this command at the end of their flows. If you've already authored a
@@ -145,7 +148,24 @@ this command at the end of their flows. If you've already authored a
 
 ```sh
 mogen build examples/chair.mog --out chair.glb
+mogen build examples/chair.mog --out chair.fbx          # extension dispatch
+mogen build examples/chair.mog --format fbx             # → chair.fbx
 ```
+
+### FBX format notes
+
+The FBX exporter emits FBX 7.4 binary that loads in Blender 4.x and other
+standard FBX importers. Notable mappings (lossy by FBX's spec):
+
+- PBR materials are encoded as Phong; the raw `metallic` and `roughness`
+  factors ride along as `Properties70` entries so PBR-aware importers
+  (Blender's principled BSDF) can recover them.
+- Quaternion rotations and rotation tracks are converted to Euler XYZ
+  degrees; the FBX `RotationOrder` is set to XYZ to match.
+- Light intensity passes through verbatim — FBX doesn't distinguish
+  candela (point/spot) from lux (directional) like glTF does.
+- DSL extras (`role`, `tags`, `cast_shadow`, `kind`) are preserved as
+  custom `Properties70` entries on each Model.
 
 ---
 
