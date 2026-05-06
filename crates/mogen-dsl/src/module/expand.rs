@@ -254,6 +254,7 @@ fn is_wrapper_attr(k: &str) -> bool {
             | "to"
             | "collider"
             | "cast_shadow"
+            | "lod"
     )
 }
 

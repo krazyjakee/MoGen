@@ -1,0 +1,6 @@
+// summary: Rivet line — evenly spaced row of low hemispherical rivet heads along X. Each rivet's flat base sits on y=0, dome up to y=+radius, so the whole strip drops onto a host's +Y face. Default 8 rivets spanning 0.4m at 6mm radius. Wrap in a group with a metal `mat=` and place via `pos=`/`rot=` (or `conform` for curved hosts).
+module "rivet_line" (count=8, length=0.4, radius=0.006) {
+  grid "rivet_line" (count=[$count, 1, 1], step=[$length / ($count - 1), 0, 0], center=1) {
+    hemisphere "rivet" (radius=$radius, segments=10, rings=4)
+  }
+}

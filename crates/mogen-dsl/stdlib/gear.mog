@@ -1,0 +1,12 @@
+// summary: Gear (coarse, Phase A) — central cylindrical hub plus an array of rectangular teeth around it. Approximation only; once `extrude` (Phase B) lands, prefer it for proper involute gears. Default 16 teeth on a 0.1m hub, 0.02m thick. Wrap in a group with a metal `mat=` and rotate as needed.
+module "gear" (teeth=16, hub_radius=0.1, tooth_height=0.014, tooth_width=0.014, thickness=0.02) {
+  group "gear" {
+    cylinder "hub" (radius=$hub_radius, height=$thickness, segments=24)
+    array "teeth" (count=$teeth, around=y) {
+      box "tooth" (
+        pos=[$hub_radius + $tooth_height * 0.5, 0, 0],
+        size=[$tooth_height, $thickness, $tooth_width]
+      )
+    }
+  }
+}

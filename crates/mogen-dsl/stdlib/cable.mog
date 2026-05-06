@@ -1,0 +1,11 @@
+// summary: Cable / rope — thin spline_tube spanning 1m along X with a gentle gravity dip at the centre. Use for power cables, ropes, hoses, wires. The path is unit-length; wrap in a group + `scale=` / `rot=` / `pos=` to span between two specific anchor points (or run `conform` to drape it over a surface).
+module "cable" (radius=0.008) {
+  spline_tube "cable" (
+    points=[[-0.5, 0.0, 0.0], [-0.17, -0.04, 0.0], [0.17, -0.04, 0.0], [0.5, 0.0, 0.0]],
+    radius=$radius,
+    samples=16, segments=8
+  ) {
+    connector "start" (at=[-0.5, 0.0, 0.0], dir=[-1, 0, 0], tag=cable_start)
+    connector "end"   (at=[ 0.5, 0.0, 0.0], dir=[ 1, 0, 0], tag=cable_end)
+  }
+}
