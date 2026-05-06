@@ -2347,7 +2347,7 @@ dependencies = [
 
 [[package]]
 name = "mogen"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2365,7 +2365,7 @@ dependencies = [
 
 [[package]]
 name = "mogen-anim"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "glam",
  "mogen-core",
@@ -2373,7 +2373,7 @@ dependencies = [
 
 [[package]]
 name = "mogen-core"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "glam",
  "serde",
@@ -2381,7 +2381,7 @@ dependencies = [
 
 [[package]]
 name = "mogen-dsl"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "glam",
@@ -2395,7 +2395,7 @@ dependencies = [
 
 [[package]]
 name = "mogen-export"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "glam",
@@ -2410,7 +2410,7 @@ dependencies = [
 
 [[package]]
 name = "mogen-geom"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "glam",
@@ -2421,7 +2421,7 @@ dependencies = [
 
 [[package]]
 name = "mogen-llm"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2443,7 +2443,7 @@ dependencies = [
 
 [[package]]
 name = "mogen-moghub-client"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "mogen-registry",
@@ -2458,7 +2458,7 @@ dependencies = [
 
 [[package]]
 name = "mogen-registry"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "mogen-core",
@@ -2470,7 +2470,7 @@ dependencies = [
 
 [[package]]
 name = "mogen-render"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "glam",
@@ -2485,7 +2485,7 @@ dependencies = [
 
 [[package]]
 name = "mogen-studio"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "arboard",
@@ -2514,7 +2514,7 @@ dependencies = [
 
 [[package]]
 name = "mogen-update"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "flate2",
@@ -2529,7 +2529,7 @@ dependencies = [
 
 [[package]]
 name = "mogen-validate"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "codespan-reporting 0.12.0",
  "mogen-core",
@@ -2540,7 +2540,7 @@ dependencies = [
 
 [[package]]
 name = "mogen-wasm"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "console_error_panic_hook",
