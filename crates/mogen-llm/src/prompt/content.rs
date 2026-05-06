@@ -389,6 +389,8 @@ pub(super) const KINDS_REFERENCE: &str = "\
 | `material` | name | `color=[r,g,b]`, `alpha`, `metallic`, `roughness`, `alpha_mode=\"opaque\"\\|\"blend\"\\|\"mask\"`, `alpha_cutoff`, `emissive=[r,g,b]`, `emissive_strength` (HDR — use for neon/fluorescent), `transmission` (glass — use ALONE, never combined with `alpha`/`alpha_mode=\"blend\"` or the surface renders invisible; canonical glass is `transmission=0.9, roughness=0.05`), `double_sided=0\\|1` (disable back-face culling — leaves, fins, flags), `uv_mode=\"tile\"\\|\"fit\"` (default `tile` = world-space UVs for repeating textures; `fit` = per-face `[0,1]²` for sign/decal images), `uv_scale=N` or `[u,v]` (tiles per world unit in `tile` mode; default `1.0`) |
 | `box` | `size=[x,y,z]` | `pos`, `rot`, `mat` |
 | `rounded_box` | `size=[x,y,z]` | `radius`, `segments`, `pos`, `rot`, `mat` |
+| `chamfered_box` | `size=[x,y,z]` | `radius` (bevel offset, default 0.1); flat 45° bevels on all 12 edges + 8 corner triangles. Sharp-edge counterpart to `rounded_box`. |
+| `inset_box` | `size=[x,y,z]` | `face=\"+y\"\\|\"-y\"\\|\"+x\"\\|\"-x\"\\|\"+z\"\\|\"-z\"` (or `\"top\"/\"bottom\"/\"left\"/\"right\"/\"front\"/\"back\"`), `amount` (inset distance, 0.1), `depth` (sink depth, 0.05); five plain box faces + one sunken panel — use for window frames, recessed door panels, button caps, sunken pickup wells. |
 | `plane` | `size=[x,_,z]` | `pos`, `rot`, `mat` (XZ plane, +Y facing) |
 | `quad` | `size=[x,y]` or `[x,y,_]` | `pos`, `rot`, `mat` (XY plane, +Z facing) |
 | `disc` | `radius` | `segments`, `pos`, `rot`, `mat` |
@@ -446,7 +448,7 @@ pub(super) const KINDS_REFERENCE: &str = "\
 
 | primitive | connectors |
 |-----------|------------|
-| `box`, `rounded_box`, `prism` | `top`, `bottom`, `left`, `right`, `front`, `back` |
+| `box`, `rounded_box`, `chamfered_box`, `inset_box`, `prism` | `top`, `bottom`, `left`, `right`, `front`, `back` |
 | `cylinder` | `top`, `bottom`, `side` (at +X on the wall) |
 | `cone`, `pyramid` | `apex` / `top` (pointy end), `base` / `bottom` |
 | `sphere`, `icosphere`, `ellipsoid`, `superellipsoid` | `top`, `bottom`, `left`, `right`, `front`, `back` |

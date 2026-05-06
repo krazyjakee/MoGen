@@ -413,11 +413,12 @@ mod tests {
         // `ALLOWLIST_INTRO` added ~700 bytes vs the pre-modifier baseline;
         // the detailing-modules + per-node `lod=` recipes added another
         // ~1.0 KB; the extrude/sweep/loft KINDS_REFERENCE rows another ~1 KB;
-        // the `*_range` selective-deformation note added ~250 bytes.
+        // the `*_range` selective-deformation note added ~250 bytes; the
+        // chamfered_box / inset_box KINDS_REFERENCE rows added ~700 bytes.
         let s = cacheable_block();
         assert!(
-            s.len() < 26_000,
-            "cacheable_block grew to {} bytes — cap is 26_000. Reference \
+            s.len() < 26_500,
+            "cacheable_block grew to {} bytes — cap is 26_500. Reference \
              material that grows without bound should be fetched on demand, \
              not pinned in the cache.",
             s.len()
