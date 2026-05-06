@@ -329,7 +329,7 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         ("spline_ribbon", "widths") => "list",
         ("extrude", "points") => "list",
         ("extrude", "hole") => "list",
-        ("extrude", "height") | ("extrude", "taper") | ("extrude", "twist") => "number",
+        ("extrude", "height") | ("extrude", "twist") => "number",
         ("extrude", "caps") => "number",
         ("sweep", "profile") => "list",
         ("sweep", "path") => "list",
