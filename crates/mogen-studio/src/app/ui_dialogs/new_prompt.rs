@@ -185,8 +185,8 @@ impl MogenStudioApp {
                     ui.colored_label(
                         egui::Color32::from_rgb(230, 200, 100),
                         format!(
-                            "{} can't read images — pick Z.ai or Gemini in \
-                             Generation › Provider to use this image",
+                            "{} can't read images — pick a vision-capable \
+                             provider in Generation › Provider to use this image",
                             self.settings.provider().display_name(),
                         ),
                     );

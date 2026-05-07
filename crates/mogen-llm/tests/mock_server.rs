@@ -390,3 +390,41 @@ fn zai_vision_uses_image_url_content() {
         "data:image/png;base64,AQID"
     );
 }
+
+#[test]
+fn fireworks_vision_uses_image_url_content() {
+    // Vision input on Fireworks must serialise as the OpenAI-compatible
+    // `content: [{type:"text"}, {type:"image_url", image_url:{url:"data:..."}}]`
+    // shape — Kimi K2.5 / K2.6 are native multimodal and accept this wire
+    // format via Fireworks' OpenAI-compatible chat endpoint. The Z.ai-shaped
+    // helper response works here because both providers run the same
+    // OpenAI-compatible Chat Completions surface.
+    let dsl = "scene { box \"b\" (size=[1,1,1]) }";
+    let server = MockServer::start(vec![&zai_chat_body(dsl)]);
+    let client =
+        LlmClient::with_base_url(Provider::Fireworks, "test-key", server.base_url());
+
+    let mut cfg = GenerateConfig::new("describe");
+    cfg.model = "accounts/fireworks/routers/kimi-k2p6".to_string();
+    cfg.user_images.push(ImageInput {
+        mime_type: "image/png".into(),
+        // Three bytes that base64-encode to "AQID".
+        data: vec![0x01, 0x02, 0x03],
+    });
+    let _ = generate_with_repair(&client, cfg, &RepairConfig { max_iters: 0, on_iteration: None })
+        .expect("request ok");
+
+    let reqs = server.requests.lock().unwrap();
+    assert_eq!(reqs.len(), 1);
+    let body: serde_json::Value = serde_json::from_str(&reqs[0]).expect("valid JSON");
+    assert_eq!(body["model"], "accounts/fireworks/routers/kimi-k2p6");
+    let messages = body["messages"].as_array().expect("messages array");
+    let user = messages.last().expect("user turn");
+    assert_eq!(user["role"], "user");
+    let parts = user["content"].as_array().expect("content array on vision turn");
+    assert_eq!(parts.len(), 2, "got: {body}");
+    assert_eq!(parts[0]["type"], "text");
+    assert_eq!(parts[0]["text"], "describe");
+    assert_eq!(parts[1]["type"], "image_url");
+    assert_eq!(parts[1]["image_url"]["url"], "data:image/png;base64,AQID");
+}

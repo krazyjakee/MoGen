@@ -91,6 +91,7 @@ pub(super) fn model_presets(slot: ProviderSlot) -> &'static [&'static str] {
         ],
         ProviderSlot::Zai => &[
             "glm-5.1",
+            "glm-5v-turbo",
             "glm-4.6",
             "glm-4.5-air",
             "glm-4.5-flash",
@@ -427,6 +428,28 @@ impl MogenStudioApp {
                                  the saved key here takes precedence when non-empty.",
                             ),
                         );
+                    }
+
+                    if matches!(active_provider, Provider::Zai) {
+                        // GLM Coding Plan endpoint toggle. Default-on so users
+                        // on the coding plan land on the supported surface
+                        // (`/api/coding/paas/v4`) — the general PaaS endpoint
+                        // throws `os error 10054` (peer reset) on coding-plan
+                        // keys carrying the heavy MoGen DSL system instruction.
+                        ui.add_space(8.0);
+                        let mut on = self.settings.zai_use_coding_plan();
+                        let resp = ui.checkbox(&mut on, "Use GLM Coding Plan endpoint");
+                        resp.on_hover_text(
+                            "Routes Z.ai chat calls through `/api/coding/paas/v4` (the \
+                             dedicated endpoint Z.ai documents for tools like \
+                             Claude Code, Cline, Crush, MoGen Studio) instead of \
+                             the general `/api/paas/v4` surface. Default on. \
+                             Disable if you don't have a GLM Coding Plan \
+                             subscription on this key.",
+                        );
+                        if on != self.settings.zai_use_coding_plan() {
+                            self.settings.set_zai_use_coding_plan(on);
+                        }
                     }
 
                 }
