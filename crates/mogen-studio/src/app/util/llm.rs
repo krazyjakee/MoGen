@@ -5,9 +5,9 @@ use std::sync::Arc;
 use mogen_llm::{
     cacheable_block, default_cache_path, embed_seed_header, format_imports_preserve_block,
     generate_with_repair, inline_block, parse_prompt_header, parse_seed_header, repair_message,
-    resolve_or_create_cache, summarize_imports, validate_text, GenerateConfig, GoogleCredential,
-    ImageInput, LlmClient, OAuthBundle, Provider, RepairConfig, StdlibIndex, ThinkingLevel, Usage,
-    DEFAULT_TTL_SECONDS,
+    resolve_or_create_cache, summarize_imports, validate_text, visual_refine, GenerateConfig,
+    GoogleCredential, ImageInput, LlmClient, OAuthBundle, Provider, RepairConfig, StdlibIndex,
+    ThinkingLevel, Usage, DEFAULT_TTL_SECONDS,
 };
 
 use crate::app::error_class::classify;
@@ -196,6 +196,7 @@ pub(in crate::app) fn run_llm(
             .as_deref()
             .and_then(parse_prompt_header)
             .unwrap_or_else(|| prompt.clone()),
+        LlmKind::Refine => unreachable!("run_llm is not the refine entry point; refine uses run_llm_refine"),
     };
 
     let user_prompt = match kind {
@@ -336,6 +337,7 @@ pub(in crate::app) fn run_llm(
             repair_message(&header_prompt, existing_src, &diags, &[])
         }
         LlmKind::Textures => unreachable!("run_llm is text-only; textures uses run_llm_textures"),
+        LlmKind::Refine => unreachable!("run_llm is not the refine entry point; refine uses run_llm_refine"),
     };
 
     let mut cfg = GenerateConfig::new(user_prompt);
@@ -413,6 +415,147 @@ pub(in crate::app) fn run_llm(
                 retry_prompt: Some(prompt),
                 error: Some(info),
                 kind,
+            }
+        }
+    }
+}
+
+/// Worker-thread body for one visual auto-refinement iteration.
+///
+/// Mirrors `mogen/src/commands/modify.rs:220-308` (the CLI's `--auto-refine`
+/// loop body) without the spinner: build the LLM client, snapshot the
+/// current generation knobs into a [`GenerateConfig`], call
+/// [`mogen_llm::visual_refine`] with the rendered PNG + previous DSL, and
+/// fold the result into a [`LlmOutcome`] for the studio's poll path.
+///
+/// The `meta(prompt=…)` header is re-stamped from `original_prompt` here
+/// so the next iteration's `parse_prompt_header` lookup still recovers the
+/// asset description. The Reviewer is instructed in
+/// [`mogen_llm::build_reviewer_message`] to **not** emit `meta(...)`, so
+/// without this stamp the buffer would lose its provenance line on every
+/// pass.
+///
+/// Errors are routed through [`classify`] and surfaced via
+/// [`LlmOutcome::error`] — same shape modify/animate/repair use, so the
+/// existing error banner + Retry path applies for free.
+pub(in crate::app) fn run_llm_refine(
+    provider: Provider,
+    credential: Credential,
+    run_cfg: LlmRunConfig,
+    original_prompt: String,
+    current_dsl: String,
+    png: Vec<u8>,
+    tx: Sender<LlmMessage>,
+) -> LlmOutcome {
+    let send_progress = |p: LlmProgress| {
+        let _ = tx.send(LlmMessage::Progress(p));
+    };
+
+    let client = build_provider_client(provider, credential, &run_cfg.claude_code_path);
+
+    // Reviewer agent is its own system instruction (see
+    // `mogen_llm::reviewer_system_instruction`) — `visual_refine` rebuilds
+    // it internally and clears any pinned `cachedContents`. We deliberately
+    // do NOT call `attach_system_instruction` here; the Coder's cached
+    // block keys the wrong preamble.
+    let mut cfg = GenerateConfig::new(String::new());
+    cfg.model = run_cfg.model.clone();
+    // Carry forward the seed embedded in `current_dsl`'s header when one
+    // exists so the Reviewer's repair loop is reproducible against the
+    // same generation. Falls back to a fresh per-iteration seed for files
+    // without a header (newly hand-written DSL, or pre-LLM imports).
+    let seed = run_cfg
+        .seed_override
+        .or_else(|| parse_seed_header(&current_dsl))
+        .unwrap_or_else(pick_default_seed);
+    cfg.seed = Some(seed);
+    cfg.thinking_level = Some(run_cfg.thinking);
+    cfg.temperature = Some(run_cfg.temperature);
+
+    let image = ImageInput {
+        mime_type: "image/png".to_string(),
+        data: png,
+    };
+
+    let max_iters = run_cfg.max_repair_iters;
+    let tx_for_repair = tx.clone();
+    let repair = RepairConfig {
+        max_iters,
+        on_iteration: Some(Box::new(move |iter, diags| {
+            let errors = diags
+                .iter()
+                .filter(|d| matches!(d.severity, mogen_core::Severity::Error))
+                .count();
+            let _ = tx_for_repair.send(LlmMessage::Progress(LlmProgress::Repair {
+                iter,
+                max: max_iters,
+                errors,
+            }));
+        })),
+    };
+
+    send_progress(LlmProgress::Status(format!(
+        "calling {} (refine) — thinking={:?}",
+        provider.label(),
+        run_cfg.thinking,
+    )));
+
+    let registry = mogen_dsl::stdlib_registry();
+    match visual_refine(
+        &client,
+        &cfg,
+        &repair,
+        registry,
+        &original_prompt,
+        &current_dsl,
+        image,
+    ) {
+        Ok(outcome) => {
+            send_progress(LlmProgress::Status(format!(
+                "done — {} call(s), {} tokens",
+                outcome.call_count, outcome.usage.total_tokens
+            )));
+            // Reviewer is told to omit `meta(...)`, so re-stamp the
+            // provenance header from the original asset description here
+            // — without this, every refine pass would strip the prompt
+            // line and the next iteration would fall back to the
+            // synthetic mod_prompt label in `start_llm_refine`.
+            let wrapped = embed_seed_header(
+                &outcome.dsl,
+                seed,
+                &original_prompt,
+                Some(run_cfg.thinking),
+            );
+            let wrapped =
+                mogen_dsl::stamp_mogen_version(&wrapped, env!("CARGO_PKG_VERSION"));
+            LlmOutcome {
+                dsl: wrapped,
+                diagnostics: outcome.diagnostics,
+                usage: outcome.usage,
+                calls: outcome.call_count,
+                model: run_cfg.model,
+                image_calls: 0,
+                // Refine has no editable prompt; the synthetic label
+                // matches what `submit_refine_capture` stashed.
+                retry_prompt: None,
+                error: None,
+                kind: LlmKind::Refine,
+            }
+        }
+        Err(e) => {
+            let info = classify(&e);
+            LlmOutcome {
+                // Keep the previous DSL on failure so the buffer reverts
+                // to a known-valid state instead of being wiped.
+                dsl: current_dsl,
+                diagnostics: Vec::new(),
+                usage: Usage::default(),
+                calls: 0,
+                model: run_cfg.model,
+                image_calls: 0,
+                retry_prompt: None,
+                error: Some(info),
+                kind: LlmKind::Refine,
             }
         }
     }

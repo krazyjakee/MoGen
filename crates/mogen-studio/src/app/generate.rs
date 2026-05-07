@@ -277,6 +277,13 @@ impl MogenStudioApp {
                 // happen if the filter were bypassed — drop on the floor
                 // rather than mis-attributing it to the active file's status.
             }
+            CaptureKind::Refine => {
+                // Refine captures are handled by the auto-refine driver in
+                // `app/llm.rs`. We route the outcome straight through —
+                // including errors, so the driver can clean up the session
+                // instead of leaking a stuck `llm_in_flight = Refine` slot.
+                self.on_refine_render_done(ctx, outcome);
+            }
             CaptureKind::Video => {
                 let pending = match self.pending_video.take() {
                     Some(p) => p,
