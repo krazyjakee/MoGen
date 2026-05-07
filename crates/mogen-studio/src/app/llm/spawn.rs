@@ -35,6 +35,8 @@ impl MogenStudioApp {
             // Populated per-call by `spawn_llm` from the active file's path
             // so relative `import "X.mog"` lookups resolve correctly.
             base_dir: None,
+            plan: self.settings.plan_first(),
+            zai_refine_use_vision: self.settings.zai_refine_use_vision(),
         }
     }
 

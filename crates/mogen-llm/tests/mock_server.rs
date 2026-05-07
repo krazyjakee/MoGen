@@ -335,3 +335,58 @@ fn visual_refine_attaches_image_and_dsl() {
         "reviewer turn must inline the previous DSL so the model can edit it: {text}"
     );
 }
+
+/// Helper that produces a Z.ai-shaped chat-completions response carrying
+/// `text` as the assistant's reply. Mirrors `candidate_body` for Gemini.
+fn zai_chat_body(text: &str) -> String {
+    serde_json::json!({
+        "choices": [
+            { "message": { "role": "assistant", "content": text } }
+        ],
+        "usage": {
+            "prompt_tokens": 10,
+            "completion_tokens": 20,
+            "total_tokens": 30,
+        }
+    })
+    .to_string()
+}
+
+#[test]
+fn zai_vision_uses_image_url_content() {
+    // Vision input on Z.ai must serialise as the OpenAI-compatible
+    // `content: [{type:"text"}, {type:"image_url", image_url:{url:"data:..."}}]`
+    // shape — the Java backend rejects raw `inline_data` parts (Gemini's
+    // wire format) on `glm-5v-turbo`. Pin the contract so a refactor
+    // can't silently regress the wire shape.
+    let dsl = "scene { box \"b\" (size=[1,1,1]) }";
+    let server = MockServer::start(vec![&zai_chat_body(dsl)]);
+    let client = LlmClient::with_base_url(Provider::Zai, "test-key", server.base_url());
+
+    let mut cfg = GenerateConfig::new("describe");
+    cfg.model = mogen_llm::ZAI_DEFAULT_VISION_MODEL.to_string();
+    cfg.user_images.push(ImageInput {
+        mime_type: "image/png".into(),
+        // Three bytes that base64-encode to "AQID".
+        data: vec![0x01, 0x02, 0x03],
+    });
+    let _ = generate_with_repair(&client, cfg, &RepairConfig { max_iters: 0, on_iteration: None })
+        .expect("request ok");
+
+    let reqs = server.requests.lock().unwrap();
+    assert_eq!(reqs.len(), 1);
+    let body: serde_json::Value = serde_json::from_str(&reqs[0]).expect("valid JSON");
+    assert_eq!(body["model"], mogen_llm::ZAI_DEFAULT_VISION_MODEL);
+    let messages = body["messages"].as_array().expect("messages array");
+    let user = messages.last().expect("user turn");
+    assert_eq!(user["role"], "user");
+    let parts = user["content"].as_array().expect("content array on vision turn");
+    assert_eq!(parts.len(), 2, "got: {body}");
+    assert_eq!(parts[0]["type"], "text");
+    assert_eq!(parts[0]["text"], "describe");
+    assert_eq!(parts[1]["type"], "image_url");
+    assert_eq!(
+        parts[1]["image_url"]["url"],
+        "data:image/png;base64,AQID"
+    );
+}

@@ -214,9 +214,18 @@ pub(crate) fn generate(args: GenerateArgs) -> Result<()> {
                 data: png,
             };
 
+            // Z.ai vision auto-swap. The Coder pass on Z.ai runs against
+            // a text model (`glm-5.1` by default); the Reviewer needs to
+            // read the rendered PNG, so it has to route through
+            // `glm-5v-turbo` instead. Mirrors the Studio-side override
+            // in `app/util/llm.rs::run_llm_refine`.
+            let mut refine_cfg = cfg.clone();
+            if provider == Provider::Zai {
+                refine_cfg.model = mogen_llm::ZAI_DEFAULT_VISION_MODEL.to_string();
+            }
             let refined = match visual_refine(
                 &client,
-                &cfg,
+                &refine_cfg,
                 &refine_repair,
                 registry,
                 &args.prompt,

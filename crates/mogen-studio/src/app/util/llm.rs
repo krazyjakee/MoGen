@@ -34,6 +34,15 @@ pub(in crate::app) struct LlmRunConfig {
     /// quote bounds for each `use`. `None` for unsaved buffers — the prompt
     /// still lists imports verbatim, just without AABBs.
     pub base_dir: Option<PathBuf>,
+    /// When `true` and the call is `LlmKind::Generate`, run an Architect
+    /// planner pass before the Coder pass. Mirrors the CLI's
+    /// `mogen generate --plan` flag. Ignored on every other `LlmKind`.
+    pub plan: bool,
+    /// When `true` and the active provider is `Provider::Zai`, force the
+    /// Reviewer call (in `run_llm_refine`) onto `glm-5v-turbo`
+    /// regardless of the user's per-provider model override. Set from
+    /// `Settings::zai_refine_use_vision()` in `build_run_config`.
+    pub zai_refine_use_vision: bool,
 }
 
 /// Pin the system instruction onto `cfg`. For Gemini, upload `cacheable_block`
@@ -353,6 +362,61 @@ pub(in crate::app) fn run_llm(
         cfg.user_images.push(img);
     }
 
+    // Architect (planner) pass. Only meaningful when (a) the user opted in,
+    // (b) the call is Generate, and (c) there's a text prompt to plan
+    // against — image-only generates skip planning because the planner
+    // is text-only and "describe an unseen image" is not a useful task.
+    // Mirrors `crates/mogen/src/commands/generate.rs:109-130` (the CLI's
+    // `--plan` two-phase shape).
+    let plan_prompt_text = prompt.trim().to_string();
+    let want_plan =
+        kind == LlmKind::Generate && run_cfg.plan && !plan_prompt_text.is_empty();
+    let mut prefix_usage = Usage::default();
+    let mut prefix_calls: u32 = 0;
+    if want_plan {
+        send_progress(LlmProgress::Status(format!(
+            "calling {} ({} planner) — thinking={:?}",
+            provider.label(),
+            kind.label(),
+            run_cfg.thinking,
+        )));
+        match mogen_llm::generate_plan(&client, &cfg, &plan_prompt_text) {
+            Ok(po) => {
+                prefix_usage = po.usage.clone();
+                prefix_calls = 1;
+                cfg.user_prompt = mogen_llm::compose_coder_prompt(
+                    &plan_prompt_text,
+                    &po.plan,
+                );
+            }
+            Err(e) => {
+                let info = classify(&e);
+                return LlmOutcome {
+                    dsl: existing.unwrap_or_default(),
+                    diagnostics: Vec::new(),
+                    usage: prefix_usage,
+                    calls: prefix_calls,
+                    model: run_cfg.model,
+                    image_calls: 0,
+                    retry_prompt: Some(prompt),
+                    error: Some(info),
+                    kind,
+                };
+            }
+        }
+    }
+
+    // Z.ai vision auto-swap. The Studio's per-provider model dropdown
+    // pins a *text* model id (`glm-5.1`); when the user attaches an
+    // image we have to route through `glm-5v-turbo` instead — the text
+    // models can't see the image and the call would 400 on a
+    // mismatched-input shape. The override is intentional and silent;
+    // a future user staring at "why isn't my custom model used?" should
+    // find this comment.
+    if provider == Provider::Zai && !cfg.user_images.is_empty() {
+        cfg.model = mogen_llm::ZAI_DEFAULT_VISION_MODEL.to_string();
+    }
+
     send_progress(LlmProgress::Status(format!(
         "calling {} ({}) — thinking={:?}",
         provider.label(),
@@ -379,9 +443,15 @@ pub(in crate::app) fn run_llm(
 
     match generate_with_repair(&client, cfg, &repair) {
         Ok(outcome) => {
+            // Roll planner usage/calls into the final summary so the
+            // status line reflects the full cost of the run, not just
+            // the Coder pass.
+            let mut total_usage = prefix_usage.clone();
+            total_usage.add(&outcome.usage);
+            let total_calls = prefix_calls + outcome.call_count;
             send_progress(LlmProgress::Status(format!(
                 "done — {} call(s), {} tokens",
-                outcome.call_count, outcome.usage.total_tokens
+                total_calls, total_usage.total_tokens
             )));
             let wrapped = embed_seed_header(
                 &outcome.dsl,
@@ -394,8 +464,8 @@ pub(in crate::app) fn run_llm(
             LlmOutcome {
                 dsl: wrapped,
                 diagnostics: outcome.diagnostics,
-                usage: outcome.usage,
-                calls: outcome.call_count,
+                usage: total_usage,
+                calls: total_calls,
                 model: run_cfg.model,
                 image_calls: 0,
                 retry_prompt: Some(prompt),
@@ -408,8 +478,8 @@ pub(in crate::app) fn run_llm(
             LlmOutcome {
                 dsl: existing.unwrap_or_default(),
                 diagnostics: Vec::new(),
-                usage: Usage::default(),
-                calls: 0,
+                usage: prefix_usage,
+                calls: prefix_calls,
                 model: run_cfg.model,
                 image_calls: 0,
                 retry_prompt: Some(prompt),
@@ -459,7 +529,17 @@ pub(in crate::app) fn run_llm_refine(
     // do NOT call `attach_system_instruction` here; the Coder's cached
     // block keys the wrong preamble.
     let mut cfg = GenerateConfig::new(String::new());
-    cfg.model = run_cfg.model.clone();
+    // Z.ai vision auto-swap. The Reviewer is image-driven by
+    // construction (it gets a rendered PNG every iteration), so the
+    // text models can't see the input. Pin to `glm-5v-turbo` whenever
+    // the active provider is Z.ai and the user hasn't opted out via
+    // the "Use GLM-5V-Turbo for refine" checkbox in the LLM panel.
+    let model = if provider == Provider::Zai && run_cfg.zai_refine_use_vision {
+        mogen_llm::ZAI_DEFAULT_VISION_MODEL.to_string()
+    } else {
+        run_cfg.model.clone()
+    };
+    cfg.model = model.clone();
     // Carry forward the seed embedded in `current_dsl`'s header when one
     // exists so the Reviewer's repair loop is reproducible against the
     // same generation. Falls back to a fresh per-iteration seed for files
@@ -533,7 +613,7 @@ pub(in crate::app) fn run_llm_refine(
                 diagnostics: outcome.diagnostics,
                 usage: outcome.usage,
                 calls: outcome.call_count,
-                model: run_cfg.model,
+                model: model.clone(),
                 image_calls: 0,
                 // Refine has no editable prompt; the synthetic label
                 // matches what `submit_refine_capture` stashed.
@@ -551,7 +631,7 @@ pub(in crate::app) fn run_llm_refine(
                 diagnostics: Vec::new(),
                 usage: Usage::default(),
                 calls: 0,
-                model: run_cfg.model,
+                model,
                 image_calls: 0,
                 retry_prompt: None,
                 error: Some(info),

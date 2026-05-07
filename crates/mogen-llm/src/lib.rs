@@ -70,7 +70,7 @@ pub use settings_store::{load_api_keys, read_api_key, settings_path as settings_
 pub use fireworks::{FireworksClient, FireworksError};
 pub use textures::parse_prompt_header;
 pub use zai::{ZaiClient, ZaiError};
-pub use zai_chat::{ZaiChatClient, ZaiChatError};
+pub use zai_chat::{ZaiChatClient, ZaiChatError, DEFAULT_VISION_MODEL as ZAI_DEFAULT_VISION_MODEL};
 pub use types::{
     GenerateConfig, GenerateResponse, ImageInput, Role, ThinkingLevel, Turn, Usage,
     DEFAULT_TEMPERATURE,
