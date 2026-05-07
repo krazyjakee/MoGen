@@ -40,6 +40,8 @@ impl MogenStudioApp {
             // consistent. `build_run_config` returns a default-empty value
             // here to keep that boundary clean.
             style: None,
+            plan: self.settings.plan_first(),
+            zai_refine_use_vision: self.settings.zai_refine_use_vision(),
         }
     }
 

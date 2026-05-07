@@ -327,6 +327,29 @@ pub struct Settings {
     /// any newer release supersedes the skip.
     #[serde(default)]
     pub skipped_update_tag: String,
+
+    /// When `true`, the Studio's New from Prompt → Generate flow runs an
+    /// Architect (planner) pass before the DSL Coder pass. Mirrors the
+    /// CLI's `mogen generate --plan` flag. Default `false` so the
+    /// existing one-shot behaviour stays bit-for-bit unless the user
+    /// opts in. Persisted both because the dialog wires through to it
+    /// and because users tend to either want it always on or always
+    /// off (per-call discoverability without losing the last choice).
+    #[serde(default)]
+    pub plan_first: bool,
+
+    /// When `Some(true)` (or unset) and the active provider is Z.ai, the
+    /// Refine button forces the Reviewer call onto `glm-5v-turbo`
+    /// regardless of the user's per-provider model override. The default
+    /// is "swap on" because the only reason to opt out is "I want the
+    /// call to fail loudly so I can see what model my override resolves
+    /// to" — useful for debugging, useless in production. Read by
+    /// `run_llm_refine`; surfaced as a checkbox in the Refine section
+    /// when the active slot is Z.ai. `None` falls back to `true` at read
+    /// time so existing settings files keep the new behaviour without a
+    /// migration step.
+    #[serde(default)]
+    pub zai_refine_use_vision: Option<bool>,
 }
 
 /// Default viewer background. Independent of the UI theme so the model's
@@ -578,6 +601,28 @@ impl Settings {
 
     pub fn seed_override(&self) -> Option<u64> {
         self.seed_override
+    }
+
+    /// Whether the Generate flow should run the Architect (planner) pass
+    /// before the Coder pass. Mirrors `mogen generate --plan` from the
+    /// CLI; default `false`.
+    pub fn plan_first(&self) -> bool {
+        self.plan_first
+    }
+
+    pub fn set_plan_first(&mut self, on: bool) {
+        self.plan_first = on;
+    }
+
+    /// Whether the Refine button forces `glm-5v-turbo` when the active
+    /// provider is Z.ai. `None` (unset) → `true`, so existing settings
+    /// files inherit the new behaviour without a migration.
+    pub fn zai_refine_use_vision(&self) -> bool {
+        self.zai_refine_use_vision.unwrap_or(true)
+    }
+
+    pub fn set_zai_refine_use_vision(&mut self, on: bool) {
+        self.zai_refine_use_vision = Some(on);
     }
 
     /// Resolve the persisted slot key to a [`ProviderSlot`], falling back to

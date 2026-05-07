@@ -11,6 +11,7 @@
 
 use std::time::Duration;
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::Deserialize;
 use thiserror::Error;
 
@@ -22,6 +23,12 @@ pub const DEFAULT_MODEL: &str = "glm-5.1";
 /// Default fast model. Same family as the heavy default; users can
 /// override per-tab in Studio if they want a cheaper/faster tier.
 pub const DEFAULT_FAST_MODEL: &str = "glm-5.1";
+
+/// Vision-capable Z.ai model. Triggered by [`build_request`] whenever the
+/// caller passes a non-empty [`GenerateConfig::user_images`]; the Studio's
+/// worker also forces this id when an image is attached on the Z.ai
+/// provider so the user-facing model dropdown stays advisory.
+pub const DEFAULT_VISION_MODEL: &str = "glm-5v-turbo";
 
 const DEFAULT_BASE_URL: &str = "https://api.z.ai/api/paas/v4";
 
@@ -144,10 +151,39 @@ fn build_request(cfg: &GenerateConfig) -> serde_json::Value {
             "content": turn.text,
         }));
     }
-    messages.push(serde_json::json!({
-        "role": "user",
-        "content": cfg.user_prompt,
-    }));
+    // User turn. When images are attached, switch to the OpenAI-compatible
+    // vision shape: `content` becomes an array of `{type:"text"}` plus
+    // `{type:"image_url", image_url:{url:"data:<mime>;base64,..."}}` parts.
+    // Z.ai's docs recommend text-first ordering on the chat surface, which
+    // also matches what `glm-5v-turbo` expects in production.
+    if cfg.user_images.is_empty() {
+        messages.push(serde_json::json!({
+            "role": "user",
+            "content": cfg.user_prompt,
+        }));
+    } else {
+        let mut parts: Vec<serde_json::Value> =
+            Vec::with_capacity(cfg.user_images.len() + 1);
+        parts.push(serde_json::json!({
+            "type": "text",
+            "text": cfg.user_prompt,
+        }));
+        for img in &cfg.user_images {
+            let url = format!(
+                "data:{};base64,{}",
+                img.mime_type,
+                STANDARD.encode(&img.data),
+            );
+            parts.push(serde_json::json!({
+                "type": "image_url",
+                "image_url": { "url": url },
+            }));
+        }
+        messages.push(serde_json::json!({
+            "role": "user",
+            "content": parts,
+        }));
+    }
 
     let mut req = serde_json::json!({
         "model": cfg.model,
@@ -155,11 +191,26 @@ fn build_request(cfg: &GenerateConfig) -> serde_json::Value {
     });
 
     if let Some(t) = cfg.temperature {
-        req["temperature"] = serde_json::json!(t);
+        // Round-trip through Display → f64 to strip the f32-widening
+        // artifact: `serde_json::json!(0.3_f32)` emits
+        // "0.30000001192092896", which Z.ai 400s as "Invalid API
+        // parameter" even though the value is within `[0.0, 1.0]`.
+        // Going through `format!("{}", t)` lands on the shortest
+        // decimal that round-trips ("0.3"), parsed as f64 it's the
+        // closest representable, and serde_json's ryu emits the same
+        // short form back on the wire.
+        let t_str = format!("{}", t);
+        let t_f64: f64 = t_str.parse().unwrap_or_else(|_| f64::from(t));
+        req["temperature"] = serde_json::json!(t_f64);
     }
-    if let Some(s) = cfg.seed {
-        req["seed"] = serde_json::json!(s as i64);
-    }
+    // Note: Z.ai's chat completions surface does NOT accept a `seed`
+    // field — the schema (https://docs.z.ai/api-reference/llm/chat-completion)
+    // exposes only `temperature`, `top_p`, `max_tokens`, `do_sample`,
+    // `thinking`, etc. Sending `seed` 400s the request with "Invalid API
+    // parameter" regardless of the value's type. The seed still rides
+    // along in the DSL `meta(seed=...)` header for cross-provider
+    // reproducibility; we just don't put it on the wire here.
+    let _ = cfg.seed;
     req
 }
 
@@ -256,14 +307,37 @@ mod tests {
     }
 
     #[test]
-    fn request_body_includes_seed_and_temperature() {
+    fn request_body_omits_seed_and_includes_temperature() {
+        // Z.ai's chat completions schema does not list `seed` as a
+        // recognised field — sending it 400s the request with
+        // "Invalid API parameter" regardless of value type. The seed
+        // travels through the DSL `meta(seed=…)` header instead, so
+        // cross-provider reproducibility still works.
         let mut cfg = GenerateConfig::new("x");
         cfg.model = DEFAULT_MODEL.into();
         cfg.seed = Some(7);
         cfg.temperature = Some(0.42);
         let body = build_request(&cfg);
-        assert_eq!(body["seed"], 7);
+        assert!(
+            body.get("seed").is_none(),
+            "seed must not appear in the wire payload: {body}"
+        );
         assert!((body["temperature"].as_f64().unwrap() - 0.42).abs() < 1e-6);
+    }
+
+    #[test]
+    fn temperature_avoids_f32_widening_artifact() {
+        // f32 0.3 widens to f64 0.30000001192092896 — Z.ai's backend
+        // 400s anything outside the documented `[0.0, 1.0]` decimal
+        // form, even though the f64 value still satisfies the bound.
+        // The fix routes through Display → parse → f64 so the shortest
+        // round-trip decimal (0.3) is what ends up on the wire.
+        let mut cfg = GenerateConfig::new("x");
+        cfg.model = DEFAULT_MODEL.into();
+        cfg.temperature = Some(0.3);
+        let body = build_request(&cfg);
+        let serialized = serde_json::to_string(&body["temperature"]).unwrap();
+        assert_eq!(serialized, "0.3", "got: {serialized}");
     }
 
     #[test]
@@ -281,5 +355,51 @@ mod tests {
     #[test]
     fn default_model_is_glm_5_1() {
         assert_eq!(DEFAULT_MODEL, "glm-5.1");
+    }
+
+    #[test]
+    fn nanos_seed_does_not_appear_on_the_wire() {
+        // Studio's `pick_default_seed()` returns `as_nanos() as u64`,
+        // which can be ~1.7e18 — a value that previously overflowed a
+        // Java `int` on the wire. The fix is to drop the field
+        // entirely; this test pins that the field is absent regardless
+        // of how large the seed grows.
+        let mut cfg = GenerateConfig::new("x");
+        cfg.model = DEFAULT_MODEL.into();
+        cfg.seed = Some(1_778_138_120_133_371_400u64);
+        let body = build_request(&cfg);
+        assert!(
+            body.get("seed").is_none(),
+            "seed must not appear in the wire payload: {body}"
+        );
+    }
+
+    #[test]
+    fn user_image_becomes_image_url_part() {
+        // Vision input: a non-empty `user_images` switches the user
+        // message's `content` from a plain string to an array of typed
+        // parts (text + image_url). The image is delivered as a
+        // `data:<mime>;base64,...` URL — Z.ai's chat surface rejects raw
+        // bytes / hosted-URL forms when the model is glm-5v-turbo.
+        let mut cfg = GenerateConfig::new("describe this");
+        cfg.model = DEFAULT_VISION_MODEL.into();
+        cfg.user_images.push(crate::types::ImageInput {
+            mime_type: "image/png".into(),
+            data: vec![0x01, 0x02, 0x03],
+        });
+        let body = build_request(&cfg);
+        let messages = body["messages"].as_array().unwrap();
+        let user_msg = messages.last().unwrap();
+        assert_eq!(user_msg["role"], "user");
+        let parts = user_msg["content"].as_array().expect("content is array");
+        assert_eq!(parts.len(), 2, "got: {body}");
+        assert_eq!(parts[0]["type"], "text");
+        assert_eq!(parts[0]["text"], "describe this");
+        assert_eq!(parts[1]["type"], "image_url");
+        let url = parts[1]["image_url"]["url"]
+            .as_str()
+            .expect("image_url.url is string");
+        // Three bytes of 0x01 0x02 0x03 base64-encode to "AQID".
+        assert_eq!(url, "data:image/png;base64,AQID");
     }
 }

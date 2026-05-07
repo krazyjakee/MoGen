@@ -170,6 +170,27 @@ impl MogenStudioApp {
                     }
                 });
 
+                // Vision-mismatch warning. When an image is staged but
+                // the active provider can't read images, surface an
+                // inline orange row right under the thumbnail so the
+                // cause is adjacent to the cure. We deliberately keep
+                // the Generate button enabled — the text prompt alone
+                // may still be useful, the image attachment is
+                // preserved across provider swaps, and the warning is
+                // informational, not blocking.
+                if self.new_prompt_image.is_some()
+                    && !self.settings.provider().supports_images()
+                {
+                    ui.add_space(2.0);
+                    ui.colored_label(
+                        egui::Color32::from_rgb(230, 200, 100),
+                        format!(
+                            "{} can't read images — pick Z.ai or Gemini in \
+                             Generation › Provider to use this image",
+                            self.settings.provider().display_name(),
+                        ),
+                    );
+                }
                 ui.add_space(8.0);
                 ui.separator();
                 ui.add_space(4.0);
@@ -350,6 +371,20 @@ impl MogenStudioApp {
                         egui::Color32::from_rgb(230, 150, 80),
                         "(not a valid u64 — seed will fall back to random)",
                     );
+                }
+
+                // --- Plan-first toggle ---
+                ui.add_space(4.0);
+                let mut plan_draft = self.settings.plan_first();
+                if ui
+                    .checkbox(&mut plan_draft, "Use Architect agent (plan first)")
+                    .on_hover_text(
+                        "Run a plain-language planning pass before \
+                         generating DSL. Slower but better on complex scenes.",
+                    )
+                    .changed()
+                {
+                    self.settings.set_plan_first(plan_draft);
                 }
 
                 let has_key = self.resolve_api_key().is_some();
