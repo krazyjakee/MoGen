@@ -32,6 +32,19 @@
 *.exr       filter=lfs diff=lfs merge=lfs -text
 *.hdr       filter=lfs diff=lfs merge=lfs -text
 
+# Golden-GLB regression fixtures (see crates/mogen/tests/goldens.rs).
+# Small, deterministic outputs of the compiler — kept in plain git so the
+# test suite works without `git lfs pull` and CI doesn't depend on LFS.
+crates/mogen/tests/fixtures/*.glb -filter -diff -merge binary
+examples/chair.glb        -filter -diff -merge binary
+examples/chair_mat.glb    -filter -diff -merge binary
+examples/chair_array.glb  -filter -diff -merge binary
+examples/chair_module.glb -filter -diff -merge binary
+examples/table.glb        -filter -diff -merge binary
+examples/sword.glb        -filter -diff -merge binary
+examples/drone.glb        -filter -diff -merge binary
+examples/simple_house.glb -filter -diff -merge binary
+
 # Godot-adjacent binary assets (the repo lives under godot-projects/)
 *.tres      text
 *.tscn      text
