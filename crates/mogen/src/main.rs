@@ -22,6 +22,7 @@ use commands::moghub::{
 };
 use commands::repair::{repair, RepairArgs};
 use commands::textures::textures_cmd;
+use commands::thumbnail::{thumbnail, ThumbnailArgs};
 use commands::update::{update, UpdateArgs};
 
 /// CLI-facing mirror of [`ThinkingLevel`]. Kept separate so we don't leak
@@ -307,7 +308,9 @@ enum MoghubCmd {
         /// Version changelog message.
         #[arg(short, long)]
         message: Option<String>,
-        /// Path to a PNG to attach as the model thumbnail.
+        /// Path to a PNG to attach as the model thumbnail. Optional —
+        /// when omitted, the CLI renders one headlessly via `mogen-render`
+        /// using the same orbit framing as the Studio's preview.
         #[arg(long)]
         thumbnail: Option<PathBuf>,
         /// Override the published filename. Defaults to the input
@@ -513,6 +516,27 @@ enum Cmd {
     },
     /// Read a GLB and print its structure.
     Inspect { input: PathBuf },
+    /// Render a PNG preview of a `.mog` via the headless GL pipeline.
+    /// Suitable to feed back into `mogen moghub publish --thumbnail`.
+    Thumbnail {
+        input: PathBuf,
+        /// Output PNG path. Defaults to `<input>.png` alongside the DSL file.
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+        /// Square edge length in pixels. Defaults to 512 (matches Studio).
+        #[arg(long, default_value_t = 512)]
+        size: u32,
+        /// Camera yaw in radians. Defaults to π/4 (Studio default).
+        #[arg(long)]
+        yaw: Option<f32>,
+        /// Camera pitch in radians. Defaults to 0.5 rad (~28°, Studio default).
+        #[arg(long)]
+        pitch: Option<f32>,
+        /// Background fill as 6-digit hex (e.g. `#2a2d33`). Defaults to
+        /// Studio's slate grey.
+        #[arg(long)]
+        bg: Option<String>,
+    },
     /// Generate a DSL file from a natural-language prompt via the configured
     /// LLM provider, then validate and compile it.
     Generate {
@@ -858,6 +882,21 @@ fn main() -> ExitCode {
         Cmd::Check { input, json } => check(input, json),
         Cmd::DumpScene { input, json } => dump_scene(input, json),
         Cmd::Inspect { input } => inspect(input),
+        Cmd::Thumbnail {
+            input,
+            out,
+            size,
+            yaw,
+            pitch,
+            bg,
+        } => thumbnail(ThumbnailArgs {
+            input,
+            out,
+            size,
+            yaw,
+            pitch,
+            bg,
+        }),
         Cmd::Generate {
             prompt,
             out,
