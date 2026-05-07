@@ -123,8 +123,17 @@ pub(crate) fn resolve_model(provider: Provider, flag: Option<String>) -> String 
 }
 
 /// Construct the right [`LlmClient`] for `provider` with `api_key`.
+///
+/// Z.ai routes through `with_base_url` so the persisted GLM Coding Plan
+/// toggle (in `~/.mogen/settings.json`) chooses between the dedicated
+/// `/api/coding/paas/v4` endpoint (default-on, recommended for coding-plan
+/// keys) and the general `/api/paas/v4` surface.
 pub(crate) fn build_client(provider: Provider, api_key: String) -> LlmClient {
-    LlmClient::new(provider, api_key)
+    if provider == Provider::Zai {
+        LlmClient::with_base_url(provider, api_key, mogen_llm::zai_base_url())
+    } else {
+        LlmClient::new(provider, api_key)
+    }
 }
 
 /// Resolve the Google credential for Gemini calls under the given `mode`.

@@ -30,7 +30,19 @@ pub const DEFAULT_FAST_MODEL: &str = "glm-5.1";
 /// provider so the user-facing model dropdown stays advisory.
 pub const DEFAULT_VISION_MODEL: &str = "glm-5v-turbo";
 
-const DEFAULT_BASE_URL: &str = "https://api.z.ai/api/paas/v4";
+/// Default Z.ai chat-completions endpoint. The general "PaaS v4" surface
+/// covers every account but is rate-limited more aggressively for the
+/// dedicated coding plan; coding-plan keys carrying heavy system
+/// instructions (the MoGen DSL prompt) often trip an `os error 10054`
+/// (peer reset) on this URL.
+pub const DEFAULT_BASE_URL: &str = "https://api.z.ai/api/paas/v4";
+
+/// Dedicated GLM Coding Plan endpoint. Z.ai documents this surface as the
+/// one purpose-built for tools like Claude Code, Cline, Crush, MoGen
+/// Studio (see <https://docs.z.ai/devpack/overview>); it accepts the same
+/// auth and wire shape as `DEFAULT_BASE_URL` but is the supported target
+/// for users on the GLM Coding Plan.
+pub const CODING_PLAN_BASE_URL: &str = "https://api.z.ai/api/coding/paas/v4";
 
 #[derive(Debug, Error)]
 pub enum ZaiChatError {

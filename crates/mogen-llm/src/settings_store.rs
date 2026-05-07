@@ -48,6 +48,15 @@ pub struct ApiKeys {
     pub fireworks_api_key: String,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub zai_api_key: String,
+    /// When `Some(true)` (or absent — defaults to true), Z.ai chat calls
+    /// route through the dedicated GLM Coding Plan endpoint
+    /// (`/api/coding/paas/v4`). When `Some(false)`, use the general PaaS
+    /// endpoint (`/api/paas/v4`). The coding endpoint is rate-limited
+    /// less aggressively for keys carrying heavy system instructions
+    /// (the MoGen DSL prompt) and avoids the `os error 10054` peer
+    /// resets users on the coding plan see on the general endpoint.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub zai_use_coding_plan: Option<bool>,
 }
 
 /// Resolve the canonical `~/.mogen/settings.json` path. Returns `None`
@@ -88,6 +97,25 @@ pub fn read_api_key(provider: Provider) -> Option<String> {
         None
     } else {
         Some(trimmed.to_string())
+    }
+}
+
+/// Resolve the Z.ai chat-completions base URL according to the persisted
+/// `zai_use_coding_plan` toggle. Returns the dedicated GLM Coding Plan
+/// endpoint when the toggle is `Some(true)` or absent (default-on); the
+/// general PaaS endpoint when the toggle is `Some(false)`.
+///
+/// Used by the CLI's [`crate::Provider::Zai`] client construction so a
+/// single user file controls both surfaces without each call site
+/// re-implementing the toggle.
+pub fn zai_base_url() -> &'static str {
+    let on = load_api_keys()
+        .and_then(|k| k.zai_use_coding_plan)
+        .unwrap_or(true);
+    if on {
+        crate::ZAI_CODING_PLAN_BASE_URL
+    } else {
+        crate::ZAI_DEFAULT_BASE_URL
     }
 }
 

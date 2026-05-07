@@ -13,6 +13,7 @@
 
 use std::time::Duration;
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::Deserialize;
 use thiserror::Error;
 
@@ -139,10 +140,41 @@ fn build_request(cfg: &GenerateConfig) -> serde_json::Value {
             "content": turn.text,
         }));
     }
-    messages.push(serde_json::json!({
-        "role": "user",
-        "content": cfg.user_prompt,
-    }));
+    // User turn. When images are attached, switch to the OpenAI-compatible
+    // vision shape: `content` becomes an array of `{type:"text"}` plus
+    // `{type:"image_url", image_url:{url:"data:<mime>;base64,..."}}` parts.
+    // Kimi K2.5 / K2.6 (the Fire Pass `kimi-k2p6` router) are native
+    // multimodal models and accept this shape via Fireworks' OpenAI-
+    // compatible endpoint. Text-first ordering matches the Z.ai chat
+    // surface and OpenAI's documented convention.
+    if cfg.user_images.is_empty() {
+        messages.push(serde_json::json!({
+            "role": "user",
+            "content": cfg.user_prompt,
+        }));
+    } else {
+        let mut parts: Vec<serde_json::Value> =
+            Vec::with_capacity(cfg.user_images.len() + 1);
+        parts.push(serde_json::json!({
+            "type": "text",
+            "text": cfg.user_prompt,
+        }));
+        for img in &cfg.user_images {
+            let url = format!(
+                "data:{};base64,{}",
+                img.mime_type,
+                STANDARD.encode(&img.data),
+            );
+            parts.push(serde_json::json!({
+                "type": "image_url",
+                "image_url": { "url": url },
+            }));
+        }
+        messages.push(serde_json::json!({
+            "role": "user",
+            "content": parts,
+        }));
+    }
 
     let mut req = serde_json::json!({
         "model": cfg.model,
@@ -220,6 +252,7 @@ struct RawPromptDetails {
 mod tests {
     use super::*;
     use crate::types::{Role, Turn};
+    use crate::types::ImageInput;
 
     #[test]
     fn request_body_includes_system_message() {
@@ -282,5 +315,43 @@ mod tests {
     #[test]
     fn default_model_is_kimi_k2p6_router() {
         assert_eq!(DEFAULT_MODEL, "accounts/fireworks/routers/kimi-k2p6");
+    }
+
+    #[test]
+    fn request_body_uses_image_url_content_when_image_attached() {
+        // Vision input on Fireworks must serialise as the OpenAI-compatible
+        // `content: [{type:"text"}, {type:"image_url", image_url:{url:"data:..."}}]`
+        // shape — Kimi K2.5 / K2.6 are native multimodal and accept this
+        // wire format via Fireworks' OpenAI-compatible chat endpoint.
+        let mut cfg = GenerateConfig::new("describe");
+        cfg.model = DEFAULT_MODEL.into();
+        cfg.user_images.push(ImageInput {
+            mime_type: "image/png".into(),
+            // Three bytes that base64-encode to "AQID".
+            data: vec![0x01, 0x02, 0x03],
+        });
+        let body = build_request(&cfg);
+        let messages = body["messages"].as_array().unwrap();
+        let user = messages.last().unwrap();
+        assert_eq!(user["role"], "user");
+        let parts = user["content"].as_array().expect("content array on vision turn");
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0]["type"], "text");
+        assert_eq!(parts[0]["text"], "describe");
+        assert_eq!(parts[1]["type"], "image_url");
+        assert_eq!(parts[1]["image_url"]["url"], "data:image/png;base64,AQID");
+    }
+
+    #[test]
+    fn request_body_uses_string_content_when_no_image() {
+        // The text-only fast path must keep emitting `content: <string>` —
+        // a regression to an array shape would burn extra tokens and break
+        // the existing wire-shape contract Fireworks documents for chat.
+        let mut cfg = GenerateConfig::new("hello");
+        cfg.model = DEFAULT_MODEL.into();
+        let body = build_request(&cfg);
+        let messages = body["messages"].as_array().unwrap();
+        let user = messages.last().unwrap();
+        assert_eq!(user["content"], "hello");
     }
 }

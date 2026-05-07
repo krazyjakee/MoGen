@@ -350,6 +350,18 @@ pub struct Settings {
     /// migration step.
     #[serde(default)]
     pub zai_refine_use_vision: Option<bool>,
+    /// When `Some(true)` (or absent — defaults to `true`), Z.ai chat
+    /// calls (Generate / Modify / Animate / Ask, plus the Refine pass)
+    /// route through the dedicated GLM Coding Plan endpoint
+    /// (`/api/coding/paas/v4`) instead of the general PaaS surface
+    /// (`/api/paas/v4`). The coding endpoint is purpose-built for tools
+    /// like Claude Code, Cline, Crush, MoGen Studio and avoids the
+    /// `os error 10054` peer resets users on the coding plan see when
+    /// shipping the heavy MoGen DSL system instruction at the general
+    /// endpoint. Surfaced as a checkbox in Preferences › LLM under the
+    /// Z.ai key field.
+    #[serde(default)]
+    pub zai_use_coding_plan: Option<bool>,
 }
 
 /// Default viewer background. Independent of the UI theme so the model's
@@ -623,6 +635,29 @@ impl Settings {
 
     pub fn set_zai_refine_use_vision(&mut self, on: bool) {
         self.zai_refine_use_vision = Some(on);
+    }
+
+    /// Whether Z.ai chat calls should target the dedicated GLM Coding
+    /// Plan endpoint. `None` (unset) → `true`, so existing settings
+    /// files inherit the new behaviour without a migration.
+    pub fn zai_use_coding_plan(&self) -> bool {
+        self.zai_use_coding_plan.unwrap_or(true)
+    }
+
+    pub fn set_zai_use_coding_plan(&mut self, on: bool) {
+        self.zai_use_coding_plan = Some(on);
+    }
+
+    /// Resolve the Z.ai chat-completions base URL for this profile.
+    /// Mirrors [`mogen_llm::zai_base_url`] but reads from the Studio's
+    /// in-memory `Settings` rather than the on-disk `~/.mogen/settings.json`
+    /// so the dialog reflects unsaved edits immediately.
+    pub fn zai_base_url(&self) -> &'static str {
+        if self.zai_use_coding_plan() {
+            mogen_llm::ZAI_CODING_PLAN_BASE_URL
+        } else {
+            mogen_llm::ZAI_DEFAULT_BASE_URL
+        }
     }
 
     /// Resolve the persisted slot key to a [`ProviderSlot`], falling back to
