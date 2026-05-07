@@ -142,18 +142,26 @@ pub fn inset_box_mesh(
     // when face_sign>0 the (perp1, perp2) order p1+→p2+ traces CCW around
     // the outward normal; when face_sign<0 it traces CW, so we reverse.
     // The standalone helper builds either order from a single quad spec.
-    let push_quad = |mesh: &mut Mesh, n: [f32; 3], q: [[f32; 3]; 4], reverse: bool, fit_uv: bool| {
+    // Push one quad with the requested normal and CCW/CW winding. UV
+    // mode mirrors the surrounding box face: Fit gives each inset quad
+    // its own unit square; Tile uses world-space metres on the (perp1,
+    // perp2) plane so the inset ring tiles at the same metric scale as
+    // the unmodified box face it abuts. (Tile mode previously dropped
+    // through to Fit, producing a visible UV scale seam at the inset
+    // boundary — caught by the second-pass review.)
+    let push_quad = |mesh: &mut Mesh, n: [f32; 3], q: [[f32; 3]; 4], reverse: bool| {
         let base = mesh.positions.len() as u32;
         let order = if reverse { [3, 2, 1, 0] } else { [0, 1, 2, 3] };
         const FIT: [[f32; 2]; 4] = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
         for (i, &k) in order.iter().enumerate() {
-            mesh.positions.push(q[k]);
+            let p = q[k];
+            mesh.positions.push(p);
             mesh.normals.push(n);
-            // Uvs intentionally simple: fit-mode unit-square per quad. Tile
-            // mode falls through to the same in v1 — author who needs a
-            // uv-coherent inset can layer a `decal` on top.
-            let _ = fit_uv;
-            mesh.uvs.push(FIT[i]);
+            let uv = match mode {
+                UvMode::Fit => FIT[i],
+                UvMode::Tile => [p[perp1], p[perp2]],
+            };
+            mesh.uvs.push(uv);
         }
         mesh.indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     };
@@ -163,10 +171,10 @@ pub fn inset_box_mesh(
     // Outer ring: four trapezoidal strips at the face plane, all sharing
     // the face's outward normal. Winding has to match the original face
     // orientation so the ring lies flush with the surrounding box.
-    push_quad(&mut mesh, face_normal, [a00, a10, b10, b00], reverse, true);
-    push_quad(&mut mesh, face_normal, [a10, a11, b11, b10], reverse, true);
-    push_quad(&mut mesh, face_normal, [a11, a01, b01, b11], reverse, true);
-    push_quad(&mut mesh, face_normal, [a01, a00, b00, b01], reverse, true);
+    push_quad(&mut mesh, face_normal, [a00, a10, b10, b00], reverse);
+    push_quad(&mut mesh, face_normal, [a10, a11, b11, b10], reverse);
+    push_quad(&mut mesh, face_normal, [a11, a01, b01, b11], reverse);
+    push_quad(&mut mesh, face_normal, [a01, a00, b00, b01], reverse);
 
     // Side walls: four quads dropping from the inner ring at the face plane
     // down to the sunken floor. Normals point INTO the well (i.e. inward
@@ -177,44 +185,20 @@ pub fn inset_box_mesh(
         n
     };
     // perp1- wall (inner-ring side at p1=-cp1): normal points +perp1 (inward).
-    push_quad(
-        &mut mesh,
-        wall_n(perp1, 1.0),
-        [b00, c00, c01, b01],
-        reverse,
-        true,
-    );
+    push_quad(&mut mesh, wall_n(perp1, 1.0), [b00, c00, c01, b01], reverse);
     // perp1+ wall: normal -perp1.
-    push_quad(
-        &mut mesh,
-        wall_n(perp1, -1.0),
-        [b10, b11, c11, c10],
-        reverse,
-        true,
-    );
+    push_quad(&mut mesh, wall_n(perp1, -1.0), [b10, b11, c11, c10], reverse);
     // perp2- wall: normal +perp2.
-    push_quad(
-        &mut mesh,
-        wall_n(perp2, 1.0),
-        [b00, b10, c10, c00],
-        reverse,
-        true,
-    );
+    push_quad(&mut mesh, wall_n(perp2, 1.0), [b00, b10, c10, c00], reverse);
     // perp2+ wall: normal -perp2.
-    push_quad(
-        &mut mesh,
-        wall_n(perp2, -1.0),
-        [b01, c01, c11, b11],
-        reverse,
-        true,
-    );
+    push_quad(&mut mesh, wall_n(perp2, -1.0), [b01, c01, c11, b11], reverse);
 
     // Sunken floor: same outward normal as the original face (a recessed
     // panel still faces outward), at the deeper face_offset. Without
     // `reverse` the (p1, p2) sweep matches the outer ring and would create
     // a coincident-orientation floor — that's actually right because the
     // floor's normal is the same as the face's; pass through unchanged.
-    push_quad(&mut mesh, face_normal, [c00, c10, c11, c01], reverse, true);
+    push_quad(&mut mesh, face_normal, [c00, c10, c11, c01], reverse);
 
     mesh
 }
