@@ -28,6 +28,10 @@ textures-optimize = ["textures", "dep:image", "dep:oxipng"]
 # selected anywhere in the workspace, calling `union_many` would hit the
 # `csg_stub` panic.
 merge = []
+# Binary FBX 7.4 export. Off by default — pulls in `fbxcel`, which the
+# wasm crate doesn't enable. The desktop CLI turns this on so `mogen build`
+# can dispatch on output extension.
+fbx = ["dep:fbxcel"]
 
 [dependencies]
 mogen-core = { workspace = true }
@@ -38,6 +42,7 @@ serde_json = { workspace = true }
 glam = { workspace = true }
 image = { workspace = true, optional = true }
 oxipng = { workspace = true, optional = true }
+fbxcel = { version = "0.9", features = ["writer", "tree"], optional = true }
 
 [dev-dependencies]
 mogen-dsl = { workspace = true, features = ["csg"] }

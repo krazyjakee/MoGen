@@ -8,7 +8,24 @@ use mogen_dsl::module::FsLoader;
 use crate::format::{format_duration, print_build_summary};
 use crate::spinner::Spinner;
 
-pub(crate) fn build(input: PathBuf, out: PathBuf) -> Result<()> {
+/// Output container the build command should emit. Decided from the
+/// `--format` flag (when supplied) or the output path's extension.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum BuildFormat {
+    Glb,
+    Fbx,
+}
+
+impl BuildFormat {
+    pub(crate) fn from_path(out: &std::path::Path) -> Self {
+        match out.extension().and_then(|e| e.to_str()) {
+            Some(e) if e.eq_ignore_ascii_case("fbx") => BuildFormat::Fbx,
+            _ => BuildFormat::Glb,
+        }
+    }
+}
+
+pub(crate) fn build(input: PathBuf, out: PathBuf, format: Option<BuildFormat>) -> Result<()> {
     let start = Instant::now();
     let label = input
         .file_name()
@@ -80,9 +97,19 @@ pub(crate) fn build(input: PathBuf, out: PathBuf) -> Result<()> {
         scene.resolve_texture_paths(base);
     }
 
-    spinner.set_message(format!("build {label}: writing GLB"));
-    if let Err(e) = mogen_export::write_glb(&scene, &out) {
-        spinner.abandon_with_message(format!("build {label}: GLB export failed"));
+    let format = format.unwrap_or_else(|| BuildFormat::from_path(&out));
+    let (label_str, write_result) = match format {
+        BuildFormat::Glb => {
+            spinner.set_message(format!("build {label}: writing GLB"));
+            ("GLB", mogen_export::write_glb(&scene, &out))
+        }
+        BuildFormat::Fbx => {
+            spinner.set_message(format!("build {label}: writing FBX"));
+            ("FBX", mogen_export::write_fbx(&scene, &out))
+        }
+    };
+    if let Err(e) = write_result {
+        spinner.abandon_with_message(format!("build {label}: {label_str} export failed"));
         return Err(e);
     }
 

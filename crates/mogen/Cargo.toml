@@ -13,7 +13,7 @@ mogen-core = { workspace = true }
 # The CLI wants the full pipeline, so opt back in to every default feature.
 mogen-dsl = { workspace = true, features = ["csg"] }
 mogen-validate = { workspace = true, features = ["csg"] }
-mogen-export = { workspace = true, features = ["textures", "merge"] }
+mogen-export = { workspace = true, features = ["textures", "merge", "fbx"] }
 mogen-llm = { workspace = true }
 mogen-moghub-client = { workspace = true, features = ["oauth"] }
 mogen-update = { workspace = true }

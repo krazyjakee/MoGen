@@ -9,10 +9,18 @@ mod skin;
 mod texture;
 mod writer;
 
+#[cfg(feature = "fbx")]
+pub mod fbx;
+
 pub use options::ExportOptions;
 pub use texture::{FsTextureSource, MapTextureSource, TextureSource};
 pub use writer::{
     build_glb_with_options, build_glb_with_options_and_source, write_glb, write_glb_with_options,
+};
+
+#[cfg(feature = "fbx")]
+pub use fbx::{
+    build_fbx_with_options, build_fbx_with_options_and_source, write_fbx, write_fbx_with_options,
 };
 
 use serde::Serialize;
