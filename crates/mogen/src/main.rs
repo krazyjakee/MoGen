@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use mogen_llm::{Provider, ThinkingLevel};
+use mogen_llm::{Provider, Style, ThinkingLevel};
 
 use commands::animate::{animate, AnimateArgs};
 use commands::auth::{dispatch as auth_dispatch, AuthCmd, AuthTarget, LoginCmd};
@@ -42,6 +42,42 @@ impl From<ThinkingArg> for ThinkingLevel {
             ThinkingArg::Medium => ThinkingLevel::Medium,
             ThinkingArg::High => ThinkingLevel::High,
             ThinkingArg::Xhigh => ThinkingLevel::XHigh,
+        }
+    }
+}
+
+/// CLI-facing mirror of [`Style`]. Same separation as `ThinkingArg` — keeps
+/// `clap::ValueEnum` out of `mogen-llm`. Variants render as kebab-case
+/// slugs by clap's default rename (e.g. `LowPoly` → `low-poly`); the
+/// `From` impl maps each variant to the snake-case [`Style::key`] used
+/// inside `meta(style=…)`.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum StyleArg {
+    Ps1,
+    N64,
+    LowPoly,
+    HighDetail,
+    Arcade,
+    Voxel,
+    CelShaded,
+    StylizedFantasy,
+    Cyberpunk,
+    PixelArt,
+}
+
+impl From<StyleArg> for Style {
+    fn from(a: StyleArg) -> Self {
+        match a {
+            StyleArg::Ps1 => Style::Ps1,
+            StyleArg::N64 => Style::N64,
+            StyleArg::LowPoly => Style::LowPoly,
+            StyleArg::HighDetail => Style::HighDetail,
+            StyleArg::Arcade => Style::Arcade,
+            StyleArg::Voxel => Style::Voxel,
+            StyleArg::CelShaded => Style::CelShaded,
+            StyleArg::StylizedFantasy => Style::StylizedFantasy,
+            StyleArg::Cyberpunk => Style::Cyberpunk,
+            StyleArg::PixelArt => Style::PixelArt,
         }
     }
 }
@@ -618,6 +654,12 @@ enum Cmd {
         /// then to `high`.
         #[arg(long, value_enum)]
         thinking: Option<ThinkingArg>,
+        /// Visual-style hint. Prepends a "## Style" guidance block to the
+        /// prompt and stamps `meta(style=…)` into the saved DSL so future
+        /// `modify` / `animate` / `repair` runs inherit the look. Omit
+        /// for no style guidance.
+        #[arg(long, value_enum)]
+        style: Option<StyleArg>,
     },
     /// Modify an existing DSL file with a natural-language prompt via the
     /// configured LLM provider, then validate and recompile the GLB.
@@ -668,6 +710,10 @@ enum Cmd {
         /// Cap on server-side reasoning. See `generate --thinking`.
         #[arg(long, value_enum)]
         thinking: Option<ThinkingArg>,
+        /// Visual-style hint. Falls back to the file's `meta(style=…)`
+        /// when omitted, so styled files stay styled across edits.
+        #[arg(long, value_enum)]
+        style: Option<StyleArg>,
     },
     /// Add or edit animations on an existing DSL file via the configured LLM
     /// provider, then validate and recompile the GLB. The LLM is restricted
@@ -721,6 +767,10 @@ enum Cmd {
         /// Cap on server-side reasoning. See `generate --thinking`.
         #[arg(long, value_enum)]
         thinking: Option<ThinkingArg>,
+        /// Visual-style hint. Falls back to the file's `meta(style=…)`
+        /// when omitted.
+        #[arg(long, value_enum)]
+        style: Option<StyleArg>,
     },
     /// Repair validation errors in an existing .mog file via the configured
     /// LLM provider. Runs the validator first and passes each diagnostic
@@ -775,6 +825,10 @@ enum Cmd {
         /// Cap on server-side reasoning. See `generate --thinking`.
         #[arg(long, value_enum)]
         thinking: Option<ThinkingArg>,
+        /// Visual-style hint. Falls back to the file's `meta(style=…)`
+        /// when omitted.
+        #[arg(long, value_enum)]
+        style: Option<StyleArg>,
     },
     /// Generate PBR textures for every material in a .mog file: an LLM-drawn
     /// albedo via Gemini 2.5 Flash Image, plus locally-derived normal,
@@ -947,6 +1001,7 @@ fn main() -> ExitCode {
             no_cache,
             temperature,
             thinking,
+            style,
         } => generate(GenerateArgs {
             prompt,
             out,
@@ -962,6 +1017,7 @@ fn main() -> ExitCode {
             no_cache,
             temperature,
             thinking: thinking.map(Into::into),
+            style: style.map(Into::into),
         }),
         Cmd::Modify {
             input,
@@ -979,6 +1035,7 @@ fn main() -> ExitCode {
             no_cache,
             temperature,
             thinking,
+            style,
         } => modify(ModifyArgs {
             input,
             prompt,
@@ -995,6 +1052,7 @@ fn main() -> ExitCode {
             no_cache,
             temperature,
             thinking: thinking.map(Into::into),
+            style: style.map(Into::into),
         }),
         Cmd::Animate {
             input,
@@ -1012,6 +1070,7 @@ fn main() -> ExitCode {
             no_cache,
             temperature,
             thinking,
+            style,
         } => animate(AnimateArgs {
             input,
             prompt,
@@ -1028,6 +1087,7 @@ fn main() -> ExitCode {
             no_cache,
             temperature,
             thinking: thinking.map(Into::into),
+            style: style.map(Into::into),
         }),
         Cmd::Repair {
             input,
@@ -1045,6 +1105,7 @@ fn main() -> ExitCode {
             no_cache,
             temperature,
             thinking,
+            style,
         } => repair(RepairArgs {
             input,
             out,
@@ -1061,6 +1122,7 @@ fn main() -> ExitCode {
             no_cache,
             temperature,
             thinking: thinking.map(Into::into),
+            style: style.map(Into::into),
         }),
         Cmd::Textures {
             input,

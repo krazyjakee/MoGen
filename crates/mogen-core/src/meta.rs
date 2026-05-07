@@ -34,4 +34,11 @@ pub struct Meta {
     /// Original natural-language prompt the file was generated from.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt: Option<String>,
+    /// Visual-style hint stamped by `mogen-llm` when the user picks one
+    /// from the CLI flag or Studio dropdown. Free-form string in this
+    /// layer (the validator and DSL extractor are deliberately lenient
+    /// so hand-edited files with experimental keys still load); the
+    /// LLM crate decides how to map it onto its `Style` enum.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub style: Option<String>,
 }

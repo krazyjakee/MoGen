@@ -6,7 +6,8 @@ use super::prefs::model_presets;
 use crate::app::types::{EnhanceTarget, GenImageInput, MAX_GEN_IMAGE_BYTES};
 use crate::app::MogenStudioApp;
 use crate::settings::{
-    thinking_level_key, thinking_level_label, ProviderSlot, PROVIDER_SLOTS, THINKING_LEVELS,
+    style_label, thinking_level_key, thinking_level_label, ProviderSlot, PROVIDER_SLOTS,
+    STYLE_OPTIONS, THINKING_LEVELS,
 };
 
 /// Decode the image bytes via the `image` crate, downscale to a thumbnail
@@ -269,6 +270,28 @@ impl MogenStudioApp {
                         }
                     });
 
+                // --- style dropdown ---
+                ui.add_space(4.0);
+                ui.label("Style").on_hover_text(
+                    "Visual style hint appended to the prompt and stamped \
+                     into meta(style=…) so it sticks across modify / animate \
+                     / repair runs. Pick \"Default\" to send the prompt \
+                     unchanged.",
+                );
+                let current_style = self.settings.style();
+                egui::ComboBox::from_id_salt("new_prompt_style")
+                    .selected_text(style_label(current_style))
+                    .show_ui(ui, |ui| {
+                        for s in STYLE_OPTIONS {
+                            if ui
+                                .selectable_label(s == current_style, style_label(s))
+                                .clicked()
+                            {
+                                self.settings.set_style(s);
+                            }
+                        }
+                    });
+
                 let has_key = self.resolve_api_key().is_some();
                 if !has_key {
                     ui.add_space(4.0);
@@ -340,6 +363,10 @@ impl MogenStudioApp {
             self.new_untitled();
             self.active_mut().gen_prompt = prompt;
             self.active_mut().gen_image = staged;
+            // Capture the style at submit time so Retry / follow-up edits
+            // re-issue the same call without re-reading the dialog (which
+            // is closed by then).
+            self.active_mut().gen_style = self.settings.style();
             let ctx_clone = ctx.clone();
             self.start_llm_generate(ctx_clone);
             self.new_prompt_draft.clear();

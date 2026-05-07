@@ -3,8 +3,9 @@ use std::path::PathBuf;
 
 use anyhow::{anyhow, bail, Context, Result};
 use mogen_llm::{
-    embed_seed_header, generate_with_repair, parse_prompt_header, parse_seed_header,
-    parse_thinking_header, GenerateConfig, Provider, RepairConfig, ThinkingLevel,
+    apply_style_to_prompt, embed_seed_header, generate_with_repair, parse_prompt_header,
+    parse_seed_header, parse_style_header, parse_thinking_header, stamp_style_header,
+    GenerateConfig, Provider, RepairConfig, Style, ThinkingLevel,
 };
 
 use crate::commands::build::build;
@@ -33,6 +34,9 @@ pub(crate) struct AnimateArgs {
     /// CLI override; `None` falls through to the file's
     /// `meta(thinking=…)` attribute, then the library default.
     pub thinking: Option<ThinkingLevel>,
+    /// CLI override; `None` falls through to the file's
+    /// `meta(style=…)` attribute. Sticky across animate runs.
+    pub style: Option<Style>,
 }
 
 pub(crate) fn animate(args: AnimateArgs) -> Result<()> {
@@ -49,6 +53,9 @@ pub(crate) fn animate(args: AnimateArgs) -> Result<()> {
         .thinking
         .or_else(|| parse_thinking_header(&existing))
         .unwrap_or(ThinkingLevel::High);
+
+    // Precedence: CLI flag > per-file header > none.
+    let effective_style = args.style.or_else(|| parse_style_header(&existing));
 
     // Preserve the original `meta(prompt=…)` from the existing file so edits
     // don't clobber the provenance line with the animate instruction.
@@ -102,6 +109,7 @@ Existing file:\n\n{existing}",
         anim_prompt = args.prompt.trim(),
     );
 
+    let user_prompt = apply_style_to_prompt(&user_prompt, effective_style);
     let mut cfg = GenerateConfig::new(user_prompt);
     cfg.model = model;
     cfg.budget_tokens = args.budget_tokens;
@@ -140,6 +148,7 @@ Existing file:\n\n{existing}",
 
     let wrapped = embed_seed_header(&outcome.dsl, seed, &header_prompt, Some(effective_thinking));
     let wrapped = mogen_dsl::stamp_mogen_version(&wrapped, env!("CARGO_PKG_VERSION"));
+    let wrapped = stamp_style_header(&wrapped, effective_style);
 
     if !outcome.is_ok() {
         pb.abandon_with_message(format!(

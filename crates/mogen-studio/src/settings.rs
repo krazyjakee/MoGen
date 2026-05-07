@@ -18,7 +18,7 @@ pub use provider_slot::{
 use std::fs;
 
 use mogen_llm::gemini::{DEFAULT_MODEL, DEFAULT_TEMPERATURE};
-use mogen_llm::{Provider, ThinkingLevel};
+use mogen_llm::{Provider, Style, ThinkingLevel, STYLES};
 use mogen_moghub_client::session_store as moghub_session;
 use serde::{Deserialize, Serialize};
 
@@ -66,6 +66,11 @@ pub struct Settings {
     /// unknown falls back to the library default at read time.
     #[serde(default)]
     pub thinking_level: String,
+    /// Persisted as the [`Style::key`] slug (e.g. `"ps1"`, `"low_poly"`). Empty
+    /// or unknown means "no style" — the dialog opens on `Default (no style)`
+    /// and `apply_style_to_prompt` is a passthrough.
+    #[serde(default)]
+    pub style: String,
     /// Absolute path of the last `.mog` opened in the GUI. Used at startup to
     /// reopen the previous file. With [`Self::open_tabs`] populated this also
     /// names which tab to activate after the strip is restored.
@@ -495,6 +500,20 @@ impl Settings {
         ThinkingLevel::parse(&self.thinking_level).unwrap_or(ThinkingLevel::High)
     }
 
+    /// Resolve the persisted slug to a [`Style`], or `None` for the
+    /// "Default (no style)" choice. Unknown values map to `None` so a
+    /// hand-edited settings file with a deprecated slug degrades
+    /// silently to the default.
+    pub fn style(&self) -> Option<Style> {
+        Style::parse(&self.style)
+    }
+
+    /// Persist a fresh style choice. `None` clears the field so future
+    /// loads land on `Default (no style)`.
+    pub fn set_style(&mut self, s: Option<Style>) {
+        self.style = s.map(|s| s.key().to_string()).unwrap_or_default();
+    }
+
     /// Resolve the persisted label to a `Theme`, falling back to `DEFAULT_THEME`
     /// when the field is empty or unknown.
     pub fn theme(&self) -> Theme {
@@ -858,3 +877,36 @@ pub const THINKING_LEVELS: [ThinkingLevel; 4] = [
     ThinkingLevel::High,
     ThinkingLevel::XHigh,
 ];
+
+/// Human-facing label for the style combobox. `None` is the leading
+/// "Default (no style)" entry that keeps the existing behaviour
+/// bit-for-bit (no prompt suffix, no `meta(style=…)` line).
+pub fn style_label(s: Option<Style>) -> &'static str {
+    match s {
+        None => "Default (no style)",
+        Some(s) => s.label(),
+    }
+}
+
+/// Dropdown ordering: `None` first, then the catalogue order from
+/// [`mogen_llm::STYLES`]. Length is `STYLES.len() + 1` (= 11 today).
+pub const STYLE_OPTIONS: [Option<Style>; 11] = [
+    None,
+    Some(Style::Ps1),
+    Some(Style::N64),
+    Some(Style::LowPoly),
+    Some(Style::HighDetail),
+    Some(Style::Arcade),
+    Some(Style::Voxel),
+    Some(Style::CelShaded),
+    Some(Style::StylizedFantasy),
+    Some(Style::Cyberpunk),
+    Some(Style::PixelArt),
+];
+
+// Compile-time guard: STYLE_OPTIONS must list every published style plus the
+// leading `None`. Bumping `STYLES` without growing this array is a build
+// error rather than a silent UI regression.
+const _: () = {
+    assert!(STYLE_OPTIONS.len() == STYLES.len() + 1);
+};
