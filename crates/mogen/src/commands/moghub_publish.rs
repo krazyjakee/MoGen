@@ -6,13 +6,16 @@
 //! create-vs-update, and finally rewrites those three meta keys back
 //! into the source file so the next publish targets the same model.
 
+use std::io::Cursor;
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, bail, Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
+use mogen_dsl::module::FsLoader;
 use mogen_moghub_client::{
     PublishFileInput, PublishRequest, PublishResponse, PublishTextureInput,
 };
+use mogen_render::headless::{render_thumbnail, ThumbnailOptions};
 
 use super::moghub_textures::collect_publish_textures;
 
@@ -140,14 +143,13 @@ pub(crate) fn publish(args: PublishArgs) -> Result<()> {
         .with_context(|| "bundling textures")?;
     log_bundle(&suggested_filename, &imports, &textures);
 
-    let thumbnail_png_base64 = match &args.thumbnail {
-        Some(p) => {
-            let bytes = std::fs::read(p)
-                .with_context(|| format!("reading thumbnail {}", p.display()))?;
-            Some(STANDARD.encode(bytes))
-        }
-        None => None,
+    let thumbnail_png = match &args.thumbnail {
+        Some(path) => std::fs::read(path)
+            .with_context(|| format!("reading thumbnail {}", path.display()))?,
+        None => render_publish_thumbnail(&source, &entry_dir)
+            .context("rendering publish thumbnail")?,
     };
+    let thumbnail_png_base64 = STANDARD.encode(&thumbnail_png);
 
     // Prior publish identity — drives create-vs-update.
     let update_target = read_update_target(&source);
@@ -248,6 +250,36 @@ fn stamp_publish_meta(
     std::fs::write(input, src)
         .with_context(|| format!("writing stamped meta to {}", input.display()))?;
     Ok(())
+}
+
+/// Parse + lower the entry source to a SceneGraph and render a PNG
+/// thumbnail through the headless GL pipeline. Defaults match the
+/// Studio's preview framing so a CLI publish and a Studio publish of
+/// the same `.mog` ship visually identical thumbnails.
+fn render_publish_thumbnail(source: &str, entry_dir: &Path) -> Result<Vec<u8>> {
+    let ast = mogen_dsl::parse(source).context("parsing source for thumbnail render")?;
+    let mut loader = FsLoader::new();
+    let mut scene = mogen_dsl::lower::lower_with_loader(&ast, Some(entry_dir), &mut loader)
+        .context("lowering source for thumbnail render")?;
+    scene.resolve_texture_paths(entry_dir);
+
+    let opts = ThumbnailOptions {
+        base_dir: Some(entry_dir.to_path_buf()),
+        ..ThumbnailOptions::default()
+    };
+    let pixels = render_thumbnail(&scene, &opts).context("headless thumbnail render")?;
+
+    let mut png = Vec::with_capacity(pixels.len() / 4);
+    image::write_buffer_with_format(
+        &mut Cursor::new(&mut png),
+        &pixels,
+        opts.size,
+        opts.size,
+        image::ColorType::Rgba8,
+        image::ImageFormat::Png,
+    )
+    .context("encoding thumbnail PNG")?;
+    Ok(png)
 }
 
 fn log_bundle(

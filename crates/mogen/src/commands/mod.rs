@@ -10,4 +10,5 @@ pub(crate) mod moghub_publish;
 pub(crate) mod moghub_textures;
 pub(crate) mod repair;
 pub(crate) mod textures;
+pub(crate) mod thumbnail;
 pub(crate) mod update;

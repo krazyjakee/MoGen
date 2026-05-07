@@ -2,6 +2,8 @@
 //! result handling (including stamping `meta(moghub_*)` so the next
 //! publish targets the same MoGHub model).
 
+use std::path::PathBuf;
+
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use mogen_moghub_client::{PublishFileInput, PublishRequest};
 
@@ -86,21 +88,7 @@ impl MogenStudioApp {
         // than on first paint of the dialog) keeps the typical fast path
         // — open dialog, glance at preview, click Publish — under one frame
         // of dead air.
-        let thumbnail_temp = publish_thumb_temp_path();
-        self.viewer.submit_capture(CaptureRequest {
-            kind: CaptureKind::Publish,
-            size: PUBLISH_THUMB_SIZE,
-            bg: self.settings.viewer_bg_rgb(),
-            frames: vec![CaptureFrame {
-                yaw: std::f32::consts::FRAC_PI_4,
-                pitch: 0.5,
-                time: 0.0,
-                path: thumbnail_temp.clone(),
-            }],
-            total: 0,
-            written: Vec::new(),
-            error: None,
-        });
+        let thumbnail_temp = self.submit_publish_thumbnail_capture();
 
         self.community.publish = Some(PublishDialogState {
             title: meta.name.unwrap_or_default(),
@@ -147,6 +135,7 @@ impl MogenStudioApp {
             .unwrap_or_default();
         let posting = self.community.pending_publish.is_some();
         let mut submit = false;
+        let mut retry_capture = false;
         let mut open_in_browser: Option<String> = None;
         egui::Window::new("Publish to MoGHub")
             .open(&mut keep_open)
@@ -299,7 +288,10 @@ impl MogenStudioApp {
                                 egui::Color32::LIGHT_RED,
                                 format!("preview render failed: {err}"),
                             );
-                            ui.weak("Publishing without a thumbnail.");
+                            ui.weak("A preview is required before publishing.");
+                            if ui.button("Retry capture").clicked() {
+                                retry_capture = true;
+                            }
                         } else if state.thumbnail_bytes.is_none() {
                             ui.weak("Rendering preview…");
                         } else {
@@ -317,6 +309,7 @@ impl MogenStudioApp {
                         .update_target
                         .as_ref()
                         .filter(|_| !state.publish_as_new);
+                    let has_thumbnail = state.thumbnail_bytes.is_some();
                     let label = match (posting, updating) {
                         (true, Some(_)) => "Publishing update…".to_string(),
                         (true, None) => "Publishing…".to_string(),
@@ -325,10 +318,18 @@ impl MogenStudioApp {
                         }
                         (false, None) => "Publish".to_string(),
                     };
-                    if ui
-                        .add_enabled(!posting, egui::Button::new(label))
-                        .clicked()
-                    {
+                    let publish_btn = ui.add_enabled(
+                        !posting && has_thumbnail,
+                        egui::Button::new(label),
+                    );
+                    let publish_btn = if !has_thumbnail && !posting {
+                        publish_btn.on_disabled_hover_text(
+                            "Waiting for the preview render — the thumbnail is required.",
+                        )
+                    } else {
+                        publish_btn
+                    };
+                    if publish_btn.clicked() {
                         submit = true;
                     }
                     if !posting && ui.button("Cancel").clicked() {
@@ -365,9 +366,39 @@ impl MogenStudioApp {
             }
             self.community.publish = None;
         }
+        if retry_capture {
+            let temp = self.submit_publish_thumbnail_capture();
+            if let Some(state) = self.community.publish.as_mut() {
+                state.thumbnail_temp = Some(temp);
+                state.thumbnail_error = None;
+            }
+        }
         if submit {
             self.kick_publish(ctx);
         }
+    }
+
+    /// Submit a Publish-kind viewport capture and return the temp path the
+    /// GL worker will write to. Used by `open_publish_dialog` for the
+    /// initial capture and by the dialog's Retry button when the prior
+    /// capture errored.
+    fn submit_publish_thumbnail_capture(&mut self) -> PathBuf {
+        let thumbnail_temp = publish_thumb_temp_path();
+        self.viewer.submit_capture(CaptureRequest {
+            kind: CaptureKind::Publish,
+            size: PUBLISH_THUMB_SIZE,
+            bg: self.settings.viewer_bg_rgb(),
+            frames: vec![CaptureFrame {
+                yaw: std::f32::consts::FRAC_PI_4,
+                pitch: 0.5,
+                time: 0.0,
+                path: thumbnail_temp.clone(),
+            }],
+            total: 0,
+            written: Vec::new(),
+            error: None,
+        });
+        thumbnail_temp
     }
 
     fn kick_publish(&mut self, ctx: &egui::Context) {
@@ -443,10 +474,15 @@ impl MogenStudioApp {
             Vec::new()
         };
 
-        let thumbnail_png_base64 = state
-            .thumbnail_bytes
-            .as_ref()
-            .map(|bytes| STANDARD.encode(bytes));
+        // Defensive: the Publish button is gated on this being Some, so we
+        // shouldn't reach here without a thumbnail. Bail loudly rather than
+        // ship an incomplete request.
+        let Some(thumb_bytes) = state.thumbnail_bytes.as_ref() else {
+            state.error =
+                Some("preview not captured yet — wait for the render to finish".to_string());
+            return;
+        };
+        let thumbnail_png_base64 = STANDARD.encode(thumb_bytes);
         let target_model_id = state
             .update_target
             .as_ref()

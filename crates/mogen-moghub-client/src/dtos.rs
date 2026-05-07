@@ -175,8 +175,11 @@ pub struct PublishRequest {
     /// mogen pipeline.
     #[serde(default)]
     pub textures: Vec<PublishTextureInput>,
-    #[serde(default)]
-    pub thumbnail_png_base64: Option<String>,
+    /// PNG bytes for the model preview, base64-encoded. Required: every
+    /// publish flow (Studio, CLI) must produce one before the request is
+    /// constructed. The server's DTO still accepts an absent value for
+    /// backward compatibility, but no client path is allowed to omit it.
+    pub thumbnail_png_base64: String,
     #[serde(default)]
     pub parent_version_id: Option<String>,
     #[serde(default)]
