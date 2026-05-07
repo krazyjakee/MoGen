@@ -232,3 +232,106 @@ fn api_error_surfaces_with_status_and_message() {
     assert!(s.contains("400"), "got: {s}");
     assert!(s.contains("API key not valid"), "got: {s}");
 }
+
+#[test]
+fn planner_then_coder_threads_plan_into_user_turn() {
+    // The Architect/Coder split is the reason `--plan` exists. The
+    // Architect emits Markdown; the Coder pass is supposed to translate
+    // that plan into DSL while still seeing the original prompt. If the
+    // wiring drops either piece — plan into the user turn, or original
+    // prompt — the value of the split collapses. This test pins the
+    // contract end-to-end against the real client + repair stack.
+    let plan_text = "## Subject\nA tall wooden stool with four legs.\n\n## Parts\n- seat (top)\n- four legs splayed slightly outward";
+    let coder_dsl = "scene { box \"seat\" (size=[0.4, 0.05, 0.4]) }";
+    let server = MockServer::start(vec![
+        &candidate_body(plan_text),
+        &candidate_body(coder_dsl),
+    ]);
+    let client = LlmClient::with_base_url(Provider::Gemini, "test-key", server.base_url());
+
+    let base = mogen_llm::GenerateConfig::new("a wooden stool");
+    let plan = mogen_llm::generate_plan(&client, &base, "a wooden stool")
+        .expect("plan call ok");
+    assert!(plan.plan.contains("four legs"));
+
+    let coder_user_prompt = mogen_llm::compose_coder_prompt("a wooden stool", &plan.plan);
+    let mut coder_cfg = mogen_llm::GenerateConfig::new(coder_user_prompt);
+    coder_cfg.model = base.model.clone();
+    let outcome = generate_with_repair(
+        &client,
+        coder_cfg,
+        &RepairConfig { max_iters: 0, on_iteration: None },
+    )
+    .expect("coder call ok");
+    assert!(outcome.is_ok(), "diagnostics: {:?}", outcome.diagnostics);
+
+    // Two HTTP requests landed; the second one (the Coder) must contain
+    // both the original prompt and the architect's plan body verbatim.
+    let reqs = server.requests.lock().unwrap();
+    assert_eq!(reqs.len(), 2, "expected planner + coder calls");
+    let coder_req = &reqs[1];
+    assert!(
+        coder_req.contains("a wooden stool"),
+        "Coder turn must keep the original prompt: {coder_req}"
+    );
+    assert!(
+        coder_req.contains("four legs splayed slightly outward"),
+        "Coder turn must inline the architect's plan body: {coder_req}"
+    );
+    assert!(
+        coder_req.contains("Plan:"),
+        "Coder turn must mark the plan section so the model can find it: {coder_req}"
+    );
+}
+
+#[test]
+fn visual_refine_attaches_image_and_dsl() {
+    // The Reviewer agent's whole job is "look at this image of what your
+    // last DSL produced, fix it". If the image is dropped or the previous
+    // DSL never makes it into the user turn, the critique is text-only —
+    // exactly the failure mode `visual_refine` exists to avoid. Pin the
+    // wiring here so a refactor can't silently strip either piece.
+    let revised = "scene { box \"seat\" (size=[0.4, 0.05, 0.4]) }";
+    let server = MockServer::start(vec![&candidate_body(revised)]);
+    let client = LlmClient::with_base_url(Provider::Gemini, "test-key", server.base_url());
+
+    let registry = mogen_dsl::stdlib_registry();
+    let base = mogen_llm::GenerateConfig::new("a wooden stool");
+    let image = ImageInput {
+        mime_type: "image/png".into(),
+        // Three bytes the test can spot once base64-encoded ("AQID").
+        data: vec![0x01, 0x02, 0x03],
+    };
+    let previous_dsl = "scene { box \"old\" (size=[1, 1, 1]) }";
+    let outcome = mogen_llm::visual_refine(
+        &client,
+        &base,
+        &RepairConfig { max_iters: 0, on_iteration: None },
+        registry,
+        "a wooden stool",
+        previous_dsl,
+        image,
+    )
+    .expect("reviewer call ok");
+    assert!(outcome.is_ok());
+
+    let reqs = server.requests.lock().unwrap();
+    assert_eq!(reqs.len(), 1, "reviewer should issue exactly one call");
+    let body: serde_json::Value = serde_json::from_str(&reqs[0]).expect("valid JSON");
+    let parts = body["contents"][0]["parts"]
+        .as_array()
+        .expect("user-turn parts array");
+    // Vision convention: image part first, text part second.
+    assert_eq!(parts.len(), 2, "user turn must carry image+text: {body}");
+    assert_eq!(parts[0]["inline_data"]["mime_type"], "image/png");
+    assert_eq!(parts[0]["inline_data"]["data"], "AQID");
+    let text = parts[1]["text"].as_str().expect("text part is string");
+    assert!(
+        text.contains("a wooden stool"),
+        "reviewer turn must keep the original prompt: {text}"
+    );
+    assert!(
+        text.contains("box \"old\""),
+        "reviewer turn must inline the previous DSL so the model can edit it: {text}"
+    );
+}
