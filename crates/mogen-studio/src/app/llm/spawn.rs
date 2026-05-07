@@ -113,6 +113,7 @@ impl MogenStudioApp {
             LlmKind::Animate => format!("calling {provider_label} (animate)…"),
             LlmKind::Repair => format!("calling {provider_label} (repair)…"),
             LlmKind::Textures => unreachable!("spawn_llm is text-only"),
+            LlmKind::Refine => unreachable!("refine uses spawn_llm_refine, not spawn_llm"),
         }));
         f.llm_started_at = Some(Instant::now());
         f.llm_events.clear();
@@ -124,6 +125,7 @@ impl MogenStudioApp {
                 LlmKind::Animate => "starting animate".into(),
                 LlmKind::Repair => "starting repair".into(),
                 LlmKind::Textures => unreachable!(),
+                LlmKind::Refine => unreachable!(),
             },
             tone: LlmEventTone::Info,
         });
@@ -139,8 +141,10 @@ impl MogenStudioApp {
             LlmKind::Animate => format!("calling {provider_label} (animate)…"),
             LlmKind::Repair => format!("calling {provider_label} (repair)…"),
             // Textures takes its own path via `start_llm_textures` and never
-            // reaches spawn_llm.
+            // reaches spawn_llm. Refine takes its own path via
+            // `spawn_llm_refine`.
             LlmKind::Textures => unreachable!("spawn_llm is text-only"),
+            LlmKind::Refine => unreachable!("refine uses spawn_llm_refine, not spawn_llm"),
         };
 
         let worker_tx = tx.clone();
@@ -160,6 +164,101 @@ impl MogenStudioApp {
                 credential,
                 run_cfg,
                 sys_instr,
+                worker_tx,
+            );
+            let _ = tx.send(LlmMessage::Done(outcome));
+            ctx.request_repaint();
+        });
+    }
+
+    /// Spawn the worker thread for one visual auto-refinement iteration.
+    ///
+    /// The render has already happened on the GL thread (called from
+    /// `on_refine_render_done`); this just kicks the LLM half — resolves
+    /// the credential, snapshots the run config, and posts a worker that
+    /// runs [`crate::app::util::run_llm_refine`] and reports back through
+    /// the standard `llm_rx` channel.
+    ///
+    /// `file_index` is bound on entry rather than read from `self.active`
+    /// so a concurrent tab switch routes the outcome to the correct file
+    /// (the worker thread does not see the active-tab state).
+    pub(in crate::app) fn spawn_llm_refine(
+        &mut self,
+        ctx: egui::Context,
+        file_index: usize,
+        png: Vec<u8>,
+        original_prompt: String,
+        current_dsl: String,
+    ) {
+        let provider = self.settings.provider();
+        // Re-check the credential here — `start_llm_refine` checked at
+        // session start, but multi-iter sessions can span minutes and
+        // the user could have signed out / cleared keys in between.
+        // Failing here surfaces through the same status-line + session
+        // teardown the GL pre-spawn failures use.
+        let credential = match self.resolve_credential() {
+            Some(c) => c,
+            None => {
+                let f = &mut self.files[file_index];
+                f.refine_session = None;
+                f.llm_in_flight = None;
+                f.llm_progress = None;
+                f.llm_started_at = None;
+                f.llm_events.clear();
+                f.status = format!(
+                    "refine: lost {} credential mid-session — re-add in Edit → Preferences…",
+                    provider.label(),
+                );
+                return;
+            }
+        };
+
+        let mut run_cfg = self.build_run_config();
+        if let Some(level) = self.files[file_index].thinking_override {
+            run_cfg.thinking = level;
+        }
+        run_cfg.base_dir = self.files[file_index]
+            .path
+            .as_ref()
+            .and_then(|p| p.parent().map(|p| p.to_path_buf()));
+
+        let provider_label = provider.label();
+        let pass_label = self.files[file_index]
+            .refine_session
+            .as_ref()
+            .map(|s| {
+                format!(
+                    "refine {}/{}",
+                    s.iters_total - s.iters_remaining + 1,
+                    s.iters_total,
+                )
+            })
+            .unwrap_or_else(|| "refine".into());
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let f = &mut self.files[file_index];
+        f.llm_rx = Some(rx);
+        // llm_in_flight is already Some(LlmKind::Refine) from
+        // submit_refine_capture; just refresh the headline.
+        f.llm_progress = Some(LlmProgress::Status(format!(
+            "calling {provider_label} ({pass_label})…"
+        )));
+        f.llm_events.push(LlmEvent {
+            at: Instant::now(),
+            text: format!("calling {provider_label} for reviewer critique"),
+            tone: LlmEventTone::Info,
+        });
+        f.status = format!("calling {provider_label} ({pass_label})…");
+
+        let worker_tx = tx.clone();
+        std::thread::spawn(move || {
+            let outcome = crate::app::util::run_llm_refine(
+                provider,
+                credential,
+                run_cfg,
+                original_prompt,
+                current_dsl,
+                png,
                 worker_tx,
             );
             let _ = tx.send(LlmMessage::Done(outcome));

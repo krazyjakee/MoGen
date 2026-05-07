@@ -510,6 +510,13 @@ pub(super) enum LlmKind {
     Animate,
     Repair,
     Textures,
+    /// Visual auto-refinement: render the current scene, hand the PNG +
+    /// DSL back to a vision-capable provider as a Reviewer turn, replay
+    /// the corrected DSL through the validate+repair loop. One run can
+    /// chain N iterations; each iteration needs a fresh main-thread
+    /// render of the just-applied DSL, so the multi-iter loop is driven
+    /// by [`RefineSession`] rather than by a single worker thread.
+    Refine,
 }
 
 impl LlmKind {
@@ -520,8 +527,45 @@ impl LlmKind {
             LlmKind::Animate => "animate",
             LlmKind::Repair => "repair",
             LlmKind::Textures => "textures",
+            LlmKind::Refine => "refine",
         }
     }
+}
+
+/// Multi-iteration visual auto-refinement state.
+///
+/// One refine "session" is N sequential single-iteration calls — the same
+/// shape `mogen generate --auto-refine N` runs in the CLI. We can't pack
+/// N iterations into one worker thread because each iteration needs a
+/// fresh **main-thread** render of the just-applied DSL (winit's
+/// `EventLoop::new` is main-thread on Windows). Instead, the session
+/// holds the cross-iteration metadata while the per-iteration capture +
+/// LLM call ride the existing capture pipeline + `llm_in_flight` slot.
+///
+/// Cleared by [`MogenStudioApp::cancel_active_llm`] on Esc, by
+/// `apply_llm_outcome` after the final iteration completes, and by an
+/// iteration that fails (the buffer keeps the last valid DSL but the
+/// loop bails — same policy as the CLI's `break` on reviewer error).
+pub(super) struct RefineSession {
+    /// Iterations still to run, INCLUDING the one currently in flight.
+    /// Decremented after each successful apply: `1` means "the current
+    /// pass is the last one, don't queue another capture when it lands".
+    pub iters_remaining: u32,
+    /// Initial iteration count, kept for the `"refine 2/3"`-style status
+    /// label so the user can see progress through the multi-iter loop.
+    pub iters_total: u32,
+    /// `meta(prompt=…)` snapshot captured at session start — the original
+    /// natural-language description the Reviewer is asked to critique
+    /// the render against. Stable across iterations so we don't re-parse
+    /// the freshly-rewritten DSL on every pass (and so the Reviewer
+    /// keeps comparing against the *original* intent, not its own
+    /// previous correction).
+    pub original_prompt: String,
+    /// File this session is bound to. Each iteration re-checks this
+    /// against `self.active` before kicking the next capture, so a tab
+    /// switch mid-loop cancels cleanly instead of rendering the wrong
+    /// scene.
+    pub file_index: usize,
 }
 
 /// Which prompt field the enhance action should rewrite and replace in place.
@@ -781,6 +825,24 @@ pub(super) struct FileState {
     /// non-textures LLM run so a stale filter can't leak across kinds.
     pub(super) texture_retry_filter: Option<Vec<String>>,
 
+    /// Active multi-iteration visual auto-refinement state. `Some(_)`
+    /// from the moment the user clicks `Refine N×` until the final
+    /// iteration applies (or the loop is cancelled / fails). The
+    /// per-iteration capture and LLM call still ride `llm_in_flight` /
+    /// `llm_rx` / `llm_events` — this just remembers cross-iteration
+    /// metadata (remaining count, the original prompt to critique
+    /// against) so the next iteration can be queued from
+    /// `apply_llm_outcome`.
+    pub(super) refine_session: Option<RefineSession>,
+
+    /// Spinbox value for the "Refine current" button — number of
+    /// reviewer iterations the next click runs. Defaults to 1; floored
+    /// at 1 / capped at [`crate::app::llm::refine::MAX_REFINE_ITERS`] so
+    /// the UI never offers a no-op or a budget-burning loop. Per-file
+    /// rather than app-level so users iterating on multiple scenes can
+    /// keep different cadences without manually re-typing the count.
+    pub(super) refine_iters: u32,
+
     /// Captured camera so switching tabs doesn't snap the user's framing.
     /// Restored on `activate` when present, refreshed every frame for the
     /// active tab.
@@ -856,6 +918,8 @@ impl FileState {
             llm_error: None,
             llm_last_prompt: None,
             texture_retry_filter: None,
+            refine_session: None,
+            refine_iters: 1,
             camera: None,
             first_render: true,
             last_edit_at: None,
@@ -902,6 +966,8 @@ impl FileState {
             llm_error: None,
             llm_last_prompt: None,
             texture_retry_filter: None,
+            refine_session: None,
+            refine_iters: 1,
             camera: None,
             first_render: true,
             last_edit_at: None,

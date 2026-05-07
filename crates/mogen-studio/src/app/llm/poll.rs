@@ -124,6 +124,13 @@ impl MogenStudioApp {
                 let short = info.headline.clone();
                 f.llm_error = Some(info);
                 f.status = format!("{}: {short}", outcome.kind.label());
+                // Refine-iteration failure: tear down the session so the
+                // next outcome poll cycle can't try to chain another
+                // pass on top of an error state. Mirrors the CLI's
+                // `break` on Reviewer error in `commands/modify.rs`.
+                if matches!(outcome.kind, LlmKind::Refine) {
+                    f.refine_session = None;
+                }
                 return;
             }
         }
@@ -239,6 +246,37 @@ impl MogenStudioApp {
         if textures_partial_success {
             if let Some(info) = outcome.error {
                 self.files[i].llm_error = Some(info);
+            }
+        }
+
+        // Visual auto-refine driver: chain the next iteration if we have
+        // one queued and the just-applied DSL parsed cleanly. Anything
+        // else (DSL with validator errors, kind != Refine, file no
+        // longer active, no session) tears the session down here so a
+        // stuck `iters_remaining > 0` can't silently fire another
+        // capture later. The error path above already returned before
+        // reaching here, so this branch only sees clean-DSL outcomes.
+        if matches!(outcome.kind, LlmKind::Refine) {
+            // Decrement first so iters_remaining always tracks "not
+            // counting the pass we just applied".
+            let still_running = if let Some(s) = self.files[i].refine_session.as_mut() {
+                s.iters_remaining = s.iters_remaining.saturating_sub(1);
+                s.iters_remaining > 0
+            } else {
+                false
+            };
+            if still_running && !has_errors && i == self.active {
+                self.submit_refine_capture(ctx);
+            } else {
+                // End of session: either we hit the iteration cap, the
+                // refined DSL produced validator errors (CLI's "bail
+                // and keep last valid" policy — we surface diagnostics
+                // and let the user decide), or the user switched tabs.
+                self.files[i].refine_session = None;
+                if still_running && i != self.active {
+                    self.files[i].status =
+                        "refine: active tab changed mid-session — stopped".into();
+                }
             }
         }
     }
