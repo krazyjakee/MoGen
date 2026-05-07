@@ -180,9 +180,9 @@ impl MogenStudioApp {
             && provider_supports_images;
         let refine_tip = if !provider_supports_images {
             format!(
-                "Switch to Gemini in Edit → Preferences — {provider_name} cannot read \
-                 images, so it cannot critique a render. Only vision-capable providers \
-                 can refine."
+                "Switch to Gemini or Z.ai in Edit → Preferences — \
+                 {provider_name} cannot read images, so it cannot critique a \
+                 render. Only vision-capable providers can refine."
             )
         } else if src_empty {
             "Open or paste a .mog file first".to_string()
@@ -236,11 +236,33 @@ impl MogenStudioApp {
                 self.start_llm_refine(ctx, iters);
             }
         });
+
+        // Z.ai-only: opt out of the automatic vision-model swap so the
+        // user can pin the Reviewer to whatever they configured under
+        // Generation › Model. Default-on because the only reason to opt
+        // out is debugging — the Reviewer is image-driven by
+        // construction, so any non-vision model just fails loudly.
+        if matches!(provider, mogen_llm::Provider::Zai) {
+            let mut zai_use_vision = self.settings.zai_refine_use_vision();
+            if ui
+                .checkbox(&mut zai_use_vision, "Use GLM-5V-Turbo for refine")
+                .on_hover_text(
+                    "Force the Reviewer to run on `glm-5v-turbo` (Z.ai's \
+                     vision model). Required for refine on Z.ai — text \
+                     models can't see the rendered scene.",
+                )
+                .changed()
+            {
+                self.settings.set_zai_refine_use_vision(zai_use_vision);
+                let _ = self.settings.save();
+            }
+        }
+
         if !provider_supports_images {
             ui.colored_label(
                 egui::Color32::from_rgb(230, 200, 100),
                 format!(
-                    "{provider_name} has no vision input — switch to Gemini to enable Refine",
+                    "{provider_name} has no vision input — switch to Gemini or Z.ai to enable Refine",
                 ),
             );
         }
