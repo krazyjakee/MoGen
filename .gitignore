@@ -56,3 +56,7 @@ examples/textures
 
 # Stray Claude Code tool-result dumps that landed at repo root
 *tool-results*.txt
+
+# Local CLI scratch outputs (regenerated on each run)
+/test_outputs/
+/target-wasm-check/

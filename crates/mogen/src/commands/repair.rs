@@ -12,7 +12,7 @@ use mogen_llm::{
 use crate::commands::build::build;
 use crate::common::{
     attach_system_instruction, build_llm_client, ensure_parent_dir, format_cached_tokens,
-    pick_default_seed, resolve_model, summarize_repair_errors,
+    pick_default_seed, resolve_model, summarize_repair_errors, GeminiAuthMode,
 };
 use crate::spinner::{Spinner, LLM_FLAVORS};
 
@@ -35,6 +35,8 @@ pub(crate) struct RepairArgs {
     /// CLI override; `None` falls through to the file's
     /// `meta(thinking=…)` attribute, then the library default.
     pub thinking: Option<ThinkingLevel>,
+    /// Gemini credential-resolution mode derived from `--provider`.
+    pub auth: GeminiAuthMode,
 }
 
 /// LLM-repair an existing .mog file. Validates first; exits early (success)
@@ -95,9 +97,10 @@ pub(crate) fn repair(args: RepairArgs) -> Result<()> {
         }
     }
 
-    let client = build_llm_client(args.provider, args.api_key)?;
-    let model = resolve_model(args.provider, args.model);
-    let provider_label = args.provider.label();
+    let provider = args.provider;
+    let client = build_llm_client(provider, args.api_key, args.auth)?;
+    let model = resolve_model(provider, args.model);
+    let provider_label = provider.label();
 
     // The repair message already contains the previous DSL, every diagnostic
     // (with caret excerpts), and each code's fix hint — exactly the shape the

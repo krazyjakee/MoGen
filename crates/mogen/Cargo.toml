@@ -17,8 +17,10 @@ mogen-export = { workspace = true, features = ["textures", "merge"] }
 mogen-llm = { workspace = true }
 mogen-moghub-client = { workspace = true, features = ["oauth"] }
 mogen-update = { workspace = true }
+mogen-render = { workspace = true }
 anyhow = { workspace = true }
 base64 = "0.22"
 clap = { workspace = true }
 serde_json = { workspace = true }
+image = { workspace = true }
 indicatif = "0.17"

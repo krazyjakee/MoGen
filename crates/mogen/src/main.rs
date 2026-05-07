@@ -1,6 +1,7 @@
 mod commands;
 mod common;
 mod format;
+mod refine_render;
 mod spinner;
 
 use std::path::PathBuf;
@@ -45,11 +46,30 @@ impl From<ThinkingArg> for ThinkingLevel {
     }
 }
 
-/// CLI-facing mirror of [`Provider`]. Same separation as `ThinkingArg` —
-/// keeps `clap::ValueEnum` out of the library crate.
+/// CLI-facing mirror of [`Provider`] **plus** the Gemini auth-mode flag.
+/// The four Gemini-flavored variants (`Auto`, `Gemini`, `GeminiOauth`,
+/// `Antigravity`) all map to [`Provider::Gemini`] and disambiguate the
+/// credential path via [`GeminiAuthMode`]; non-Gemini variants ignore the
+/// auth mode entirely (their credential path is API-key-only).
+///
+/// Folding auth into `--provider` keeps the user-facing surface small —
+/// `mogen generate "…" --provider antigravity` is one flag, not two —
+/// at the cost of one extra layer of indirection internally.
 #[derive(Debug, Clone, Copy, ValueEnum)]
 enum ProviderArg {
+    /// Auto-detect Gemini credentials: flag → env → settings → gemini-cli
+    /// OAuth → Antigravity OAuth. Default. Recommended for most users.
+    Auto,
+    /// Gemini via API key only (`GEMINI_API_KEY` env or settings.json).
+    /// Skips OAuth entirely; errors if no key is available.
     Gemini,
+    /// Gemini via the gemini-cli OAuth bundle written by `mogen auth login`.
+    /// Errors if the bundle is missing or unreadable.
+    GeminiOauth,
+    /// Gemini via the Antigravity OAuth bundle written by
+    /// `mogen auth login --antigravity`. Required for image generation;
+    /// also valid for text gen and survives gemini-cli 403s.
+    Antigravity,
     Openai,
     Anthropic,
     Ollama,
@@ -67,13 +87,38 @@ enum ProviderArg {
 impl From<ProviderArg> for Provider {
     fn from(p: ProviderArg) -> Self {
         match p {
-            ProviderArg::Gemini => Provider::Gemini,
+            // Every Gemini auth flavor routes to the same library provider —
+            // the difference is the credential, not the wire protocol.
+            ProviderArg::Auto
+            | ProviderArg::Gemini
+            | ProviderArg::GeminiOauth
+            | ProviderArg::Antigravity => Provider::Gemini,
             ProviderArg::Openai => Provider::OpenAI,
             ProviderArg::Anthropic => Provider::Anthropic,
             ProviderArg::Ollama => Provider::Ollama,
             ProviderArg::ClaudeCode => Provider::ClaudeCode,
             ProviderArg::Fireworks => Provider::Fireworks,
             ProviderArg::Zai => Provider::Zai,
+        }
+    }
+}
+
+impl From<ProviderArg> for crate::common::GeminiAuthMode {
+    fn from(p: ProviderArg) -> Self {
+        use crate::common::GeminiAuthMode;
+        match p {
+            ProviderArg::Auto => GeminiAuthMode::Auto,
+            ProviderArg::Gemini => GeminiAuthMode::ApiKey,
+            ProviderArg::GeminiOauth => GeminiAuthMode::GeminiOauth,
+            ProviderArg::Antigravity => GeminiAuthMode::Antigravity,
+            // Non-Gemini providers ignore this; Auto is the harmless default
+            // that `build_llm_client` accepts unconditionally for them.
+            ProviderArg::Openai
+            | ProviderArg::Anthropic
+            | ProviderArg::Ollama
+            | ProviderArg::ClaudeCode
+            | ProviderArg::Fireworks
+            | ProviderArg::Zai => GeminiAuthMode::Auto,
         }
     }
 }
@@ -528,10 +573,12 @@ enum Cmd {
         /// Seed embedded in the DSL header for reproducibility. Randomized if omitted.
         #[arg(long)]
         seed: Option<u64>,
-        /// LLM provider. The matching API key env var is read for the call
-        /// (`GEMINI_API_KEY` / `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` /
-        /// `OLLAMA_API_KEY`). Ollama runs locally and is keyless by default.
-        #[arg(long, value_enum, default_value_t = ProviderArg::Gemini)]
+        /// LLM provider. For Gemini, credentials are resolved via `--auth`
+        /// (default `auto`) and `mogen auth login` (gemini-cli or
+        /// Antigravity OAuth) or `GEMINI_API_KEY`. Other providers use the
+        /// matching `*_API_KEY` env var (`OPENAI_API_KEY` / `ANTHROPIC_API_KEY`
+        /// / `OLLAMA_API_KEY`); Ollama is keyless by default.
+        #[arg(long, value_enum, default_value_t = ProviderArg::Auto)]
         provider: ProviderArg,
         /// Model name. When omitted, falls back to the provider's default
         /// (Gemini Pro / GPT-4o / Claude Sonnet / llama3.1).
@@ -568,6 +615,22 @@ enum Cmd {
         /// then to `high`.
         #[arg(long, value_enum)]
         thinking: Option<ThinkingArg>,
+        /// Run the Architect agent first: generate a Markdown plan from the
+        /// prompt, then feed that plan into the Coder pass. Splits spatial
+        /// reasoning out of the DSL emission step so the model is less
+        /// likely to drown in primitive coordinates. Costs one extra LLM
+        /// round-trip; the planning call uses the same model + thinking
+        /// level as the Coder pass.
+        #[arg(long)]
+        plan: bool,
+        /// Render the generated DSL with the headless renderer and feed the
+        /// PNG back to a vision-capable LLM for self-critique, repeating
+        /// `N` times. Each iteration runs through the full validate +
+        /// repair loop, so the final file is still guaranteed to compile.
+        /// `0` (the default) skips refinement entirely. Requires a
+        /// vision-capable provider (currently Gemini only).
+        #[arg(long, default_value_t = 0, value_parser = clap::value_parser!(u32).range(0..=10))]
+        auto_refine: u32,
     },
     /// Modify an existing DSL file with a natural-language prompt via the
     /// configured LLM provider, then validate and recompile the GLB.
@@ -587,7 +650,7 @@ enum Cmd {
         #[arg(long)]
         seed: Option<u64>,
         /// LLM provider. See `generate --provider`.
-        #[arg(long, value_enum, default_value_t = ProviderArg::Gemini)]
+        #[arg(long, value_enum, default_value_t = ProviderArg::Auto)]
         provider: ProviderArg,
         /// Model name. When omitted, falls back to the provider's default.
         #[arg(long)]
@@ -618,6 +681,13 @@ enum Cmd {
         /// Cap on server-side reasoning. See `generate --thinking`.
         #[arg(long, value_enum)]
         thinking: Option<ThinkingArg>,
+        /// Run the Architect agent first. See `generate --plan`.
+        #[arg(long)]
+        plan: bool,
+        /// Visual auto-refinement iteration count. See
+        /// `generate --auto-refine`.
+        #[arg(long, default_value_t = 0, value_parser = clap::value_parser!(u32).range(0..=10))]
+        auto_refine: u32,
     },
     /// Add or edit animations on an existing DSL file via the configured LLM
     /// provider, then validate and recompile the GLB. The LLM is restricted
@@ -640,7 +710,7 @@ enum Cmd {
         #[arg(long)]
         seed: Option<u64>,
         /// LLM provider. See `generate --provider`.
-        #[arg(long, value_enum, default_value_t = ProviderArg::Gemini)]
+        #[arg(long, value_enum, default_value_t = ProviderArg::Auto)]
         provider: ProviderArg,
         /// Model name. When omitted, falls back to the provider's default.
         #[arg(long)]
@@ -691,7 +761,7 @@ enum Cmd {
         #[arg(long)]
         seed: Option<u64>,
         /// LLM provider. See `generate --provider`.
-        #[arg(long, value_enum, default_value_t = ProviderArg::Gemini)]
+        #[arg(long, value_enum, default_value_t = ProviderArg::Auto)]
         provider: ProviderArg,
         /// Model name. When omitted, falls back to the provider's default.
         #[arg(long)]
@@ -825,7 +895,7 @@ enum Cmd {
         #[arg(long, default_value = "benches/prompts.txt")]
         prompts: PathBuf,
         /// LLM provider. See `generate --provider`.
-        #[arg(long, value_enum, default_value_t = ProviderArg::Gemini)]
+        #[arg(long, value_enum, default_value_t = ProviderArg::Auto)]
         provider: ProviderArg,
         /// Model name. When omitted, falls back to the provider's default.
         #[arg(long)]
@@ -873,6 +943,8 @@ fn main() -> ExitCode {
             no_cache,
             temperature,
             thinking,
+            plan,
+            auto_refine,
         } => generate(GenerateArgs {
             prompt,
             out,
@@ -888,6 +960,9 @@ fn main() -> ExitCode {
             no_cache,
             temperature,
             thinking: thinking.map(Into::into),
+            plan,
+            auto_refine,
+            auth: provider.into(),
         }),
         Cmd::Modify {
             input,
@@ -905,6 +980,8 @@ fn main() -> ExitCode {
             no_cache,
             temperature,
             thinking,
+            plan,
+            auto_refine,
         } => modify(ModifyArgs {
             input,
             prompt,
@@ -921,6 +998,9 @@ fn main() -> ExitCode {
             no_cache,
             temperature,
             thinking: thinking.map(Into::into),
+            plan,
+            auto_refine,
+            auth: provider.into(),
         }),
         Cmd::Animate {
             input,
@@ -954,6 +1034,7 @@ fn main() -> ExitCode {
             no_cache,
             temperature,
             thinking: thinking.map(Into::into),
+            auth: provider.into(),
         }),
         Cmd::Repair {
             input,
@@ -987,6 +1068,7 @@ fn main() -> ExitCode {
             no_cache,
             temperature,
             thinking: thinking.map(Into::into),
+            auth: provider.into(),
         }),
         Cmd::Textures {
             input,
@@ -1047,6 +1129,7 @@ fn main() -> ExitCode {
             api_key,
             no_cache,
             thinking.into(),
+            provider.into(),
         ),
     };
     match result {
