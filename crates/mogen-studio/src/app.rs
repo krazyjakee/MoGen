@@ -331,6 +331,13 @@ pub struct MogenStudioApp {
     /// the receiver and the cleanup paths we need on completion.
     video_encode: Option<self::generate::VideoEncode>,
 
+    /// Set while an LLM auto-refine iteration's screenshot capture is
+    /// pumping through the GL worker. Carries the file index the
+    /// capture was submitted for so the outcome can be routed back to
+    /// that file even if the user has switched tabs in the meantime.
+    /// `None` when no refine capture is in flight.
+    pending_refine_capture: Option<self::llm::refine::PendingRefineCapture>,
+
     /// "Render MP4" options modal visibility. Opened from the File menu /
     /// spotlight before kicking the actual render off so the user can pick
     /// resolution and camera mode.
@@ -513,6 +520,7 @@ impl MogenStudioApp {
             pending_external: None,
             init: Some(init),
             pending_video: None,
+            pending_refine_capture: None,
             video_encode: None,
             show_video_options: false,
             video_opts_draft: self::generate::VideoOptions::default(),

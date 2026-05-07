@@ -14,6 +14,7 @@
 mod credentials;
 mod enhance;
 mod poll;
+pub(in crate::app) mod refine;
 mod spawn;
 mod textures;
 
@@ -119,7 +120,10 @@ impl MogenStudioApp {
             LlmKind::Generate => self.active().gen_prompt.clone(),
             LlmKind::Modify => self.active().mod_prompt.clone(),
             LlmKind::Animate => self.active().anim_prompt.clone(),
-            LlmKind::Repair | LlmKind::Textures => String::new(),
+            // Repair / Textures / Refine have no editable prompt field —
+            // their `llm_last_prompt` carries a synthetic label that the
+            // retry path falls back to via `draft_prompt`.
+            LlmKind::Repair | LlmKind::Textures | LlmKind::Refine => String::new(),
         };
         let prompt = if current_prompt.trim().is_empty() {
             draft_prompt
@@ -167,6 +171,19 @@ impl MogenStudioApp {
                     _ => self.start_llm_textures(ctx),
                 }
             }
+            LlmKind::Refine => {
+                // Refine retry re-kicks the loop with the same iteration
+                // count as the failed run. The session is cleared by the
+                // failure path in `apply_llm_outcome`, so there's no
+                // stale `iters_remaining` to leak across retries.
+                let iters = self
+                    .active()
+                    .refine_session
+                    .as_ref()
+                    .map(|s| s.iters_total.max(1))
+                    .unwrap_or(1);
+                self.start_llm_refine(ctx, iters);
+            }
         }
     }
 
@@ -184,6 +201,11 @@ impl MogenStudioApp {
         f.llm_progress = None;
         f.llm_started_at = None;
         f.llm_events.clear();
+        // Drop the multi-iter refine session too — without this, a cancel
+        // mid-iteration would leave `iters_remaining > 0` and the next
+        // capture outcome could re-enter `apply_llm_outcome`'s "queue
+        // another iteration" branch and silently kick a new pass.
+        f.refine_session = None;
         f.status =
             "llm: cancelled (background call may still finish but result is dropped)".into();
     }
