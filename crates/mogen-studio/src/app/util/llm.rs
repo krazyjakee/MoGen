@@ -43,6 +43,11 @@ pub(in crate::app) struct LlmRunConfig {
     /// regardless of the user's per-provider model override. Set from
     /// `Settings::zai_refine_use_vision()` in `build_run_config`.
     pub zai_refine_use_vision: bool,
+    /// Base URL for the Z.ai chat-completions surface. Honoured only
+    /// when the active provider is `Provider::Zai` (other providers
+    /// ignore it). Set from `Settings::zai_base_url()` in
+    /// `build_run_config`.
+    pub zai_base_url: String,
 }
 
 /// Pin the system instruction onto `cfg`. For Gemini, upload `cacheable_block`
@@ -137,10 +142,13 @@ impl Credential {
 /// reroutes through `with_base_url` to honour the binary-path setting; a
 /// Gemini OAuth credential routes through `gemini_from_credential` so the
 /// resulting client speaks Cloud Code Assist instead of the public API.
+/// Z.ai routes through `with_base_url` to honour the GLM Coding Plan
+/// endpoint toggle.
 pub(in crate::app) fn build_provider_client(
     provider: Provider,
     credential: Credential,
     claude_code_path: &str,
+    zai_base_url: &str,
 ) -> LlmClient {
     match (provider, credential) {
         (Provider::Gemini, Credential::GeminiOAuth(bundle)) => {
@@ -151,6 +159,9 @@ pub(in crate::app) fn build_provider_client(
         }
         (Provider::ClaudeCode, cred) => {
             LlmClient::with_base_url(provider, cred.api_key_or_empty(), claude_code_path)
+        }
+        (Provider::Zai, cred) => {
+            LlmClient::with_base_url(provider, cred.api_key_or_empty(), zai_base_url)
         }
         (provider, cred) => LlmClient::new(provider, cred.api_key_or_empty()),
     }
@@ -174,7 +185,7 @@ pub(in crate::app) fn run_llm(
         let _ = tx.send(LlmMessage::Progress(p));
     };
 
-    let client = build_provider_client(provider, credential, &run_cfg.claude_code_path);
+    let client = build_provider_client(provider, credential, &run_cfg.claude_code_path, &run_cfg.zai_base_url);
     let seed = run_cfg.seed_override.unwrap_or_else(|| {
         existing
             .as_deref()
@@ -521,7 +532,7 @@ pub(in crate::app) fn run_llm_refine(
         let _ = tx.send(LlmMessage::Progress(p));
     };
 
-    let client = build_provider_client(provider, credential, &run_cfg.claude_code_path);
+    let client = build_provider_client(provider, credential, &run_cfg.claude_code_path, &run_cfg.zai_base_url);
 
     // Reviewer agent is its own system instruction (see
     // `mogen_llm::reviewer_system_instruction`) — `visual_refine` rebuilds

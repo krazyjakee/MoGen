@@ -16,11 +16,16 @@
 //! emits a JSON envelope on stdout from which we extract `result` (the
 //! assistant text) and `usage` (token counts).
 //!
-//! `--max-turns 1` ensures the CLI cannot iterate on tool calls — the model
-//! gets one shot to produce text. Vision input, server seeds, and extended
-//! thinking knobs are not exposed by `claude -p` and are silently ignored.
+//! `--max-turns 1` is used for text-only calls so the CLI cannot iterate
+//! on tool calls — the model gets one shot to produce text. When the
+//! caller passes a non-empty [`GenerateConfig::user_images`], we instead
+//! write each image to a temp file and reference it as `@<absolute-path>`
+//! inside the prompt; the spawned `claude` invocation then uses
+//! `--max-turns 3` so the model can `Read` the file (turn 1) and follow
+//! up before producing its final assistant text.
 
 use std::io::Write;
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 use serde::Deserialize;
@@ -97,14 +102,26 @@ impl ClaudeCodeClient {
     }
 
     pub fn generate(&self, cfg: &GenerateConfig) -> Result<GenerateResponse, ClaudeCodeError> {
-        let prompt = build_prompt(cfg);
+        // Materialise any attached images to disk first, so we can reference
+        // them by absolute path inside the prompt. The model uses its
+        // built-in `Read` tool to load each file as a vision content block —
+        // that's how `claude --print` exposes vision input today (the CLI
+        // has no `--image` flag).
+        let image_paths = write_temp_images(&cfg.user_images)?;
+        let prompt = build_prompt(cfg, &image_paths);
+
+        // Text-only calls keep the historical fast-path: one turn, no tool
+        // use. Vision calls need a small budget so the model can `Read`
+        // each attached image (turn 1), optionally follow up (turn 2),
+        // then deliver its assistant text (turn 3).
+        let max_turns = if image_paths.is_empty() { "1" } else { "3" };
 
         let mut cmd = Command::new(&self.path);
         cmd.arg("--print")
             .arg("--output-format")
             .arg("json")
             .arg("--max-turns")
-            .arg("1");
+            .arg(max_turns);
         if !cfg.model.trim().is_empty() {
             cmd.arg("--model").arg(cfg.model.trim());
         }
@@ -201,9 +218,15 @@ impl Default for ClaudeCodeClient {
 
 /// Flatten system instruction + history + user turn into a single prompt.
 /// `claude -p` accepts one text input, so we reconstruct turn structure with
-/// plain delimiters. Image inputs are dropped (the print-mode CLI has no
-/// vision flag).
-fn build_prompt(cfg: &GenerateConfig) -> String {
+/// plain delimiters.
+///
+/// When `image_paths` is non-empty, the function prepends an
+/// `[ATTACHED IMAGES]` block inside the `[REQUEST]` section that lists
+/// each image with an `@<absolute-path>` reference and instructs the
+/// model to use its built-in `Read` tool to load each file before
+/// answering. That's how `claude --print` ingests vision input today —
+/// the CLI has no dedicated `--image` flag.
+fn build_prompt(cfg: &GenerateConfig, image_paths: &[PathBuf]) -> String {
     let mut out = String::with_capacity(cfg.user_prompt.len() + 256);
 
     if let Some(sys) = &cfg.system_instruction {
@@ -226,11 +249,61 @@ fn build_prompt(cfg: &GenerateConfig) -> String {
     }
 
     out.push_str("[REQUEST]\n");
+    if !image_paths.is_empty() {
+        out.push_str("[ATTACHED IMAGES]\n");
+        out.push_str(
+            "Use your built-in Read tool on each of the following image \
+             files before answering. Treat their contents as visual \
+             reference for the request below.\n",
+        );
+        for p in image_paths {
+            out.push_str(&format!("@{}\n", p.display()));
+        }
+        out.push('\n');
+    }
     out.push_str(&cfg.user_prompt);
     if !cfg.user_prompt.ends_with('\n') {
         out.push('\n');
     }
     out
+}
+
+/// Pick a filesystem extension for an image based on its declared MIME
+/// type. Falls back to `bin` when the MIME is unknown so we always
+/// produce a writable path; the model's `Read` tool is content-sniffed
+/// rather than extension-driven, so the fallback still works.
+fn extension_for_mime(mime_type: &str) -> &'static str {
+    match mime_type.trim().to_ascii_lowercase().as_str() {
+        "image/png" => "png",
+        "image/jpeg" | "image/jpg" => "jpg",
+        "image/webp" => "webp",
+        "image/gif" => "gif",
+        "image/bmp" => "bmp",
+        _ => "bin",
+    }
+}
+
+/// Materialise each [`crate::types::ImageInput`] to a deterministic file
+/// under `<temp>/mogen-claude-images/img_<idx>.<ext>` so the spawned
+/// `claude --print` invocation can `Read` it. Deterministic names mean a
+/// re-run overwrites the prior file in place, so the directory does not
+/// grow across the repair loop.
+fn write_temp_images(
+    images: &[crate::types::ImageInput],
+) -> Result<Vec<PathBuf>, ClaudeCodeError> {
+    if images.is_empty() {
+        return Ok(Vec::new());
+    }
+    let dir = std::env::temp_dir().join("mogen-claude-images");
+    std::fs::create_dir_all(&dir)?;
+    let mut paths = Vec::with_capacity(images.len());
+    for (idx, img) in images.iter().enumerate() {
+        let ext = extension_for_mime(&img.mime_type);
+        let path = dir.join(format!("img_{idx}.{ext}"));
+        std::fs::write(&path, &img.data)?;
+        paths.push(path);
+    }
+    Ok(paths)
 }
 
 #[derive(Debug, Deserialize)]
@@ -266,7 +339,7 @@ mod tests {
         cfg.system_instruction = Some("you write DSL".into());
         cfg.history.push(Turn { role: Role::User, text: "first try".into() });
         cfg.history.push(Turn { role: Role::Model, text: "scene { }".into() });
-        let p = build_prompt(&cfg);
+        let p = build_prompt(&cfg, &[]);
         let sys_idx = p.find("[SYSTEM]").unwrap();
         let conv_idx = p.find("[CONVERSATION]").unwrap();
         let req_idx = p.find("[REQUEST]").unwrap();
@@ -280,7 +353,7 @@ mod tests {
     #[test]
     fn build_prompt_skips_empty_sections() {
         let cfg = GenerateConfig::new("hi");
-        let p = build_prompt(&cfg);
+        let p = build_prompt(&cfg, &[]);
         assert!(!p.contains("[SYSTEM]"));
         assert!(!p.contains("[CONVERSATION]"));
         assert!(p.starts_with("[REQUEST]"));
@@ -345,5 +418,80 @@ mod tests {
             }
             other => panic!("expected NonZeroExit, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn build_prompt_emits_attached_section_when_images_present() {
+        let cfg = GenerateConfig::new("describe");
+        let paths = vec![
+            PathBuf::from("/tmp/mogen-claude-images/img_0.png"),
+            PathBuf::from("/tmp/mogen-claude-images/img_1.jpg"),
+        ];
+        let p = build_prompt(&cfg, &paths);
+        // Section must live inside the request block, before the user prompt.
+        let attached = p.find("[ATTACHED IMAGES]").expect("attached header");
+        let req = p.find("[REQUEST]").expect("request header");
+        let prompt = p.find("describe").expect("user prompt");
+        assert!(req < attached, "[ATTACHED IMAGES] must follow [REQUEST]");
+        assert!(attached < prompt, "[ATTACHED IMAGES] must precede the prompt");
+        assert!(p.contains("@/tmp/mogen-claude-images/img_0.png"));
+        assert!(p.contains("@/tmp/mogen-claude-images/img_1.jpg"));
+        assert!(
+            p.contains("Read tool"),
+            "prompt must instruct the model to use Read tool, got: {p}",
+        );
+    }
+
+    #[test]
+    fn build_prompt_omits_attached_section_when_no_images() {
+        // Text-only path must stay byte-identical to today's output —
+        // a regression to a non-empty `[ATTACHED IMAGES]` would burn tokens
+        // and confuse the model on every text generation call.
+        let cfg = GenerateConfig::new("hi");
+        let p = build_prompt(&cfg, &[]);
+        assert!(!p.contains("[ATTACHED IMAGES]"));
+        assert!(p.starts_with("[REQUEST]"));
+        assert!(p.ends_with("hi\n"));
+    }
+
+    #[test]
+    fn extension_for_mime_picks_image_extension() {
+        assert_eq!(extension_for_mime("image/png"), "png");
+        assert_eq!(extension_for_mime("image/jpeg"), "jpg");
+        assert_eq!(extension_for_mime("image/jpg"), "jpg");
+        assert_eq!(extension_for_mime("image/webp"), "webp");
+        assert_eq!(extension_for_mime("image/gif"), "gif");
+        assert_eq!(extension_for_mime("image/bmp"), "bmp");
+        // Unknown / blank MIME types fall back to a writable extension so the
+        // path resolves regardless; the model's `Read` tool is content-sniffed.
+        assert_eq!(extension_for_mime("application/octet-stream"), "bin");
+        assert_eq!(extension_for_mime(""), "bin");
+        assert_eq!(extension_for_mime("IMAGE/PNG"), "png");
+    }
+
+    #[test]
+    fn write_temp_images_uses_extension_from_mime() {
+        use crate::types::ImageInput;
+        let imgs = vec![
+            ImageInput { mime_type: "image/png".into(), data: vec![1, 2, 3] },
+            ImageInput { mime_type: "image/jpeg".into(), data: vec![4, 5, 6] },
+        ];
+        let paths = write_temp_images(&imgs).expect("write succeeds");
+        assert_eq!(paths.len(), 2);
+        // Names are deterministic (idx-based) so re-runs overwrite in place.
+        assert!(paths[0].file_name().unwrap().to_string_lossy().ends_with("img_0.png"));
+        assert!(paths[1].file_name().unwrap().to_string_lossy().ends_with("img_1.jpg"));
+        // The bytes must round-trip so the model's `Read` sees what we wrote.
+        assert_eq!(std::fs::read(&paths[0]).unwrap(), vec![1, 2, 3]);
+        assert_eq!(std::fs::read(&paths[1]).unwrap(), vec![4, 5, 6]);
+        for p in &paths {
+            let _ = std::fs::remove_file(p);
+        }
+    }
+
+    #[test]
+    fn write_temp_images_returns_empty_on_empty_input() {
+        let paths = write_temp_images(&[]).expect("empty ok");
+        assert!(paths.is_empty());
     }
 }

@@ -22,8 +22,9 @@ pub(in crate::app) fn run_prompt_enhance(
     credential: Credential,
     model: String,
     claude_code_path: String,
+    zai_base_url: String,
 ) -> Result<String, String> {
-    let client = build_provider_client(provider, credential, &claude_code_path);
+    let client = build_provider_client(provider, credential, &claude_code_path, &zai_base_url);
     let raw = raw_prompt.trim();
     // Templates focus the rewrite on enriching the user's high-level
     // description — what the object looks like or how a part should change —

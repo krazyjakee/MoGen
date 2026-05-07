@@ -37,6 +37,7 @@ impl MogenStudioApp {
             base_dir: None,
             plan: self.settings.plan_first(),
             zai_refine_use_vision: self.settings.zai_refine_use_vision(),
+            zai_base_url: self.settings.zai_base_url().to_string(),
         }
     }
 
