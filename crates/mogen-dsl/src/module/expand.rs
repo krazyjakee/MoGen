@@ -541,13 +541,22 @@ fn interpolate_string(s: &str, scope: &Scope) -> Result<String> {
     }
     let bytes = s.as_bytes();
     let mut out = String::with_capacity(s.len());
-    let mut i = 0;
+    // `lit_start` is the byte index of the next literal run we haven't
+    // flushed yet. Flushing via `&s[lit_start..i]` keeps multi-byte
+    // UTF-8 characters intact — `byte as char` would map each
+    // continuation byte (0x80..=0xBF) to its U+0080..U+00FF codepoint and
+    // corrupt accented letters, CJK, emoji, etc. Byte scanning still
+    // works because `$`, `{`, `}`, `_`, and ASCII alphanumerics are all
+    // single-byte UTF-8, never appearing as continuation bytes.
+    let mut lit_start = 0usize;
+    let mut i = 0usize;
     while i < bytes.len() {
-        let b = bytes[i];
-        if b != b'$' {
-            out.push(b as char);
+        if bytes[i] != b'$' {
             i += 1;
             continue;
+        }
+        if lit_start < i {
+            out.push_str(&s[lit_start..i]);
         }
         // Either `${name}` or `$name`.
         let (name, consumed) = if i + 1 < bytes.len() && bytes[i + 1] == b'{' {
@@ -577,6 +586,7 @@ fn interpolate_string(s: &str, scope: &Scope) -> Result<String> {
                 // Bare `$` not followed by an identifier — leave it literal.
                 out.push('$');
                 i += 1;
+                lit_start = i;
                 continue;
             }
             (&s[start..end], end - i)
@@ -590,6 +600,10 @@ fn interpolate_string(s: &str, scope: &Scope) -> Result<String> {
             }
         }
         i += consumed;
+        lit_start = i;
+    }
+    if lit_start < bytes.len() {
+        out.push_str(&s[lit_start..]);
     }
     Ok(out)
 }
