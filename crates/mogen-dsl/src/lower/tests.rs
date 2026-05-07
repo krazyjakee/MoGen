@@ -1666,6 +1666,41 @@ fn string_interpolation_with_braces() {
 }
 
 #[test]
+fn string_interpolation_preserves_multibyte_utf8() {
+    // Regression test for the second-pass review: `interpolate_string`
+    // walked source bytes and used `byte as char`, which corrupts every
+    // UTF-8 continuation byte (0x80..=0xBF) into a U+0080..U+00FF
+    // codepoint. `"pièce_$i"` would render as `"piÃ¨ce_0"` etc. The fix
+    // flushes literal runs via string slicing so multi-byte chars stay
+    // intact.
+    let g = lower_src(
+        r#"scene {
+            for (var="i", from=0, to=2) {
+                box "pièce_$i" (size=[0.05, 0.5, 0.05])
+            }
+        }"#,
+    );
+    let names: Vec<_> = g.nodes.iter().map(|n| n.name.clone()).collect();
+    assert!(
+        names.contains(&"pièce_0".to_string()),
+        "multi-byte char must survive interpolation; got names: {names:?}"
+    );
+    assert!(names.contains(&"pièce_1".to_string()));
+    // Also exercise the `${name}` branch with non-ASCII content around it.
+    let g2 = lower_src(
+        r#"module "p" (i=0) {
+            box "${i}号_部品" (size=[0.5, 0.1, 0.5])
+        }
+        scene { use "p" (i=42) }"#,
+    );
+    assert!(
+        g2.nodes.iter().any(|n| n.name == "42号_部品"),
+        "CJK + ${{name}} interpolation must preserve trailing multi-byte chars; got: {:?}",
+        g2.nodes.iter().map(|n| &n.name).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn module_with_for_inside_expands_per_use() {
     // `for` inside a module body should expand against the call's params.
     let g = lower_src(

@@ -66,6 +66,19 @@ pub fn loft_mesh(
     let sorted_sections: Vec<&Section> = order.iter().map(|&i| &sections[i]).collect();
     let sorted_heights: Vec<f32> = order.iter().map(|&i| heights[i]).collect();
 
+    // Reject duplicate heights up front. Without this, the section pair
+    // collapses to a zero-height ring of duplicate vertices and the side
+    // strips degenerate into zero-area triangles that cause z-fighting at
+    // render time. Caught by the second-pass review.
+    for w in sorted_heights.windows(2) {
+        if w[0] == w[1] {
+            return Err(anyhow!(
+                "loft sections must have distinct heights — found duplicate {}",
+                w[0]
+            ));
+        }
+    }
+
     let samples_between = samples_between_sections.max(1);
 
     // Build all rings (sample-interpolated rings between each adjacent
@@ -133,23 +146,31 @@ pub fn loft_mesh(
         mesh.uvs.push([u, v]);
     }
 
-    // Quad strips between adjacent rings.
+    // Quad strips between adjacent rings. Winding `[a, d, b, a, c, d]`
+    // produces outward-facing normals for a CCW-authored profile (and
+    // inward for CW holes), matching `extrude` and `sweep`. Verified on a
+    // unit-square profile: the +X face triangle (1, 7, 2) yields a +X
+    // cross-product, the -Z face triangle (0, 5, 1) yields a -Z normal.
     for r in 0..(rings.len() as u32 - 1) {
         for j in 0..n as u32 {
             let a = r * row + j;
             let b = a + 1;
             let c = a + row;
             let d = c + 1;
-            mesh.indices.extend_from_slice(&[a, b, d, a, d, c]);
+            mesh.indices.extend_from_slice(&[a, d, b, a, c, d]);
         }
     }
 
     if caps {
-        // Bottom cap: section[0], normal -Y, winding flipped.
-        push_cap(&mut mesh, &rings[0].1, rings[0].0, true, mode);
-        // Top cap: last section, normal +Y.
+        // earcut walks a CCW 2D outline and produces CCW 2D triangles.
+        // Embedded as `[p[0], h, p[1]]` (profile-X → world-X, profile-Y →
+        // world-Z), CCW-in-2D maps to a -Y normal in 3D (right-hand rule
+        // when viewed down +Y). The bottom cap wants -Y, so it keeps
+        // earcut's order; the top cap wants +Y, so it flips. Reviewer
+        // caught the previous code with these swapped.
+        push_cap(&mut mesh, &rings[0].1, rings[0].0, false, mode);
         let last = rings.len() - 1;
-        push_cap(&mut mesh, &rings[last].1, rings[last].0, false, mode);
+        push_cap(&mut mesh, &rings[last].1, rings[last].0, true, mode);
     }
 
     recompute_normals(&mut mesh);
@@ -296,6 +317,112 @@ mod tests {
         .unwrap();
         assert_eq!(mesh_a.positions.len(), mesh_b.positions.len());
         assert_eq!(mesh_a.indices.len(), mesh_b.indices.len());
+    }
+
+    #[test]
+    fn loft_side_quads_face_outward() {
+        // Regression test for the second-pass review: side quads were
+        // wound `[a, b, d, a, d, c]` which produces inward-facing normals
+        // on every quad strip. Verify the corrected winding produces
+        // outward normals on each cardinal face of a square loft.
+        let mesh = loft_mesh(
+            &[rect(1.0, 1.0), rect(1.0, 1.0)],
+            &[0.0, 1.0],
+            1,
+            false, // No caps — only side strips.
+            UvMode::default(),
+        )
+        .unwrap();
+        // The square profile has 4 vertices + 1 seam-dup, so row=5. Side
+        // triangles are emitted in pairs per profile edge. The first quad
+        // (j=0, between profile vertices 0 and 1) covers the -Z face;
+        // its triangles' geometric normal must have a negative Z component.
+        let positions = &mesh.positions;
+        let triangles_per_quad = 2;
+        let cardinal_faces: [[f32; 3]; 4] = [
+            [0.0, 0.0, -1.0], // -Z face (profile edge 0→1, both Z = -1)
+            [1.0, 0.0, 0.0],  // +X face (edge 1→2, both X = +1)
+            [0.0, 0.0, 1.0],  // +Z face (edge 2→3, both Z = +1)
+            [-1.0, 0.0, 0.0], // -X face (edge 3→0, both X = -1)
+        ];
+        for (face_idx, expected_dir) in cardinal_faces.iter().enumerate() {
+            let tri_offset = face_idx * triangles_per_quad * 3;
+            for tri in 0..triangles_per_quad {
+                let i0 = mesh.indices[tri_offset + tri * 3] as usize;
+                let i1 = mesh.indices[tri_offset + tri * 3 + 1] as usize;
+                let i2 = mesh.indices[tri_offset + tri * 3 + 2] as usize;
+                let p0 = positions[i0];
+                let p1 = positions[i1];
+                let p2 = positions[i2];
+                let e1 = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
+                let e2 = [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]];
+                let n = [
+                    e1[1] * e2[2] - e1[2] * e2[1],
+                    e1[2] * e2[0] - e1[0] * e2[2],
+                    e1[0] * e2[1] - e1[1] * e2[0],
+                ];
+                let dot = n[0] * expected_dir[0] + n[1] * expected_dir[1] + n[2] * expected_dir[2];
+                assert!(
+                    dot > 0.0,
+                    "side quad face {face_idx} tri {tri}: cross product {n:?} disagrees with expected {expected_dir:?} (dot={dot})"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn loft_caps_face_outward() {
+        // Companion regression test: bottom cap normals must have a
+        // negative Y component, top cap normals positive. Reviewer caught
+        // the previous code with these flip flags swapped.
+        let mesh = loft_mesh(
+            &[rect(1.0, 1.0), rect(1.0, 1.0)],
+            &[0.0, 1.0],
+            1,
+            true,
+            UvMode::default(),
+        )
+        .unwrap();
+        // Sides are 4 quads × 2 triangles = 8 tris. Caps follow.
+        let side_tri_count = 4 * 2;
+        let after_sides = side_tri_count * 3;
+        // Find one cap triangle and one top-cap triangle by Y coordinate.
+        let mut saw_bottom_outward = false;
+        let mut saw_top_outward = false;
+        for tri in mesh.indices[after_sides..].chunks_exact(3) {
+            let p0 = mesh.positions[tri[0] as usize];
+            let p1 = mesh.positions[tri[1] as usize];
+            let p2 = mesh.positions[tri[2] as usize];
+            let avg_y = (p0[1] + p1[1] + p2[1]) / 3.0;
+            let e1 = [p1[0] - p0[0], p1[1] - p0[1], p1[2] - p0[2]];
+            let e2 = [p2[0] - p0[0], p2[1] - p0[1], p2[2] - p0[2]];
+            let ny = e1[2] * e2[0] - e1[0] * e2[2];
+            if avg_y < 0.5 {
+                assert!(ny < 0.0, "bottom cap tri normal Y must be negative, got {ny}");
+                saw_bottom_outward = true;
+            } else {
+                assert!(ny > 0.0, "top cap tri normal Y must be positive, got {ny}");
+                saw_top_outward = true;
+            }
+        }
+        assert!(saw_bottom_outward && saw_top_outward, "expected at least one tri per cap");
+    }
+
+    #[test]
+    fn loft_rejects_duplicate_heights() {
+        let result = loft_mesh(
+            &[rect(1.0, 1.0), rect(0.5, 0.5), rect(0.25, 0.25)],
+            &[0.0, 1.0, 1.0],
+            4,
+            true,
+            UvMode::default(),
+        );
+        let err = result.expect_err("duplicate heights must error");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("distinct heights"),
+            "error must mention distinct heights, got: {msg}"
+        );
     }
 
     fn aabb(positions: &[[f32; 3]]) -> ([f32; 3], [f32; 3]) {
