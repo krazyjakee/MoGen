@@ -118,6 +118,15 @@ pub struct Settings {
     #[serde(default)]
     pub gemini_fast_model: String,
 
+    /// Opt-in to preview / bleeding-edge model defaults. When `true` and no
+    /// explicit override is set, Gemini API-key sessions resolve to the
+    /// latest preview Pro / Flash IDs (`gemini-3.1-pro-preview` /
+    /// `gemini-3-flash-preview`) instead of the stable `*-latest` aliases.
+    /// Off by default — preview models can be deprecated or rate-limited
+    /// without notice and the user should opt in deliberately.
+    #[serde(default)]
+    pub use_preview_models: bool,
+
     /// OpenAI thinking-model override. Empty -> [`mogen_llm::openai::DEFAULT_MODEL`].
     #[serde(default)]
     pub openai_model: String,
@@ -630,6 +639,11 @@ impl Settings {
         if slot.is_gemini_oauth() {
             return DEFAULT_OAUTH_GEMINI_MODEL.to_string();
         }
+        if self.use_preview_models {
+            if let Some(preview) = preview_thinking_model(provider) {
+                return preview.to_string();
+            }
+        }
         provider.default_model().to_string()
     }
 
@@ -645,6 +659,11 @@ impl Settings {
         }
         if slot.is_gemini_oauth() {
             return DEFAULT_OAUTH_GEMINI_FAST_MODEL.to_string();
+        }
+        if self.use_preview_models {
+            if let Some(preview) = preview_fast_model(provider) {
+                return preview.to_string();
+            }
         }
         // Ollama is the only provider whose library default for fast == thinking,
         // so let the user's thinking override apply to fast too when fast is blank.
@@ -877,6 +896,29 @@ pub const THINKING_LEVELS: [ThinkingLevel; 4] = [
     ThinkingLevel::High,
     ThinkingLevel::XHigh,
 ];
+
+/// Bleeding-edge thinking-model id for a provider, or `None` when the
+/// provider has no preview tier worth surfacing as a default. Driven by
+/// [`Settings::use_preview_models`]; users still get the per-provider
+/// override (left blank) → stable `*-latest` alias path when the toggle
+/// is off.
+pub fn preview_thinking_model(provider: Provider) -> Option<&'static str> {
+    match provider {
+        // Gemini 3.x Pro Preview. The OAuth slot already pins to this id
+        // unconditionally; the toggle extends the same default to API-key
+        // users who explicitly opt in.
+        Provider::Gemini => Some("gemini-3.1-pro-preview"),
+        _ => None,
+    }
+}
+
+/// Bleeding-edge fast-model id, symmetric with [`preview_thinking_model`].
+pub fn preview_fast_model(provider: Provider) -> Option<&'static str> {
+    match provider {
+        Provider::Gemini => Some("gemini-3-flash-preview"),
+        _ => None,
+    }
+}
 
 /// Human-facing label for the style combobox. `None` is the leading
 /// "Default (no style)" entry that keeps the existing behaviour

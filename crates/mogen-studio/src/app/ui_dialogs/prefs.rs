@@ -2,11 +2,12 @@ use eframe::egui;
 use mogen_llm::google_oauth::{ProviderConfig, ANTIGRAVITY_CONFIG, GEMINI_CLI_CONFIG};
 use mogen_llm::Provider;
 
+use crate::app::pricing::{format_per_million, image_pricing, text_pricing};
 use crate::app::MogenStudioApp;
 use crate::settings::{
-    thinking_level_key, thinking_level_label, ImageProvider, ProviderSlot,
-    DEFAULT_MAX_REPAIR_ITERS, DEFAULT_OAUTH_GEMINI_FAST_MODEL, DEFAULT_OAUTH_GEMINI_MODEL,
-    IMAGE_PROVIDERS, PROVIDER_SLOTS, THINKING_LEVELS,
+    preview_fast_model, preview_thinking_model, thinking_level_key, thinking_level_label,
+    ImageProvider, ProviderSlot, DEFAULT_MAX_REPAIR_ITERS, DEFAULT_OAUTH_GEMINI_FAST_MODEL,
+    DEFAULT_OAUTH_GEMINI_MODEL, IMAGE_PROVIDERS, PROVIDER_SLOTS, THINKING_LEVELS,
 };
 use crate::theme::{apply_theme, theme_label, Theme, THEMES};
 
@@ -94,6 +95,37 @@ pub(super) fn model_presets(slot: ProviderSlot) -> &'static [&'static str] {
             "glm-4.5-air",
             "glm-4.5-flash",
         ],
+    }
+}
+
+/// One row of the Pricing summary block. Renders the headline rate plus a
+/// dimmer second line for the >200k tier when the model is tiered.
+fn price_row(
+    ui: &mut egui::Ui,
+    label: &str,
+    model: &str,
+    price: crate::app::pricing::TextPricing,
+) {
+    ui.label(
+        egui::RichText::new(format!(
+            "{label}  {model}  in {} · out {} · cached {}",
+            format_per_million(price.input_per_million_usd),
+            format_per_million(price.output_per_million_usd),
+            format_per_million(price.cached_input_per_million_usd),
+        ))
+        .small(),
+    );
+    if price.is_tiered() {
+        ui.label(
+            egui::RichText::new(format!(
+                "          >200k prompt: in {} · out {} · cached {}",
+                format_per_million(price.input_per_million_usd_long),
+                format_per_million(price.output_per_million_usd_long),
+                format_per_million(price.cached_input_per_million_usd_long),
+            ))
+            .small()
+            .weak(),
+        );
     }
 }
 
@@ -420,8 +452,38 @@ impl MogenStudioApp {
                     ));
                     ui.add_space(6.0);
 
+                    // Preview / bleeding-edge toggle. Off by default — preview
+                    // model ids can be deprecated or rate-limited without notice.
+                    // OAuth slot already pins to preview tags so the toggle is
+                    // redundant there; hide it to avoid confusion.
+                    if !active_slot.is_gemini_oauth()
+                        && preview_thinking_model(active_provider).is_some()
+                    {
+                        let mut on = self.settings.use_preview_models;
+                        if ui
+                            .checkbox(&mut on, "Use preview / bleeding-edge models")
+                            .on_hover_text(
+                                "When enabled (and no explicit override is set), \
+                                 default to the latest Gemini preview Pro / Flash \
+                                 IDs instead of the stable `*-latest` aliases. \
+                                 Preview models can be deprecated without notice.",
+                            )
+                            .changed()
+                        {
+                            self.settings.use_preview_models = on;
+                        }
+                        ui.add_space(6.0);
+                    }
+
                     let (thinking_default, fast_default) = if active_slot.is_gemini_oauth() {
                         (DEFAULT_OAUTH_GEMINI_MODEL, DEFAULT_OAUTH_GEMINI_FAST_MODEL)
+                    } else if self.settings.use_preview_models {
+                        (
+                            preview_thinking_model(active_provider)
+                                .unwrap_or_else(|| active_provider.default_model()),
+                            preview_fast_model(active_provider)
+                                .unwrap_or_else(|| active_provider.default_fast_model()),
+                        )
                     } else {
                         (active_provider.default_model(), active_provider.default_fast_model())
                     };
@@ -499,6 +561,88 @@ impl MogenStudioApp {
                     );
                     if let Some(buf) = self.settings.fast_model_field_mut(active_provider) {
                         *buf = fast_draft;
+                    }
+
+                    // --- pricing summary ---
+                    // Resolve currently-active model ids (override > preview >
+                    // default) and read their rates straight from the same
+                    // table the session meter uses. Gemini-only for now —
+                    // other providers fall through to a zero-rate row.
+                    let thinking_model = self.settings.provider_model();
+                    let fast_model = self.settings.provider_fast_model();
+                    let thinking_price = text_pricing(&thinking_model);
+                    let fast_price = text_pricing(&fast_model);
+                    let has_pricing = thinking_price.input_per_million_usd > 0.0
+                        || fast_price.input_per_million_usd > 0.0;
+
+                    if has_pricing {
+                        ui.add_space(10.0);
+                        ui.label(
+                            egui::RichText::new("Pricing (approx, USD)")
+                                .strong(),
+                        );
+                        ui.label(
+                            egui::RichText::new(
+                                "List rates from ai.google.dev/gemini-api/docs/pricing. \
+                                 The session meter shows actual cost based on token usage.",
+                            )
+                            .small()
+                            .weak(),
+                        );
+                        ui.add_space(4.0);
+
+                        price_row(
+                            ui,
+                            "Thinking",
+                            &thinking_model,
+                            thinking_price,
+                        );
+                        if fast_price.input_per_million_usd > 0.0 {
+                            price_row(ui, "Fast", &fast_model, fast_price);
+                        }
+
+                        // Image rate (textures pipeline). Only show when the
+                        // pricing table actually knows the model — Z.ai's
+                        // `glm-image` rate isn't surfaced here.
+                        let img_model = match self.settings.image_provider() {
+                            ImageProvider::Auto
+                            | ImageProvider::ApiKey
+                            | ImageProvider::Antigravity => "gemini-2.5-flash-image",
+                            ImageProvider::ZAI => "",
+                        };
+                        let img_price = image_pricing(img_model);
+                        if img_price.per_image_usd > 0.0 {
+                            ui.add_space(2.0);
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "Texture image  {img_model}  ${:.3}/image",
+                                    img_price.per_image_usd,
+                                ))
+                                .small(),
+                            );
+                        }
+
+                        // Typical-call envelope so users have a feel for what
+                        // a single generate / modify costs without doing the
+                        // arithmetic. ~5k input + ~3k output is what a small
+                        // example.mog round-trips at; real prompts vary.
+                        let typical_in = 5_000.0_f64;
+                        let typical_out = 3_000.0_f64;
+                        let typical_cost = typical_in
+                            * thinking_price.input_per_million_usd
+                            / 1_000_000.0
+                            + typical_out
+                                * thinking_price.output_per_million_usd
+                                / 1_000_000.0;
+                        ui.add_space(2.0);
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "Typical generate (~5k in / ~3k out): ~${:.3}",
+                                typical_cost,
+                            ))
+                            .small()
+                            .weak(),
+                        );
                     }
                 }
 
