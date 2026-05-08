@@ -139,6 +139,13 @@ mogen-dsl  ──parse──►  AST  ──validate_ast──►  lower  ──
   and embeds a seed in the DSL header for reproducibility.
 - Branding: use **MoGen** / **MoGen Studio** in prose and user-facing UI; lowercase
   `mogen` / `mogen-studio` for crate names, binary names, env vars, and path identifiers.
+- **Studio UI text size**: never call `.small()` on `RichText` / `egui::Label` for any
+  user-facing copy (captions, hints, status lines, helper text, pricing notes, dialog
+  subtitles, etc.). Body text must render at the default `TextStyle::Body` size — egui's
+  small style is unreadable at our default scale. For de-emphasis use `.weak()` alone
+  (same size, dimmer colour). Compact button affordances like
+  `egui::Button::new("▲").small()` are the only allowed `.small()` use, and only when the
+  button is icon/glyph-only.
 - Environment variables are `MOGEN_CACHE_DIR`, `MOGEN_GOLDENS_UPDATE`, `MOGEN_GLTF_VALIDATOR`.
   Caches default to `$HOME/.cache/mogen/`.
 

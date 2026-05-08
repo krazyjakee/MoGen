@@ -35,11 +35,7 @@ impl MogenStudioApp {
                 );
                 ui.add_space(8.0);
 
-                ui.label(
-                    egui::RichText::new(&context_label)
-                        .strong()
-                        .small(),
-                );
+                ui.label(egui::RichText::new(&context_label).strong());
                 ui.add_space(2.0);
                 // Snippet preview — read-only, scrolls so a big file doesn't
                 // blow out the dialog. Monospace because it's code.
@@ -126,11 +122,7 @@ impl MogenStudioApp {
                     ui.add_space(6.0);
                     match result {
                         Ok(text) => {
-                            ui.label(
-                                egui::RichText::new("Answer")
-                                    .strong()
-                                    .small(),
-                            );
+                            ui.label(egui::RichText::new("Answer").strong());
                             ui.add_space(2.0);
                             egui::ScrollArea::vertical()
                                 .id_salt("ask_answer_scroll")

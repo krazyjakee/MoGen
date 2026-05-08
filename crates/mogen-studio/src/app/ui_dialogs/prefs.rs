@@ -106,15 +106,12 @@ fn price_row(
     model: &str,
     price: crate::app::pricing::TextPricing,
 ) {
-    ui.label(
-        egui::RichText::new(format!(
-            "{label}  {model}  in {} · out {} · cached {}",
-            format_per_million(price.input_per_million_usd),
-            format_per_million(price.output_per_million_usd),
-            format_per_million(price.cached_input_per_million_usd),
-        ))
-        .small(),
-    );
+    ui.label(egui::RichText::new(format!(
+        "{label}  {model}  in {} · out {} · cached {}",
+        format_per_million(price.input_per_million_usd),
+        format_per_million(price.output_per_million_usd),
+        format_per_million(price.cached_input_per_million_usd),
+    )));
     if price.is_tiered() {
         ui.label(
             egui::RichText::new(format!(
@@ -123,7 +120,6 @@ fn price_row(
                 format_per_million(price.output_per_million_usd_long),
                 format_per_million(price.cached_input_per_million_usd_long),
             ))
-            .small()
             .weak(),
         );
     }
@@ -586,7 +582,6 @@ impl MogenStudioApp {
                                 "List rates from ai.google.dev/gemini-api/docs/pricing. \
                                  The session meter shows actual cost based on token usage.",
                             )
-                            .small()
                             .weak(),
                         );
                         ui.add_space(4.0);
@@ -613,13 +608,10 @@ impl MogenStudioApp {
                         let img_price = image_pricing(img_model);
                         if img_price.per_image_usd > 0.0 {
                             ui.add_space(2.0);
-                            ui.label(
-                                egui::RichText::new(format!(
-                                    "Texture image  {img_model}  ${:.3}/image",
-                                    img_price.per_image_usd,
-                                ))
-                                .small(),
-                            );
+                            ui.label(egui::RichText::new(format!(
+                                "Texture image  {img_model}  ${:.3}/image",
+                                img_price.per_image_usd,
+                            )));
                         }
 
                         // Typical-call envelope so users have a feel for what
@@ -640,7 +632,6 @@ impl MogenStudioApp {
                                 "Typical generate (~5k in / ~3k out): ~${:.3}",
                                 typical_cost,
                             ))
-                            .small()
                             .weak(),
                         );
                     }

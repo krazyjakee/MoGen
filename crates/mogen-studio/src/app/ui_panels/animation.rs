@@ -144,7 +144,6 @@ impl MogenStudioApp {
                     ui.label(&c.name);
                     ui.label(
                         egui::RichText::new(format!("{:.2}s", c.duration))
-                            .small()
                             .weak(),
                     );
                     if let Some(p) = &c.origin {
@@ -154,7 +153,6 @@ impl MogenStudioApp {
                             .unwrap_or("import");
                         ui.label(
                             egui::RichText::new(format!("⤴ {stem}"))
-                                .small()
                                 .weak(),
                         )
                         .on_hover_text(p.to_string_lossy());

@@ -28,7 +28,7 @@ impl MogenStudioApp {
             .inner_margin(egui::Margin::same(6.0))
             .show(ui, |ui| {
                 ui.colored_label(accent, egui::RichText::new(&info.headline).strong());
-                ui.label(egui::RichText::new(&info.detail).small());
+                ui.label(egui::RichText::new(&info.detail));
                 ui.horizontal(|ui| {
                     let retry_label = if info.retryable { "Retry" } else { "Retry anyway" };
                     let has_last = self.active().llm_last_prompt.is_some();

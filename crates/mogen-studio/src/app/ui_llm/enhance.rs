@@ -31,7 +31,7 @@ impl MogenStudioApp {
 
         ui.horizontal(|ui| {
             if ui
-                .add_enabled(can_run, egui::Button::new("✨ Enhance").small())
+                .add_enabled(can_run, egui::Button::new("✨ Enhance"))
                 .on_hover_text(hover)
                 .clicked()
             {
@@ -40,17 +40,15 @@ impl MogenStudioApp {
             }
             if this_busy {
                 ui.spinner();
-                ui.label(egui::RichText::new("enhancing…").small().weak());
+                ui.label(egui::RichText::new("enhancing…").weak());
             } else if let Some(msg) = err_for_target {
                 ui.label(
                     egui::RichText::new(msg)
-                        .small()
                         .color(ui.visuals().warn_fg_color),
                 );
             } else if !has_key {
                 ui.label(
                     egui::RichText::new("no API key")
-                        .small()
                         .color(egui::Color32::from_rgb(230, 200, 100)),
                 );
             }

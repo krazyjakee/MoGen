@@ -47,9 +47,7 @@ impl MogenStudioApp {
             // doesn't shout at users who never touched the dropdown.
             if current.is_some() {
                 ui.label(
-                    egui::RichText::new("(saved in file header)")
-                        .small()
-                        .weak(),
+                    egui::RichText::new("(saved in file header)").weak(),
                 );
             }
         });

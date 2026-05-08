@@ -136,7 +136,6 @@ impl MogenStudioApp {
                         |ui| {
                             ui.label(
                                 egui::RichText::new(format!("{} — outline", page.title))
-                                    .small()
                                     .weak(),
                             );
                             ui.add(
@@ -200,7 +199,7 @@ impl MogenStudioApp {
                         |ui| {
                             ui.set_max_width(body_width);
                             ui.label(
-                                egui::RichText::new(page.subtitle).small().weak(),
+                                egui::RichText::new(page.subtitle).weak(),
                             );
                             ui.add_space(4.0);
                             // `both()` rather than `vertical()` so a long

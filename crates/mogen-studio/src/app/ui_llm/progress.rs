@@ -63,23 +63,19 @@ impl MogenStudioApp {
                     // worker reported 0 for any reason.
                     let max = if *max > 0 { *max } else { max_iters.max(1) };
                     ui.horizontal(|ui| {
-                        ui.label(
-                            egui::RichText::new("repair loop").small().weak(),
-                        );
+                        ui.label(egui::RichText::new("repair loop").weak());
                         ui.add_space(4.0);
                         draw_repair_dots(ui, *iter, max, accent);
                         ui.add_space(4.0);
                         ui.label(
                             egui::RichText::new(format!("{iter}/{max}"))
-                                .monospace()
-                                .small(),
+                                .monospace(),
                         );
                         ui.label(
                             egui::RichText::new(format!(
                                 "· {errors} error{} to fix",
                                 if *errors == 1 { "" } else { "s" }
                             ))
-                            .small()
                             .color(ui.visuals().warn_fg_color),
                         );
                     });
@@ -114,7 +110,6 @@ impl MogenStudioApp {
                     };
                     ui.label(
                         egui::RichText::new(format!("{verb} {material}"))
-                            .small()
                             .weak(),
                     );
                 }
@@ -281,8 +276,7 @@ fn draw_timeline_row(
         ui.painter()
             .circle_filled(dot_rect.center(), 3.0, bullet_color);
         ui.add(
-            egui::Label::new(egui::RichText::new(&ev.text).small())
-                .truncate(),
+            egui::Label::new(egui::RichText::new(&ev.text)).truncate(),
         );
         ui.with_layout(
             egui::Layout::right_to_left(egui::Align::Center),
@@ -290,7 +284,6 @@ fn draw_timeline_row(
                 let age = until.saturating_duration_since(ev.at);
                 ui.label(
                     egui::RichText::new(format_age(age))
-                        .small()
                         .weak()
                         .monospace(),
                 );
