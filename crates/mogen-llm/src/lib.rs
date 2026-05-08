@@ -36,6 +36,7 @@ pub mod provider;
 pub mod repair;
 pub mod settings_store;
 pub mod textures;
+pub mod style;
 pub mod types;
 pub mod zai;
 pub mod zai_chat;
@@ -62,6 +63,7 @@ pub use repair::{
 pub use settings_store::{load_api_keys, read_api_key, settings_path as settings_store_path, ApiKeys};
 pub use fireworks::{FireworksClient, FireworksError};
 pub use textures::parse_prompt_header;
+pub use style::{apply_style_to_prompt, style_prompt_block, Style, STYLES};
 pub use zai::{ZaiClient, ZaiError};
 pub use zai_chat::{ZaiChatClient, ZaiChatError};
 pub use types::{
@@ -135,6 +137,35 @@ pub fn parse_thinking_header(dsl: &str) -> Option<ThinkingLevel> {
         }
     }
     None
+}
+
+/// Extract the visual style from a DSL `meta(style=...)` attribute. Returns
+/// `None` when no `meta` block is present, the attribute is absent, or the
+/// recorded value isn't a known style key (after [`Style::parse`] alias
+/// resolution). Treats unknown values as "no style" rather than erroring so
+/// hand-edited files with experimental keys still load — the validator
+/// allows arbitrary strings in `meta(style=…)`.
+pub fn parse_style_header(dsl: &str) -> Option<Style> {
+    if let Some(v) = mogen_dsl::read_meta_attr(dsl, "style") {
+        if let Some(style) = Style::parse(&v) {
+            return Some(style);
+        }
+    }
+    None
+}
+
+/// Insert or update `meta(style=…)` on the top-level meta block. `None`
+/// is a passthrough so callers can chain this after `embed_seed_header`
+/// without branching on whether the user picked a style.
+///
+/// Symmetric with [`mogen_dsl::stamp_mogen_version`] — uses
+/// [`mogen_dsl::upsert_meta_attr`] so existing attrs are preserved and
+/// the meta block is created when missing.
+pub fn stamp_style_header(dsl: &str, style: Option<Style>) -> String {
+    match style {
+        Some(s) => mogen_dsl::upsert_meta_attr(dsl, "style", s.key()),
+        None => dsl.to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -236,5 +267,48 @@ scene { box \"b\" (size=[1,1,1], mat=\"wood\") }
         assert!(!wrapped.contains("// prompt:"));
         assert_eq!(parse_seed_header(&wrapped), Some(2));
         assert_eq!(parse_thinking_header(&wrapped), Some(ThinkingLevel::High));
+    }
+
+    #[test]
+    fn style_header_roundtrip() {
+        let dsl = "scene { box \"b\" (size=[1,1,1]) }\n";
+        let stamped = stamp_style_header(dsl, Some(Style::Ps1));
+        assert!(stamped.contains("style = \"ps1\""));
+        assert_eq!(parse_style_header(&stamped), Some(Style::Ps1));
+    }
+
+    #[test]
+    fn style_header_none_is_passthrough() {
+        let dsl = "scene { box \"b\" (size=[1,1,1]) }\n";
+        assert_eq!(stamp_style_header(dsl, None), dsl);
+        assert_eq!(parse_style_header(dsl), None);
+    }
+
+    #[test]
+    fn style_header_updates_existing_meta() {
+        let dsl = "meta (name = \"chair\", style = \"voxel\")\nscene {}\n";
+        assert_eq!(parse_style_header(dsl), Some(Style::Voxel));
+        let updated = stamp_style_header(dsl, Some(Style::PixelArt));
+        assert!(updated.contains("style = \"pixel_art\""));
+        assert!(updated.contains("name = \"chair\""));
+        assert_eq!(parse_style_header(&updated), Some(Style::PixelArt));
+    }
+
+    #[test]
+    fn style_header_unknown_value_is_none() {
+        let dsl = "meta (style = \"weird-experiment\")\nscene {}\n";
+        assert_eq!(parse_style_header(dsl), None);
+    }
+
+    #[test]
+    fn style_header_composes_with_seed_and_thinking() {
+        let dsl = "scene { box \"b\" (size=[1,1,1]) }\n";
+        let wrapped = embed_seed_header(dsl, 7, "p", Some(ThinkingLevel::Low));
+        let wrapped = stamp_style_header(&wrapped, Some(Style::CelShaded));
+        // All three live in one meta block.
+        assert_eq!(wrapped.matches("meta (").count(), 1);
+        assert_eq!(parse_seed_header(&wrapped), Some(7));
+        assert_eq!(parse_thinking_header(&wrapped), Some(ThinkingLevel::Low));
+        assert_eq!(parse_style_header(&wrapped), Some(Style::CelShaded));
     }
 }

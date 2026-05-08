@@ -3,11 +3,12 @@ use std::sync::mpsc::Sender;
 use std::sync::Arc;
 
 use mogen_llm::{
-    cacheable_block, default_cache_path, embed_seed_header, format_imports_preserve_block,
-    generate_with_repair, inline_block, parse_prompt_header, parse_seed_header, repair_message,
-    resolve_or_create_cache, summarize_imports, validate_text, GenerateConfig, GoogleCredential,
-    ImageInput, LlmClient, OAuthBundle, Provider, RepairConfig, StdlibIndex, ThinkingLevel, Usage,
-    DEFAULT_TTL_SECONDS,
+    apply_style_to_prompt, cacheable_block, default_cache_path, embed_seed_header,
+    format_imports_preserve_block, generate_with_repair, inline_block, parse_prompt_header,
+    parse_seed_header, parse_style_header, repair_message, resolve_or_create_cache,
+    stamp_style_header, summarize_imports, validate_text, GenerateConfig, GoogleCredential,
+    ImageInput, LlmClient, OAuthBundle, Provider, RepairConfig, StdlibIndex, Style, ThinkingLevel,
+    Usage, DEFAULT_TTL_SECONDS,
 };
 
 use crate::app::error_class::classify;
@@ -34,6 +35,11 @@ pub(in crate::app) struct LlmRunConfig {
     /// quote bounds for each `use`. `None` for unsaved buffers — the prompt
     /// still lists imports verbatim, just without AABBs.
     pub base_dir: Option<PathBuf>,
+    /// Visual-style hint for this call. `None` is a complete passthrough
+    /// (no prompt suffix, no `meta(style=…)` line). For modify/animate/
+    /// repair, the spawn site falls this back to the file's stamped
+    /// `meta(style=…)` so styled files stay styled across edits.
+    pub style: Option<Style>,
 }
 
 /// Pin the system instruction onto `cfg`. For Gemini, upload `cacheable_block`
@@ -198,6 +204,19 @@ pub(in crate::app) fn run_llm(
             .unwrap_or_else(|| prompt.clone()),
     };
 
+    // Precedence:
+    //   - Generate / Textures: the dialog's pick is the only source.
+    //   - Modify / Animate / Repair: the dialog's pick wins, but if it's
+    //     `None` we fall back to the file's `meta(style=…)` so styled
+    //     files stay styled across edits even when the user didn't
+    //     re-pick a style on this turn.
+    let effective_style: Option<Style> = match kind {
+        LlmKind::Generate | LlmKind::Textures => run_cfg.style,
+        LlmKind::Modify | LlmKind::Animate | LlmKind::Repair => run_cfg
+            .style
+            .or_else(|| existing.as_deref().and_then(parse_style_header)),
+    };
+
     let user_prompt = match kind {
         LlmKind::Generate => {
             // When the only input is an image, a non-empty text part still
@@ -338,6 +357,7 @@ pub(in crate::app) fn run_llm(
         LlmKind::Textures => unreachable!("run_llm is text-only; textures uses run_llm_textures"),
     };
 
+    let user_prompt = apply_style_to_prompt(&user_prompt, effective_style);
     let mut cfg = GenerateConfig::new(user_prompt);
     cfg.model = run_cfg.model.clone();
     cfg.seed = Some(seed);
@@ -389,6 +409,7 @@ pub(in crate::app) fn run_llm(
             );
             let wrapped =
                 mogen_dsl::stamp_mogen_version(&wrapped, env!("CARGO_PKG_VERSION"));
+            let wrapped = stamp_style_header(&wrapped, effective_style);
             LlmOutcome {
                 dsl: wrapped,
                 diagnostics: outcome.diagnostics,

@@ -71,6 +71,7 @@ meta (
 | `mogen_version` | string | **toolchain** | auto-stamped from the running mogen version on every save (`mogen generate`/`modify`/`animate`/`repair`/`textures` and Studio Save). Don't write it yourself. |
 | `description` | string | author | one-line summary |
 | `tags` | list of string | author | free-form labels |
+| `style` | string | toolchain | visual-style hint stamped by `mogen generate --style …` (or Studio's "New from Prompt" dropdown). One of `ps1`, `n64`, `low_poly`, `high_detail`, `arcade`, `voxel`, `cel_shaded`, `stylized_fantasy`, `cyberpunk`, `pixel_art`. The validator accepts any string so hand-edited experimental keys still load; `mogen` and Studio inherit the value on `modify` / `animate` / `repair` so styled files stay styled. |
 
 The block is purely informational — it's not consumed by the geometry
 pipeline. It survives lowering on `SceneGraph::meta` so tooling (Studio,

@@ -66,6 +66,9 @@ fn meta_from_node(n: &Node) -> Meta {
             ("prompt", Value::String(s)) | ("prompt", Value::Ident(s)) => {
                 m.prompt = Some(s.clone())
             }
+            ("style", Value::String(s)) | ("style", Value::Ident(s)) => {
+                m.style = Some(s.clone())
+            }
             _ => {} // type mismatches surfaced by the validator
         }
     }
@@ -542,6 +545,27 @@ mod tests {
         assert_eq!(m.seed, Some(1777726918483806000));
         assert_eq!(m.thinking.as_deref(), Some("medium"));
         assert_eq!(m.prompt.as_deref(), Some("a chair"));
+    }
+
+    #[test]
+    fn extract_style() {
+        let src = "meta (style=\"ps1\")\nscene { }\n";
+        let ast = crate::parse(src).unwrap();
+        let m = extract_meta(&ast).unwrap();
+        assert_eq!(m.style.as_deref(), Some("ps1"));
+    }
+
+    #[test]
+    fn upsert_and_read_style_attr() {
+        // The generic upsert helper should already work for `style`; this
+        // is a regression test so adding new attrs doesn't accidentally
+        // break the round-trip.
+        let src = "scene {}\n";
+        let out = upsert_meta_attr(src, "style", "voxel");
+        assert!(out.contains("meta (style = \"voxel\")"));
+        assert_eq!(read_meta_attr(&out, "style").as_deref(), Some("voxel"));
+        let updated = upsert_meta_attr(&out, "style", "pixel_art");
+        assert_eq!(read_meta_attr(&updated, "style").as_deref(), Some("pixel_art"));
     }
 
     #[test]

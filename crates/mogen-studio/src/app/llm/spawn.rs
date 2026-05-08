@@ -35,6 +35,11 @@ impl MogenStudioApp {
             // Populated per-call by `spawn_llm` from the active file's path
             // so relative `import "X.mog"` lookups resolve correctly.
             base_dir: None,
+            // Per-call style is set by `spawn_llm` from the active file's
+            // captured `gen_style` so Retry / follow-up edits stay
+            // consistent. `build_run_config` returns a default-empty value
+            // here to keep that boundary clean.
+            style: None,
         }
     }
 
@@ -85,6 +90,16 @@ impl MogenStudioApp {
             .path
             .as_ref()
             .and_then(|p| p.parent().map(|p| p.to_path_buf()));
+        // Per-call style: prefer the file's captured pick (set by the New
+        // from Prompt dialog at submit time, or by `loaded()` for an
+        // existing styled file) so Retry and follow-up modify/animate
+        // calls stay in style. Falls back to the persisted Settings
+        // default for fresh, never-styled tabs so the dropdown's last
+        // pick still applies on the first generate of a new session.
+        run_cfg.style = self
+            .active()
+            .gen_style
+            .or_else(|| self.settings.style());
         let sys_instr = self.cached_system_instruction();
 
         let provider_label = provider.label();
