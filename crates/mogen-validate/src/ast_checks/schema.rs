@@ -101,7 +101,7 @@ pub fn attrs_for_kind(kind: &str) -> &'static [&'static str] {
     match kind {
         "meta" => &[
             "name", "version", "mogen_version", "description", "tags",
-            "seed", "thinking", "prompt",
+            "seed", "thinking", "prompt", "style",
             // Stamped by MoGen Studio's Publish dialog after a successful
             // upload; subsequent publishes use them to republish into the
             // same MoGHub model instead of allocating a new slug.
@@ -206,6 +206,7 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         | ("meta", "seed")
         | ("meta", "thinking")
         | ("meta", "prompt")
+        | ("meta", "style")
         | ("meta", "moghub_model_id")
         | ("meta", "moghub_slug")
         | ("meta", "moghub_version") => "string",

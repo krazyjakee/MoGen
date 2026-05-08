@@ -144,6 +144,34 @@ mod meta_block_tests {
     }
 
     #[test]
+    fn meta_style_accepts_known_key() {
+        let src = r#"meta (style="ps1") scene { box "b" (size=[1,1,1]) }"#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().all(|d| d.severity != Severity::Error),
+            "meta(style=\"ps1\") should validate cleanly, got {diags:?}"
+        );
+        // No unknown-attr warning (the allowlist must include `style`).
+        assert!(
+            !diags.iter().any(|d| d.code == "W0102" && d.message.contains("\"style\"")),
+            "got {diags:?}"
+        );
+    }
+
+    #[test]
+    fn meta_style_accepts_freeform_string() {
+        // The validator deliberately leaves `style` as a free-form string so
+        // hand-edited files with experimental keys still load. mogen-llm
+        // narrows it to its own enum at the call site.
+        let src = r#"meta (style="weird-experiment") scene { box "b" (size=[1,1,1]) }"#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().all(|d| d.severity != Severity::Error),
+            "meta(style=…) with an unknown value should still validate, got {diags:?}"
+        );
+    }
+
+    #[test]
     fn meta_unknown_attr_warns() {
         let src = r#"meta (foo="bar") scene {}"#;
         let diags = diags_for(src);

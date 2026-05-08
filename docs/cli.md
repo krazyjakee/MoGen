@@ -38,6 +38,7 @@ A few flag patterns repeat across every LLM-driven subcommand
 | `--model <NAME>` | Gemini model id. Default `gemini-pro-latest` for text. For `textures`, the default depends on credentials: `gemini-3-pro-image-preview` when authenticated via OAuth (paid plan), otherwise `gemini-2.5-flash-image`. Pass `gemini-3.1-flash-image-preview` (or any other image model) to override. |
 | `--temperature <N>` | Sampling temperature. Library default is `0.3` when omitted. |
 | `--thinking <low\|medium\|high\|xhigh>` | Cap server-side reasoning. `low` = 512 tokens, `medium` = 2048, `high` = 8192 (default), `xhigh` = 24576 (slowest, most careful). |
+| `--style <ps1\|n64\|low-poly\|high-detail\|arcade\|voxel\|cel-shaded\|stylized-fantasy\|cyberpunk\|pixel-art>` | Visual-style hint. Prepends a "## Style" guidance block to the prompt and stamps `meta(style="…")` into the saved DSL. Sticky across `modify` / `animate` / `repair` runs — once stamped, those subcommands inherit the style from the file unless `--style` is passed again to override. Omit to send the prompt unchanged. |
 | `--budget_tokens <N>` | Abort if total prompt + response token count exceeds this limit. |
 | `--max-repair-iters <N>` | Repair attempts after the first try. Default `2`. |
 | `--cached-content <NAME>` | Reuse an existing `cachedContents/...` resource for the system instruction (skips re-uploading the grammar/stdlib reference). |
@@ -45,8 +46,9 @@ A few flag patterns repeat across every LLM-driven subcommand
 | `--seed <U64>` | Seed embedded in the DSL header for reproducibility. Defaults to the seed parsed from an existing `.mog`'s header, or a random one if absent. |
 | `--dry-run` | Skip GLB compilation and disk writes — print the generated/edited DSL only. |
 
-The seed, the thinking budget, and the original prompt are stamped into the
-top-level `meta(...)` block of every generated `.mog`:
+The seed, the thinking budget, the original prompt, and (when picked) the
+visual style are stamped into the top-level `meta(...)` block of every
+generated `.mog`:
 
 ```mog
 meta (
@@ -54,6 +56,7 @@ meta (
   seed = "1777210527637284168",
   thinking = "high",
   prompt = "A simple four-legged chair.",
+  style = "low_poly",
 )
 ```
 
@@ -264,6 +267,8 @@ non-zero, leaving the broken `.mog` on disk for inspection.
 mogen generate "a wooden stool" --out stool.glb
 mogen generate "a clockwork dragon" --thinking xhigh --out dragon.glb
 mogen generate "a cube" --thinking low --dry-run                  # no API cost beyond one fast call
+mogen generate "a wooden stool" --style ps1 --out stool.glb       # PS1-style chunky low-poly
+mogen modify stool.mog "make it a barstool"                       # inherits meta(style="ps1") automatically
 ```
 
 ---

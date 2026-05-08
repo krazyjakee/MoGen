@@ -3,7 +3,8 @@ use std::path::PathBuf;
 
 use anyhow::{anyhow, bail, Context, Result};
 use mogen_llm::{
-    embed_seed_header, generate_with_repair, GenerateConfig, Provider, RepairConfig, ThinkingLevel,
+    apply_style_to_prompt, embed_seed_header, generate_with_repair, stamp_style_header,
+    GenerateConfig, Provider, RepairConfig, Style, ThinkingLevel,
 };
 
 use crate::commands::build::build;
@@ -30,6 +31,10 @@ pub(crate) struct GenerateArgs {
     pub temperature: Option<f32>,
     /// CLI override; `None` falls through to the library default.
     pub thinking: Option<ThinkingLevel>,
+    /// CLI override; `None` opts out of any style guidance (no prompt
+    /// suffix, no `meta(style=…)` line). Generate has no prior file to
+    /// inherit from, so this is the only source.
+    pub style: Option<Style>,
 }
 
 pub(crate) fn generate(args: GenerateArgs) -> Result<()> {
@@ -61,7 +66,11 @@ pub(crate) fn generate(args: GenerateArgs) -> Result<()> {
 
     let seed = args.seed.unwrap_or_else(pick_default_seed);
 
-    let mut cfg = GenerateConfig::new(&args.prompt);
+    // Prepend the visual-style guidance block when the user picked one.
+    // `None` is a passthrough so existing prompts and goldens stay
+    // byte-identical.
+    let user_prompt = apply_style_to_prompt(&args.prompt, args.style);
+    let mut cfg = GenerateConfig::new(user_prompt);
     cfg.model = model.clone();
     cfg.budget_tokens = args.budget_tokens;
     if let Some(t) = args.temperature {
@@ -102,6 +111,7 @@ pub(crate) fn generate(args: GenerateArgs) -> Result<()> {
 
     let wrapped = embed_seed_header(&outcome.dsl, seed, &args.prompt, Some(effective_thinking));
     let wrapped = mogen_dsl::stamp_mogen_version(&wrapped, env!("CARGO_PKG_VERSION"));
+    let wrapped = stamp_style_header(&wrapped, args.style);
 
     if !outcome.is_ok() {
         pb.abandon_with_message(format!(

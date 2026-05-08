@@ -7,6 +7,7 @@ use eframe::egui;
 use mogen_core::Diagnostic;
 use mogen_export::ExportOptions;
 use mogen_llm::gemini::{ThinkingLevel, Usage};
+use mogen_llm::Style;
 use mogen_llm::textures::{TextureStage, DEFAULT_TEXTURE_SIZE};
 
 use crate::pipeline::CompileResult;
@@ -736,6 +737,11 @@ pub(super) struct FileState {
     /// re-issue the same call after a transient failure without forcing the
     /// user to re-pick the file.
     pub(super) gen_image: Option<GenImageInput>,
+    /// Visual style captured at submit time, so the Retry button (and any
+    /// follow-up modify/animate the user runs without re-opening the dialog)
+    /// can re-issue the same call without re-reading the dialog. `None`
+    /// means "no style" — the prompt is sent as-is.
+    pub(super) gen_style: Option<Style>,
     pub(super) mod_prompt: String,
     pub(super) anim_prompt: String,
     pub(super) texture_cfg: TextureUiConfig,
@@ -827,6 +833,7 @@ impl FileState {
             last_watch_check: None,
             gen_prompt: String::new(),
             gen_image: None,
+            gen_style: None,
             mod_prompt: String::new(),
             anim_prompt: String::new(),
             texture_cfg: TextureUiConfig::default(),
@@ -859,6 +866,7 @@ impl FileState {
     ) -> Self {
         let status = format!("opened {}", path.display());
         let thinking_override = mogen_llm::parse_thinking_header(&source);
+        let gen_style = mogen_llm::parse_style_header(&source);
         Self {
             tab_id,
             path: Some(path),
@@ -870,6 +878,7 @@ impl FileState {
             last_watch_check: None,
             gen_prompt: String::new(),
             gen_image: None,
+            gen_style,
             mod_prompt: String::new(),
             anim_prompt: String::new(),
             texture_cfg: TextureUiConfig::default(),
