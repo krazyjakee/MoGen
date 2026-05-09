@@ -231,6 +231,10 @@ pub(super) enum LlmErrorClass {
     ServerError,
     BadRequest,
     Other,
+    /// Partial success — typically a textures run where some materials
+    /// finished and some failed. Renders in a softer accent than a hard
+    /// failure.
+    Partial,
 }
 
 /// Running aggregate of every Gemini call made this app session, plus an
@@ -623,10 +627,15 @@ pub(super) struct AutocompleteState {
     pub(super) range: Option<std::ops::Range<usize>>,
     /// Screen-space anchor point (below-left of the caret) for the popup.
     pub(super) anchor: Option<egui::Pos2>,
-    /// When the user hits Esc we want the popup to stay closed even though
-    /// the caret is still in an identifier. Cleared the next time the source
-    /// changes (so typing another letter re-opens it).
-    pub(super) suppressed_for_source_len: Option<usize>,
+    /// When the user hits Esc we want the popup to stay closed for a short
+    /// window even though the caret is still in an identifier. Time-based
+    /// rather than length-based so deleting and re-typing the same character
+    /// (which leaves source length unchanged) still re-opens the popup.
+    pub(super) suppressed_until: Option<std::time::Instant>,
+    /// Last candidate-set fingerprint we showed. When the prefix shifts
+    /// (so the candidate set changes), reset `selected` to 0 instead of
+    /// clamping at the old index — the top match should be preselected.
+    pub(super) last_signature: Option<u64>,
 }
 
 /// Deferred action decoded from a popup key press. Applied after the TextEdit
@@ -657,6 +666,14 @@ pub(super) struct FindState {
     pub(super) focus_pending: bool,
     /// User toggle — case-insensitive by default to match every modern editor.
     pub(super) case_sensitive: bool,
+    /// When true, the query is compiled as a Rust regex; when false (the
+    /// default) it's a plain substring match. The toggle button surfaces this
+    /// next to the case-sensitivity toggle.
+    pub(super) use_regex: bool,
+    /// Set when the latest regex query failed to compile so the bar can
+    /// surface a "(invalid regex)" hint instead of silently showing zero
+    /// matches.
+    pub(super) regex_invalid: bool,
     /// When `Some`, the editor should scroll to (and re-highlight) the match
     /// at this index after rendering. Set by Enter / F3 / Next / Prev.
     pub(super) scroll_pending: Option<usize>,

@@ -18,6 +18,7 @@ impl MogenStudioApp {
         let mut do_build = false;
         let mut do_cancel = false;
         let mut do_close = false;
+        let mut save_then_export = false;
         let i = self.active;
         let file_has_path = self.files[i].path.is_some();
         let last_status = self.files[i].status.clone();
@@ -42,6 +43,16 @@ impl MogenStudioApp {
                         "untitled MOG file — output will be written to the project root \
                          as untitled.glb. Save the MOG file first to export next to it.",
                     );
+                    if ui
+                        .button("Save MOG first…")
+                        .on_hover_text(
+                            "Open the Save-As picker now so the GLB exports next to \
+                             the saved .mog instead of falling back to the project root.",
+                        )
+                        .clicked()
+                    {
+                        save_then_export = true;
+                    }
                 }
 
                 ui.add_space(10.0);
@@ -119,6 +130,14 @@ impl MogenStudioApp {
                 }
             });
 
+        if save_then_export {
+            // Close the export dialog so the picker isn't stacked behind it,
+            // then trigger the Save-As flow. The user re-opens File → Build
+            // GLB once the file has a path.
+            self.show_export = false;
+            self.save_as();
+            return;
+        }
         if !open || do_close {
             self.show_export = false;
             return;

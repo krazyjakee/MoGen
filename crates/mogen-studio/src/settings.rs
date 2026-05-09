@@ -320,6 +320,13 @@ pub struct Settings {
     /// without re-authenticating.
     #[serde(default)]
     pub image_provider: String,
+
+    /// GitHub release tag the user explicitly skipped from the
+    /// Help → Check for Updates dialog. The dialog suppresses the
+    /// "update available" CTA when the latest tag matches this string;
+    /// any newer release supersedes the skip.
+    #[serde(default)]
+    pub skipped_update_tag: String,
 }
 
 /// Default viewer background. Independent of the UI theme so the model's

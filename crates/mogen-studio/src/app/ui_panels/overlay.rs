@@ -41,10 +41,13 @@ impl MogenStudioApp {
                                 // Hotkeys are bare W/E/R (Godot / Unity
                                 // convention) — surfaced in the tooltip so
                                 // users can discover them without docs.
+                                // Labels match the bare W/E/R hotkeys so the
+                                // button text and the keyboard binding don't
+                                // contradict each other.
                                 for (label, mode, tip) in [
-                                    ("T", GizmoMode::Translate, "Translate gizmo  (W)"),
-                                    ("R", GizmoMode::Rotate, "Rotate gizmo  (E)"),
-                                    ("S", GizmoMode::Scale, "Scale gizmo  (R)"),
+                                    ("W", GizmoMode::Translate, "Translate gizmo  (W)"),
+                                    ("E", GizmoMode::Rotate, "Rotate gizmo  (E)"),
+                                    ("R", GizmoMode::Scale, "Scale gizmo  (R)"),
                                 ] {
                                     let selected = cur == mode;
                                     if ui
@@ -243,11 +246,18 @@ impl MogenStudioApp {
                                 .on_hover_text(if cinema_on {
                                     "Stop cinema mode and restore the previous camera"
                                 } else {
-                                    "Play an automated sequence of camera shots"
+                                    "Play an automated sequence of camera shots. \
+                                     Animations resume only if they were already \
+                                     playing — toggle Play first if you want the \
+                                     subject to move while the camera pans."
                                 })
                                 .clicked()
                             {
-                                self.viewer.set_cinema_active(!cinema_on);
+                                // Don't force-play animations on enable: the
+                                // previous default surprised users who were
+                                // previewing a static model. They can hit Play
+                                // separately if they want both at once.
+                                self.viewer.set_cinema_active(!cinema_on, false);
                             }
                         });
                     });
@@ -258,10 +268,20 @@ impl MogenStudioApp {
         // and never competes with the right-hand inspector for horizontal room
         // (DCC convention — Blender/Maya put help text at the bottom).
         let cinema_on = self.viewer.is_cinema_active();
+        let ctrl_held = ctx.input(|i| i.modifiers.ctrl || i.modifiers.command);
         let status_text: Option<String> = if cinema_on {
             self.viewer
                 .cinema_shot_label()
                 .map(|name| format!("now: {name}"))
+        } else if ctrl_held {
+            // Ctrl held = snap mode. Surface the actual step values so users
+            // know exactly what they're snapping to before committing a drag.
+            Some(format!(
+                "snap: translate {}u · rotate {}° · scale {}× — release ctrl for free drag",
+                crate::viewer::state::TRANSLATE_SNAP_STEP,
+                crate::viewer::state::ROTATE_SNAP_STEP_DEG,
+                crate::viewer::state::SCALE_SNAP_STEP,
+            ))
         } else {
             Some(
                 "click: select · shift/cmd+click: add · del: delete selected · \
@@ -279,6 +299,43 @@ impl MogenStudioApp {
                         .fill(ui.visuals().window_fill().linear_multiply(0.85))
                         .show(ui, |ui| {
                             ui.label(egui::RichText::new(text).weak());
+                        });
+                });
+        }
+
+        // First-launch / empty-buffer state. Rendered centred over the
+        // viewport so the user has somewhere to start instead of staring at
+        // a black canvas.
+        if !self.viewer.has_scene() {
+            egui::Area::new(egui::Id::new("viewport_empty_state"))
+                .fixed_pos(viewport_rect.center())
+                .pivot(egui::Align2::CENTER_CENTER)
+                .interactable(false)
+                .show(ctx, |ui| {
+                    egui::Frame::popup(ui.style())
+                        .fill(ui.visuals().window_fill().linear_multiply(0.85))
+                        .inner_margin(egui::Margin::symmetric(20.0, 16.0))
+                        .show(ui, |ui| {
+                            ui.vertical_centered(|ui| {
+                                ui.label(
+                                    egui::RichText::new("No scene loaded yet")
+                                        .heading()
+                                        .strong(),
+                                );
+                                ui.add_space(6.0);
+                                ui.label(
+                                    "Type DSL in the editor on the left, or use one of:",
+                                );
+                                ui.add_space(4.0);
+                                ui.label(
+                                    egui::RichText::new(
+                                        "• File → Open…  to load a .mog file\n\
+                                         • File → New from Prompt…  to generate one with AI\n\
+                                         • Right-click the viewport  to add a primitive",
+                                    )
+                                    .weak(),
+                                );
+                            });
                         });
                 });
         }

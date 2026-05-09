@@ -98,44 +98,72 @@ impl MogenStudioApp {
 
     /// Walk the active source and refill `find.matches` with char-index
     /// ranges. Cheap for typical .mog sizes; we just call this whenever the
-    /// query, source, or case toggle could have changed.
+    /// query, source, or case toggle could have changed. The match indices
+    /// are CHAR offsets, not byte offsets — that's the convention the rest
+    /// of the find code (overlay, scroll, caret) consumes.
     pub(super) fn recompute_find_matches(&mut self) {
         let src = &self.files[self.active].source;
         self.find.matches.clear();
+        self.find.regex_invalid = false;
         if self.find.query.is_empty() {
             return;
         }
-        let needle: Vec<char> = self.find.query.chars().collect();
-        let n = needle.len();
-        if n == 0 {
-            return;
-        }
-        let hay: Vec<char> = src.chars().collect();
-        if hay.len() < n {
-            return;
-        }
-        let cs = self.find.case_sensitive;
-        for start in 0..=hay.len() - n {
-            let mut ok = true;
-            for j in 0..n {
-                let a = hay[start + j];
-                let b = needle[j];
-                let eq = if cs {
-                    a == b
-                } else {
-                    // `to_lowercase` returns an iterator because some chars
-                    // map to multiple lowercase chars (German ß → ss). For
-                    // search the simple comparison is good enough — fold both
-                    // sides through the same iterator and check equality.
-                    a.to_lowercase().eq(b.to_lowercase())
-                };
-                if !eq {
-                    ok = false;
-                    break;
+
+        if self.find.use_regex {
+            // (?i) at the front for case-insensitive mode keeps the regex
+            // human-readable in the input bar (no second toggle to track).
+            let mut pattern = String::new();
+            if !self.find.case_sensitive {
+                pattern.push_str("(?i)");
+            }
+            pattern.push_str(&self.find.query);
+            let compiled = match regex::Regex::new(&pattern) {
+                Ok(r) => r,
+                Err(_) => {
+                    self.find.regex_invalid = true;
+                    return;
+                }
+            };
+            for m in compiled.find_iter(src) {
+                let start_char = src[..m.start()].chars().count();
+                let end_char = start_char + src[m.start()..m.end()].chars().count();
+                if start_char != end_char {
+                    self.find.matches.push(start_char..end_char);
                 }
             }
-            if ok {
-                self.find.matches.push(start..start + n);
+        } else {
+            let needle: Vec<char> = self.find.query.chars().collect();
+            let n = needle.len();
+            if n == 0 {
+                return;
+            }
+            let hay: Vec<char> = src.chars().collect();
+            if hay.len() < n {
+                return;
+            }
+            let cs = self.find.case_sensitive;
+            for start in 0..=hay.len() - n {
+                let mut ok = true;
+                for j in 0..n {
+                    let a = hay[start + j];
+                    let b = needle[j];
+                    let eq = if cs {
+                        a == b
+                    } else {
+                        // `to_lowercase` returns an iterator because some
+                        // chars map to multiple lowercase chars (German ß →
+                        // ss). Fold both sides through the same iterator and
+                        // check equality.
+                        a.to_lowercase().eq(b.to_lowercase())
+                    };
+                    if !eq {
+                        ok = false;
+                        break;
+                    }
+                }
+                if ok {
+                    self.find.matches.push(start..start + n);
+                }
             }
         }
         if self.find.current >= self.find.matches.len() {
@@ -206,13 +234,15 @@ impl MogenStudioApp {
 
                     let label = if self.find.query.is_empty() {
                         String::new()
+                    } else if self.find.regex_invalid {
+                        "(invalid regex)".to_string()
                     } else if self.find.matches.is_empty() {
                         "No results".to_string()
                     } else {
                         format!("{} of {}", self.find.current + 1, self.find.matches.len())
                     };
                     ui.add_sized(
-                        [88.0, 16.0],
+                        [110.0, 16.0],
                         egui::Label::new(egui::RichText::new(label).weak()),
                     );
 
@@ -234,10 +264,27 @@ impl MogenStudioApp {
                     let mut cs = self.find.case_sensitive;
                     if ui
                         .toggle_value(&mut cs, "Aa")
-                        .on_hover_text("Match case")
+                        .on_hover_text(if cs {
+                            "Match case (on) — click to make search case-insensitive"
+                        } else {
+                            "Match case (off) — click to make search case-sensitive"
+                        })
                         .changed()
                     {
                         self.find.case_sensitive = cs;
+                        query_changed = true;
+                    }
+                    let mut rx = self.find.use_regex;
+                    if ui
+                        .toggle_value(&mut rx, ".*")
+                        .on_hover_text(if rx {
+                            "Regex (on) — query is compiled as a Rust regex"
+                        } else {
+                            "Regex (off) — click to interpret the query as a regex pattern"
+                        })
+                        .changed()
+                    {
+                        self.find.use_regex = rx;
                         query_changed = true;
                     }
                     ui.with_layout(

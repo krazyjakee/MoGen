@@ -3,17 +3,57 @@ use eframe::egui;
 use crate::app::types::EnhanceTarget;
 use crate::app::MogenStudioApp;
 
+/// Build the hover text shown on a disabled button. Lists every gating
+/// condition currently failing so the user knows which prerequisite to fix
+/// without having to discover them one by one.
+fn disabled_reason(reasons: &[(&str, bool)]) -> Option<String> {
+    let blockers: Vec<&str> = reasons
+        .iter()
+        .filter_map(|(label, ok)| if !ok { Some(*label) } else { None })
+        .collect();
+    if blockers.is_empty() {
+        None
+    } else if blockers.len() == 1 {
+        Some(format!("Disabled — {}", blockers[0]))
+    } else {
+        Some(format!("Disabled:\n  • {}", blockers.join("\n  • ")))
+    }
+}
+
 impl MogenStudioApp {
     pub(in crate::app) fn ui_llm(&mut self, ui: &mut egui::Ui) {
         let has_key = self.resolve_api_key().is_some();
+        let mut request_open_prefs = false;
         if !has_key {
+            // Treat the no-key banner as a real call-to-action: state which
+            // provider needs a key and offer a one-click jump into the right
+            // pane of Preferences. Multi-line so each path the user can take
+            // (paste / env var) gets its own line.
+            let provider = self.settings.provider().display_name();
             ui.colored_label(
                 egui::Color32::from_rgb(230, 200, 100),
-                format!(
-                    "no {} API key — set one in Edit → Preferences…",
-                    self.settings.provider().display_name(),
-                ),
+                format!("{provider}: no API key — every LLM action below is disabled."),
             );
+            ui.label(
+                egui::RichText::new(
+                    "Quickest path: click \"Open Preferences\" and paste a \
+                     key. The matching environment variable also works if \
+                     you'd rather not store the key on disk.",
+                )
+                .weak(),
+            );
+            ui.horizontal(|ui| {
+                if ui.button("Open Preferences").clicked() {
+                    request_open_prefs = true;
+                }
+                ui.label(
+                    egui::RichText::new("(Edit → Preferences… → LLM)").weak(),
+                );
+            });
+            ui.add_space(4.0);
+        }
+        if request_open_prefs {
+            self.show_options = true;
         }
 
         // Gate buttons on *this file's* in-flight state only — other files can
@@ -22,6 +62,11 @@ impl MogenStudioApp {
         let busy = self.active().llm_in_flight.is_some();
         let src_empty = self.active().source.trim().is_empty();
         let has_path = self.active().path.is_some();
+        let provider_name_full = self.settings.provider().display_name();
+        let no_key_msg = format!("set a {provider_name_full} API key in Preferences");
+        let busy_msg = "another LLM call is already in flight on this tab";
+        let no_src_msg = "open or paste a .mog file first";
+        let no_path_msg = "save the file first — textures writes PNGs next to it";
 
         // Show the classified error banner above the prompt fields so users
         // see the failure before deciding whether to Retry or edit.
@@ -51,12 +96,20 @@ impl MogenStudioApp {
             },
         );
         let mod_enabled = has_key && !busy && !src_empty;
+        let mod_reason = disabled_reason(&[
+            (no_key_msg.as_str(), has_key),
+            (busy_msg, !busy),
+            (no_src_msg, !src_empty),
+        ]);
         ui.horizontal(|ui| {
-            if ui
+            let resp = ui
                 .add_enabled(mod_enabled, egui::Button::new("Modify"))
-                .on_hover_text("Smallest-edit rewrite of the current MOG file")
-                .clicked()
-            {
+                .on_hover_text(
+                    mod_reason
+                        .as_deref()
+                        .unwrap_or("Smallest-edit rewrite of the current MOG file"),
+                );
+            if resp.clicked() {
                 let ctx = ui.ctx().clone();
                 self.start_llm_modify(ctx);
             }
@@ -85,12 +138,20 @@ impl MogenStudioApp {
             },
         );
         let anim_enabled = has_key && !busy && !src_empty;
+        let anim_reason = disabled_reason(&[
+            (no_key_msg.as_str(), has_key),
+            (busy_msg, !busy),
+            (no_src_msg, !src_empty),
+        ]);
         ui.horizontal(|ui| {
-            if ui
+            let resp = ui
                 .add_enabled(anim_enabled, egui::Button::new("Animate"))
-                .on_hover_text("Append joints/clips/skeleton to the current MOG file")
-                .clicked()
-            {
+                .on_hover_text(
+                    anim_reason
+                        .as_deref()
+                        .unwrap_or("Append joints/clips/skeleton to the current MOG file"),
+                );
+            if resp.clicked() {
                 let ctx = ui.ctx().clone();
                 self.start_llm_animate(ctx);
             }
@@ -135,16 +196,20 @@ impl MogenStudioApp {
         } else {
             "Repair".to_string()
         };
-        let repair_tip = if src_empty {
-            "Open or paste a .mog file first".to_string()
-        } else if error_count == 0 {
-            "No validation errors to repair".to_string()
-        } else {
-            format!("Feed the diagnostics (with spans and fix hints) back to {provider_name}")
-        };
+        let no_errors_msg =
+            "no validation errors to fix — Repair lights up when the file fails to compile";
+        let repair_reason = disabled_reason(&[
+            (no_key_msg.as_str(), has_key),
+            (busy_msg, !busy),
+            (no_src_msg, !src_empty),
+            (no_errors_msg, error_count > 0),
+        ]);
+        let repair_default_tip = format!(
+            "Feed the diagnostics (with spans and fix hints) back to {provider_name}"
+        );
         if ui
             .add_enabled(repair_enabled, egui::Button::new(repair_label))
-            .on_hover_text(repair_tip)
+            .on_hover_text(repair_reason.as_deref().unwrap_or(&repair_default_tip))
             .clicked()
         {
             let ctx = ui.ctx().clone();
@@ -226,12 +291,44 @@ impl MogenStudioApp {
         self.files[self.active].texture_cfg.expanded = resp.openness > 0.5;
 
         let tex_enabled = has_key && !busy && !src_empty && has_path;
+        let tex_reason = disabled_reason(&[
+            (no_key_msg.as_str(), has_key),
+            (busy_msg, !busy),
+            (no_src_msg, !src_empty),
+            (no_path_msg, has_path),
+        ]);
+        // Pre-flight cost estimate: count materials in the most recent
+        // compile result, multiply by the per-image price, and surface the
+        // estimate next to the button. Image-only price (the textures
+        // pipeline always uses Gemini Flash Image regardless of the active
+        // text provider).
+        let material_count = self
+            .active()
+            .last_result
+            .as_ref()
+            .and_then(|r| r.scene.as_ref())
+            .map(|s| s.materials.len())
+            .unwrap_or(0);
+        let image_price = crate::app::pricing::image_pricing("gemini-2.5-flash-image");
+        let est_cost = material_count as f64 * image_price.per_image_usd;
+        if material_count > 0 && image_price.per_image_usd > 0.0 {
+            ui.label(
+                egui::RichText::new(format!(
+                    "Pre-flight: {material_count} material{} × {} ≈ {} per run \
+                     (PBR maps are derived locally, no extra cost).",
+                    if material_count == 1 { "" } else { "s" },
+                    crate::app::pricing::format_usd(image_price.per_image_usd),
+                    crate::app::pricing::format_usd(est_cost),
+                ))
+                .weak(),
+            );
+        }
         if ui
             .add_enabled(tex_enabled, egui::Button::new("Generate Textures"))
-            .on_hover_text(
+            .on_hover_text(tex_reason.as_deref().unwrap_or(
                 "Run the textures pipeline with the options above. \
                  Writes PNGs to ./textures/ next to the .mog.",
-            )
+            ))
             .clicked()
         {
             let ctx = ui.ctx().clone();

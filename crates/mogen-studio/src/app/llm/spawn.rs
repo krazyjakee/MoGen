@@ -57,16 +57,20 @@ impl MogenStudioApp {
             Some(c) => c,
             None => {
                 self.active_mut().status = if slot.is_gemini_oauth() {
-                    "no Gemini OAuth token — sign in with Google in Edit → Preferences… \
-                     (or switch to \"Gemini (API key)\")"
+                    "Gemini OAuth: not signed in. Open Edit → Preferences and \
+                     sign in with Google, or switch the active provider to \
+                     \"Gemini (API key)\"."
                         .to_string()
                 } else if matches!(provider, mogen_llm::Provider::Gemini) {
-                    "no Gemini API key — set GEMINI_API_KEY, paste a key in Edit → \
-                     Preferences…, or switch to \"Gemini (Google OAuth)\""
+                    "Gemini: no API key. Pick one path: paste a key in \
+                     Edit → Preferences, set $GEMINI_API_KEY in your \
+                     environment, or switch the active provider to \
+                     \"Gemini (Google OAuth)\" and sign in."
                         .to_string()
                 } else {
                     format!(
-                        "no {} API key — set one in Options… or export {}",
+                        "{}: no API key. Paste one in Edit → Preferences or \
+                         export ${} in your environment.",
                         provider.label(),
                         provider.env_var(),
                     )

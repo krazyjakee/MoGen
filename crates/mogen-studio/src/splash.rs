@@ -117,7 +117,7 @@ pub fn draw(
                 text_pos,
                 egui::Align2::LEFT_BOTTOM,
                 label,
-                egui::FontId::proportional(13.0),
+                egui::FontId::proportional(14.5),
                 egui::Color32::from_rgb(232, 226, 210),
             );
 
@@ -130,7 +130,7 @@ pub fn draw(
                 title_pos,
                 egui::Align2::RIGHT_BOTTOM,
                 title,
-                egui::FontId::proportional(13.0),
+                egui::FontId::proportional(14.5),
                 egui::Color32::from_rgba_unmultiplied(232, 226, 210, 200),
             );
         });

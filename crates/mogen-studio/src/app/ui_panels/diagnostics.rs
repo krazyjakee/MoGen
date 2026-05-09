@@ -58,7 +58,8 @@ impl MogenStudioApp {
     }
 
     pub(in crate::app) fn ui_diagnostics(&mut self, ui: &mut egui::Ui) {
-        let f = &self.files[self.active];
+        let i = self.active;
+        let f = &self.files[i];
         let Some(result) = &f.last_result else {
             ui.label("(no build yet)");
             return;
@@ -74,6 +75,10 @@ impl MogenStudioApp {
             }
             return;
         }
+        // Collect the offset to jump to outside the loop because the
+        // diagnostic row borrows `f` immutably and we need mutable access to
+        // `self.files[i]` to push the pending caret.
+        let mut jump_to: Option<usize> = None;
         for d in &result.diagnostics {
             let (color, tag) = match d.severity {
                 Severity::Error => (egui::Color32::from_rgb(230, 100, 100), "error"),
@@ -83,11 +88,24 @@ impl MogenStudioApp {
             ui.horizontal_wrapped(|ui| {
                 ui.colored_label(color, format!("[{tag}] {}", d.code));
                 if let Some(span) = d.span {
-                    let (line, col) = offset_to_line_col(&f.source, span.start);
-                    ui.label(format!("{line}:{col}"));
+                    let safe_start = span.start.min(f.source.len());
+                    let (line, col) = offset_to_line_col(&f.source, safe_start);
+                    // Clickable line:col jumps the editor caret to the
+                    // diagnostic site. Underlined link styling follows the
+                    // rest of the app's convention.
+                    let link = ui.add(egui::Link::new(
+                        egui::RichText::new(format!("{line}:{col}")).underline(),
+                    ));
+                    if link.clicked() {
+                        jump_to = Some(safe_start);
+                    }
+                    link.on_hover_text("Jump editor caret to this location");
                 }
                 ui.label(&d.message);
             });
+        }
+        if let Some(offset) = jump_to {
+            self.files[i].pending_caret = Some(offset);
         }
     }
 }

@@ -62,6 +62,16 @@ impl MogenStudioApp {
                 ui.add_space(2.0);
                 ui.label(egui::RichText::new(&path_disp).monospace().weak());
             }
+            // Tell the user up front that closing the dialog without picking
+            // an option keeps their buffer (i.e. the "Keep mine" / "Keep
+            // buffer" branch).
+            ui.add_space(4.0);
+            ui.label(
+                egui::RichText::new(
+                    "Closing this dialog without choosing keeps your buffer.",
+                )
+                .weak(),
+            );
             ui.add_space(10.0);
             match kind {
                 ExternalChangeKind::Modified => {
@@ -114,9 +124,14 @@ impl MogenStudioApp {
                         {
                             do_keep = true;
                         }
+                        // Spacer so destructive Close tab is visually separated
+                        // from the safe options on the left.
+                        ui.add_space(20.0);
                         if ui
                             .button("Close tab")
-                            .on_hover_text("Close this tab without saving.")
+                            .on_hover_text(
+                                "Close this tab without saving — destructive, can't be undone.",
+                            )
                             .clicked()
                         {
                             do_close = true;

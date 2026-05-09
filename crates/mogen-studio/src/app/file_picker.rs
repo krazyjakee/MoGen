@@ -451,11 +451,15 @@ impl MogenStudioApp {
                         ui.add_space(4.0);
                         ui.horizontal(|ui| {
                             if picker.mode.is_save() {
-                                ui.label("Filename:");
+                                ui.label("Filename:")
+                                    .on_hover_text(
+                                        "The .mog extension is added automatically \
+                                         if you leave it off.",
+                                    );
                                 let save_resp = ui.add(
                                     egui::TextEdit::singleline(&mut picker.save_name_draft)
                                         .desired_width(240.0)
-                                        .hint_text("scene.mog"),
+                                        .hint_text("scene.mog (or scene — .mog is added)"),
                                 );
                                 if picker.focus_save_name_pending {
                                     save_resp.request_focus();
@@ -519,11 +523,40 @@ impl MogenStudioApp {
                                             !picker.save_name_draft.trim().is_empty()
                                         }
                                     };
+                                    // Spell out the gating condition for the
+                                    // disabled state — silent disabled buttons
+                                    // make users assume the picker is broken.
+                                    let confirm_tip = if confirm_enabled {
+                                        match &picker.mode {
+                                            PickerMode::SaveAs { .. } => {
+                                                "Save as .mog (extension auto-appended)"
+                                            }
+                                            _ => "Open the selected file",
+                                        }
+                                        .to_string()
+                                    } else {
+                                        match &picker.mode {
+                                            PickerMode::Open => {
+                                                "Disabled — pick a .mog file from the grid"
+                                                    .into()
+                                            }
+                                            PickerMode::Import => {
+                                                "Disabled — pick at least one .mog module"
+                                                    .into()
+                                            }
+                                            PickerMode::SaveAs { .. } => {
+                                                "Disabled — type a filename above (.mog \
+                                                 extension is auto-appended)"
+                                                    .into()
+                                            }
+                                        }
+                                    };
                                     if ui
                                         .add_enabled(
                                             confirm_enabled,
                                             egui::Button::new(picker.mode.confirm_label()),
                                         )
+                                        .on_hover_text(confirm_tip)
                                         .clicked()
                                     {
                                         do_confirm = true;
@@ -580,7 +613,15 @@ impl MogenStudioApp {
                                     }
                                 }
                                 if picker.entries.is_empty() {
-                                    ui.weak("(no .mog files here)");
+                                    ui.add_space(8.0);
+                                    ui.label(
+                                        egui::RichText::new("No .mog files in this folder")
+                                            .strong(),
+                                    );
+                                    ui.label(
+                                        "Browse to a different directory using the path \
+                                         bar above, or use \"New folder\" to create one.",
+                                    );
                                 }
                             });
                         });
@@ -871,8 +912,8 @@ fn paint_cell(
     painter.text(
         label_rect.center_top() + egui::vec2(0.0, 2.0),
         egui::Align2::CENTER_TOP,
-        truncate_for_cell(&entry.name, 22),
-        egui::TextStyle::Small.resolve(ui.style()),
+        truncate_for_cell(&entry.name, 18),
+        egui::TextStyle::Body.resolve(ui.style()),
         label_color,
     );
 
@@ -936,7 +977,7 @@ fn paint_thumb_placeholder(
         rect.center(),
         egui::Align2::CENTER_CENTER,
         label,
-        egui::TextStyle::Small.resolve(&egui::Style::default()),
+        egui::TextStyle::Body.resolve(&egui::Style::default()),
         visuals.weak_text_color(),
     );
 }

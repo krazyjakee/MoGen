@@ -292,6 +292,66 @@ impl MogenStudioApp {
                         }
                     });
 
+                // --- seed field ---
+                // Surfaces the existing global seed override so users can
+                // lock down a result they liked (or A/B two prompts with the
+                // same seed) without editing settings.json or the .mog
+                // header by hand. Empty input = "random per call".
+                ui.add_space(4.0);
+                ui.label("Seed (optional)").on_hover_text(
+                    "Lock the random seed used for generation. Same seed + \
+                     same prompt + same model usually reproduces the same \
+                     output. Leave blank to roll a fresh seed each call.",
+                );
+                ui.horizontal(|ui| {
+                    let seed_id = egui::Id::new("new_prompt_seed");
+                    // Draft buffer lives on the app so the dialog can edit
+                    // freely without parsing on every keystroke.
+                    let buf = &mut self.options_seed_draft;
+                    crate::app::text_menu::text_edit_with_menu(
+                        ui,
+                        seed_id,
+                        buf,
+                        |ui, text| {
+                            ui.add(
+                                egui::TextEdit::singleline(text)
+                                    .hint_text("blank = random")
+                                    .desired_width(160.0)
+                                    .id(seed_id),
+                            )
+                        },
+                    );
+                    if ui
+                        .button("Randomise")
+                        .on_hover_text(
+                            "Replace the field with a fresh random 64-bit seed",
+                        )
+                        .clicked()
+                    {
+                        use std::time::{SystemTime, UNIX_EPOCH};
+                        let seed = SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .map(|d| d.as_nanos() as u64)
+                            .unwrap_or(0)
+                            ^ 0x9E3779B97F4A7C15;
+                        self.options_seed_draft = seed.to_string();
+                    }
+                });
+                // Apply the draft to settings each frame so a Generate click
+                // immediately downstream picks up the latest value.
+                let trimmed = self.options_seed_draft.trim();
+                self.settings.seed_override = if trimmed.is_empty() {
+                    None
+                } else {
+                    trimmed.parse::<u64>().ok()
+                };
+                if !trimmed.is_empty() && self.settings.seed_override.is_none() {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(230, 150, 80),
+                        "(not a valid u64 — seed will fall back to random)",
+                    );
+                }
+
                 let has_key = self.resolve_api_key().is_some();
                 if !has_key {
                     ui.add_space(4.0);

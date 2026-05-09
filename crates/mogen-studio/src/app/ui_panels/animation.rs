@@ -106,7 +106,10 @@ impl MogenStudioApp {
 
         ui.horizontal(|ui| {
             let mut speed = self.viewer.playback_speed();
-            ui.label("Speed");
+            ui.label("Speed").on_hover_text(
+                "Negative values play clips in reverse; 0 pauses; 1× is real \
+                 time; 2× plays twice as fast.",
+            );
             let resp = ui.add(
                 egui::Slider::new(&mut speed, -2.0..=4.0)
                     .suffix("×")
@@ -124,6 +127,20 @@ impl MogenStudioApp {
             {
                 self.viewer.set_playback_speed(1.0);
             }
+            // Tag what the current speed value actually does so users see at
+            // a glance that −1× means rewind and 0× means paused-by-slider.
+            let tag = if speed.abs() < 0.005 {
+                "paused"
+            } else if speed < 0.0 {
+                "reverse"
+            } else if (speed - 1.0).abs() < 0.005 {
+                "real time"
+            } else if speed > 1.0 {
+                "fast"
+            } else {
+                "slow"
+            };
+            ui.label(egui::RichText::new(format!("({tag})")).weak());
         });
 
         ui.add_space(4.0);

@@ -43,7 +43,15 @@ pub fn run_loopback_flow(base_url: &str) -> Result<String, String> {
     );
 
     if let Err(e) = webbrowser::open(&start_url) {
-        return Err(format!("could not open browser: {e}"));
+        // Log the URL to stderr too so a user whose browser launcher is
+        // broken (e.g. headless dev environment) can copy it manually
+        // instead of being stuck on a generic "could not open browser"
+        // banner with no URL to paste.
+        eprintln!("oauth: could not auto-open browser ({e}). Open this URL manually to continue:\n  {start_url}");
+        return Err(format!(
+            "could not open browser ({e}). See the terminal for a URL you can paste \
+             into a browser manually."
+        ));
     }
 
     // Poll the listener so a user who closes the browser tab eventually

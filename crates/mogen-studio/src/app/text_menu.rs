@@ -1,5 +1,6 @@
 use eframe::egui;
 use egui::text::{CCursor, CCursorRange};
+use egui::{Key, KeyboardShortcut, Modifiers};
 
 /// Wrap a `TextEdit` add call with the standard Cut/Copy/Paste/Delete/Select All
 /// context menu. The `add` closure builds the widget and must call `.id(id)` on
@@ -87,11 +88,19 @@ pub(super) fn show_context_menu(
 
     let mut changed = false;
 
+    // Render shortcuts via egui's formatter so macOS users see ⌘ rather than
+    // the literal "Ctrl+…" the menu used to hard-code.
+    let cmd = Modifiers::COMMAND;
+    let sc_cut = ui.ctx().format_shortcut(&KeyboardShortcut::new(cmd, Key::X));
+    let sc_copy = ui.ctx().format_shortcut(&KeyboardShortcut::new(cmd, Key::C));
+    let sc_paste = ui.ctx().format_shortcut(&KeyboardShortcut::new(cmd, Key::V));
+    let sc_delete = ui
+        .ctx()
+        .format_shortcut(&KeyboardShortcut::new(Modifiers::NONE, Key::Delete));
+    let sc_select_all = ui.ctx().format_shortcut(&KeyboardShortcut::new(cmd, Key::A));
+
     if ui
-        .add_enabled(
-            has_selection,
-            egui::Button::new("Cut").shortcut_text("Ctrl+X"),
-        )
+        .add_enabled(has_selection, egui::Button::new("Cut").shortcut_text(sc_cut))
         .clicked()
     {
         ui.ctx().copy_text(text[sel_lo..sel_hi].to_string());
@@ -104,7 +113,7 @@ pub(super) fn show_context_menu(
     if ui
         .add_enabled(
             has_selection,
-            egui::Button::new("Copy").shortcut_text("Ctrl+C"),
+            egui::Button::new("Copy").shortcut_text(sc_copy),
         )
         .clicked()
     {
@@ -113,16 +122,22 @@ pub(super) fn show_context_menu(
     }
 
     if ui
-        .add(egui::Button::new("Paste").shortcut_text("Ctrl+V"))
+        .add(egui::Button::new("Paste").shortcut_text(sc_paste))
         .clicked()
     {
-        let clip = arboard::Clipboard::new().and_then(|mut c| c.get_text());
-        if let Ok(t) = clip {
-            if !t.is_empty() {
+        match arboard::Clipboard::new().and_then(|mut c| c.get_text()) {
+            Ok(t) if !t.is_empty() => {
                 text.replace_range(sel_lo..sel_hi, &t);
                 let new_byte = sel_lo + t.len();
                 store_caret(ui, new_byte, text);
                 changed = true;
+            }
+            Ok(_) => {}
+            Err(e) => {
+                // Surface clipboard failures so the user isn't left wondering
+                // why nothing happened. Most common cause is a Wayland session
+                // without a clipboard manager.
+                eprintln!("paste from clipboard failed: {e}");
             }
         }
         ui.close_menu();
@@ -131,7 +146,7 @@ pub(super) fn show_context_menu(
     if ui
         .add_enabled(
             has_selection,
-            egui::Button::new("Delete").shortcut_text("Del"),
+            egui::Button::new("Delete").shortcut_text(sc_delete),
         )
         .clicked()
     {
@@ -144,7 +159,7 @@ pub(super) fn show_context_menu(
     ui.separator();
 
     if ui
-        .add(egui::Button::new("Select All").shortcut_text("Ctrl+A"))
+        .add(egui::Button::new("Select All").shortcut_text(sc_select_all))
         .clicked()
     {
         let total_chars = text.chars().count();

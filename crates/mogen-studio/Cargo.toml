@@ -59,6 +59,10 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg"]
 # attaching it to `PublishRequest::thumbnail_png_base64`.
 base64 = "0.22"
 arboard = { version = "3", default-features = false }
+# Regex crate powers the find-bar's optional regex mode. Already in the
+# transitive dep tree via tracing; pulling it in directly keeps the cargo
+# tree stable.
+regex = "1"
 sentry = { version = "0.34", default-features = false, features = ["backtrace", "contexts", "debug-images", "panic", "reqwest", "rustls"] }
 # Browser shim — opens the GitHub OAuth URL via the system handler.
 # tiny_http is pulled in transitively via mogen-moghub-client's `oauth`

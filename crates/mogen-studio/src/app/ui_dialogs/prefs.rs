@@ -265,6 +265,36 @@ impl MogenStudioApp {
                         }
                     });
 
+                // Live indicator: which credential will Auto actually use
+                // right now? The precedence chain is buried in the prose
+                // above; surface the current resolution explicitly so users
+                // don't have to reason it out.
+                if current_image == ImageProvider::Auto {
+                    use crate::app::util::Credential;
+                    let label = match self.resolve_gemini_credential() {
+                        Some(Credential::AntigravityOAuth(_)) => {
+                            "Auto → Antigravity OAuth (signed in)"
+                        }
+                        Some(Credential::ApiKey(_)) => {
+                            "Auto → Gemini API key (saved or $GEMINI_API_KEY)"
+                        }
+                        Some(Credential::GeminiOAuth(_)) => {
+                            "Auto → gemini-cli OAuth (last-resort fallback — \
+                             will surface a 'wrong client' error if used for \
+                             textures)"
+                        }
+                        Some(Credential::Zai(_)) => {
+                            "Auto → Z.ai (unusual settings combination)"
+                        }
+                        None => {
+                            "Auto → no credential resolved — texture \
+                             generation will fail. Sign in to Antigravity or \
+                             paste a Gemini API key."
+                        }
+                    };
+                    ui.label(egui::RichText::new(label).weak());
+                }
+
                 if current_image == ImageProvider::ZAI {
                     ui.add_space(8.0);
                     ui.label("Z.ai API key").on_hover_text(
@@ -309,10 +339,18 @@ impl MogenStudioApp {
                     // expose a binary-path override for non-PATH installs.
                     ui.heading("Claude Code binary");
                     ui.label(
-                        "Auth is handled by your local `claude` install \
-                         (run `claude /login` if you haven't yet). Used by \
-                         Generate / Modify / Animate / Ask. Image generation \
-                         (Textures) still requires Gemini.",
+                        "Auth is handled by your local `claude` install — \
+                         run `claude` in a terminal and use the `/login` \
+                         slash command if you haven't yet. Used by Generate \
+                         / Modify / Animate / Ask.",
+                    );
+                    ui.label(
+                        egui::RichText::new(
+                            "Note: image generation (Textures) always uses \
+                             Gemini. Set a Gemini API key on the Gemini slot \
+                             above.",
+                        )
+                        .weak(),
                     );
                     ui.add_space(6.0);
                     ui.label("Path (optional)").on_hover_text(
@@ -344,15 +382,21 @@ impl MogenStudioApp {
                     ui.label(match active_provider {
                         Provider::Gemini => {
                             "Used by Generate / Modify / Animate / Textures. Stored in your \
-                             user config directory and persists between sessions."
+                             user config directory and persists between sessions. The \
+                             $GEMINI_API_KEY environment variable is used when this field \
+                             is blank."
                         }
                         Provider::OpenAI => {
                             "Used by Generate / Modify / Animate / Ask. Stored in your \
-                             user config directory and persists between sessions."
+                             user config directory and persists between sessions. The \
+                             $OPENAI_API_KEY environment variable is used when this field \
+                             is blank."
                         }
                         Provider::Anthropic => {
                             "Used by Generate / Modify / Animate / Ask. Stored in your \
-                             user config directory and persists between sessions."
+                             user config directory and persists between sessions. The \
+                             $ANTHROPIC_API_KEY environment variable is used when this \
+                             field is blank."
                         }
                         Provider::Ollama => {
                             "Optional bearer token for an Ollama endpoint behind an \

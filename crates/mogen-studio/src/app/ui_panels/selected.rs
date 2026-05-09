@@ -35,6 +35,37 @@ impl MogenStudioApp {
                  shows the most recently clicked node; Delete removes every \
                  selected node.",
             );
+            // Spell out which node is primary vs secondary so the user can
+            // see at a glance whose attributes the inspector is editing.
+            // Pulled from the viewer-side scene snapshot rather than the
+            // file's last_result so the names line up with what's painted
+            // in the viewport.
+            if let Some(scene_arc) = self
+                .files
+                .get(self.active)
+                .and_then(|f| f.last_result.as_ref())
+                .and_then(|r| r.scene.as_ref())
+            {
+                let all = self.viewer.all_selected();
+                ui.horizontal_wrapped(|ui| {
+                    for (idx, id) in all.iter().enumerate() {
+                        let is_primary = idx + 1 == all.len();
+                        let name = scene_arc
+                            .nodes
+                            .get(id.0 as usize)
+                            .map(|n| n.name.as_str())
+                            .unwrap_or("(stale)");
+                        let prefix = if is_primary { "★ " } else { "" };
+                        let label = format!("{prefix}{name}");
+                        let rich = if is_primary {
+                            egui::RichText::new(label).strong()
+                        } else {
+                            egui::RichText::new(label).weak()
+                        };
+                        ui.label(rich);
+                    }
+                });
+            }
             ui.add_space(4.0);
         }
         let i = self.active;
@@ -807,8 +838,20 @@ impl MogenStudioApp {
             }
         }
 
+        let any_edits = !edits.is_empty();
         for edit in edits {
             self.viewer.push_pending_edit(edit);
+        }
+        // Mirror the viewport-pick behaviour: when an inspector field commits
+        // a transform / attribute write, jump the editor caret to the node's
+        // declaration so the user can see what just changed in source. The
+        // span comes from the lowered scene graph and is None for derived
+        // nodes (CSG output, replicators) — they have nothing to point at.
+        if any_edits {
+            if let Some(span) = node_span {
+                let i = self.active;
+                self.files[i].pending_caret = Some(span.start);
+            }
         }
 
         // Delete / Duplicate operate straight on the source string because

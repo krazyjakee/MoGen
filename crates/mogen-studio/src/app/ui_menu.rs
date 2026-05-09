@@ -105,7 +105,13 @@ impl MogenStudioApp {
                 }
                 ui.menu_button("Open Recent", |ui| {
                     if self.settings.recent_files.is_empty() {
-                        ui.label("(no recent MOG files)");
+                        ui.label(
+                            egui::RichText::new("No recent files").strong(),
+                        );
+                        ui.label(
+                            "Use File → Open… or File → New from Prompt… to \
+                             start a project. The list fills up as you go.",
+                        );
                     } else {
                         let recents: Vec<String> = self.settings.recent_files.clone();
                         for path in &recents {
@@ -851,14 +857,30 @@ impl MogenStudioApp {
                 ui.horizontal(|ui| {
                     for (i, f) in self.files.iter().enumerate() {
                         let selected = i == self.active;
-                        let mut label = f.display_name();
+                        // Prefix with a leading bullet for unsaved buffers so
+                        // dirty state is visible at a glance, not just on the
+                        // trailing edge where a long filename can push it
+                        // out of view.
+                        let mut label = String::new();
                         if f.dirty {
-                            label.push_str(" •");
+                            label.push_str("• ");
                         }
+                        label.push_str(&f.display_name());
                         if f.llm_in_flight.is_some() {
                             label.push_str(" ⟳");
                         }
                         let resp = ui.selectable_label(selected, label);
+                        let resp = if f.dirty || f.llm_in_flight.is_some() {
+                            resp.on_hover_text(if f.dirty && f.llm_in_flight.is_some() {
+                                "• unsaved changes · ⟳ AI request in progress"
+                            } else if f.dirty {
+                                "• unsaved changes — Cmd/Ctrl+S to save"
+                            } else {
+                                "⟳ AI request in progress"
+                            })
+                        } else {
+                            resp
+                        };
                         if resp.clicked() {
                             activate = Some(i);
                         }
@@ -937,8 +959,17 @@ impl MogenStudioApp {
                                 ui.close_menu();
                             }
                         });
+                        // Larger hit-area than `small_button("×")`. Frame is
+                        // off so the X looks the same when idle but registers
+                        // a wider clickable region for trackpad / touch users.
                         let x_resp = ui
-                            .small_button("×")
+                            .add(
+                                egui::Button::new(
+                                    egui::RichText::new("×").strong(),
+                                )
+                                .frame(false)
+                                .min_size(egui::vec2(18.0, 18.0)),
+                            )
                             .on_hover_text("Close tab");
                         if x_resp.clicked() {
                             close = Some(i);

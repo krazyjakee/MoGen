@@ -179,10 +179,21 @@ impl MogenStudioApp {
                 // this publish without rewriting the file.
                 ui.horizontal(|ui| {
                     ui.label("Title");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut state.title)
-                            .hint_text("from meta(name = \"…\")"),
-                    );
+                    let title_empty = state.title.trim().is_empty();
+                    let mut text_edit = egui::TextEdit::singleline(&mut state.title)
+                        .hint_text("from meta(name = \"…\")");
+                    if title_empty {
+                        text_edit = text_edit
+                            .text_color(egui::Color32::from_rgb(230, 100, 100));
+                    }
+                    ui.add(text_edit);
+                    if title_empty {
+                        ui.label(
+                            egui::RichText::new("required")
+                                .color(egui::Color32::from_rgb(230, 100, 100))
+                                .weak(),
+                        );
+                    }
                 });
                 let updating = state
                     .update_target
@@ -310,6 +321,7 @@ impl MogenStudioApp {
                         .as_ref()
                         .filter(|_| !state.publish_as_new);
                     let has_thumbnail = state.thumbnail_bytes.is_some();
+                    let title_ok = !state.title.trim().is_empty();
                     let label = match (posting, updating) {
                         (true, Some(_)) => "Publishing update…".to_string(),
                         (true, None) => "Publishing…".to_string(),
@@ -319,13 +331,21 @@ impl MogenStudioApp {
                         (false, None) => "Publish".to_string(),
                     };
                     let publish_btn = ui.add_enabled(
-                        !posting && has_thumbnail,
+                        !posting && has_thumbnail && title_ok,
                         egui::Button::new(label),
                     );
-                    let publish_btn = if !has_thumbnail && !posting {
-                        publish_btn.on_disabled_hover_text(
-                            "Waiting for the preview render — the thumbnail is required.",
-                        )
+                    let publish_btn = if !posting {
+                        if !title_ok {
+                            publish_btn.on_disabled_hover_text(
+                                "Title is required — type one in the field above.",
+                            )
+                        } else if !has_thumbnail {
+                            publish_btn.on_disabled_hover_text(
+                                "Waiting for the preview render — the thumbnail is required.",
+                            )
+                        } else {
+                            publish_btn
+                        }
                     } else {
                         publish_btn
                     };

@@ -40,13 +40,22 @@ impl MogenStudioApp {
                 }
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
-                    if ui
-                        .button("Save All")
+                    // Render Save All as the visually-prominent primary
+                    // action. Enter triggers it; Esc maps to Cancel via the
+                    // window-close path.
+                    let save_btn = ui
+                        .add(
+                            egui::Button::new(
+                                egui::RichText::new("Save All").strong(),
+                            )
+                            .fill(ui.visuals().selection.bg_fill),
+                        )
                         .on_hover_text(
                             "Save each unsaved MOG file, then quit. \
-                             Untitled MOG files open a Save As dialog.",
-                        )
-                        .clicked()
+                             Untitled MOG files open a Save As dialog. (Enter)",
+                        );
+                    if save_btn.clicked()
+                        || ui.input(|i| i.key_pressed(egui::Key::Enter))
                     {
                         do_save_all = true;
                     }
@@ -57,7 +66,9 @@ impl MogenStudioApp {
                     {
                         do_discard = true;
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.button("Cancel").clicked()
+                        || ui.input(|i| i.key_pressed(egui::Key::Escape))
+                    {
                         do_cancel = true;
                     }
                 });
@@ -123,13 +134,19 @@ impl MogenStudioApp {
                 ));
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
-                    if ui
-                        .button("Save")
+                    let save_btn = ui
+                        .add(
+                            egui::Button::new(
+                                egui::RichText::new("Save").strong(),
+                            )
+                            .fill(ui.visuals().selection.bg_fill),
+                        )
                         .on_hover_text(
                             "Save this MOG file, then close the tab. \
-                             Untitled MOG files open a Save As dialog.",
-                        )
-                        .clicked()
+                             Untitled MOG files open a Save As dialog. (Enter)",
+                        );
+                    if save_btn.clicked()
+                        || ui.input(|i| i.key_pressed(egui::Key::Enter))
                     {
                         do_save = true;
                     }
@@ -140,7 +157,9 @@ impl MogenStudioApp {
                     {
                         do_discard = true;
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.button("Cancel").clicked()
+                        || ui.input(|i| i.key_pressed(egui::Key::Escape))
+                    {
                         do_cancel = true;
                     }
                 });

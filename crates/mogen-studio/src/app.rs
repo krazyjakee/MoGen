@@ -100,7 +100,7 @@ struct InitProgress {
 /// Floor on splash visibility (ms). Shorter and the splash flashes; longer
 /// and it feels like the app is dragging. Tuned to feel deliberate without
 /// holding up users on cold launch with no tabs to restore.
-const SPLASH_MIN_DWELL_MS: u128 = 4000;
+const SPLASH_MIN_DWELL_MS: u128 = 1800;
 
 /// Maximum recently-closed paths held for Ctrl+Shift+T reopen. Matches the
 /// settings `recent_files` cap so the two lists feel comparable; older
@@ -122,6 +122,11 @@ pub struct MogenStudioApp {
     settings: Settings,
     show_options: bool,
     options_api_key_draft: String,
+    /// Draft string for the optional seed field in the New Prompt dialog.
+    /// Stored as a `String` so the user can type freely without partial
+    /// parses; we re-parse on submit. Preferences → LLM has its own seed
+    /// editor that reads/writes `settings.seed_override` directly.
+    options_seed_draft: String,
     /// Active tab inside the Preferences window. Persists across opens within
     /// a session so re-opening the dialog returns to whichever pane the user
     /// was last on.
@@ -378,6 +383,10 @@ impl MogenStudioApp {
 
         let mut settings = Settings::load();
         let options_api_key_draft = settings.gemini_api_key.clone();
+        let options_seed_draft = settings
+            .seed_override
+            .map(|s| s.to_string())
+            .unwrap_or_default();
         install_fonts(&cc.egui_ctx);
         apply_theme(&cc.egui_ctx, settings.theme());
         viewer.set_preview_shader(settings.preview_shader());
@@ -457,6 +466,7 @@ impl MogenStudioApp {
             settings,
             show_options: false,
             options_api_key_draft,
+            options_seed_draft,
             prefs_active_tab: ui_dialogs::PrefsTab::default(),
             show_onboarding,
             show_crash_consent,

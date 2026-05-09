@@ -244,10 +244,16 @@ impl MogenStudioApp {
             let imports = edit::list_imports(&self.files[self.active].source);
             ui.menu_button("Imports", |ui| {
                 if imports.is_empty() {
-                    ui.add_enabled(false, egui::Button::new("(no imports)"))
-                        .on_hover_text(
-                            "Use File → Import… (Cmd+Shift+I) to add an `import \"…\"` line first",
-                        );
+                    ui.label(
+                        egui::RichText::new("No imports yet").strong(),
+                    );
+                    ui.label(
+                        egui::RichText::new(
+                            "File → Import… (Cmd+Shift+I) adds an \
+                             `import \"…\"` line. Imports show up here.",
+                        )
+                        .weak(),
+                    );
                 } else {
                     for entry in &imports {
                         let label = entry.module_name.clone();
