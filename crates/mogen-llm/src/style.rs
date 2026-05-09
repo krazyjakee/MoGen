@@ -109,10 +109,14 @@ impl Style {
                  detail and sharp PS1-style facets."
             }
             Style::LowPoly => {
-                "Modern indie low-poly: clean faceted shading with crisp triangle \
-                 facets, flat single-colour materials per surface, simple chamfers on \
-                 prominent edges, and no high-frequency surface detail. Read as a \
-                 deliberate stylistic choice rather than a hardware limit."
+                "Modern indie low-poly à la Synty / Quaternius asset packs: clean \
+                 angular silhouettes, faceted shading with crisp triangle facets, \
+                 oversized hero features (big hands as mittens, big boots, blocky \
+                 head), flat single-colour painterly materials per surface, gentle \
+                 chamfers on edges, and textures used only for painted face details \
+                 — no fabric weave or brick patterns. For humanoid characters use \
+                 `humanoid_full` with vec3 colour params; layer outfit/equipment \
+                 from `outfit_*` and `equip_*` stdlib modules."
             }
             Style::HighDetail => {
                 "Dense AAA geometry: high-segment curves (cylinders ≥ 32 segments, \

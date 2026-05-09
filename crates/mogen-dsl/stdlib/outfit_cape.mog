@@ -1,0 +1,21 @@
+// summary: Shoulder cape (curved_plane drape) for humanoid_full. Hangs from the upper back, follows the chest bone. Color param defaults to a deep crimson. Pair with `outfit_helmet` for a knight, `outfit_hat_brimmed` for a wanderer.
+module "outfit_cape" (
+  height=1.7,
+  color=[0.55, 0.10, 0.10]
+) {
+  material "outfit_cape" (color=$color, roughness=0.85)
+
+  // Single curved_plane that drapes from the shoulders down to mid-thigh.
+  // Bound to spine_chest so it sways naturally with the torso.
+  group "outfit_cape" (skin="rig", bind="spine_chest") {
+    curved_plane "outfit_cape_drape" (
+      pos=[0, $height * 0.55, $height * 0.075],
+      size=[$height * 0.32, $height * 0.40],
+      curvature=0.3,
+      rot=[0, 180, 0],
+      segments_u=4,
+      segments_v=6,
+      mat="outfit_cape", faceted=1
+    )
+  }
+}

@@ -191,16 +191,23 @@ fn walk(
         // `module` and `use` carry user-defined attr names (params/args); skip the
         // closed attr vocabulary check. We still validate specific constraints below.
         "module" => {
-            // Parameter defaults must be numeric scalars; the collector enforces this,
-            // but we also reject e.g. `module "leg" (color="red")` here with a clearer
-            // diagnostic than lowering would produce.
+            // Parameter defaults must be numeric scalars or vec3 colours/sizes;
+            // the collector enforces this, but we also reject e.g.
+            // `module "leg" (kind="big")` here with a clearer diagnostic than
+            // lowering would produce.
             for (k, v) in &n.attrs {
-                if !matches!(v, mogen_dsl::ast::Value::Number(_) | mogen_dsl::ast::Value::Expr(_)) {
+                if !matches!(
+                    v,
+                    mogen_dsl::ast::Value::Number(_)
+                        | mogen_dsl::ast::Value::Expr(_)
+                        | mogen_dsl::ast::Value::Vec3(_)
+                        | mogen_dsl::ast::Value::Vec3Expr(_)
+                ) {
                     diags.push(
                         Diagnostic::error(
                             "E0303",
                             format!(
-                                "module parameter `{}` default must be a number or expression",
+                                "module parameter `{}` default must be a number, expression, or vec3",
                                 k
                             ),
                         )

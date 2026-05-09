@@ -118,7 +118,14 @@ fn lower_track(
         return lower_joint_track(node, &joint, duration, easing);
     }
 
-    let Some(node_id) = find_node_scoped(graph, &target_name, use_id) else {
+    // Try the use-frame-scoped lookup first; if that misses, fall back to a
+    // global by-name lookup so animation clips defined in their own module
+    // (e.g. `humanoid_walk`) can drive bones declared in a sibling module
+    // frame (`humanoid_full`'s skeleton). This matches the clip files'
+    // documented contract: "drives bones by name".
+    let node_id = find_node_scoped(graph, &target_name, use_id)
+        .or_else(|| graph.find_node(&target_name));
+    let Some(node_id) = node_id else {
         bail!(
             "track target \"{}\" is neither a joint nor a scene node",
             target_name

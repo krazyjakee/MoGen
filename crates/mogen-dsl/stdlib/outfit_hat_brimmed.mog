@@ -1,0 +1,25 @@
+// summary: Brimmed hat (cylinder brim + chamfered_box dome) for humanoid_full. Snaps to the head's `crown` socket and follows the head bone via `bind="neck"`. Color param defaults to a warm leather brown. For a wizard-style pointed hat use `equip_staff` instead.
+module "outfit_hat_brimmed" (
+  height=1.7,
+  color=[0.42, 0.30, 0.20]
+) {
+  material "outfit_hat" (color=$color, roughness=0.85)
+
+  // Two pieces — flat brim, chamfered crown — wrapped in a group bound to
+  // `neck` so the hat tracks the head as the figure walks.
+  group "outfit_hat" (skin="rig", bind="neck") {
+    cylinder "outfit_hat_brim" (
+      pos=[0, $height * 0.985, 0],
+      radius=$height * 0.085,
+      height=$height * 0.014,
+      segments=16,
+      mat="outfit_hat", faceted=1
+    )
+    chamfered_box "outfit_hat_dome" (
+      pos=[0, $height * 1.030, 0],
+      size=[$height * 0.090, $height * 0.060, $height * 0.090],
+      radius=$height * 0.012,
+      mat="outfit_hat", faceted=1
+    )
+  }
+}

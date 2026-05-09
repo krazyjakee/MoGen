@@ -39,7 +39,20 @@ pub use loader::{parse_registry_spec, FsLoader, LoadedFile, Loader, RegistrySpec
 pub struct Param {
     pub name: String,
     /// `None` means required; the caller must supply a value.
-    pub default: Option<Expr>,
+    pub default: Option<ParamDefault>,
+}
+
+/// What a module parameter's default value is — either a scalar expression
+/// (the historical case, still substituted into arithmetic via `$param`) or
+/// a constant vec3 (used for colour/size parameters where the whole value
+/// is spliced into an attribute, e.g. `material "skin" (color=$skin)`).
+///
+/// Vec3 params are intentionally restricted to whole-attribute substitution;
+/// per-component arithmetic on vec3 params is not supported in v1.
+#[derive(Debug, Clone)]
+pub enum ParamDefault {
+    Scalar(Expr),
+    Vec3([f32; 3]),
 }
 
 #[derive(Debug, Clone)]
@@ -170,14 +183,96 @@ mod tests {
     }
 
     #[test]
-    fn non_scalar_default_rejected() {
-        // Vec3 defaults make no sense for `$param` arithmetic substitution.
+    fn list_default_rejected() {
+        // N-element lists (limits, profile, etc.) are not valid module defaults.
         let src = r#"
-            module "leg" (dims=[1, 1, 1]) { box "b" (size=$dims) }
+            module "leg" (limits=[-90, 0, 90, 180]) { box "b" (size=[1,1,1]) }
         "#;
         let ast = parse(src).unwrap();
         let err = collect_modules(&ast).unwrap_err().to_string();
-        assert!(err.contains("must be a scalar"), "got: {err}");
+        assert!(err.contains("default must be"), "got: {err}");
+    }
+
+    #[test]
+    fn vec3_default_accepted() {
+        // Colour-style vec3 params splice as a whole-attribute value.
+        let ast = expand(
+            r#"
+            module "thing" (skin=[0.85, 0.65, 0.55]) {
+              material "skin" (color=$skin)
+              box "b" (size=[1,1,1], mat="skin")
+            }
+            scene { use "thing" () }
+        "#,
+        );
+        // Find the inlined material declaration.
+        let scene = &ast[0];
+        let mat = scene
+            .children
+            .iter()
+            .find(|n| n.kind == "material" && n.name.as_deref() == Some("skin"))
+            .expect("material survived expansion");
+        match first_attr(mat, "color") {
+            Value::Vec3([r, g, b]) => {
+                assert!((r - 0.85).abs() < 1e-6);
+                assert!((g - 0.65).abs() < 1e-6);
+                assert!((b - 0.55).abs() < 1e-6);
+            }
+            other => panic!("expected Vec3, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn vec3_param_overridden_by_caller() {
+        let ast = expand(
+            r#"
+            module "thing" (skin=[1.0, 0.0, 0.0]) {
+              material "skin" (color=$skin)
+            }
+            scene { use "thing" (skin=[0.0, 1.0, 0.0]) }
+        "#,
+        );
+        let mat = ast[0]
+            .children
+            .iter()
+            .find(|n| n.kind == "material")
+            .expect("material survived");
+        match first_attr(mat, "color") {
+            Value::Vec3([r, g, b]) => {
+                assert!(r.abs() < 1e-6);
+                assert!((g - 1.0).abs() < 1e-6);
+                assert!(b.abs() < 1e-6);
+            }
+            other => panic!("expected Vec3, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn vec3_param_passes_through_nested_use() {
+        let ast = expand(
+            r#"
+            module "inner" (color=[1.0, 1.0, 1.0]) {
+              material "shirt" (color=$color)
+            }
+            module "outer" (shirt=[0.2, 0.4, 0.7]) {
+              use "inner" (color=$shirt)
+            }
+            scene { use "outer" () }
+        "#,
+        );
+        let mat = ast[0]
+            .children
+            .iter()
+            .find(|n| n.kind == "material")
+            .expect("inner material survived");
+        match first_attr(mat, "color") {
+            Value::Vec3([r, g, b]) => {
+                assert!((r - 0.2).abs() < 1e-6);
+                assert!((g - 0.4).abs() < 1e-6);
+                assert!((b - 0.7).abs() < 1e-6);
+            }
+            other => panic!("expected Vec3, got {:?}", other),
+        }
     }
 
     #[test]

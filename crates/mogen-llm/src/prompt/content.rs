@@ -137,37 +137,44 @@ from a validator failure.
    animation — do not rig them.
 8. **Organic shapes** (people, animals, plants): prefer `use \"humanoid_*\"` \
    / `use \"quadruped_*\"` from the stdlib over rebuilding limbs from raw \
-   primitives — the stdlib parts already smin-blend their internal joints \
-   (no shoulder or knee crease). **Detail floor for any humanoid or \
-   creature: hands (or paws/claws), feet (or hooves/pads), and facial \
-   features (eyes + nose/snout + mouth or beak) are required.** A bare \
-   torso + 4 capsule limbs reads as a placeholder, not a character. For a \
-   generic person the one-line `use \"humanoid_full\" (height=1.7)` is the \
-   correct default: it expands into torso + head + arms + hands + legs + \
-   feet + face + hair, pre-attached and pre-skinned to a `\"rig\"` \
-   skeleton. It expects the standard material palette `skin` / `cloth` / \
-   `hair` / `eye` / `mouth` / `boot` declared at the top of the scene; \
-   attach hats, packs, weapons, or armor to the figure with `attach`. \
-   Reach for the granular humanoid_* parts (`humanoid_torso`, \
-   `humanoid_head`, `humanoid_arm`, `humanoid_leg`, \
-   `humanoid_hand_5fingers`, `humanoid_foot`, `humanoid_face`, \
-   `humanoid_hair_short`/`_long`) only when proportions need to deviate \
-   from `humanoid_full`'s defaults. Use `humanoid_full` only ONCE per \
-   scene (it embeds a `\"rig\"` skeleton). For **whole trees / large \
-   bushes** reach for the recursive `branch (...)` node — one declaration \
-   emits a tapered trunk + recursive forks + alpha-cutout `leaf_card` \
-   foliage at every tip; pair it with `material (alpha_mode=\"mask\", \
-   double_sided=1)` for the leaf material. Use `use \"leaf\"` only when \
-   you need a single curved-plane leaf cluster on something that *isn't* \
-   a procedural tree (potted plant, single hanging vine). When two parts \
-   of one body must visually merge into one surface — neck-into-torso, \
-   hip-cap-into-leg, jaw-into-skull — wrap them in `union \"joint\" \
-   (smooth=K) { ... }` with `K ≈ 0.04–0.10` for human-scale parts \
-   (`K` is a fillet radius in metres; too large and the parts melt \
-   together, too small and the seam stays visible). Allow ±3 % asymmetry \
-   on paired parts (one ear/leg slightly different) — biology is never \
-   perfectly mirrored. Material naming: `<creature>_<region>_<surface>` \
-   (e.g. `tiger_back_fur`, `oak_bark`, `koi_belly_scales`) so the texture \
+   primitives. **Detail floor for any humanoid or creature: hands (or \
+   paws/claws), feet (or hooves/pads), and facial features (eyes + \
+   nose/snout + mouth or beak) are required.** A bare torso + 4 capsule \
+   limbs reads as a placeholder, not a character. For ANY person-like \
+   subject (knight, wizard, archer, civilian, child) the one-line \
+   `use \"humanoid_full\" (height=1.7, skin=[r,g,b], shirt=[r,g,b], \
+   pants=[r,g,b], boot=[r,g,b], hair=[r,g,b])` is the correct default: it \
+   expands into a Synty-style low-poly figure (torso/head/arms/hands/legs/ \
+   feet/face) pre-skinned to a `\"rig\"` skeleton, materials are declared \
+   internally from the colour params (no need to redeclare them), the \
+   face has a painted `face` panel that the texture pipeline auto-fills \
+   with eyes/brows/mouth, and the rig drives the shipped `humanoid_walk` \
+   / `humanoid_run` / `humanoid_idle` / `humanoid_jump` clips. Always \
+   pair `humanoid_full` with one of those clips so the character isn't \
+   frozen. Use `humanoid_full` only ONCE per scene (it embeds a `\"rig\"` \
+   skeleton). For clothing and gear, reach for the outfit/equipment \
+   modules — they socket-snap and bone-bind so they follow the figure \
+   during animation: `outfit_hat_brimmed (color=…)`, `outfit_helmet \
+   (color=…, visor_color=…)`, `outfit_cape (color=…)`, `outfit_backpack \
+   (color=…)`, `outfit_belt (color=…, buckle_color=…)`, `equip_sword \
+   (blade_color=…, hilt_color=…)`, `equip_shield (color=…, \
+   boss_color=…)`, `equip_staff (wood_color=…, crystal_color=…)`. Stack \
+   as many as the prompt implies (a knight is helmet + cape + belt + \
+   sword + shield). For **whole trees / large bushes** reach for the \
+   recursive `branch (...)` node — one declaration emits a tapered trunk \
+   + recursive forks + alpha-cutout `leaf_card` foliage at every tip; \
+   pair it with `material (alpha_mode=\"mask\", double_sided=1)` for the \
+   leaf material. Use `use \"leaf\"` only when you need a single \
+   curved-plane leaf cluster on something that *isn't* a procedural tree \
+   (potted plant, single hanging vine). When two parts of one body must \
+   visually merge into one surface — neck-into-torso, hip-cap-into-leg, \
+   jaw-into-skull — wrap them in `union \"joint\" (smooth=K) { ... }` \
+   with `K ≈ 0.04–0.10` for human-scale parts (`K` is a fillet radius \
+   in metres; too large and the parts melt together, too small and the \
+   seam stays visible). Allow ±3 % asymmetry on paired parts (one \
+   ear/leg slightly different) — biology is never perfectly mirrored. \
+   Material naming: `<creature>_<region>_<surface>` (e.g. \
+   `tiger_back_fur`, `oak_bark`, `koi_belly_scales`) so the texture \
    pipeline picks anatomical priors when generating the albedo.";
 
 pub(super) const GRAMMAR_REFERENCE: &str = "\
@@ -622,37 +629,23 @@ scene {
 
 ### Prompt: \"a person walking\"
 ### Output:
-meta (name = \"person_walking\", description = \"a rigged humanoid figure in a walk cycle\", tags = [\"character\", \"humanoid\", \"animated\"])
-
-material \"skin\"  (color=[0.85, 0.65, 0.55], roughness=0.7)
-material \"cloth\" (color=[0.22, 0.38, 0.62], roughness=0.85)
-material \"hair\"  (color=[0.20, 0.15, 0.10], roughness=0.9)
-material \"eye\"   (color=[0.08, 0.08, 0.10], roughness=0.4)
-material \"mouth\" (color=[0.55, 0.20, 0.20], roughness=0.7)
-material \"boot\"  (color=[0.15, 0.10, 0.05], roughness=0.85)
+meta (name = \"person_walking\", description = \"a low-poly humanoid figure in a walk cycle\", tags = [\"character\", \"humanoid\", \"animated\"])
 
 scene {
-  // `humanoid_full` expands into torso + head + arms + hands + legs + feet +
-  // face + hair, all attached to a single \"rig\" skeleton. One line gives
-  // the complete figure; the named bones below are exposed for animation.
-  use \"humanoid_full\" (height=1.7)
-}
-
-// Walk cycle drives the rig the module already wired up. End each track on
-// the same value as it starts so the loop is seamless. Sign convention for
-// hip/shoulder around +X: positive swings the limb forward (-Z), negative
-// swings it back (+Z). Knees and elbows must use NEGATIVE rotation around
-// +X so the shin/forearm bend backward (heel toward butt, forearm toward
-// face) — positive values produce a reverse insect-style joint.
-clip \"walk\" (seconds=1.0) {
-  track \"hip_l\"      (prop=rotation, axis=[1, 0, 0], keys=[[0, -25], [0.5,  25], [1.0, -25]])
-  track \"hip_r\"      (prop=rotation, axis=[1, 0, 0], keys=[[0,  25], [0.5, -25], [1.0,  25]])
-  track \"knee_l\"     (prop=rotation, axis=[1, 0, 0], keys=[[0,   0], [0.25, -35], [0.5,  0], [1.0,  0]])
-  track \"knee_r\"     (prop=rotation, axis=[1, 0, 0], keys=[[0,   0], [0.5,   0], [0.75, -35], [1.0, 0]])
-  track \"shoulder_l\" (prop=rotation, axis=[1, 0, 0], keys=[[0,  20], [0.5, -20], [1.0,  20]])
-  track \"shoulder_r\" (prop=rotation, axis=[1, 0, 0], keys=[[0, -20], [0.5,  20], [1.0, -20]])
-  track \"elbow_l\"    (prop=rotation, axis=[1, 0, 0], keys=[[0,  10], [0.5,  30], [1.0,  10]])
-  track \"elbow_r\"    (prop=rotation, axis=[1, 0, 0], keys=[[0,  30], [0.5,  10], [1.0,  30]])
+  // `humanoid_full` declares its own materials from the colour params, so a
+  // single line gives a fully-coloured Synty-style figure: faceted body,
+  // mitten hands, painted face panel, 17-bone rig. Pair with one of the
+  // shipped clips (`humanoid_walk` here, also `_run` / `_idle` / `_jump`)
+  // so the figure isn't frozen.
+  use \"humanoid_full\" (
+    height=1.7,
+    skin =[0.85, 0.65, 0.55],
+    shirt=[0.22, 0.38, 0.62],
+    pants=[0.20, 0.22, 0.30],
+    boot =[0.15, 0.10, 0.05],
+    hair =[0.20, 0.15, 0.10]
+  )
+  use \"humanoid_walk\" ()
 }
 
 ### Prompt: \"a crouching tiger\"
@@ -687,32 +680,25 @@ scene {
 
 ### Prompt: \"a knight in armor\"
 ### Output:
-meta (name = \"knight_in_armor\", description = \"a humanoid knight wearing a steel helmet, chestplate, and carrying a sword\", tags = [\"character\", \"knight\", \"armor\"])
-
-material \"skin\"  (color=[0.85, 0.65, 0.55], roughness=0.7)
-material \"cloth\" (color=[0.18, 0.20, 0.25], roughness=0.85)
-material \"hair\"  (color=[0.45, 0.30, 0.18], roughness=0.9)
-material \"eye\"   (color=[0.10, 0.18, 0.25], roughness=0.4)
-material \"mouth\" (color=[0.55, 0.20, 0.20], roughness=0.7)
-material \"boot\"  (color=[0.20, 0.13, 0.08], roughness=0.85)
-material \"steel\" (color=[0.72, 0.74, 0.78], metallic=1.0, roughness=0.35)
-material \"hilt\"  (color=[0.55, 0.40, 0.20], roughness=0.6)
+meta (name = \"knight_in_armor\", description = \"a low-poly knight in steel helmet with cape, sword, and shield\", tags = [\"character\", \"knight\", \"armor\"])
 
 scene {
-  // Start from the full preset, then attach armor + sword to the existing
-  // body parts via their connectors. `helmet` mounts on the head's `crown`;
-  // `chestplate` parents to `torso` (front face); `sword` to `hand_r`'s wrist.
-  use \"humanoid_full\" (height=1.7)
-
-  hemisphere   \"helmet\"     (radius=0.13, mat=\"steel\")
-  rounded_box  \"chestplate\" (size=[0.42, 0.5, 0.06], radius=0.03, segments=2, mat=\"steel\")
-  cylinder     \"sword_blade\" (radius=0.025, height=0.7, mat=\"steel\")
-  cylinder     \"sword_hilt\"  (radius=0.025, height=0.12, mat=\"hilt\")
-
-  attach (parent=\"head\",   child=\"helmet\",     socket=\"crown\", plug=\"bottom\", offset=-0.04)
-  attach (parent=\"torso\",  child=\"chestplate\", socket=\"front\", plug=\"back\")
-  attach (parent=\"hand_r\", child=\"sword_hilt\", socket=\"wrist\", plug=\"bottom\")
-  attach (parent=\"sword_hilt\", child=\"sword_blade\", socket=\"top\", plug=\"bottom\")
+  // Compose with stdlib outfit/equipment modules — each socket-snaps to the
+  // corresponding humanoid_full connector and bone-binds so it follows the
+  // walk animation. No manual `attach` calls needed.
+  use \"humanoid_full\" (
+    height=1.7,
+    skin =[0.85, 0.65, 0.55],
+    shirt=[0.50, 0.52, 0.55],
+    pants=[0.30, 0.30, 0.32],
+    boot =[0.10, 0.10, 0.10]
+  )
+  use \"outfit_helmet\" (color=[0.72, 0.74, 0.78], visor_color=[0.30, 0.32, 0.34])
+  use \"outfit_cape\"   (color=[0.62, 0.18, 0.18])
+  use \"outfit_belt\"   ()
+  use \"equip_sword\"   ()
+  use \"equip_shield\"  ()
+  use \"humanoid_walk\" ()
 }
 
 ### Prompt: \"a small wooden cart\"

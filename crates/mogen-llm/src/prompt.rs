@@ -49,8 +49,7 @@ impl StdlibIndex {
                         .params
                         .iter()
                         .map(|p| {
-                            let default = p.default.as_ref().and_then(|e| e.eval_const())
-                                .map(|n| format_number(n));
+                            let default = p.default.as_ref().and_then(format_default);
                             (p.name.clone(), default)
                         })
                         .collect(),
@@ -94,6 +93,24 @@ fn format_number(n: f32) -> String {
         format!("{}", n as i64)
     } else {
         format!("{n}")
+    }
+}
+
+/// Render a module parameter's declared default for the prompt's stdlib
+/// summary. Scalars fold to a single number; vec3 colours/sizes render as
+/// `[r, g, b]` so the model sees the canonical form to pass back. Returns
+/// `None` for scalar defaults whose expression doesn't fold to a constant
+/// (rare — `default = $other_param` style); the parameter still surfaces
+/// in the summary, just without a default annotation.
+fn format_default(d: &mogen_dsl::ParamDefault) -> Option<String> {
+    match d {
+        mogen_dsl::ParamDefault::Scalar(e) => e.eval_const().map(format_number),
+        mogen_dsl::ParamDefault::Vec3(arr) => Some(format!(
+            "[{}, {}, {}]",
+            format_number(arr[0]),
+            format_number(arr[1]),
+            format_number(arr[2])
+        )),
     }
 }
 
@@ -365,9 +382,11 @@ mod tests {
             s.contains("Prompt: \"a person walking\""),
             "humanoid walk fewshot missing"
         );
+        // The humanoid fewshot now drives the rig via the stdlib walk module
+        // rather than an inline clip — same semantics, less prompt bloat.
         assert!(
-            s.contains("clip \"walk\" (seconds=1.0)"),
-            "humanoid walk clip missing"
+            s.contains("use \"humanoid_walk\""),
+            "humanoid walk fewshot must pair with humanoid_walk clip module"
         );
     }
 
@@ -545,49 +564,61 @@ mod tests {
     #[test]
     fn organic_fewshots_attach_limbs_via_module_connectors() {
         // The tiger fewshot still attaches legs to torso connectors via
-        // quadruped_torso. Humanoid figures now go through `humanoid_full`,
-        // so we check the knight fewshot demonstrates attaching armor to
-        // the parts the preset already provides.
+        // quadruped_torso (the quadruped path is unchanged). The knight
+        // fewshot now uses outfit/equipment modules instead of hand-rolled
+        // attaches — they socket-snap and bone-bind internally so the LLM
+        // doesn't need to author `attach` calls for armor at all.
         let s = system_instruction(&StdlibIndex::default());
         assert!(
             s.contains("attach (parent=\"torso\", child=\"leg_fl\""),
             "tiger fewshot should attach legs to torso connectors"
         );
         assert!(
-            s.contains("attach (parent=\"head\",   child=\"helmet\""),
-            "knight fewshot should attach helmet to head's crown connector"
+            s.contains("use \"outfit_helmet\""),
+            "knight fewshot should compose with outfit_helmet (auto-socket-snap)"
         );
         assert!(
-            s.contains("attach (parent=\"hand_r\", child=\"sword_hilt\""),
-            "knight fewshot should attach a sword to a hand from humanoid_full"
+            s.contains("use \"equip_sword\""),
+            "knight fewshot should compose with equip_sword (auto-socket-snap)"
         );
     }
 
     #[test]
     fn humanoid_fewshots_use_humanoid_full_preset() {
-        // Both walking and knight fewshots now lean on `humanoid_full` so the
-        // detail floor (hands/feet/face/hair) is met without the LLM having
-        // to author every part by hand.
+        // Both walking and knight fewshots lean on `humanoid_full` so the
+        // detail floor (hands/feet/face) is met without the LLM having to
+        // author every part by hand. Both pass colours via the new vec3
+        // params instead of pre-declaring the material palette — `humanoid_full`
+        // declares its own materials internally from those params.
         let s = system_instruction(&StdlibIndex::default());
         assert!(
-            s.contains("use \"humanoid_full\" (height=1.7)"),
-            "walking fewshot should use humanoid_full"
+            s.contains("use \"humanoid_full\" ("),
+            "humanoid fewshots should call humanoid_full"
         );
-        // Both fewshots use h=1.7 — known good height for humanoid_full's
-        // current proportions; some other heights hit a CSG manifold edge
-        // case in the smin-blended limbs. The preamble also references the
-        // same call form once, so we expect at least 3 occurrences.
+        // The colour-param contract must show up — at minimum the walking
+        // fewshot wires `skin=`, `shirt=`, `pants=`, `boot=`.
         assert!(
-            s.matches("use \"humanoid_full\" (height=1.7)").count() >= 3,
-            "expected humanoid_full(height=1.7) to appear in preamble + both humanoid fewshots"
+            s.contains("skin =[0.85, 0.65, 0.55]")
+                || s.contains("skin=[0.85, 0.65, 0.55]"),
+            "walking fewshot must demonstrate skin colour param"
         );
-        // The standard material palette must appear so the LLM copies it.
-        assert!(s.contains("material \"skin\""));
-        assert!(s.contains("material \"cloth\""));
-        assert!(s.contains("material \"hair\""));
-        assert!(s.contains("material \"eye\""));
-        assert!(s.contains("material \"mouth\""));
-        assert!(s.contains("material \"boot\""));
+        assert!(s.contains("shirt"), "shirt colour param must appear");
+        assert!(s.contains("pants"), "pants colour param must appear");
+        // Knight fewshot pairs with outfit modules so the LLM sees the
+        // composition pattern.
+        assert!(
+            s.contains("use \"outfit_helmet\""),
+            "knight fewshot must reference outfit_helmet"
+        );
+        assert!(
+            s.contains("use \"equip_sword\""),
+            "knight fewshot must reference equip_sword"
+        );
+        // Walk clip must be paired so the figure isn't frozen.
+        assert!(
+            s.contains("use \"humanoid_walk\""),
+            "walking fewshot must pair humanoid_full with humanoid_walk"
+        );
     }
 
     #[test]

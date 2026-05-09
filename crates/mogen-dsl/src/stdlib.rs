@@ -26,6 +26,21 @@ const STDLIB_FILES: &[(&str, &str)] = &[
     ("humanoid_hair_short.mog",   include_str!("../stdlib/humanoid_hair_short.mog")),
     ("humanoid_hair_long.mog",    include_str!("../stdlib/humanoid_hair_long.mog")),
     ("humanoid_full.mog",         include_str!("../stdlib/humanoid_full.mog")),
+    ("humanoid_idle.mog",         include_str!("../stdlib/humanoid_idle.mog")),
+    ("humanoid_walk.mog",         include_str!("../stdlib/humanoid_walk.mog")),
+    ("humanoid_run.mog",          include_str!("../stdlib/humanoid_run.mog")),
+    ("humanoid_jump.mog",         include_str!("../stdlib/humanoid_jump.mog")),
+    // Outfit / equipment modules — socket-snap to humanoid_full's connectors
+    // (`crown`, `back`, `waist`, `wrist_l_grip`, `wrist_r_grip`, …) and
+    // bone-bind so they follow the figure during animation.
+    ("outfit_hat_brimmed.mog",    include_str!("../stdlib/outfit_hat_brimmed.mog")),
+    ("outfit_helmet.mog",         include_str!("../stdlib/outfit_helmet.mog")),
+    ("outfit_cape.mog",           include_str!("../stdlib/outfit_cape.mog")),
+    ("outfit_backpack.mog",       include_str!("../stdlib/outfit_backpack.mog")),
+    ("outfit_belt.mog",           include_str!("../stdlib/outfit_belt.mog")),
+    ("equip_sword.mog",           include_str!("../stdlib/equip_sword.mog")),
+    ("equip_shield.mog",          include_str!("../stdlib/equip_shield.mog")),
+    ("equip_staff.mog",           include_str!("../stdlib/equip_staff.mog")),
     ("quadruped_torso.mog",       include_str!("../stdlib/quadruped_torso.mog")),
     ("quadruped_leg.mog",         include_str!("../stdlib/quadruped_leg.mog")),
     ("tail.mog",                  include_str!("../stdlib/tail.mog")),
@@ -158,7 +173,24 @@ mod tests {
             if def.params.iter().any(|p| p.default.is_none()) {
                 continue;
             }
-            let src = format!("{preamble}scene {{ use \"{name}\" () }}");
+            // Outfit / equipment / animation-clip modules document a
+            // dependency on humanoid_full's `rig` skeleton + named bones.
+            // Lowering them in isolation would fail with "unknown skin
+            // 'rig'" or "track target … is not a joint nor a scene node".
+            // For those, prepend a humanoid_full instance so the test
+            // exercises the realistic call site.
+            let depends_on_humanoid =
+                name.starts_with("outfit_") || name.starts_with("equip_")
+                    || (name.starts_with("humanoid_")
+                        && matches!(name.as_str(),
+                            "humanoid_walk" | "humanoid_run"
+                            | "humanoid_idle" | "humanoid_jump"));
+            let scaffold = if depends_on_humanoid && name != "humanoid_full" {
+                "use \"humanoid_full\" ()\n"
+            } else {
+                ""
+            };
+            let src = format!("{preamble}scene {{ {scaffold}use \"{name}\" () }}");
             let ast = parse(&src).unwrap_or_else(|e| panic!("parse {name}: {e}"));
             let scene = lower(&ast).unwrap_or_else(|e| panic!("lower {name} failed: {e}"));
             assert!(
