@@ -804,6 +804,15 @@ pub(super) struct FileState {
     /// selection changes so clicking a leg in 3D jumps the editor caret.
     pub(super) pending_caret: Option<usize>,
 
+    /// Last caret byte offset reflected into the viewport selection. Read
+    /// after the TextEdit paints; when the new offset differs we look up the
+    /// node whose `source_span` contains it and update the viewport
+    /// selection. Pre-armed to the offset whenever we apply `pending_caret`
+    /// so a programmatic jump from a viewport pick can't feed back into
+    /// another sync next frame (the edges of the loop are: viewport pick
+    /// sets pending_caret → editor moves caret → caret diff would re-pick).
+    pub(super) last_synced_caret_byte: Option<usize>,
+
     /// VS Code–style additional selections layered on top of the TextEdit's
     /// own primary cursor. Cmd+D pushes the prior primary range here and
     /// advances the primary to the next occurrence; subsequent typing /
@@ -852,6 +861,7 @@ impl FileState {
             last_edit_at: None,
             needs_compile: false,
             pending_caret: None,
+            last_synced_caret_byte: None,
             extra_carets: Vec::new(),
             undo: UndoStack::default(),
             status: "new scene".into(),
@@ -897,6 +907,7 @@ impl FileState {
             last_edit_at: None,
             needs_compile: false,
             pending_caret: None,
+            last_synced_caret_byte: None,
             extra_carets: Vec::new(),
             undo: UndoStack::default(),
             status,

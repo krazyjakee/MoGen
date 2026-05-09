@@ -214,6 +214,53 @@ impl MogenStudioApp {
                         }
                     }
 
+                    // Code → viewport selection sync. When the user moves
+                    // the caret inside the editor (click, arrow, Find,
+                    // line ops, …), look up which scene node owns that
+                    // byte offset and make it the primary selection so the
+                    // 3D viewport highlights / gizmos / inspector follow
+                    // along.
+                    //
+                    // Loop avoidance: a viewport pick sets `pending_caret`
+                    // which we consumed above. The TextEdit only sees the
+                    // new offset on the *next* frame, so this frame's
+                    // `output.cursor_range` still reflects the old caret —
+                    // re-syncing from it would clobber the selection the
+                    // pick just established. Pre-arming
+                    // `last_synced_caret_byte` to the offset we just stored
+                    // means the next-frame poll sees no diff and stays
+                    // quiet. The `set_node_at_source_offset` call itself
+                    // never queues a `pending_caret`, so a code-side click
+                    // can't push back into the editor.
+                    if generating {
+                        // Editor is locked while the LLM owns the buffer;
+                        // any cursor wobble during generation is noise.
+                    } else if let Some(applied) = pending_caret {
+                        self.files[i].last_synced_caret_byte = Some(applied);
+                    } else if let Some(range) = output.cursor_range {
+                        let src = &self.files[i].source;
+                        let char_idx = range.primary.ccursor.index;
+                        let byte_off = src
+                            .char_indices()
+                            .nth(char_idx)
+                            .map(|(b, _)| b)
+                            .unwrap_or(src.len());
+                        match self.files[i].last_synced_caret_byte {
+                            Some(prev) if prev == byte_off => {}
+                            Some(_) => {
+                                self.viewer.select_node_at_source_offset(byte_off);
+                                self.files[i].last_synced_caret_byte = Some(byte_off);
+                            }
+                            None => {
+                                // First read for this tab: adopt the
+                                // observed offset without syncing so just
+                                // opening / activating a file doesn't
+                                // synthesise a phantom click.
+                                self.files[i].last_synced_caret_byte = Some(byte_off);
+                            }
+                        }
+                    }
+
                     // Ctrl+click navigation: jumps to imported module
                     // declarations, opens URLs / referenced files, or
                     // scrolls the in-app docs window to the matching

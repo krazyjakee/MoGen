@@ -1292,3 +1292,41 @@ fn pick_nth_named(scene: &SceneGraph, ids: &[NodeId], name: &str, n: u32) -> Opt
     }
     None
 }
+
+/// Find the deepest user-authored scene node whose `source_span` contains
+/// `byte_offset`. "Deepest" = smallest containing span, so a click inside a
+/// child wins over its enclosing group. Nodes lowered from imported `.mog`
+/// files (`origin = Some(...)`) are skipped: their spans index into another
+/// file, not the active source. Returns `None` when the offset falls in a
+/// comment, whitespace, or otherwise outside every node's authored range —
+/// callers preserve the existing selection in that case rather than treating
+/// it as a deselect.
+pub(super) fn find_deepest_node_at_offset(
+    scene: &SceneGraph,
+    byte_offset: usize,
+) -> Option<NodeId> {
+    let mut best: Option<(NodeId, usize)> = None;
+    for (idx, node) in scene.nodes.iter().enumerate() {
+        if node.origin.is_some() {
+            continue;
+        }
+        let Some(span) = node.source_span else {
+            continue;
+        };
+        // Half-open: a caret resting at `span.end` belongs to whatever
+        // structure starts there (or to none, if nothing follows). Without
+        // this, two adjacent siblings with `prev.end == next.start` would
+        // both claim the boundary offset and the deepest-by-length tiebreak
+        // would pick whichever happened to be enumerated last.
+        if byte_offset < span.start || byte_offset >= span.end {
+            continue;
+        }
+        let len = span.end - span.start;
+        match best {
+            None => best = Some((NodeId(idx as u32), len)),
+            Some((_, prev_len)) if len < prev_len => best = Some((NodeId(idx as u32), len)),
+            _ => {}
+        }
+    }
+    best.map(|(id, _)| id)
+}
