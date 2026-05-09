@@ -6,8 +6,8 @@ use super::prefs::model_presets;
 use crate::app::types::{EnhanceTarget, GenImageInput, MAX_GEN_IMAGE_BYTES};
 use crate::app::MogenStudioApp;
 use crate::settings::{
-    style_label, thinking_level_key, thinking_level_label, ProviderSlot, PROVIDER_SLOTS,
-    STYLE_OPTIONS, THINKING_LEVELS,
+    preview_thinking_model, style_label, thinking_level_key, thinking_level_label,
+    ProviderSlot, PROVIDER_SLOTS, STYLE_OPTIONS, THINKING_LEVELS,
 };
 
 /// Decode the image bytes via the `image` crate, downscale to a thumbnail
@@ -226,7 +226,12 @@ impl MogenStudioApp {
                     .is_some()
                 {
                     let presets = model_presets(active_slot);
-                    let model_default = active_provider.default_model();
+                    let model_default = if self.settings.use_preview_models {
+                        preview_thinking_model(active_provider)
+                            .unwrap_or_else(|| active_provider.default_model())
+                    } else {
+                        active_provider.default_model()
+                    };
                     let mut model_draft = self
                         .settings
                         .thinking_model_field(active_provider)
@@ -263,6 +268,30 @@ impl MogenStudioApp {
                         self.settings.thinking_model_field_mut(active_provider)
                     {
                         *buf = model_draft;
+                    }
+
+                    // --- preview / bleeding-edge toggle ---
+                    // Mirrors the same checkbox in Preferences → LLM. Only
+                    // shown when the active provider has a preview tier worth
+                    // surfacing (Gemini today) and the slot isn't OAuth, which
+                    // already pins to preview tags unconditionally.
+                    if !active_slot.is_gemini_oauth()
+                        && preview_thinking_model(active_provider).is_some()
+                    {
+                        ui.add_space(4.0);
+                        let mut on = self.settings.use_preview_models;
+                        if ui
+                            .checkbox(&mut on, "Use preview / bleeding-edge models")
+                            .on_hover_text(
+                                "When enabled (and no explicit override is set), \
+                                 default to the latest Gemini preview Pro / Flash \
+                                 IDs instead of the stable `*-latest` aliases. \
+                                 Preview models can be deprecated without notice.",
+                            )
+                            .changed()
+                        {
+                            self.settings.use_preview_models = on;
+                        }
                     }
                 }
 

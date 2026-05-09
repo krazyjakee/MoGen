@@ -2,7 +2,6 @@ use std::path::PathBuf;
 
 use eframe::egui;
 
-use crate::preview_shader::{preview_shader_label, PreviewShader, PREVIEW_SHADERS};
 use crate::settings::DEFAULT_VIEWER_BG_RGB;
 use crate::theme::{apply_theme, theme_label, Theme, THEMES};
 
@@ -335,51 +334,6 @@ impl MogenStudioApp {
                     ui.close_menu();
                 }
                 ui.separator();
-                let alt = Modifiers::ALT;
-                for (label, sc, op, tooltip) in [
-                    (
-                        "Toggle Comment",
-                        KeyboardShortcut::new(cmd, Key::Slash),
-                        super::line_ops::LineOp::ToggleComment,
-                        "Comment or uncomment the selected line(s)",
-                    ),
-                    (
-                        "Select Line",
-                        KeyboardShortcut::new(cmd, Key::L),
-                        super::line_ops::LineOp::SelectLine,
-                        "Extend the selection to the full line",
-                    ),
-                    (
-                        "Delete Line",
-                        KeyboardShortcut::new(cmd_shift, Key::K),
-                        super::line_ops::LineOp::DeleteLine,
-                        "Delete the line(s) covered by the selection",
-                    ),
-                    (
-                        "Move Line Up",
-                        KeyboardShortcut::new(alt, Key::ArrowUp),
-                        super::line_ops::LineOp::MoveUp,
-                        "Swap the current line(s) with the line above",
-                    ),
-                    (
-                        "Move Line Down",
-                        KeyboardShortcut::new(alt, Key::ArrowDown),
-                        super::line_ops::LineOp::MoveDown,
-                        "Swap the current line(s) with the line below",
-                    ),
-                    (
-                        "Select Next Occurrence",
-                        KeyboardShortcut::new(cmd, Key::D),
-                        super::line_ops::LineOp::SelectNext,
-                        "Select the word under the caret, or jump to the next match",
-                    ),
-                ] {
-                    if native_shortcut_menu_item(ui, label, sc, tooltip, true).clicked() {
-                        action = MenuAction::EditorLineOp(op);
-                        ui.close_menu();
-                    }
-                }
-                ui.separator();
                 if shortcut_menu_item(
                     ui,
                     "Preferences…",
@@ -394,7 +348,6 @@ impl MogenStudioApp {
             });
 
             let mut chosen_theme: Option<Theme> = None;
-            let mut chosen_shader: Option<PreviewShader> = None;
             ui.menu_button("View", |ui| {
                 if shortcut_menu_item(
                     ui,
@@ -454,20 +407,6 @@ impl MogenStudioApp {
                     let _ = self.settings.save();
                 }
                 ui.separator();
-                ui.menu_button("Shader", |ui| {
-                    let current = self.settings.preview_shader();
-                    for s in PREVIEW_SHADERS {
-                        let selected = s == current;
-                        if ui
-                            .selectable_label(selected, preview_shader_label(s))
-                            .clicked()
-                            && !selected
-                        {
-                            chosen_shader = Some(s);
-                            ui.close_menu();
-                        }
-                    }
-                });
                 ui.menu_button("Theme", |ui| {
                     let current = self.settings.theme();
                     for t in THEMES {
@@ -513,11 +452,6 @@ impl MogenStudioApp {
             if let Some(t) = chosen_theme {
                 self.settings.set_theme(t);
                 apply_theme(ui.ctx(), t);
-                let _ = self.settings.save();
-            }
-            if let Some(s) = chosen_shader {
-                self.settings.set_preview_shader(s);
-                self.viewer.set_preview_shader(s);
                 let _ = self.settings.save();
             }
 
@@ -699,19 +633,6 @@ impl MogenStudioApp {
                         "generate: another render is already in flight, finish it first".into();
                 } else {
                     self.show_video_options = true;
-                }
-            }
-            MenuAction::EditorLineOp(op) => {
-                let editor_id = self.active_editor_id();
-                let mutated = self.apply_line_op(ctx, editor_id, op);
-                ctx.memory_mut(|m| m.request_focus(editor_id));
-                if mutated {
-                    let i = self.active;
-                    self.files[i].dirty =
-                        self.files[i].source != self.files[i].last_saved_source;
-                    self.files[i].needs_compile = true;
-                    self.files[i].last_edit_at = Some(std::time::Instant::now());
-                    self.break_undo_chain(i);
                 }
             }
             MenuAction::OpenDocs => {
