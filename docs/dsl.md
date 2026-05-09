@@ -1280,6 +1280,37 @@ clip "open" (seconds=1.0) {
   interpolates linearly between them. This is what the stdlib walk / run
   / jump clips use to drive bones with hand-tuned curves.
 
+### Easing
+
+Every `track` and procedural template accepts an optional `easing=` attribute
+that selects a non-linear interpolation curve. glTF samplers themselves only
+support LINEAR / STEP / CUBICSPLINE, so MoGen bakes the easing curve into a
+dense LINEAR sampling at lower time — the resulting `.glb` plays back the
+same in any compliant viewer (Godot, Blender, Three.js, glTF-Validator).
+
+For an authored `track`, easing is applied between consecutive user
+keyframes (so `keys=[[0, 0], [1, 90]]` with `easing=ease_in_out` produces a
+smooth S-curve from 0° to 90°). For a template, easing warps the procedural
+phase parameter — e.g. `open_close (..., easing=ease_in_out_back)` opens
+slowly, overshoots, and settles back.
+
+| name | shape |
+|---|---|
+| `linear` (default) | t |
+| `ease_in` / `ease_out` / `ease_in_out` | quadratic |
+| `ease_in_cubic` / `ease_out_cubic` / `ease_in_out_cubic` | cubic |
+| `ease_in_sine` / `ease_out_sine` / `ease_in_out_sine` | half-cosine |
+| `ease_in_back` / `ease_out_back` / `ease_in_out_back` | overshoots the endpoint |
+| `ease_in_bounce` / `ease_out_bounce` / `ease_in_out_bounce` | multi-stage bounce |
+
+```
+clip "hop" (seconds=0.6) {
+  track "body" (prop=translation, axis=[0, 1, 0],
+                easing=ease_out_bounce, from=0, to=0.4)
+}
+spin "fan" (target="rotor", rpm=120, easing=ease_in_out_sine)
+```
+
 ### Procedural templates
 
 One-line declarations that expand into a full clip. They all take a
@@ -1287,11 +1318,11 @@ One-line declarations that expand into a full clip. They all take a
 
 | template | extra attrs | effect |
 |---|---|---|
-| `spin` | `axis`, `rpm` (60) | continuous rotation |
-| `open_close` | `axis`, `angle` (90), `seconds` (1.0) | 0° → angle → 0° swing |
-| `wave` | `axis`, `amplitude` (15°), `hz` (1.0) | sinusoidal wobble |
-| `flap` | `axis`, `amplitude` (30°), `hz` (2.0) | faster wobble, bigger amplitude |
-| `idle` | `amplitude` (0.02 m), `hz` (0.5) | tiny translation breathe |
+| `spin` | `axis`, `rpm` (60), `easing` | continuous rotation |
+| `open_close` | `axis`, `angle` (90), `seconds` (1.0), `easing` | 0° → angle → 0° swing |
+| `wave` | `axis`, `amplitude` (15°), `hz` (1.0), `easing` | sinusoidal wobble |
+| `flap` | `axis`, `amplitude` (30°), `hz` (2.0), `easing` | faster wobble, bigger amplitude |
+| `idle` | `amplitude` (0.02 m), `hz` (0.5), `easing` | tiny translation breathe |
 
 When the target is a joint, its `axis` is used by default; when it's a node,
 pass `axis` explicitly.

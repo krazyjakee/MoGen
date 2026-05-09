@@ -19,7 +19,7 @@ use fbxcel::tree::any::AnyTree;
 use fbxcel::tree::v7400::{NodeHandle, Tree};
 
 use mogen_core::{
-    Clip, Interpolation, Light, LightKind, Material, Mesh, SceneGraph, Skin,
+    Clip, Easing, Interpolation, Light, LightKind, Material, Mesh, SceneGraph, Skin,
     TextureRef, Track, TrackProperty, Transform,
 };
 use mogen_geom::box_mesh;
@@ -547,6 +547,7 @@ fn translation_animation_emits_stack_layer_curve_node_and_three_axes() {
             node: id,
             property: TrackProperty::Translation,
             interpolation: Interpolation::Linear,
+            easing: Easing::Linear,
             times: vec![0.0, 0.5, 1.0],
             values: vec![[0.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0]],
         }],
@@ -648,6 +649,7 @@ fn step_interpolation_emits_constant_key_attr_flag() {
             node: id,
             property: TrackProperty::Translation,
             interpolation: Interpolation::Step,
+            easing: Easing::Linear,
             times: vec![0.0, 1.0],
             values: vec![[0.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]],
         }],
@@ -690,6 +692,7 @@ fn rotation_track_emits_euler_degrees() {
             node: id,
             property: TrackProperty::Rotation,
             interpolation: Interpolation::Linear,
+            easing: Easing::Linear,
             times: vec![0.0],
             values: vec![[q.x, q.y, q.z, q.w]],
         }],

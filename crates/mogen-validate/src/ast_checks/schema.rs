@@ -168,11 +168,11 @@ pub fn attrs_for_kind(kind: &str) -> &'static [&'static str] {
         "array" => &["count", "around", "start_angle"],
         "joint" => &["type", "axis", "limits", "pivot"],
         "clip" => &["seconds"],
-        "track" => &["prop", "axis", "from", "to", "keys"],
-        "spin" => &["target", "axis", "rpm"],
-        "open_close" => &["target", "axis", "angle", "seconds"],
-        "wave" | "flap" => &["target", "axis", "amplitude", "hz"],
-        "idle" => &["target", "amplitude", "hz"],
+        "track" => &["prop", "axis", "from", "to", "keys", "easing"],
+        "spin" => &["target", "axis", "rpm", "easing"],
+        "open_close" => &["target", "axis", "angle", "seconds", "easing"],
+        "wave" | "flap" => &["target", "axis", "amplitude", "hz", "easing"],
+        "idle" => &["target", "amplitude", "hz", "easing"],
         "skeleton" => &[],
         "bone" => &["envelope"],
         "attach" => &["parent", "child", "socket", "plug", "offset", "twist"],
@@ -398,6 +398,12 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         | ("flap", "hz")
         | ("idle", "amplitude")
         | ("idle", "hz") => "number",
+        ("track", "easing")
+        | ("spin", "easing")
+        | ("open_close", "easing")
+        | ("wave", "easing")
+        | ("flap", "easing")
+        | ("idle", "easing") => "string",
         ("bone", "envelope") => "number",
         ("attach", "parent") | ("attach", "child")
         | ("attach", "socket") | ("attach", "plug") => "string",
