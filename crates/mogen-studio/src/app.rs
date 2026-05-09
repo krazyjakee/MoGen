@@ -122,9 +122,10 @@ pub struct MogenStudioApp {
     settings: Settings,
     show_options: bool,
     options_api_key_draft: String,
-    /// Draft string for the optional seed field in the New Prompt dialog and
-    /// (mirrored) Preferences → LLM. Stored as a `String` so the user can
-    /// type freely without partial parses; we re-parse on submit.
+    /// Draft string for the optional seed field in the New Prompt dialog.
+    /// Stored as a `String` so the user can type freely without partial
+    /// parses; we re-parse on submit. Preferences → LLM has its own seed
+    /// editor that reads/writes `settings.seed_override` directly.
     options_seed_draft: String,
     /// Active tab inside the Preferences window. Persists across opens within
     /// a session so re-opening the dialog returns to whichever pane the user

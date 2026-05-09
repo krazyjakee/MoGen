@@ -85,7 +85,39 @@ impl MogenStudioApp {
                                 ui.hyperlink_to("Release notes on GitHub", &info.html_url);
                             }
                             ui.add_space(8.0);
-                            if res.newer {
+                            // Honour a prior "Skip this version" — show the
+                            // release info but suppress the green CTA + the
+                            // Download / Skip buttons. The user can unskip if
+                            // they change their mind.
+                            let already_skipped = !self.settings.skipped_update_tag.is_empty()
+                                && self.settings.skipped_update_tag == info.tag;
+                            let mut want_skip: Option<String> = None;
+                            let mut want_unskip = false;
+                            if res.newer && already_skipped {
+                                ui.colored_label(
+                                    egui::Color32::from_rgb(180, 200, 220),
+                                    format!(
+                                        "{} is available but you skipped this release.",
+                                        info.version,
+                                    ),
+                                );
+                                ui.add_space(8.0);
+                                ui.horizontal(|ui| {
+                                    if ui
+                                        .button("Unskip and install")
+                                        .on_hover_text(
+                                            "Forget the skip and install this release now.",
+                                        )
+                                        .clicked()
+                                    {
+                                        want_unskip = true;
+                                        start_install = Some(info.clone());
+                                    }
+                                    if ui.button("Close").clicked() {
+                                        close = true;
+                                    }
+                                });
+                            } else if res.newer {
                                 ui.colored_label(
                                     egui::Color32::from_rgb(120, 200, 140),
                                     format!(
@@ -113,7 +145,6 @@ impl MogenStudioApp {
                                      to restart the app once the swap completes.",
                                 );
                                 ui.add_space(8.0);
-                                let mut want_skip: Option<String> = None;
                                 ui.horizontal(|ui| {
                                     if ui
                                         .button("Download and install")
@@ -140,11 +171,16 @@ impl MogenStudioApp {
                                         close = true;
                                     }
                                 });
-                                if let Some(tag) = want_skip {
-                                    self.settings.skipped_update_tag = tag;
-                                    let _ = self.settings.save();
-                                }
-                            } else {
+                            }
+                            if let Some(tag) = want_skip {
+                                self.settings.skipped_update_tag = tag;
+                                let _ = self.settings.save();
+                            }
+                            if want_unskip {
+                                self.settings.skipped_update_tag.clear();
+                                let _ = self.settings.save();
+                            }
+                            if !res.newer {
                                 ui.colored_label(
                                     egui::Color32::from_rgb(180, 200, 220),
                                     "You're already running the latest release.",
