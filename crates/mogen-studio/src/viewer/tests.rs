@@ -1,13 +1,14 @@
     use super::flatten::{flatten, PaletteSource, FLOATS_PER_VERTEX};
     use super::state::{
-        apply_gizmo_drag, commit_gizmo_drag, gizmo_handles_supported, is_import_wrapper, node_path,
-        redirect_pick, replace_selection, replace_selection_cycling, resolve_node_path,
-        snap_rotate_delta, snap_scale_factor, snap_translate_delta, toggle_selection, GizmoDrag,
-        PendingEdit, ViewerState, PICK_CYCLE_RADIUS_PX, SCALE_SNAP_STEP,
+        apply_gizmo_drag, commit_gizmo_drag, find_deepest_node_at_offset, gizmo_handles_supported,
+        is_import_wrapper, node_path, redirect_pick, replace_selection, replace_selection_cycling,
+        resolve_node_path, snap_rotate_delta, snap_scale_factor, snap_translate_delta,
+        toggle_selection, GizmoDrag, PendingEdit, ViewerState, PICK_CYCLE_RADIUS_PX,
+        SCALE_SNAP_STEP,
     };
     use eframe::egui;
     use glam::{Mat4, Quat, Vec3};
-    use mogen_core::{AlphaMode, Material, Mesh, NodeId, SceneGraph, Transform};
+    use mogen_core::{AlphaMode, Material, Mesh, NodeId, SceneGraph, Span, Transform};
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
 
@@ -641,6 +642,83 @@
         replace_selection(&mut st, Some(imported));
         assert!(st.selected.is_empty());
         assert!(st.selected_paths.is_empty());
+    }
+
+    /// Build a tiny scene whose nodes carry hand-rolled `source_span`s so
+    /// the offset-lookup tests can pick precise byte positions without
+    /// running the real DSL parser. Layout (byte offsets in brackets):
+    ///   `[0..40] group "outer" { [10..30] box "inner" { } }`
+    /// — a parent span that fully contains a child span. The third node
+    /// (`imported`) is a sibling of `inner` whose `origin = Some(...)` to
+    /// exercise the imported-skip rule.
+    fn scene_with_overlapping_spans() -> (SceneGraph, NodeId, NodeId, NodeId) {
+        let mut scene = SceneGraph::new();
+        let outer = scene.add_root("outer", "group", Transform::IDENTITY);
+        let inner = scene.add_child(outer, "inner", "box", Transform::IDENTITY);
+        let imported = scene.add_child(outer, "imported", "box", Transform::IDENTITY);
+        scene.nodes[outer.0 as usize].source_span = Some(Span::new(0, 40));
+        scene.nodes[inner.0 as usize].source_span = Some(Span::new(10, 30));
+        // Picked to overlap `inner`'s range so the deepest-by-length tiebreak
+        // genuinely depends on whether we let an imported span participate.
+        scene.nodes[imported.0 as usize].source_span = Some(Span::new(15, 25));
+        scene.nodes[imported.0 as usize].origin = Some(PathBuf::from("other.mog"));
+        (scene, outer, inner, imported)
+    }
+
+    #[test]
+    fn find_deepest_node_at_offset_picks_smallest_containing_span() {
+        // Offset 20 sits inside both the outer group (0..40) and the inner
+        // box (10..30). The deepest match wins so a code-side click on the
+        // child's source line selects the child, not its enclosing group.
+        let (scene, _outer, inner, _imported) = scene_with_overlapping_spans();
+        assert_eq!(find_deepest_node_at_offset(&scene, 20), Some(inner));
+    }
+
+    #[test]
+    fn find_deepest_node_at_offset_skips_imported_nodes() {
+        // The imported sibling's span (15..25) is the smallest one covering
+        // offset 20, but it lives in another file — selecting it would land
+        // the gizmo at byte offsets that don't index the active source.
+        // The lookup must skip it and fall back to the inner user-authored
+        // node instead.
+        let (scene, _outer, inner, _imported) = scene_with_overlapping_spans();
+        assert_eq!(find_deepest_node_at_offset(&scene, 20), Some(inner));
+    }
+
+    #[test]
+    fn find_deepest_node_at_offset_falls_back_to_outer_when_only_outer_contains() {
+        // Offset 5 lands inside the outer group's span but before the inner
+        // child's. The outer group is the only valid candidate.
+        let (scene, outer, _inner, _imported) = scene_with_overlapping_spans();
+        assert_eq!(find_deepest_node_at_offset(&scene, 5), Some(outer));
+    }
+
+    #[test]
+    fn find_deepest_node_at_offset_returns_none_outside_every_span() {
+        // Offset past every node's range — represents a click in trailing
+        // whitespace or a top-level comment. The caller preserves the
+        // existing selection in that case rather than treating it as a
+        // deselect.
+        let (scene, _outer, _inner, _imported) = scene_with_overlapping_spans();
+        assert_eq!(find_deepest_node_at_offset(&scene, 1000), None);
+    }
+
+    #[test]
+    fn find_deepest_node_at_offset_treats_span_end_as_exclusive() {
+        // A caret resting exactly at a node's `span.end` belongs to whatever
+        // structure starts there (or to none). Without the half-open
+        // boundary, two adjacent siblings with `prev.end == next.start`
+        // would both claim the boundary offset and the deepest-by-length
+        // tiebreak would silently pick whichever happened to enumerate last.
+        let mut scene = SceneGraph::new();
+        let a = scene.add_root("a", "box", Transform::IDENTITY);
+        let b = scene.add_root("b", "box", Transform::IDENTITY);
+        scene.nodes[a.0 as usize].source_span = Some(Span::new(0, 10));
+        scene.nodes[b.0 as usize].source_span = Some(Span::new(10, 20));
+        // 9 → still inside `a`.
+        assert_eq!(find_deepest_node_at_offset(&scene, 9), Some(a));
+        // 10 → boundary; belongs to `b`, not `a`.
+        assert_eq!(find_deepest_node_at_offset(&scene, 10), Some(b));
     }
 
     /// Three-sibling scene with three user-authored boxes under one root.

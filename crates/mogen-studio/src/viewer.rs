@@ -36,9 +36,9 @@ use crate::preview_shader::PreviewShader;
 
 use renderer::Renderer;
 use state::{
-    aspect_for, begin_gizmo_drag, commit_gizmo_drag, gizmo_handles_supported, node_path,
-    replace_selection, replace_selection_cycling, resolve_node_path, toggle_selection,
-    update_gizmo_drag, ViewerState,
+    aspect_for, begin_gizmo_drag, commit_gizmo_drag, find_deepest_node_at_offset,
+    gizmo_handles_supported, node_path, replace_selection, replace_selection_cycling,
+    resolve_node_path, toggle_selection, update_gizmo_drag, ViewerState,
 };
 
 pub struct Viewer {
@@ -191,6 +191,37 @@ impl Viewer {
     /// recompiles when raw `NodeId` indices may have shifted.
     pub fn all_selected_paths(&self) -> Vec<SelectionPath> {
         self.state.lock().unwrap().selected_paths.clone()
+    }
+
+    /// Reverse of the viewport-pick → caret jump: update the primary
+    /// selection to whichever user-authored node's `source_span` contains
+    /// `byte_offset`, so clicking in the code editor highlights the matching
+    /// 3D node. Does **not** queue a `pending_caret` — the caret is already
+    /// where the user moved it, and writing one back would re-trigger this
+    /// path next frame and pingpong forever. Returns `true` when the
+    /// selection actually changed; callers can short-circuit when nothing
+    /// moved. `None` from the offset lookup (caret in a comment, blank line,
+    /// or otherwise outside any span) preserves the existing selection.
+    pub fn select_node_at_source_offset(&self, byte_offset: usize) -> bool {
+        let mut st = self.state.lock().unwrap();
+        let Some(scene) = st.scene.clone() else {
+            return false;
+        };
+        let Some(target) = find_deepest_node_at_offset(&scene, byte_offset) else {
+            return false;
+        };
+        if st.selected.last().copied() == Some(target) {
+            return false;
+        }
+        st.selected.clear();
+        st.selected_paths.clear();
+        st.selected.push(target);
+        if let Some(path) = node_path(&scene, target) {
+            st.selected_paths.push(path);
+        }
+        st.gizmo_drag = None;
+        st.pick_cycle = None;
+        true
     }
 
     /// Set the desired selection by stable paths. Live `NodeId`s are cleared
