@@ -113,6 +113,7 @@ impl MogenStudioApp {
                                      to restart the app once the swap completes.",
                                 );
                                 ui.add_space(8.0);
+                                let mut want_skip: Option<String> = None;
                                 ui.horizontal(|ui| {
                                     if ui
                                         .button("Download and install")
@@ -124,10 +125,25 @@ impl MogenStudioApp {
                                     {
                                         start_install = Some(info.clone());
                                     }
+                                    if ui
+                                        .button("Skip this version")
+                                        .on_hover_text(
+                                            "Don't prompt me about this release again. \
+                                             Newer releases will still surface.",
+                                        )
+                                        .clicked()
+                                    {
+                                        want_skip = Some(info.tag.clone());
+                                        close = true;
+                                    }
                                     if ui.button("Close").clicked() {
                                         close = true;
                                     }
                                 });
+                                if let Some(tag) = want_skip {
+                                    self.settings.skipped_update_tag = tag;
+                                    let _ = self.settings.save();
+                                }
                             } else {
                                 ui.colored_label(
                                     egui::Color32::from_rgb(180, 200, 220),
