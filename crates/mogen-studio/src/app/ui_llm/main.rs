@@ -3,6 +3,23 @@ use eframe::egui;
 use crate::app::types::EnhanceTarget;
 use crate::app::MogenStudioApp;
 
+/// Build the hover text shown on a disabled button. Lists every gating
+/// condition currently failing so the user knows which prerequisite to fix
+/// without having to discover them one by one.
+fn disabled_reason(reasons: &[(&str, bool)]) -> Option<String> {
+    let blockers: Vec<&str> = reasons
+        .iter()
+        .filter_map(|(label, ok)| if !ok { Some(*label) } else { None })
+        .collect();
+    if blockers.is_empty() {
+        None
+    } else if blockers.len() == 1 {
+        Some(format!("Disabled — {}", blockers[0]))
+    } else {
+        Some(format!("Disabled:\n  • {}", blockers.join("\n  • ")))
+    }
+}
+
 impl MogenStudioApp {
     pub(in crate::app) fn ui_llm(&mut self, ui: &mut egui::Ui) {
         let has_key = self.resolve_api_key().is_some();
@@ -22,6 +39,11 @@ impl MogenStudioApp {
         let busy = self.active().llm_in_flight.is_some();
         let src_empty = self.active().source.trim().is_empty();
         let has_path = self.active().path.is_some();
+        let provider_name_full = self.settings.provider().display_name();
+        let no_key_msg = format!("set a {provider_name_full} API key in Preferences");
+        let busy_msg = "another LLM call is already in flight on this tab";
+        let no_src_msg = "open or paste a .mog file first";
+        let no_path_msg = "save the file first — textures writes PNGs next to it";
 
         // Show the classified error banner above the prompt fields so users
         // see the failure before deciding whether to Retry or edit.
@@ -51,12 +73,20 @@ impl MogenStudioApp {
             },
         );
         let mod_enabled = has_key && !busy && !src_empty;
+        let mod_reason = disabled_reason(&[
+            (no_key_msg.as_str(), has_key),
+            (busy_msg, !busy),
+            (no_src_msg, !src_empty),
+        ]);
         ui.horizontal(|ui| {
-            if ui
+            let resp = ui
                 .add_enabled(mod_enabled, egui::Button::new("Modify"))
-                .on_hover_text("Smallest-edit rewrite of the current MOG file")
-                .clicked()
-            {
+                .on_hover_text(
+                    mod_reason
+                        .as_deref()
+                        .unwrap_or("Smallest-edit rewrite of the current MOG file"),
+                );
+            if resp.clicked() {
                 let ctx = ui.ctx().clone();
                 self.start_llm_modify(ctx);
             }
@@ -85,12 +115,20 @@ impl MogenStudioApp {
             },
         );
         let anim_enabled = has_key && !busy && !src_empty;
+        let anim_reason = disabled_reason(&[
+            (no_key_msg.as_str(), has_key),
+            (busy_msg, !busy),
+            (no_src_msg, !src_empty),
+        ]);
         ui.horizontal(|ui| {
-            if ui
+            let resp = ui
                 .add_enabled(anim_enabled, egui::Button::new("Animate"))
-                .on_hover_text("Append joints/clips/skeleton to the current MOG file")
-                .clicked()
-            {
+                .on_hover_text(
+                    anim_reason
+                        .as_deref()
+                        .unwrap_or("Append joints/clips/skeleton to the current MOG file"),
+                );
+            if resp.clicked() {
                 let ctx = ui.ctx().clone();
                 self.start_llm_animate(ctx);
             }
@@ -135,16 +173,20 @@ impl MogenStudioApp {
         } else {
             "Repair".to_string()
         };
-        let repair_tip = if src_empty {
-            "Open or paste a .mog file first".to_string()
-        } else if error_count == 0 {
-            "No validation errors to repair".to_string()
-        } else {
-            format!("Feed the diagnostics (with spans and fix hints) back to {provider_name}")
-        };
+        let no_errors_msg =
+            "no validation errors to fix — Repair lights up when the file fails to compile";
+        let repair_reason = disabled_reason(&[
+            (no_key_msg.as_str(), has_key),
+            (busy_msg, !busy),
+            (no_src_msg, !src_empty),
+            (no_errors_msg, error_count > 0),
+        ]);
+        let repair_default_tip = format!(
+            "Feed the diagnostics (with spans and fix hints) back to {provider_name}"
+        );
         if ui
             .add_enabled(repair_enabled, egui::Button::new(repair_label))
-            .on_hover_text(repair_tip)
+            .on_hover_text(repair_reason.as_deref().unwrap_or(&repair_default_tip))
             .clicked()
         {
             let ctx = ui.ctx().clone();
@@ -226,12 +268,18 @@ impl MogenStudioApp {
         self.files[self.active].texture_cfg.expanded = resp.openness > 0.5;
 
         let tex_enabled = has_key && !busy && !src_empty && has_path;
+        let tex_reason = disabled_reason(&[
+            (no_key_msg.as_str(), has_key),
+            (busy_msg, !busy),
+            (no_src_msg, !src_empty),
+            (no_path_msg, has_path),
+        ]);
         if ui
             .add_enabled(tex_enabled, egui::Button::new("Generate Textures"))
-            .on_hover_text(
+            .on_hover_text(tex_reason.as_deref().unwrap_or(
                 "Run the textures pipeline with the options above. \
                  Writes PNGs to ./textures/ next to the .mog.",
-            )
+            ))
             .clicked()
         {
             let ctx = ui.ctx().clone();

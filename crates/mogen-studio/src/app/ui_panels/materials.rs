@@ -43,6 +43,31 @@ impl MogenStudioApp {
         let has_path = self.files[i].path.is_some();
         let src_empty = self.files[i].source.trim().is_empty();
         let tex_enabled = has_key && !busy && !src_empty && has_path;
+        let provider_name = self.settings.provider().display_name();
+        // Spelled out so the user knows which prerequisite to fix without
+        // having to discover them one by one.
+        let tex_disabled_reason: Option<String> = if tex_enabled {
+            None
+        } else {
+            let mut blockers: Vec<String> = Vec::new();
+            if !has_key {
+                blockers.push(format!("set a {provider_name} API key in Preferences"));
+            }
+            if busy {
+                blockers.push("another LLM call is in flight on this tab".into());
+            }
+            if src_empty {
+                blockers.push("open or paste a .mog file first".into());
+            }
+            if !has_path {
+                blockers.push("save the file first — textures writes PNGs next to it".into());
+            }
+            Some(if blockers.len() == 1 {
+                format!("Disabled — {}", blockers[0])
+            } else {
+                format!("Disabled:\n  • {}", blockers.join("\n  • "))
+            })
+        };
         let ctx = ui.ctx().clone();
         let Some(result) = &self.files[i].last_result else {
             ui.label("(no build yet)");
@@ -555,11 +580,12 @@ impl MogenStudioApp {
                                 "Run the textures pipeline for this material — writes a \
                                  base_color PNG (plus derived normal/MR/AO) into ./textures/"
                             };
-                            if ui
+                            let gen_resp = ui
                                 .add_enabled(tex_enabled, egui::Button::new(gen_label))
-                                .on_hover_text(gen_tip)
-                                .clicked()
-                            {
+                                .on_hover_text(
+                                    tex_disabled_reason.as_deref().unwrap_or(gen_tip),
+                                );
+                            if gen_resp.clicked() {
                                 pending_tex_action =
                                     Some(TexAction::Regenerate(mat.name.clone()));
                             }
@@ -598,8 +624,20 @@ impl MogenStudioApp {
                             } else {
                                 ("✗", egui::Color32::from_rgb(230, 100, 100))
                             };
+                            // Concrete hover text on the missing marker so
+                            // the user sees *which* path the file picker
+                            // looked for, not just that something is wrong.
+                            let mark_tip = if exists {
+                                format!("Found at {}", resolved.display())
+                            } else {
+                                format!(
+                                    "File not found at {}\nRegenerate or update the path \
+                                     attribute in the .mog source.",
+                                    resolved.display()
+                                )
+                            };
                             ui.horizontal_wrapped(|ui| {
-                                ui.colored_label(color, mark);
+                                ui.colored_label(color, mark).on_hover_text(mark_tip);
                                 ui.label(*slot);
                                 let display = ellipsize_path(rel_path, 30);
                                 ui.label(display)

@@ -8,7 +8,7 @@
 //! selected candidate into the active file's source and rewrites the TextEdit
 //! cursor state.
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use eframe::egui;
 use egui::text::{CCursor, CCursorRange};
@@ -79,11 +79,13 @@ impl MogenStudioApp {
             .map(|(b, _)| b)
             .unwrap_or(source.len());
 
-        // If the user pressed Esc earlier this session, keep the popup hidden
-        // until they edit again (detected by source length change).
-        if let Some(len) = self.autocomplete.suppressed_for_source_len {
-            if source.len() != len {
-                self.autocomplete.suppressed_for_source_len = None;
+        // Esc-to-suppress: keep the popup hidden for a short window so the
+        // user can finish typing without it popping back. Time-based rather
+        // than source-length based — deleting and re-typing the same char
+        // used to silently keep the popup hidden because lengths matched.
+        if let Some(deadline) = self.autocomplete.suppressed_until {
+            if Instant::now() >= deadline {
+                self.autocomplete.suppressed_until = None;
             }
         }
 
@@ -97,7 +99,7 @@ impl MogenStudioApp {
             .map(|s| s.materials.iter().map(|m| m.name.clone()).collect())
             .unwrap_or_default();
 
-        let completions = if self.autocomplete.suppressed_for_source_len.is_some() {
+        let completions = if self.autocomplete.suppressed_until.is_some() {
             None
         } else {
             compute_completions(source, caret, &mats)
@@ -106,9 +108,16 @@ impl MogenStudioApp {
         let mut should_accept = false;
         match (completions, key_action) {
             (Some(c), action) => {
-                // Keep selected within bounds when the candidate set changes.
-                let prev_selected = if self.autocomplete.open {
-                    self.autocomplete.selected.min(c.candidates.len().saturating_sub(1))
+                // Reset `selected` to 0 whenever the candidate set changes
+                // so the top match is always preselected. If it's the same
+                // set, just clamp the existing index to the new bounds.
+                let signature = candidate_signature(&c.candidates);
+                let prev_selected = if Some(signature) == self.autocomplete.last_signature
+                    && self.autocomplete.open
+                {
+                    self.autocomplete
+                        .selected
+                        .min(c.candidates.len().saturating_sub(1))
                 } else {
                     0
                 };
@@ -116,6 +125,7 @@ impl MogenStudioApp {
                 self.autocomplete.candidates = c.candidates;
                 self.autocomplete.range = Some(c.range);
                 self.autocomplete.selected = prev_selected;
+                self.autocomplete.last_signature = Some(signature);
 
                 match action {
                     AutocompleteKey::MoveDown => {
@@ -136,7 +146,12 @@ impl MogenStudioApp {
                         should_accept = true;
                     }
                     AutocompleteKey::Cancel => {
-                        self.autocomplete.suppressed_for_source_len = Some(source.len());
+                        // 600 ms is long enough that the next keystroke
+                        // doesn't immediately re-pop, short enough that
+                        // pausing to think then typing again works as
+                        // expected.
+                        self.autocomplete.suppressed_until =
+                            Some(Instant::now() + Duration::from_millis(600));
                         self.autocomplete.close();
                     }
                     AutocompleteKey::None => {}
@@ -259,10 +274,10 @@ impl MogenStudioApp {
                 .set_char_range(Some(CCursorRange::one(CCursor::new(new_char))));
             st.store(ctx, editor_id);
         }
-        // Suppress until the next edit so the popup doesn't immediately
-        // re-open on the just-inserted word (e.g. after inserting `box`, the
-        // caret sits right after it — the popup would pop right back).
-        self.autocomplete.suppressed_for_source_len = Some(source.len());
+        // Suppress for a short window after accepting so the popup doesn't
+        // immediately re-open on the just-inserted word.
+        self.autocomplete.suppressed_until =
+            Some(Instant::now() + Duration::from_millis(600));
         self.autocomplete.close();
     }
 }
@@ -274,7 +289,22 @@ impl AutocompleteState {
         self.range = None;
         self.anchor = None;
         self.selected = 0;
+        self.last_signature = None;
     }
+}
+
+/// Cheap fingerprint of the candidate label set so we can detect when the
+/// list has actually changed (and therefore reset the `selected` index back
+/// to the top). Order-sensitive, which is what we want — same labels in a
+/// different order are still a different list to the user.
+fn candidate_signature(cands: &[Candidate]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    cands.len().hash(&mut h);
+    for c in cands {
+        c.label.hash(&mut h);
+    }
+    h.finish()
 }
 
 fn render_item(ui: &mut egui::Ui, c: &Candidate, selected: bool) -> bool {

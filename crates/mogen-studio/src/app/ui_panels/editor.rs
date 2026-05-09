@@ -148,6 +148,34 @@ impl MogenStudioApp {
                         changed = true;
                     }
 
+                    // Faint current-line highlight. Drawn after the text so we
+                    // sit above the editor background but below the find /
+                    // multi-cursor overlays. Pulled from output.cursor_range
+                    // so it tracks every kind of caret movement (typing, click,
+                    // arrow, viewport-pick, diagnostic-jump) without extra
+                    // bookkeeping.
+                    if !generating {
+                        if let Some(range) = output.cursor_range {
+                            let caret_rect = output.galley.pos_from_cursor(&range.primary);
+                            let pos = output.galley_pos;
+                            let line_rect = egui::Rect::from_min_max(
+                                egui::pos2(
+                                    output.text_clip_rect.left(),
+                                    caret_rect.min.y + pos.y,
+                                ),
+                                egui::pos2(
+                                    output.text_clip_rect.right(),
+                                    caret_rect.max.y + pos.y,
+                                ),
+                            );
+                            ui.painter_at(output.text_clip_rect).rect_filled(
+                                line_rect,
+                                0.0,
+                                egui::Color32::from_white_alpha(8),
+                            );
+                        }
+                    }
+
                     // Re-assert the pre-press selection on secondary press
                     // so the right-click menu can see what the user had
                     // highlighted.

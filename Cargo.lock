@@ -2598,6 +2598,7 @@ dependencies = [
  "mogen-moghub-client",
  "mogen-update",
  "mogen-validate",
+ "regex",
  "rfd",
  "sentry",
  "serde",

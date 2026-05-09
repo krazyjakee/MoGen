@@ -451,11 +451,15 @@ impl MogenStudioApp {
                         ui.add_space(4.0);
                         ui.horizontal(|ui| {
                             if picker.mode.is_save() {
-                                ui.label("Filename:");
+                                ui.label("Filename:")
+                                    .on_hover_text(
+                                        "The .mog extension is added automatically \
+                                         if you leave it off.",
+                                    );
                                 let save_resp = ui.add(
                                     egui::TextEdit::singleline(&mut picker.save_name_draft)
                                         .desired_width(240.0)
-                                        .hint_text("scene.mog"),
+                                        .hint_text("scene.mog (or scene — .mog is added)"),
                                 );
                                 if picker.focus_save_name_pending {
                                     save_resp.request_focus();
@@ -519,11 +523,40 @@ impl MogenStudioApp {
                                             !picker.save_name_draft.trim().is_empty()
                                         }
                                     };
+                                    // Spell out the gating condition for the
+                                    // disabled state — silent disabled buttons
+                                    // make users assume the picker is broken.
+                                    let confirm_tip = if confirm_enabled {
+                                        match &picker.mode {
+                                            PickerMode::SaveAs { .. } => {
+                                                "Save as .mog (extension auto-appended)"
+                                            }
+                                            _ => "Open the selected file",
+                                        }
+                                        .to_string()
+                                    } else {
+                                        match &picker.mode {
+                                            PickerMode::Open => {
+                                                "Disabled — pick a .mog file from the grid"
+                                                    .into()
+                                            }
+                                            PickerMode::Import => {
+                                                "Disabled — pick at least one .mog module"
+                                                    .into()
+                                            }
+                                            PickerMode::SaveAs { .. } => {
+                                                "Disabled — type a filename above (.mog \
+                                                 extension is auto-appended)"
+                                                    .into()
+                                            }
+                                        }
+                                    };
                                     if ui
                                         .add_enabled(
                                             confirm_enabled,
                                             egui::Button::new(picker.mode.confirm_label()),
                                         )
+                                        .on_hover_text(confirm_tip)
                                         .clicked()
                                     {
                                         do_confirm = true;
