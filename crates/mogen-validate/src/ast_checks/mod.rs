@@ -129,8 +129,9 @@ fn scan_nested_meta(n: &Node, diags: &mut Vec<Diagnostic>) {
 }
 
 /// Warn (not error) when the file's `mogen_version` differs from the version
-/// of the toolchain running the validator. Old files keep building; the
-/// warning nudges authors to refresh.
+/// of the toolchain running the validator at the major-or-minor level. Patch
+/// bumps are silent — they round-trip without semantic change. Old files keep
+/// building; the warning nudges authors to refresh.
 fn check_meta_version(meta: &Node, diags: &mut Vec<Diagnostic>) {
     let current = env!("CARGO_PKG_VERSION");
     let stamped = meta.attrs.iter().find_map(|(k, v)| {
@@ -143,7 +144,7 @@ fn check_meta_version(meta: &Node, diags: &mut Vec<Diagnostic>) {
         }
     });
     if let Some(v) = stamped {
-        if v != current {
+        if differs_at_minor_or_above(v, current) {
             diags.push(
                 Diagnostic::warning(
                     "W0107",
@@ -156,6 +157,25 @@ fn check_meta_version(meta: &Node, diags: &mut Vec<Diagnostic>) {
             );
         }
     }
+}
+
+/// Return true when `stamped` and `current` differ at the major or minor
+/// component (ignoring patch and any pre-release/build suffix). Versions that
+/// don't parse as `MAJOR.MINOR[.…]` fall back to full string comparison so
+/// genuinely malformed values still surface.
+fn differs_at_minor_or_above(stamped: &str, current: &str) -> bool {
+    match (parse_major_minor(stamped), parse_major_minor(current)) {
+        (Some(a), Some(b)) => a != b,
+        _ => stamped != current,
+    }
+}
+
+fn parse_major_minor(v: &str) -> Option<(u64, u64)> {
+    let core = v.split(['-', '+']).next()?;
+    let mut parts = core.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    Some((major, minor))
 }
 
 fn walk(

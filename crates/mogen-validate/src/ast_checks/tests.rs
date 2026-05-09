@@ -222,6 +222,32 @@ mod meta_block_tests {
     }
 
     #[test]
+    fn version_patch_difference_is_silent() {
+        // Patch bumps round-trip without semantic change — no warning, even
+        // though the stamped string differs from the current toolchain.
+        let current = env!("CARGO_PKG_VERSION");
+        let (major, minor) = current
+            .split(['-', '+'])
+            .next()
+            .and_then(|core| {
+                let mut parts = core.split('.');
+                let mj: u64 = parts.next()?.parse().ok()?;
+                let mn: u64 = parts.next()?.parse().ok()?;
+                Some((mj, mn))
+            })
+            .expect("CARGO_PKG_VERSION parses as MAJOR.MINOR.…");
+        // Pick a patch number that cannot equal the current full version.
+        let stamped = format!("{major}.{minor}.9999");
+        assert_ne!(stamped, current);
+        let src = format!(r#"meta (mogen_version = "{stamped}") scene {{}}"#);
+        let diags = diags_for(&src);
+        assert!(
+            !diags.iter().any(|d| d.code == "W0107"),
+            "patch-only difference should not warn, got {diags:?}"
+        );
+    }
+
+    #[test]
     fn missing_meta_is_silent() {
         // Optional metadata: no warning for files that omit the block entirely.
         let diags = diags_for(r#"scene { box "b" (size=[1,1,1]) }"#);
