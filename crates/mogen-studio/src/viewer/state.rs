@@ -197,13 +197,13 @@ pub struct GizmoDrag {
 
 /// Snap step for translate: drag deltas that land the node's world-axis
 /// position on this grid are preferred when Ctrl is held.
-pub(super) const TRANSLATE_SNAP_STEP: f32 = 0.25;
+pub(crate) const TRANSLATE_SNAP_STEP: f32 = 0.25;
 /// Snap step for rotate: 15° feels coarse enough to be useful without
 /// forcing the user to fight the handle for in-between angles.
-pub(super) const ROTATE_SNAP_STEP_DEG: f32 = 15.0;
+pub(crate) const ROTATE_SNAP_STEP_DEG: f32 = 15.0;
 /// Snap step for scale: 25% increments land on nice factors (0.25, 0.5,
 /// 0.75, 1.0, 1.25, …) when Ctrl is held.
-pub(super) const SCALE_SNAP_STEP: f32 = 0.25;
+pub(crate) const SCALE_SNAP_STEP: f32 = 0.25;
 
 /// Apply axis-grid snapping to a translate drag so `start + delta` lands
 /// on a multiple of [`TRANSLATE_SNAP_STEP`]. Keeps the preview and the

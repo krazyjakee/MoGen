@@ -246,11 +246,18 @@ impl MogenStudioApp {
                                 .on_hover_text(if cinema_on {
                                     "Stop cinema mode and restore the previous camera"
                                 } else {
-                                    "Play an automated sequence of camera shots"
+                                    "Play an automated sequence of camera shots. \
+                                     Animations resume only if they were already \
+                                     playing — toggle Play first if you want the \
+                                     subject to move while the camera pans."
                                 })
                                 .clicked()
                             {
-                                self.viewer.set_cinema_active(!cinema_on);
+                                // Don't force-play animations on enable: the
+                                // previous default surprised users who were
+                                // previewing a static model. They can hit Play
+                                // separately if they want both at once.
+                                self.viewer.set_cinema_active(!cinema_on, false);
                             }
                         });
                     });
@@ -261,10 +268,20 @@ impl MogenStudioApp {
         // and never competes with the right-hand inspector for horizontal room
         // (DCC convention — Blender/Maya put help text at the bottom).
         let cinema_on = self.viewer.is_cinema_active();
+        let ctrl_held = ctx.input(|i| i.modifiers.ctrl || i.modifiers.command);
         let status_text: Option<String> = if cinema_on {
             self.viewer
                 .cinema_shot_label()
                 .map(|name| format!("now: {name}"))
+        } else if ctrl_held {
+            // Ctrl held = snap mode. Surface the actual step values so users
+            // know exactly what they're snapping to before committing a drag.
+            Some(format!(
+                "snap: translate {}u · rotate {}° · scale {}× — release ctrl for free drag",
+                crate::viewer::state::TRANSLATE_SNAP_STEP,
+                crate::viewer::state::ROTATE_SNAP_STEP_DEG,
+                crate::viewer::state::SCALE_SNAP_STEP,
+            ))
         } else {
             Some(
                 "click: select · shift/cmd+click: add · del: delete selected · \

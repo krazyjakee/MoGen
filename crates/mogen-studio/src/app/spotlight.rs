@@ -416,7 +416,11 @@ impl MogenStudioApp {
             CommandAction::Gizmo(mode) => self.viewer.set_gizmo_mode(mode),
             CommandAction::ToggleCinema => {
                 let on = self.viewer.is_cinema_active();
-                self.viewer.set_cinema_active(!on);
+                // Spotlight toggle keeps the historical "force-play" semantics
+                // because the user is invoking it explicitly from the
+                // command palette, where surprise animation playback isn't a
+                // problem.
+                self.viewer.set_cinema_active(!on, true);
             }
             CommandAction::OpenFind => self.open_find(ctx),
         }

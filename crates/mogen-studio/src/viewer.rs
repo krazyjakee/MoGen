@@ -12,7 +12,7 @@ mod lights_gl;
 mod renderer;
 mod shaders;
 pub mod shadows;
-mod state;
+pub(crate) mod state;
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -449,9 +449,13 @@ impl Viewer {
 
     /// Toggle cinema mode. On enable, latches the current camera pose and
     /// re-frames against the static bounding sphere so each shot composes
-    /// around the model itself; force-plays animations so the subject moves
-    /// while the camera pans. On disable, restores the latched pose.
-    pub fn set_cinema_active(&self, on: bool) {
+    /// around the model itself. On disable, restores the latched pose.
+    ///
+    /// `force_play` controls whether animations should be force-started when
+    /// cinema activates. Pass `true` to match the previous default (the
+    /// model performs while the camera pans); `false` lets the user enable
+    /// cinema on a static model without surprise animation playback.
+    pub fn set_cinema_active(&self, on: bool, force_play: bool) {
         let mut st = self.state.lock().unwrap();
         if on == st.cinema.active {
             return;
@@ -466,7 +470,9 @@ impl Viewer {
             let st = &mut *st;
             st.cinema.activate(&st.camera);
             st.gizmo_drag = None;
-            st.anim_playing = true;
+            if force_play {
+                st.anim_playing = true;
+            }
         } else if let Some(snap) = st.cinema.deactivate() {
             st.camera.restore(snap);
         }
