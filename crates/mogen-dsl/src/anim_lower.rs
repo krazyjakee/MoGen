@@ -8,7 +8,7 @@ use anyhow::{anyhow, bail, Result};
 use glam::{Quat, Vec3};
 
 use mogen_core::{
-    Clip, Interpolation, Joint, JointKind, NodeId, SceneGraph, Track, TrackProperty,
+    Clip, Easing, Interpolation, Joint, JointKind, NodeId, SceneGraph, Track, TrackProperty,
 };
 use mogen_anim as anim;
 
@@ -111,10 +111,11 @@ fn lower_track(
         .name
         .clone()
         .ok_or_else(|| anyhow!("track requires a target name (joint or node)"))?;
+    let easing = parse_easing_attr(node)?;
 
     // Resolve target: prefer joint match, fall back to bare node match.
     if let Some(joint) = graph.find_joint(&target_name).cloned() {
-        return lower_joint_track(node, &joint, duration);
+        return lower_joint_track(node, &joint, duration, easing);
     }
 
     let Some(node_id) = find_node_scoped(graph, &target_name, use_id) else {
@@ -135,16 +136,24 @@ fn lower_track(
     };
     let axis = node.attr_vec3("axis").unwrap_or(Vec3::Y);
     let (times, values) = sample_track(node, duration, property, axis)?;
-    Ok(Track {
+    let mut track = Track {
         node: node_id,
         property,
         interpolation: Interpolation::Linear,
+        easing,
         times,
         values,
-    })
+    };
+    track.bake_easing();
+    Ok(track)
 }
 
-fn lower_joint_track(node: &Node, joint: &Joint, duration: f32) -> Result<Track> {
+fn lower_joint_track(
+    node: &Node,
+    joint: &Joint,
+    duration: f32,
+    easing: Easing,
+) -> Result<Track> {
     let (property, axis) = match joint.kind {
         JointKind::Hinge | JointKind::Rotor | JointKind::Ball => {
             (TrackProperty::Rotation, joint.axis)
@@ -152,12 +161,32 @@ fn lower_joint_track(node: &Node, joint: &Joint, duration: f32) -> Result<Track>
         JointKind::Slider => (TrackProperty::Translation, joint.axis),
     };
     let (times, values) = sample_track(node, duration, property, axis)?;
-    Ok(Track {
+    let mut track = Track {
         node: joint.pivot,
         property,
         interpolation: Interpolation::Linear,
+        easing,
         times,
         values,
+    };
+    track.bake_easing();
+    Ok(track)
+}
+
+/// Read `easing=<ident|string>` and resolve it to an [`Easing`]. Missing
+/// attribute → [`Easing::Linear`]. Unknown spelling → error so typos surface
+/// at lower time rather than silently degrading to linear.
+fn parse_easing_attr(node: &Node) -> Result<Easing> {
+    let Some(s) = string_or_ident(node.attr("easing")) else {
+        return Ok(Easing::Linear);
+    };
+    Easing::from_str(&s).ok_or_else(|| {
+        anyhow!(
+            "unknown easing `{s}` (expected linear|ease_in|ease_out|ease_in_out|\
+             ease_in_cubic|ease_out_cubic|ease_in_out_cubic|ease_in_sine|ease_out_sine|\
+             ease_in_out_sine|ease_in_back|ease_out_back|ease_in_out_back|\
+             ease_in_bounce|ease_out_bounce|ease_in_out_bounce)"
+        )
     })
 }
 
@@ -266,6 +295,7 @@ pub fn lower_template(node: &Node, graph: &mut SceneGraph) -> Result<()> {
         .map(|j| j.axis)
         .unwrap_or(Vec3::Y);
     let axis = node.attr_vec3("axis").unwrap_or(axis_default);
+    let easing = parse_easing_attr(node)?;
 
     let multi = targets.len() > 1;
     for (i, target) in targets.into_iter().enumerate() {
@@ -277,27 +307,27 @@ pub fn lower_template(node: &Node, graph: &mut SceneGraph) -> Result<()> {
         let mut clip = match node.kind.as_str() {
             "spin" => {
                 let rpm = node.attr_number("rpm").unwrap_or(60.0);
-                anim::spin(&name, target, axis, rpm)
+                anim::spin(&name, target, axis, rpm, easing)
             }
             "open_close" => {
                 let angle = node.attr_number("angle").unwrap_or(90.0);
                 let seconds = node.attr_number("seconds").unwrap_or(1.0);
-                anim::open_close(&name, target, axis, angle, seconds)
+                anim::open_close(&name, target, axis, angle, seconds, easing)
             }
             "wave" => {
                 let amp = node.attr_number("amplitude").unwrap_or(15.0);
                 let hz = node.attr_number("hz").unwrap_or(1.0);
-                anim::wave(&name, target, axis, amp, hz)
+                anim::wave(&name, target, axis, amp, hz, easing)
             }
             "flap" => {
                 let amp = node.attr_number("amplitude").unwrap_or(30.0);
                 let hz = node.attr_number("hz").unwrap_or(2.0);
-                anim::flap(&name, target, axis, amp, hz)
+                anim::flap(&name, target, axis, amp, hz, easing)
             }
             "idle" => {
                 let amp = node.attr_number("amplitude").unwrap_or(0.02);
                 let hz = node.attr_number("hz").unwrap_or(0.5);
-                anim::idle(&name, target, amp, hz)
+                anim::idle(&name, target, amp, hz, easing)
             }
             other => bail!("unknown animation template `{other}`"),
         };
@@ -594,6 +624,79 @@ mod tests {
             Some(target),
             "spin track must target the fan's hub, not the chair's"
         );
+    }
+
+    #[test]
+    fn track_easing_densifies_keyframes() {
+        // ease_in_out on a 2-keyframe track should produce 17 dense keys
+        // (1 + 16 per segment) and lag below the linear midpoint at t=0.25.
+        let g = lower(&parse(
+            r#"
+            scene { box "h" (size=[0.1, 0.1, 0.1]) }
+            clip "c" (seconds=1.0) {
+              track "h" (prop=rotation, axis=[1, 0, 0], easing=ease_in_out, from=0, to=90)
+            }
+            "#,
+        ).expect("parse")).expect("lower");
+        let t = &g.clips[0].tracks[0];
+        assert_eq!(t.times.len(), 17, "ease_in_out should densify to 17 keys");
+        assert_eq!(t.easing, mogen_core::Easing::Linear, "easing must reset to Linear after bake");
+        // Quarter-time keyframe sits at t=0.25 with eased fraction 0.125.
+        assert!((t.times[4] - 0.25).abs() < 1e-3);
+    }
+
+    #[test]
+    fn track_easing_back_overshoots_endpoints() {
+        // ease_out_back overshoots above 1.0 mid-segment for a translation track.
+        let g = lower(&parse(
+            r#"
+            scene { box "b" (size=[0.1, 0.1, 0.1]) }
+            clip "c" (seconds=1.0) {
+              track "b" (prop=translation, axis=[1, 0, 0], easing=ease_out_back, from=0, to=1)
+            }
+            "#,
+        ).expect("parse")).expect("lower");
+        let t = &g.clips[0].tracks[0];
+        let max_x = t.values.iter().map(|v| v[0]).fold(f32::MIN, f32::max);
+        assert!(
+            max_x > 1.001,
+            "ease_out_back should overshoot 1.0, got max x = {}",
+            max_x,
+        );
+    }
+
+    #[test]
+    fn track_easing_unknown_value_errors() {
+        let err = lower(&parse(
+            r#"
+            scene { box "h" (size=[0.1, 0.1, 0.1]) }
+            clip "c" (seconds=1.0) {
+              track "h" (prop=rotation, easing=bouncy_thing, from=0, to=90)
+            }
+            "#,
+        ).expect("parse")).unwrap_err();
+        assert!(format!("{err}").contains("unknown easing"));
+    }
+
+    #[test]
+    fn template_open_close_easing_warps_phase() {
+        // open_close with linear easing has 3 keyframes; with ease_in_out it
+        // densifies to 33 to capture the warp.
+        let linear = lower(&parse(
+            r#"
+            scene { box "lid" (size=[0.5, 0.05, 0.5]) }
+            open_close "swing" (target="lid", axis=[1, 0, 0], angle=90, seconds=1.0)
+            "#,
+        ).expect("parse")).expect("lower");
+        assert_eq!(linear.clips[0].tracks[0].times.len(), 3);
+
+        let eased = lower(&parse(
+            r#"
+            scene { box "lid" (size=[0.5, 0.05, 0.5]) }
+            open_close "swing" (target="lid", axis=[1, 0, 0], angle=90, seconds=1.0, easing=ease_in_out)
+            "#,
+        ).expect("parse")).expect("lower");
+        assert_eq!(eased.clips[0].tracks[0].times.len(), 33);
     }
 
     #[test]
