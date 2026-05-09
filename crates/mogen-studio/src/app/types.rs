@@ -360,9 +360,6 @@ pub(super) enum MenuAction {
     OpenUpdate,
     GenerateThumbnail,
     GenerateVideo,
-    /// VS Code–style line / selection ops dispatched against the active
-    /// editor. The same handlers fire from the keyboard in `line_ops.rs`.
-    EditorLineOp(super::line_ops::LineOp),
     OpenDocs,
 }
 
