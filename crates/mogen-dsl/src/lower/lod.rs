@@ -164,11 +164,15 @@ impl Drop for LodMultiplierGuard {
     }
 }
 
-/// Scale a default segment/ring count by the active LOD multiplier.
+/// Scale a segment/ring/sample count by the active LOD multiplier.
+/// Used for both primitive defaults and author-supplied explicit values
+/// (e.g. `segments_u=64`) so a global `lod_scale` or per-node `lod=`
+/// keeps working on dense surfaces — heightfields, curved planes, lathes —
+/// where authors typically pin the segment count to control noise quality.
 /// Clamped to a sensible floor so circles still close.
-pub(super) fn scaled_default(default: u32, min: u32) -> u32 {
+pub(super) fn scaled_count(value: u32, min: u32) -> u32 {
     let scale = current_lod_scale();
-    let scaled = (default as f32 * scale).round();
+    let scaled = (value as f32 * scale).round();
     if scaled < min as f32 {
         min
     } else {
@@ -178,11 +182,12 @@ pub(super) fn scaled_default(default: u32, min: u32) -> u32 {
 
 /// Icosphere subdivisions are exponential (4× tris per step), so a multiplier
 /// translates to an additive offset of round(log2(scale)). Floor at 0.
-pub(super) fn scaled_subdivisions(default: u32) -> u32 {
+/// Applied to both the implicit default and an author-supplied `subdivisions=`.
+pub(super) fn scaled_subdivisions(value: u32) -> u32 {
     let scale = current_lod_scale();
     if scale <= 0.0 {
-        return default;
+        return value;
     }
     let offset = scale.log2().round() as i32;
-    (default as i32 + offset).max(0) as u32
+    (value as i32 + offset).max(0) as u32
 }

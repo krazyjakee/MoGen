@@ -848,17 +848,53 @@ fn lod_scale_doubles_default_segment_count() {
 }
 
 #[test]
-fn lod_scale_does_not_override_explicit_segments() {
-    // Explicit per-primitive value wins over the global multiplier.
+fn lod_scale_also_scales_explicit_segments() {
+    // Explicit per-primitive segment counts ride the global multiplier
+    // too — otherwise dense surface primitives (heightfield, curved_plane,
+    // surf-style waves) become LOD-inert. The clamp keeps the count above
+    // each primitive's minimum so circles still close.
     let baseline = lower_src(r#"scene { sphere "s" (radius=0.5, rings=16, segments=24) }"#);
     let scaled = lower_src(
         r#"lod_scale (value=0.25) scene { sphere "s" (radius=0.5, rings=16, segments=24) }"#,
     );
     let base_verts = find_mesh_node(&baseline, "s").mesh.as_ref().unwrap().positions.len();
     let scaled_verts = find_mesh_node(&scaled, "s").mesh.as_ref().unwrap().positions.len();
-    assert_eq!(
-        base_verts, scaled_verts,
-        "explicit segments=24/rings=16 must ignore lod_scale"
+    assert!(
+        scaled_verts < base_verts,
+        "lod_scale=0.25 should reduce explicit rings=16/segments=24 (base={base_verts}, scaled={scaled_verts})"
+    );
+}
+
+#[test]
+fn lod_scale_scales_explicit_heightfield_grid() {
+    // Regression for examples/heightfield_terrain.mog and wave_water.mog —
+    // both pin segments_u/segments_v and would otherwise ignore lod_scale.
+    let baseline = lower_src(
+        r#"scene { heightfield "h" (size=[6, 6], segments_u=64, segments_v=64) }"#,
+    );
+    let halved = lower_src(
+        r#"lod_scale (value=0.5) scene { heightfield "h" (size=[6, 6], segments_u=64, segments_v=64) }"#,
+    );
+    let doubled = lower_src(
+        r#"lod_scale (value=2) scene { heightfield "h" (size=[6, 6], segments_u=64, segments_v=64) }"#,
+    );
+    let verts = |g: &SceneGraph| find_mesh_node(g, "h").mesh.as_ref().unwrap().positions.len();
+    assert!(verts(&halved) < verts(&baseline));
+    assert!(verts(&doubled) > verts(&baseline));
+}
+
+#[test]
+fn lod_scale_clamps_explicit_segments_to_min() {
+    // A vanishing lod_scale must not silently destroy a primitive — every
+    // segment count is floored at its per-primitive minimum (cylinder=3).
+    let g = lower_src(
+        r#"lod_scale (value=0.01) scene { cylinder "c" (radius=0.5, height=1, segments=24) }"#,
+    );
+    let mesh = find_mesh_node(&g, "c").mesh.as_ref().unwrap();
+    // Cylinder side ring + caps; with segments=3 it's still a closed solid.
+    assert!(
+        !mesh.positions.is_empty() && !mesh.indices.is_empty(),
+        "cylinder under lod_scale=0.01 must still produce geometry"
     );
 }
 

@@ -97,14 +97,14 @@ consumed during lowering.
 
 | directive | value | effect |
 |---|---|---|
-| `lod_scale (value=N)` | number, default `1.0` | multiplies primitive default `segments` / `rings` / `samples`. `0.5` halves them, `2.0` doubles them. `icosphere` `subdivisions` step by `round(log2(N))` instead, since each step quadruples its triangle count. Per-primitive values (`segments=24`, `rings=16`, …) are absolute and are **not** scaled. |
+| `lod_scale (value=N)` | number, default `1.0` | multiplies every primitive `segments` / `rings` / `samples` count — both the implicit defaults *and* author-supplied explicit values like `segments_u=64`. `0.5` halves them, `2.0` doubles them. `icosphere` `subdivisions` step by `round(log2(N))` instead, since each step quadruples its triangle count. Counts are clamped to a per-primitive minimum so circles still close. |
 
 ```
 lod_scale (value=0.5)
 
 scene {
-  sphere "head" (radius=0.5)         // 12 rings, 12 segments (default 16/24 halved)
-  sphere "lod0" (radius=0.5, segments=48, rings=32)  // explicit values keep 48/32
+  sphere "head" (radius=0.5)         // 8 rings, 12 segments (default 16/24 halved)
+  sphere "lod0" (radius=0.5, segments=48, rings=32)  // 16 rings, 24 segments (48/32 halved)
 }
 ```
 
@@ -133,9 +133,12 @@ scene {
 }
 ```
 
-Like `lod_scale`, explicit per-primitive `segments=` / `rings=` /
-`subdivisions=` win over the multiplier — the override only acts on
-defaults.
+`lod=` scales every tessellation count in the marked subtree, including
+explicit per-primitive `segments=` / `rings=` / `subdivisions=`. Use it
+to dial detail on dense surfaces (heightfields, curved planes) without
+having to drop their explicit segment counts. The minimum per-primitive
+floor still applies, so a `lod=0.1` won't collapse a cylinder to fewer
+than three sides.
 
 ---
 
