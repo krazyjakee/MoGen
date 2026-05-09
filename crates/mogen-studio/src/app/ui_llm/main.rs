@@ -23,14 +23,37 @@ fn disabled_reason(reasons: &[(&str, bool)]) -> Option<String> {
 impl MogenStudioApp {
     pub(in crate::app) fn ui_llm(&mut self, ui: &mut egui::Ui) {
         let has_key = self.resolve_api_key().is_some();
+        let mut request_open_prefs = false;
         if !has_key {
+            // Treat the no-key banner as a real call-to-action: state which
+            // provider needs a key and offer a one-click jump into the right
+            // pane of Preferences. Multi-line so each path the user can take
+            // (paste / env var) gets its own line.
+            let provider = self.settings.provider().display_name();
             ui.colored_label(
                 egui::Color32::from_rgb(230, 200, 100),
-                format!(
-                    "no {} API key — set one in Edit → Preferences…",
-                    self.settings.provider().display_name(),
-                ),
+                format!("{provider}: no API key — every LLM action below is disabled."),
             );
+            ui.label(
+                egui::RichText::new(
+                    "Quickest path: click \"Open Preferences\" and paste a \
+                     key. The matching environment variable also works if \
+                     you'd rather not store the key on disk.",
+                )
+                .weak(),
+            );
+            ui.horizontal(|ui| {
+                if ui.button("Open Preferences").clicked() {
+                    request_open_prefs = true;
+                }
+                ui.label(
+                    egui::RichText::new("(Edit → Preferences… → LLM)").weak(),
+                );
+            });
+            ui.add_space(4.0);
+        }
+        if request_open_prefs {
+            self.show_options = true;
         }
 
         // Gate buttons on *this file's* in-flight state only — other files can
@@ -274,6 +297,32 @@ impl MogenStudioApp {
             (no_src_msg, !src_empty),
             (no_path_msg, has_path),
         ]);
+        // Pre-flight cost estimate: count materials in the most recent
+        // compile result, multiply by the per-image price, and surface the
+        // estimate next to the button. Image-only price (the textures
+        // pipeline always uses Gemini Flash Image regardless of the active
+        // text provider).
+        let material_count = self
+            .active()
+            .last_result
+            .as_ref()
+            .and_then(|r| r.scene.as_ref())
+            .map(|s| s.materials.len())
+            .unwrap_or(0);
+        let image_price = crate::app::pricing::image_pricing("gemini-2.5-flash-image");
+        let est_cost = material_count as f64 * image_price.per_image_usd;
+        if material_count > 0 && image_price.per_image_usd > 0.0 {
+            ui.label(
+                egui::RichText::new(format!(
+                    "Pre-flight: {material_count} material{} × {} ≈ {} per run \
+                     (PBR maps are derived locally, no extra cost).",
+                    if material_count == 1 { "" } else { "s" },
+                    crate::app::pricing::format_usd(image_price.per_image_usd),
+                    crate::app::pricing::format_usd(est_cost),
+                ))
+                .weak(),
+            );
+        }
         if ui
             .add_enabled(tex_enabled, egui::Button::new("Generate Textures"))
             .on_hover_text(tex_reason.as_deref().unwrap_or(

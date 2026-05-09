@@ -122,6 +122,10 @@ pub struct MogenStudioApp {
     settings: Settings,
     show_options: bool,
     options_api_key_draft: String,
+    /// Draft string for the optional seed field in the New Prompt dialog and
+    /// (mirrored) Preferences → LLM. Stored as a `String` so the user can
+    /// type freely without partial parses; we re-parse on submit.
+    options_seed_draft: String,
     /// Active tab inside the Preferences window. Persists across opens within
     /// a session so re-opening the dialog returns to whichever pane the user
     /// was last on.
@@ -378,6 +382,10 @@ impl MogenStudioApp {
 
         let mut settings = Settings::load();
         let options_api_key_draft = settings.gemini_api_key.clone();
+        let options_seed_draft = settings
+            .seed_override
+            .map(|s| s.to_string())
+            .unwrap_or_default();
         install_fonts(&cc.egui_ctx);
         apply_theme(&cc.egui_ctx, settings.theme());
         viewer.set_preview_shader(settings.preview_shader());
@@ -457,6 +465,7 @@ impl MogenStudioApp {
             settings,
             show_options: false,
             options_api_key_draft,
+            options_seed_draft,
             prefs_active_tab: ui_dialogs::PrefsTab::default(),
             show_onboarding,
             show_crash_consent,

@@ -231,6 +231,10 @@ pub(super) enum LlmErrorClass {
     ServerError,
     BadRequest,
     Other,
+    /// Partial success — typically a textures run where some materials
+    /// finished and some failed. Renders in a softer accent than a hard
+    /// failure.
+    Partial,
 }
 
 /// Running aggregate of every Gemini call made this app session, plus an

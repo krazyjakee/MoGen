@@ -236,8 +236,21 @@ impl MogenStudioApp {
         // and the file recompiled, so the user sees the spliced PNGs in the
         // viewer alongside the "N material(s) failed" notice. `outcome.error`
         // is `Some(_)` on this branch by definition (textures_partial_success).
+        // Downgrade the error class to Partial so the banner reads as a soft
+        // warning rather than a red hard-failure. The headline gets a
+        // "Partial:" prefix so users see at a glance that some materials did
+        // succeed before reading the detail.
         if textures_partial_success {
-            if let Some(info) = outcome.error {
+            if let Some(mut info) = outcome.error {
+                info.class = crate::app::types::LlmErrorClass::Partial;
+                if !info.headline.to_lowercase().starts_with("partial") {
+                    info.headline = format!(
+                        "Partial: {} material PNG{} written — {}",
+                        outcome.calls,
+                        if outcome.calls == 1 { "" } else { "s" },
+                        info.headline,
+                    );
+                }
                 self.files[i].llm_error = Some(info);
             }
         }

@@ -16,7 +16,8 @@ impl MogenStudioApp {
             }
             LlmErrorClass::RateLimited
             | LlmErrorClass::Network
-            | LlmErrorClass::ServerError => egui::Color32::from_rgb(230, 200, 100),
+            | LlmErrorClass::ServerError
+            | LlmErrorClass::Partial => egui::Color32::from_rgb(230, 200, 100),
             LlmErrorClass::ContentBlocked => egui::Color32::from_rgb(200, 130, 200),
             LlmErrorClass::QuotaExceeded
             | LlmErrorClass::BadRequest

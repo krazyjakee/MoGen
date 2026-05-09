@@ -155,9 +155,10 @@ impl MogenStudioApp {
                             if ui
                                 .button("Cancel")
                                 .on_hover_text(
-                                    "Stop waiting and discard the result. \
-                                     The background call may finish but its \
-                                     output is dropped. (Esc)",
+                                    "Stop waiting and discard the result. Any \
+                                     in-flight call still completes server-side \
+                                     and is billed normally — Studio just \
+                                     ignores the response. (Esc)",
                                 )
                                 .clicked()
                             {
