@@ -24,7 +24,7 @@ use commands::moghub::{
 use commands::repair::{repair, RepairArgs};
 use commands::textures::textures_cmd;
 use commands::thumbnail::{thumbnail, ThumbnailArgs};
-use commands::update::{update, UpdateArgs};
+use commands::update::{apply_update, update, UpdateArgs};
 
 /// CLI-facing mirror of [`ThinkingLevel`]. Kept separate so we don't leak
 /// `clap::ValueEnum` into the `mogen-llm` library crate.
@@ -991,6 +991,16 @@ enum Cmd {
         #[arg(long)]
         force: bool,
     },
+    /// Privileged half of the auto-updater. Hidden because no user types
+    /// this by hand — `download_and_apply` re-launches it under pkexec /
+    /// sudo / UAC when the install directory isn't writable. The plan file
+    /// is JSON describing a list of `src -> dst` moves to perform.
+    #[command(name = "__apply-update", hide = true)]
+    ApplyUpdate {
+        /// Path to the plan JSON written by the unprivileged caller.
+        #[arg(long)]
+        plan: PathBuf,
+    },
     /// Run a suite of prompts through `generate` and report success rate and
     /// mean token cost. Does not write GLBs.
     Bench {
@@ -1247,6 +1257,7 @@ fn main() -> ExitCode {
             check_only: check,
             force,
         }),
+        Cmd::ApplyUpdate { plan } => apply_update(plan),
         Cmd::Bench {
             prompts,
             provider,

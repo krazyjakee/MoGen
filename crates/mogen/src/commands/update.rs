@@ -1,9 +1,10 @@
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
 use indicatif::{ProgressBar, ProgressStyle};
 
-use mogen_update::{check, download_and_apply, Progress};
+use mogen_update::{apply_plan, check, download_and_apply, Progress};
 
 pub(crate) struct UpdateArgs {
     /// Don't prompt — install the latest release if it's newer than the
@@ -94,6 +95,9 @@ pub(crate) fn update(args: UpdateArgs) -> Result<()> {
             if let Some(s) = applied.replaced_sibling {
                 println!("replaced: {}", s.display());
             }
+            if applied.elevated {
+                println!("(install performed under elevated privileges)");
+            }
             println!("restart `mogen` (and `mogen-studio`) to pick up the new version.");
             Ok(())
         }
@@ -102,4 +106,24 @@ pub(crate) fn update(args: UpdateArgs) -> Result<()> {
             Err(anyhow!("update failed: {e:#}"))
         }
     }
+}
+
+/// Hidden `mogen __apply-update --plan <path>` entry point.
+///
+/// Invoked by [`mogen_update::download_and_apply`] under platform elevation
+/// (pkexec / sudo / UAC / osascript) when the install directory isn't
+/// writable by the unprivileged process. The caller has already extracted
+/// the new binaries to a per-update temp dir and serialised a plan
+/// describing the moves the privileged half of the updater should perform.
+///
+/// Kept out of `--help` because there's no scenario where a user types this
+/// by hand — it's strictly the elevated half of the auto-updater RPC.
+pub(crate) fn apply_update(plan: PathBuf) -> Result<()> {
+    let outcome = apply_plan(&plan)
+        .map_err(|e| anyhow!("apply update plan: {e:#}"))?;
+    println!("installed {}", outcome.tag);
+    for mv in &outcome.moves {
+        println!("  -> {}", mv.dst.display());
+    }
+    Ok(())
 }

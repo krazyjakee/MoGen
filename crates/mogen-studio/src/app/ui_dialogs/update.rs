@@ -144,6 +144,13 @@ impl MogenStudioApp {
                                      bundled mogen CLI if present alongside it). You'll need \
                                      to restart the app once the swap completes.",
                                 );
+                                ui.add_space(2.0);
+                                ui.weak(
+                                    "If MoGen is installed under a system path such as \
+                                     /usr/bin, you'll be asked to authorise the file swap \
+                                     (polkit/sudo on Linux, UAC on Windows, admin prompt \
+                                     on macOS).",
+                                );
                                 ui.add_space(8.0);
                                 ui.horizontal(|ui| {
                                     if ui

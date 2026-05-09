@@ -17,15 +17,27 @@
 //! Both functions are synchronous and block; callers that need a UI thread
 //! (Studio) run them on a worker and forward [`Progress`] events through a
 //! channel.
+//!
+//! ## Privileged installs
+//!
+//! When the install directory is owned by another user — the canonical case
+//! is a system-managed `/usr/bin/mogen` on Linux — `download_and_apply`
+//! detects this up-front (before downloading) and routes the file-swap step
+//! through [`elevate::apply_with_elevation`], which re-launches the sibling
+//! `mogen` CLI with the hidden subcommand `__apply-update --plan <path>`
+//! under the platform's auth dialog (polkit / sudo / osascript / UAC). The
+//! plan is a small JSON file describing the moves the privileged helper must
+//! perform; see [`Plan`] for the wire format.
 
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, bail, Context, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 mod archive;
+mod elevate;
 
 /// GitHub repo the updater talks to. Hardcoded — auto-update can only point at
 /// one canonical release feed.
@@ -81,6 +93,36 @@ pub struct Applied {
     pub replaced_sibling: Option<PathBuf>,
     /// The tag we installed.
     pub tag: String,
+    /// True when the swap was performed under platform-elevated privileges
+    /// (pkexec / sudo / UAC / osascript-with-admin). Studio surfaces this in
+    /// the "Updated" success line so the user knows the auth prompt they
+    /// just answered did the right thing.
+    pub elevated: bool,
+}
+
+/// A single source-to-destination move performed by the install step. Listed
+/// in [`Plan::moves`] in the order they must be applied — siblings before the
+/// running binary, so a partial failure leaves the install in a well-defined
+/// "current binary still works" state.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlanMove {
+    /// File the helper should read. Lives under the per-update temp dir
+    /// produced by extraction.
+    pub src: PathBuf,
+    /// Final on-disk path the new file should occupy.
+    pub dst: PathBuf,
+}
+
+/// JSON wire format passed from the unprivileged process to the privileged
+/// helper via `mogen __apply-update --plan <path>`. Kept tiny on purpose —
+/// the helper performs zero policy decisions, just file moves.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Plan {
+    /// The release tag being installed. Carried so the helper can print a
+    /// useful one-line confirmation on success.
+    pub tag: String,
+    /// File moves to perform, in order.
+    pub moves: Vec<PlanMove>,
 }
 
 /// Compare a release tag against the running version. `tag` may be `v0.2.0`
@@ -152,6 +194,11 @@ pub struct CheckResult {
 /// `on_progress` is invoked from the calling thread inline with the download
 /// and stage transitions; it's expected to be cheap (sending on an mpsc
 /// channel is the canonical use). It can be a no-op for headless callers.
+///
+/// When the install directory isn't writable by the running user — typically
+/// `/usr/bin` on Linux — the file-swap step is performed under platform
+/// elevation (polkit / sudo / UAC / osascript). The user sees the system
+/// auth prompt; cancelling it surfaces as a clean error.
 pub fn download_and_apply(
     info: &UpdateInfo,
     mut on_progress: impl FnMut(Progress),
@@ -163,6 +210,19 @@ pub fn download_and_apply(
     let current_exe = current_exe
         .canonicalize()
         .unwrap_or(current_exe);
+
+    let install_dir = current_exe
+        .parent()
+        .ok_or_else(|| anyhow!(
+            "current executable has no parent directory: {}",
+            current_exe.display()
+        ))?
+        .to_path_buf();
+
+    // Pre-flight permission probe. Failing here turns a wasted 30 MB
+    // download + obscure post-install error into a clean "go elevate"
+    // branch *before* anything has touched the network.
+    let install_writable = check_dir_writable(&install_dir).is_ok();
 
     on_progress(Progress::Stage("downloading".into()));
     let tmp_dir = tempdir_for_update()?;
@@ -179,61 +239,110 @@ pub fn download_and_apply(
     fs::create_dir_all(&extract_dir).context("create extract dir")?;
     archive::extract(&archive_path, &extract_dir)?;
 
+    let self_basename = binary_basename_for_path(&current_exe);
     let new_self =
-        find_binary(&extract_dir, binary_basename_for_path(&current_exe))
+        find_binary(&extract_dir, self_basename)
             .ok_or_else(|| {
                 anyhow!(
                     "release archive did not contain `{}`",
-                    binary_basename_for_path(&current_exe)
+                    self_basename
                 )
             })?;
 
     // Sibling: if we are `mogen`, look for `mogen-studio` next to us; vice
     // versa. The CLI and Studio ship together so updating one without the
     // other leaves the install in a half-upgraded state.
-    let sibling_basename = sibling_basename(&current_exe);
-    let sibling_on_disk = current_exe
-        .parent()
-        .map(|d| d.join(&sibling_basename))
-        .filter(|p| p.is_file());
-    let new_sibling = sibling_on_disk
-        .as_ref()
-        .and_then(|_| find_binary(&extract_dir, &sibling_basename));
+    let sibling_basename_str = sibling_basename(&current_exe);
+    let sibling_on_disk = install_dir.join(&sibling_basename_str);
+    let sibling_present = sibling_on_disk.is_file();
+    let new_sibling = if sibling_present {
+        find_binary(&extract_dir, &sibling_basename_str)
+    } else {
+        None
+    };
 
-    on_progress(Progress::Stage("installing".into()));
+    if install_writable {
+        on_progress(Progress::Stage("installing".into()));
+        return install_inline(
+            &current_exe,
+            &new_self,
+            sibling_present.then_some(sibling_on_disk.as_path()),
+            new_sibling.as_deref(),
+            info.tag.clone(),
+        );
+    }
 
-    // Install the sibling FIRST. It's not the running process, so a plain
-    // rename works on every platform — and if it fails we haven't touched
-    // the binary that's keeping the user's current process alive.
-    if let (Some(target), Some(source)) = (sibling_on_disk.as_ref(), new_sibling.as_ref()) {
+    // Elevated path: the install dir isn't writable, so we have to hand the
+    // file moves to a privileged helper. Build a Plan describing every move
+    // (sibling first, running binary last — same ordering as the inline path
+    // for the same "fail safe" reason), serialise it next to the extracted
+    // binaries, and re-launch the sibling `mogen` CLI under the platform's
+    // auth dialog.
+    on_progress(Progress::Stage("waiting for authorisation".into()));
+    let mut moves = Vec::with_capacity(2);
+    if let (true, Some(sib_src)) = (sibling_present, new_sibling.as_ref()) {
+        moves.push(PlanMove {
+            src: sib_src.clone(),
+            dst: sibling_on_disk.clone(),
+        });
+    }
+    moves.push(PlanMove {
+        src: new_self.clone(),
+        dst: current_exe.clone(),
+    });
+    let plan = Plan {
+        tag: info.tag.clone(),
+        moves,
+    };
+    let plan_path = tmp_dir.join("plan.json");
+    let plan_bytes = serde_json::to_vec_pretty(&plan)
+        .context("serialize update plan")?;
+    fs::write(&plan_path, &plan_bytes)
+        .with_context(|| format!("write plan to {}", plan_path.display()))?;
+
+    let helper = elevate::helper_path_for(&current_exe);
+    on_progress(Progress::Stage("installing (elevated)".into()));
+    elevate::apply_with_elevation(&helper, &plan_path)?;
+
+    Ok(Applied {
+        replaced_self: current_exe,
+        replaced_sibling: sibling_present.then_some(sibling_on_disk),
+        tag: info.tag.clone(),
+        elevated: true,
+    })
+}
+
+/// Drop-in install path used when the install dir is writable by the running
+/// user. Mirrors the pre-elevation behavior: sibling first (plain rename),
+/// running binary last (`self_replace`).
+fn install_inline(
+    current_exe: &Path,
+    new_self: &Path,
+    sibling_dest: Option<&Path>,
+    new_sibling: Option<&Path>,
+    tag: String,
+) -> Result<Applied> {
+    if let (Some(target), Some(source)) = (sibling_dest, new_sibling) {
         replace_sibling(source, target).with_context(|| {
             format!("replace sibling binary at {}", target.display())
         })?;
     }
-
     // Replace ourselves last. `self_replace` handles the platform-specific
     // dance: on Unix it relies on the kernel keeping the open inode alive so
     // a plain rename works; on Windows it renames the running .exe to .old
     // so the new file can take its place in the same directory.
-    self_replace::self_replace(&new_self).context("replace self")?;
+    self_replace::self_replace(new_self).context("replace self")?;
     // self_replace doesn't preserve mode bits on Unix when the source is a
     // freshly-extracted file with the wrong permissions. Re-mark the
     // installed binary executable to be safe.
     #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if let Ok(meta) = fs::metadata(&current_exe) {
-            let mut perm = meta.permissions();
-            let mode = perm.mode() | 0o755;
-            perm.set_mode(mode);
-            let _ = fs::set_permissions(&current_exe, perm);
-        }
-    }
+    ensure_executable(current_exe);
 
     Ok(Applied {
-        replaced_self: current_exe,
-        replaced_sibling: sibling_on_disk,
-        tag: info.tag.clone(),
+        replaced_self: current_exe.to_path_buf(),
+        replaced_sibling: sibling_dest.map(Path::to_path_buf),
+        tag,
+        elevated: false,
     })
 }
 
@@ -340,6 +449,99 @@ fn ensure_executable(path: &Path) {
     }
 }
 
+/// Probe whether the running user can create files in `dir`. We deliberately
+/// don't try to interpret mode bits / ACLs / capabilities ourselves — the
+/// only reliable answer comes from attempting an actual filesystem write.
+fn check_dir_writable(dir: &Path) -> Result<()> {
+    let probe = dir.join(format!(
+        ".mogen-update-probe-{}-{}",
+        std::process::id(),
+        nano_unique(),
+    ));
+    match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&probe)
+    {
+        Ok(_) => {
+            let _ = fs::remove_file(&probe);
+            Ok(())
+        }
+        Err(e) => Err(anyhow::Error::new(e).context(format!(
+            "writable probe failed for {}",
+            dir.display()
+        ))),
+    }
+}
+
+/// Read a `Plan` from disk and apply every move in order. Called from the
+/// elevated helper subcommand (`mogen __apply-update --plan <path>`).
+///
+/// On Linux/macOS, plain `fs::rename` works even if the destination is the
+/// running executable of *another* process, because the kernel keeps the
+/// inode alive while it's open. On Windows we have to rename the destination
+/// out of the way first (the OS holds an exclusive lock on running .exes).
+pub fn apply_plan(plan_path: &Path) -> Result<Plan> {
+    let bytes = fs::read(plan_path)
+        .with_context(|| format!("read plan from {}", plan_path.display()))?;
+    let plan: Plan =
+        serde_json::from_slice(&bytes).context("parse plan JSON")?;
+    for mv in &plan.moves {
+        external_replace(&mv.src, &mv.dst)
+            .with_context(|| format!("install {}", mv.dst.display()))?;
+    }
+    Ok(plan)
+}
+
+/// File-replace primitive used by [`apply_plan`]. Tolerant of cross-device
+/// renames (temp on a different fs to install) and on Windows of the
+/// destination being held open by another process.
+fn external_replace(source: &Path, dest: &Path) -> Result<()> {
+    #[cfg(windows)]
+    {
+        // The destination is almost always currently-running mogen.exe or
+        // mogen-studio.exe; rename it aside so the new binary can take the
+        // canonical name. The aside file lives until next reboot or manual
+        // cleanup — same trade-off the `self_replace` crate makes.
+        if dest.is_file() {
+            let aside = dest.with_extension(format!(
+                "mogen-old-{}",
+                nano_unique()
+            ));
+            fs::rename(dest, &aside).with_context(|| {
+                format!("rename {} aside", dest.display())
+            })?;
+        }
+    }
+
+    // Try a direct rename first — atomic when source and dest share a
+    // filesystem and the kernel doesn't object.
+    if fs::rename(source, dest).is_ok() {
+        #[cfg(unix)]
+        ensure_executable(dest);
+        return Ok(());
+    }
+    // Cross-device fallback: stage in dest's directory (which we now have
+    // write access to, by construction — we're either root or already past
+    // the writability check), then atomic rename onto dest.
+    let dest_dir = dest.parent().ok_or_else(|| {
+        anyhow!("destination has no parent directory: {}", dest.display())
+    })?;
+    let staging = dest_dir.join(format!(
+        ".mogen-update-stage-{}-{}",
+        std::process::id(),
+        nano_unique(),
+    ));
+    fs::copy(source, &staging)
+        .with_context(|| format!("stage copy to {}", staging.display()))?;
+    #[cfg(unix)]
+    ensure_executable(&staging);
+    fs::rename(&staging, dest).with_context(|| {
+        format!("rename staging {} -> {}", staging.display(), dest.display())
+    })?;
+    Ok(())
+}
+
 /// Returns the basename a current binary should be matched against in the
 /// extracted archive, preserving the platform-specific `.exe` suffix on
 /// Windows.
@@ -421,14 +623,20 @@ fn pick_asset<'a>(assets: &'a [GhAsset], target: &str) -> Option<&'a GhAsset> {
 fn tempdir_for_update() -> Result<PathBuf> {
     let base = std::env::temp_dir();
     let pid = std::process::id();
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.subsec_nanos())
-        .unwrap_or(0);
+    let nanos = nano_unique();
     let dir = base.join(format!("mogen-update-{pid}-{nanos}"));
     fs::create_dir_all(&dir)
         .with_context(|| format!("create temp dir {}", dir.display()))?;
     Ok(dir)
+}
+
+/// Sub-second component of the wall clock, used as a uniqueness salt for
+/// per-update temp paths. Falls back to 0 on systems with a borked clock.
+fn nano_unique() -> u32 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0)
 }
 
 // --- GitHub release wire types --------------------------------------------
@@ -501,5 +709,98 @@ mod tests {
             sibling_basename(Path::new(r"C:\bin\mogen-studio.exe")),
             "mogen.exe"
         );
+    }
+
+    #[test]
+    fn check_dir_writable_passes_for_tempdir() {
+        let tmp = std::env::temp_dir();
+        assert!(check_dir_writable(&tmp).is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn check_dir_writable_fails_for_root_owned_dir() {
+        // /usr is root-owned and read-only for normal users on every CI
+        // image we care about. Skip the assertion when the test happens
+        // to run as root (CI containers occasionally do).
+        let uid = unsafe { getuid() };
+        if uid == 0 {
+            return;
+        }
+        let dir = Path::new("/usr");
+        if !dir.is_dir() {
+            return;
+        }
+        assert!(check_dir_writable(dir).is_err());
+    }
+
+    #[cfg(unix)]
+    extern "C" {
+        fn getuid() -> u32;
+    }
+
+    #[test]
+    fn plan_round_trips_through_json() {
+        let plan = Plan {
+            tag: "v9.9.9".into(),
+            moves: vec![
+                PlanMove {
+                    src: PathBuf::from("/tmp/mogen-update-1/mogen"),
+                    dst: PathBuf::from("/usr/bin/mogen"),
+                },
+                PlanMove {
+                    src: PathBuf::from("/tmp/mogen-update-1/mogen-studio"),
+                    dst: PathBuf::from("/usr/bin/mogen-studio"),
+                },
+            ],
+        };
+        let bytes = serde_json::to_vec(&plan).unwrap();
+        let parsed: Plan = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(parsed.tag, "v9.9.9");
+        assert_eq!(parsed.moves.len(), 2);
+        assert_eq!(parsed.moves[0].dst, PathBuf::from("/usr/bin/mogen"));
+    }
+
+    #[test]
+    fn apply_plan_round_trip_in_tempdir() {
+        // Build a plan where source files live under one tempdir and the
+        // destination dir is another. apply_plan should move them across.
+        let base = std::env::temp_dir().join(format!(
+            "mogen-update-test-{}-{}",
+            std::process::id(),
+            nano_unique(),
+        ));
+        let src_dir = base.join("src");
+        let dst_dir = base.join("dst");
+        fs::create_dir_all(&src_dir).unwrap();
+        fs::create_dir_all(&dst_dir).unwrap();
+
+        let src_a = src_dir.join("mogen");
+        let src_b = src_dir.join("mogen-studio");
+        fs::write(&src_a, b"new-cli").unwrap();
+        fs::write(&src_b, b"new-studio").unwrap();
+
+        let dst_a = dst_dir.join("mogen");
+        let dst_b = dst_dir.join("mogen-studio");
+        fs::write(&dst_a, b"old-cli").unwrap();
+        fs::write(&dst_b, b"old-studio").unwrap();
+
+        let plan = Plan {
+            tag: "v0.0.1".into(),
+            moves: vec![
+                PlanMove { src: src_a, dst: dst_a.clone() },
+                PlanMove { src: src_b, dst: dst_b.clone() },
+            ],
+        };
+        let plan_path = base.join("plan.json");
+        fs::write(&plan_path, serde_json::to_vec(&plan).unwrap()).unwrap();
+
+        apply_plan(&plan_path).expect("apply ok");
+        assert_eq!(fs::read(&dst_a).unwrap(), b"new-cli");
+        assert_eq!(fs::read(&dst_b).unwrap(), b"new-studio");
+
+        // Best-effort cleanup; not asserted because the test passes either
+        // way and on Windows the run-binary aside file may still exist.
+        let _ = fs::remove_dir_all(&base);
     }
 }
