@@ -46,6 +46,18 @@ examples/*.mp4
 examples/*.glb
 examples/textures
 
+# Example goldens that double as user-facing demos and regression snapshots
+# (see crates/mogen/tests/goldens.rs). Tracked so the test suite has a
+# committed reference; everything else under examples/*.glb stays ignored.
+!examples/chair.glb
+!examples/chair_mat.glb
+!examples/chair_array.glb
+!examples/chair_module.glb
+!examples/table.glb
+!examples/sword.glb
+!examples/drone.glb
+!examples/simple_house.glb
+
 *.blend
 
 # Local generated assets at repo root (Studio scratch outputs)
