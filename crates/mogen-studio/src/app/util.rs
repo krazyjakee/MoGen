@@ -23,7 +23,8 @@ mod visibility;
 pub(super) use build::run_build;
 pub(super) use enhance::run_prompt_enhance;
 pub(super) use llm::{
-    build_provider_client, pick_default_seed, run_llm, Credential, LlmRunConfig,
+    build_provider_client, pick_default_seed, run_llm, run_llm_refine, Credential,
+    LlmRunConfig,
 };
 pub(super) use paths::{
     ellipsize_path, format_inspector_scalar, locate_project_root, offset_to_line_col,

@@ -17,7 +17,7 @@ use mogen_validate::{attrs_for_kind, KNOWN_KINDS};
 
 use content::{
     ALLOWLIST_INTRO, CONVENTIONS, FEWSHOT, GRAMMAR_REFERENCE, KINDS_REFERENCE, OUTPUT_CONTRACT,
-    PREAMBLE,
+    PLANNER_PREAMBLE, PREAMBLE, REVIEWER_PREAMBLE,
 };
 
 /// A light summary of modules discovered in stdlib / user module paths.
@@ -140,6 +140,30 @@ pub fn system_instruction(index: &StdlibIndex) -> String {
     append_fewshots(&mut s);
     append_modules(&mut s, index);
     s.push_str(OUTPUT_CONTRACT);
+    s
+}
+
+/// System instruction for the **Architect agent** (`mogen generate --plan`
+/// / `mogen modify --plan`). The planner deliberately does NOT see the DSL
+/// grammar — its job is to produce a Markdown plan in plain English so the
+/// downstream Coder pass can translate it into syntax. Keeping the planner's
+/// system prompt small also keeps the planning call cheap relative to the
+/// full DSL pass.
+pub fn planner_system_instruction() -> String {
+    PLANNER_PREAMBLE.to_string()
+}
+
+/// System instruction for the **Reviewer agent** (`mogen generate
+/// --auto-refine N` / `mogen modify --auto-refine N`). The reviewer needs
+/// to emit valid DSL after critiquing the rendered image, so it gets the
+/// regular [`system_instruction`] body with [`REVIEWER_PREAMBLE`] prepended
+/// — that prefix explains how to read the image + previous DSL packed into
+/// the user turn and reaffirms the "DSL only" output contract.
+pub fn reviewer_system_instruction(index: &StdlibIndex) -> String {
+    let body = system_instruction(index);
+    let mut s = String::with_capacity(REVIEWER_PREAMBLE.len() + body.len());
+    s.push_str(REVIEWER_PREAMBLE);
+    s.push_str(&body);
     s
 }
 
@@ -390,13 +414,14 @@ mod tests {
         // (walking + armored knight) added another ~1.5 KB net.
         //
         // After the cache split, grammar/kinds/allowlist (~17 KB) move to
-        // `cacheable_block()` and don't count against this budget. Today's
-        // inline portion sits around 22 KB; 25_000 leaves ~3 KB headroom
-        // for one more fewshot or a tightening pass.
+        // `cacheable_block()` and don't count against this budget. Two new
+        // fewshots demonstrating `extrude` (I-beam) and `loft` (boat hull)
+        // added ~1 KB to the inline portion; cap raised from 25_000 →
+        // 26_500 to keep headroom for one more fewshot.
         let s = inline_block(&StdlibIndex::default());
         assert!(
-            s.len() < 25_000,
-            "inline_block grew to {} bytes — cap is 25_000. Either tighten an \
+            s.len() < 26_500,
+            "inline_block grew to {} bytes — cap is 26_500. Either tighten an \
              existing section, drop a fewshot, or move a stable section into \
              cacheable_block.",
             s.len()
@@ -409,11 +434,23 @@ mod tests {
         // paid once per cache lifetime, so the cap is loose — but a guard
         // still catches an accidentally-uncached request-varying section
         // sneaking in. The deformation-modifier paragraph in
-        // `ALLOWLIST_INTRO` adds ~700 bytes vs the pre-modifier baseline.
+        // `ALLOWLIST_INTRO` added ~700 bytes vs the pre-modifier baseline;
+        // the detailing-modules + per-node `lod=` recipes added another
+        // ~1.0 KB; the extrude/sweep/loft KINDS_REFERENCE rows another ~1 KB;
+        // the `*_range` selective-deformation note added ~250 bytes; the
+        // chamfered_box / inset_box KINDS_REFERENCE rows added ~700 bytes;
+        // the `if`/`else`/`for` rows + control-flow / interpolation prose
+        // added another ~1.4 KB; the organic-shape primitives
+        // (`coil`/`heightfield`/`bezier_patch`/`metaball`/`wave`) added
+        // KINDS_REFERENCE rows + allowlist entries totalling ~250 bytes; the
+        // organic-shape stdlib wrappers (`spring`/`terrain_patch`/`blob`/
+        // `water_patch`) added ~530 bytes of Detailing-recipe entries; PR
+        // review follow-up filled in `coil`/`heightfield`/`bezier_patch`/
+        // `metaball` KINDS_REFERENCE rows for direct LLM authoring (~770 B).
         let s = cacheable_block();
         assert!(
-            s.len() < 23_000,
-            "cacheable_block grew to {} bytes — cap is 23_000. Reference \
+            s.len() < 31_000,
+            "cacheable_block grew to {} bytes — cap is 31_000. Reference \
              material that grows without bound should be fetched on demand, \
              not pinned in the cache.",
             s.len()
@@ -630,5 +667,40 @@ mod tests {
         assert!(s.contains("group \"lid_hinge\""));
         assert!(s.contains("joint \"lid_pivot\" (type=hinge, axis=[1, 0, 0], pivot=\"lid_hinge\")"));
         assert!(s.contains("open_close \"lid_swing\" (target=\"lid_pivot\""));
+    }
+
+    #[test]
+    fn planner_system_instruction_does_not_include_dsl_grammar() {
+        // The Architect agent's whole point is to plan in plain language.
+        // If grammar / kinds tables ever sneak in, the planner will start
+        // emitting DSL again — exactly the failure the two-stage split is
+        // meant to avoid.
+        let s = planner_system_instruction();
+        assert!(s.contains("Architect"));
+        assert!(s.contains("Markdown"));
+        assert!(!s.contains("## DSL grammar"));
+        assert!(!s.contains("## Allowed kind-specific attrs"));
+        // Sections the planner is required to emit.
+        assert!(s.contains("## Subject"));
+        assert!(s.contains("## Parts"));
+        assert!(s.contains("## Hierarchy"));
+        assert!(s.contains("## Materials"));
+    }
+
+    #[test]
+    fn reviewer_system_instruction_starts_with_preamble_and_keeps_grammar() {
+        // Reviewer needs the full grammar reference (it has to emit DSL) AND
+        // the critique preamble. Order matters: the preamble has to land
+        // before the grammar so the model knows the rest of the system
+        // prompt is just reference material.
+        let s = reviewer_system_instruction(&StdlibIndex::default());
+        let preamble_idx = s.find("Reviewer agent in a self-refinement loop")
+            .expect("missing reviewer preamble");
+        let grammar_idx = s.find("## DSL grammar").expect("missing grammar section");
+        assert!(preamble_idx < grammar_idx, "preamble must precede grammar");
+        // Output contract is unchanged from the Coder pass.
+        assert!(s.contains("## Output contract"));
+        // Image instruction must reach the model.
+        assert!(s.contains("Look at the image"));
     }
 }

@@ -1,0 +1,31 @@
+meta (name = "moon_phase_astrolabe", description = "a brass moon-phase astrolabe with engraved rings and a central moon-phase disc", tags = ["instrument", "astrolabe", "brass", "astronomy"], seed = "1778142726687167900", thinking = "low", prompt = "a moon-phase astrolabe with engraved rings", mogen_version = "0.1.3")
+
+material "brass_polished" (color=[0.78, 0.65, 0.30], metallic=1.0, roughness=0.25)
+material "brass_dark" (color=[0.40, 0.30, 0.15], metallic=0.8, roughness=0.7)
+material "silver_matte" (color=[0.82, 0.82, 0.85], metallic=0.9, roughness=0.5)
+
+scene {
+  group "astrolabe" (tags="floating") {
+    // Main body disc — cylinder along Y, face at top
+    cylinder "mater" (radius=0.125, height=0.015, mat="brass_polished") {
+      connector "top_edge" (at=[0, 0.0075, -0.125], dir=[0, 1, 0])
+    }
+
+    // Concentric rings on the face — share mater's centre, no attach needed
+    torus "rim" (major=0.125, minor=0.006, y=0.0075, mat="brass_dark")
+    torus "rete" (major=0.105, minor=0.003, y=0.0095, mat="brass_polished")
+    torus "ecliptic_ring" (major=0.085, minor=0.003, y=0.0095, rot=[23.5, 0, 0], mat="brass_dark")
+    cylinder "moon_disc" (radius=0.035, height=0.004, y=0.0095, mat="silver_matte")
+
+    // Throne bracket and suspension ring — attached to mater edge
+    box "throne" (size=[0.025, 0.03, 0.01], mat="brass_polished")
+    torus "suspension_ring" (major=0.02, minor=0.003, mat="brass_polished")
+
+    attach (parent="mater", child="throne", socket="top_edge", plug="bottom")
+    attach (parent="throne", child="suspension_ring", socket="top", plug="bottom")
+  }
+}
+
+spin "rete_spin" (target="rete", axis=[0, 1, 0], rpm=2)
+spin "ecliptic_counter" (target="ecliptic_ring", axis=[0, -1, 0], rpm=1)
+spin "moon_phase" (target="moon_disc", axis=[0, 1, 0], rpm=0.5)

@@ -11,6 +11,32 @@ use mogen_llm::{
     GenerateConfig, GoogleCredential, LlmClient, Provider, StdlibIndex, DEFAULT_TTL_SECONDS,
 };
 
+/// Gemini-specific credential selector — controls which credential path
+/// `--provider` resolves to when the active provider is Gemini. Folded
+/// into the CLI's `--provider` flag itself: `--provider auto`,
+/// `--provider gemini`, `--provider gemini-oauth`, and
+/// `--provider antigravity` all set [`Provider::Gemini`] and pick a mode
+/// here. Non-Gemini providers ignore this enum.
+///
+/// - `Auto` (default) preserves the historical resolution order — explicit
+///   flag → env → settings.json → gemini-cli OAuth — and adds an
+///   Antigravity OAuth fallback when the gemini-cli bundle fails to load.
+///   This unblocks users whose gemini-cli OAuth client is rejected with 403
+///   while their Antigravity bundle still works.
+/// - `ApiKey` forces the API-key path (flag → env → settings.json) and
+///   skips OAuth entirely.
+/// - `GeminiOauth` forces the gemini-cli OAuth bundle.
+/// - `Antigravity` forces the Antigravity OAuth bundle (the same client
+///   `mogen textures` uses for image generation; also valid for text gen).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum GeminiAuthMode {
+    #[default]
+    Auto,
+    ApiKey,
+    GeminiOauth,
+    Antigravity,
+}
+
 /// Group error diagnostics by category (derived from the code prefix) so the
 /// repair spinner can say "fixing 2 syntax, 1 attach" instead of just "3".
 pub(crate) fn summarize_repair_errors(diags: &[Diagnostic]) -> String {
@@ -97,17 +123,55 @@ pub(crate) fn resolve_model(provider: Provider, flag: Option<String>) -> String 
 }
 
 /// Construct the right [`LlmClient`] for `provider` with `api_key`.
+///
+/// Z.ai routes through `with_base_url` so the persisted GLM Coding Plan
+/// toggle (in `~/.mogen/settings.json`) chooses between the dedicated
+/// `/api/coding/paas/v4` endpoint (default-on, recommended for coding-plan
+/// keys) and the general `/api/paas/v4` surface.
 pub(crate) fn build_client(provider: Provider, api_key: String) -> LlmClient {
-    LlmClient::new(provider, api_key)
+    if provider == Provider::Zai {
+        LlmClient::with_base_url(provider, api_key, mogen_llm::zai_base_url())
+    } else {
+        LlmClient::new(provider, api_key)
+    }
 }
 
-/// Resolve the Google credential for Gemini calls. Precedence:
-/// `--api-key` flag → `GEMINI_API_KEY` env → on-disk OAuth bundle → error.
+/// Resolve the Google credential for Gemini calls under the given `mode`.
 ///
-/// API-key beats stored OAuth deliberately so users can always force the
-/// public-API path when both are configured (`mogen auth status` flags this
-/// shadowing).
-pub(crate) fn resolve_gemini_credential(flag: Option<String>) -> Result<GoogleCredential> {
+/// - [`GeminiAuthMode::Auto`] (default): `--api-key` flag → `GEMINI_API_KEY`
+///   env → `~/.mogen/settings.json` → gemini-cli OAuth bundle → Antigravity
+///   OAuth bundle (fallback). API-key beats stored OAuth deliberately so
+///   users can always force the public-API path when both are configured
+///   (`mogen auth status` flags this shadowing). The Antigravity fallback
+///   was added because Google began rejecting some gemini-cli OAuth clients
+///   with 403 even though the bundle still loads.
+/// - [`GeminiAuthMode::ApiKey`]: only the API-key chain (flag → env →
+///   settings.json). Errors out rather than falling back to OAuth.
+/// - [`GeminiAuthMode::GeminiOauth`]: only the gemini-cli OAuth bundle.
+/// - [`GeminiAuthMode::Antigravity`]: only the Antigravity OAuth bundle.
+pub(crate) fn resolve_gemini_credential(
+    flag: Option<String>,
+    mode: GeminiAuthMode,
+) -> Result<GoogleCredential> {
+    match mode {
+        GeminiAuthMode::Auto => resolve_gemini_credential_auto(flag),
+        GeminiAuthMode::ApiKey => resolve_gemini_credential_api_key(flag),
+        GeminiAuthMode::GeminiOauth => {
+            if flag.is_some() {
+                bail!("--provider gemini-oauth ignores --api-key; drop one of the flags");
+            }
+            load_gemini_cli_bundle()
+        }
+        GeminiAuthMode::Antigravity => {
+            if flag.is_some() {
+                bail!("--provider antigravity ignores --api-key; drop one of the flags");
+            }
+            load_antigravity_bundle()
+        }
+    }
+}
+
+fn resolve_gemini_credential_auto(flag: Option<String>) -> Result<GoogleCredential> {
     if let Some(k) = flag {
         if k.trim().is_empty() {
             bail!("--api-key is empty");
@@ -121,6 +185,8 @@ pub(crate) fn resolve_gemini_credential(flag: Option<String>) -> Result<GoogleCr
     if let Some(k) = read_api_key(Provider::Gemini) {
         return Ok(GoogleCredential::ApiKey(k));
     }
+    // Try the gemini-cli OAuth bundle first; on any I/O / parse error fall
+    // through to Antigravity rather than burning the whole resolution.
     if let Some(path) = token_store_path() {
         match load_bundle(&path) {
             Ok(Some(bundle)) => return Ok(GoogleCredential::OAuth(bundle)),
@@ -133,9 +199,80 @@ pub(crate) fn resolve_gemini_credential(flag: Option<String>) -> Result<GoogleCr
             }
         }
     }
+    // Fallback: Antigravity bundle works for text gen too. This rescues
+    // users whose gemini-cli client returns 403 while their Antigravity
+    // login is still healthy. Pass `--auth gemini-oauth` to skip this
+    // fallback explicitly.
+    if let Some(path) = token_store_path_for(&ANTIGRAVITY_CONFIG) {
+        match load_bundle(&path) {
+            Ok(Some(bundle)) => {
+                eprintln!(
+                    "mogen: gemini-cli OAuth bundle missing or unreadable; \
+                     using Antigravity OAuth bundle instead. Pass \
+                     `--auth gemini-oauth` to disable this fallback."
+                );
+                return Ok(GoogleCredential::AntigravityOAuth(bundle));
+            }
+            Ok(None) => {}
+            Err(e) => {
+                eprintln!(
+                    "mogen: stored Antigravity OAuth credentials at {} unreadable ({e}); ignoring",
+                    path.display()
+                );
+            }
+        }
+    }
     bail!(
         "missing GEMINI_API_KEY (set env var, pass --api-key, store it in ~/.mogen/settings.json, or run 'mogen auth login')"
     );
+}
+
+fn resolve_gemini_credential_api_key(flag: Option<String>) -> Result<GoogleCredential> {
+    if let Some(k) = flag {
+        if k.trim().is_empty() {
+            bail!("--api-key is empty");
+        }
+        return Ok(GoogleCredential::ApiKey(k));
+    }
+    let from_env = std::env::var("GEMINI_API_KEY").unwrap_or_default();
+    if !from_env.trim().is_empty() {
+        return Ok(GoogleCredential::ApiKey(from_env));
+    }
+    if let Some(k) = read_api_key(Provider::Gemini) {
+        return Ok(GoogleCredential::ApiKey(k));
+    }
+    bail!(
+        "missing GEMINI_API_KEY (set env var, pass --api-key, or store it in ~/.mogen/settings.json) — \
+         --auth api-key disables OAuth fallbacks"
+    );
+}
+
+fn load_gemini_cli_bundle() -> Result<GoogleCredential> {
+    let path = token_store_path_for(&GEMINI_CLI_CONFIG)
+        .context("could not locate the gemini-cli token store path")?;
+    match load_bundle(&path)
+        .with_context(|| format!("reading gemini-cli OAuth bundle at {}", path.display()))?
+    {
+        Some(bundle) => Ok(GoogleCredential::OAuth(bundle)),
+        None => bail!(
+            "no gemini-cli OAuth bundle at {} — run `mogen auth login` first",
+            path.display()
+        ),
+    }
+}
+
+fn load_antigravity_bundle() -> Result<GoogleCredential> {
+    let path = token_store_path_for(&ANTIGRAVITY_CONFIG)
+        .context("could not locate the Antigravity token store path")?;
+    match load_bundle(&path)
+        .with_context(|| format!("reading Antigravity OAuth bundle at {}", path.display()))?
+    {
+        Some(bundle) => Ok(GoogleCredential::AntigravityOAuth(bundle)),
+        None => bail!(
+            "no Antigravity OAuth bundle at {} — run `mogen auth login --antigravity` first",
+            path.display()
+        ),
+    }
 }
 
 /// Resolve a Google credential suitable for **image generation** (the
@@ -198,13 +335,36 @@ pub(crate) fn resolve_gemini_image_credential(
     );
 }
 
-/// Build a Gemini-aware [`LlmClient`]. For Gemini, threads `flag → env →
-/// stored OAuth` through [`resolve_gemini_credential`]; for non-Gemini
-/// providers this is identical to [`build_client`] over [`resolve_api_key`].
-pub(crate) fn build_llm_client(provider: Provider, flag: Option<String>) -> Result<LlmClient> {
+/// Build the right [`LlmClient`] for `provider` under `auth`.
+///
+/// For Gemini, threads `flag` + `auth` through [`resolve_gemini_credential`]
+/// so callers can choose between API key, gemini-cli OAuth, Antigravity
+/// OAuth, or the Auto fallback chain. For non-Gemini providers, `auth` is
+/// constrained: only [`GeminiAuthMode::Auto`] / [`GeminiAuthMode::ApiKey`]
+/// are valid; passing [`GeminiAuthMode::GeminiOauth`] /
+/// [`GeminiAuthMode::Antigravity`] errors so the user notices the mismatch
+/// instead of silently getting an API-key auth they didn't ask for.
+pub(crate) fn build_llm_client(
+    provider: Provider,
+    flag: Option<String>,
+    auth: GeminiAuthMode,
+) -> Result<LlmClient> {
     if matches!(provider, Provider::Gemini) {
-        let cred = resolve_gemini_credential(flag)?;
+        let cred = resolve_gemini_credential(flag, auth)?;
         return Ok(LlmClient::gemini_from_credential(cred));
+    }
+    match auth {
+        GeminiAuthMode::Auto | GeminiAuthMode::ApiKey => {
+            // Non-Gemini providers always go through the API-key chain.
+        }
+        GeminiAuthMode::GeminiOauth => bail!(
+            "--provider gemini-oauth is Gemini-only (got --provider {})",
+            provider.label()
+        ),
+        GeminiAuthMode::Antigravity => bail!(
+            "--provider antigravity is Gemini-only (got --provider {})",
+            provider.label()
+        ),
     }
     let key = resolve_api_key(provider, flag)?;
     Ok(build_client(provider, key))

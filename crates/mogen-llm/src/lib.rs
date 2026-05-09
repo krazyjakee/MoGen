@@ -31,8 +31,10 @@ pub mod imports;
 pub mod ollama;
 pub mod openai;
 pub mod pbr_maps;
+pub mod plan;
 pub mod prompt;
 pub mod provider;
+pub mod refine;
 pub mod repair;
 pub mod settings_store;
 pub mod textures;
@@ -55,17 +57,27 @@ pub use image_client::{ImageClient, ImageError};
 pub use imports::{
     format_import_aabb_preamble, format_imports_preserve_block, summarize_imports, ImportSummary,
 };
-pub use prompt::{cacheable_block, inline_block, system_instruction, StdlibIndex};
+pub use plan::{compose_coder_prompt, generate_plan, PlanOutcome};
+pub use prompt::{
+    cacheable_block, inline_block, planner_system_instruction, reviewer_system_instruction,
+    system_instruction, StdlibIndex,
+};
 pub use provider::{GoogleCredential, LlmClient, Provider, ProviderError};
+pub use refine::{build_reviewer_message, visual_refine};
 pub use repair::{
     generate_with_repair, repair_message, validate_text, GenerateOutcome, RepairConfig,
 };
-pub use settings_store::{load_api_keys, read_api_key, settings_path as settings_store_path, ApiKeys};
+pub use settings_store::{
+    load_api_keys, read_api_key, settings_path as settings_store_path, zai_base_url, ApiKeys,
+};
 pub use fireworks::{FireworksClient, FireworksError};
 pub use textures::parse_prompt_header;
 pub use style::{apply_style_to_prompt, style_prompt_block, Style, STYLES};
 pub use zai::{ZaiClient, ZaiError};
-pub use zai_chat::{ZaiChatClient, ZaiChatError};
+pub use zai_chat::{
+    ZaiChatClient, ZaiChatError, CODING_PLAN_BASE_URL as ZAI_CODING_PLAN_BASE_URL,
+    DEFAULT_BASE_URL as ZAI_DEFAULT_BASE_URL, DEFAULT_VISION_MODEL as ZAI_DEFAULT_VISION_MODEL,
+};
 pub use types::{
     GenerateConfig, GenerateResponse, ImageInput, Role, ThinkingLevel, Turn, Usage,
     DEFAULT_TEMPERATURE,

@@ -172,11 +172,25 @@ impl Provider {
         matches!(self, Provider::Ollama | Provider::ClaudeCode)
     }
 
-    /// Whether this provider supports image generation (used by the textures
-    /// pipeline). Today only Gemini does — non-Gemini providers fall back to
-    /// a clear error in that command.
+    /// Whether this provider supports vision **input** — i.e. the user can
+    /// attach a reference image alongside the text prompt and the model
+    /// will read it. Drives the Studio's image-to-3D Generate flow and
+    /// gates the auto-refine button (which feeds rendered scene PNGs
+    /// back to the model). Today: Gemini, Z.ai (`glm-5v-turbo`),
+    /// Fireworks (Kimi K2.5/K2.6 are native multimodal), and Claude Code
+    /// (`claude --print` resolves filesystem-path image references via
+    /// the model's built-in `Read` tool).
+    ///
+    /// This is **not** about image *generation* (the textures pipeline) —
+    /// that lives behind the `ImageProvider` enum in the Studio settings.
     pub fn supports_images(self) -> bool {
-        matches!(self, Provider::Gemini)
+        matches!(
+            self,
+            Provider::Gemini
+                | Provider::Zai
+                | Provider::Fireworks
+                | Provider::ClaudeCode
+        )
     }
 
     /// Whether this provider supports the persistent `cachedContents`-style

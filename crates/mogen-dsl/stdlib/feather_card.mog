@@ -1,0 +1,10 @@
+// summary: Feather card — single curved-plane cupped along its length, like a feather or fish-fin ray. Pair with an alpha-cutout feather/fin material (`alpha_mode="mask", double_sided=1`) to read as a real feather. Default 0.04m wide × 0.15m long; `stem` connector at the base.
+module "feather_card" (length=0.15, width=0.04) {
+  curved_plane "feather" (
+    size=[$width, $length],
+    bend_u=20, bend_v=12,
+    segments_u=4, segments_v=12
+  ) {
+    connector "stem" (at=[0, 0, $length * -0.5], dir=[0, 0, -1], tag=feather_stem)
+  }
+}

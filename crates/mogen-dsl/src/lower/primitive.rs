@@ -3,12 +3,14 @@ use glam::{Mat4, Vec3};
 
 use mogen_core::{Mesh, UvMode};
 use mogen_geom::{
-    box_mesh, capsule_mesh, clean_csg_output, cone_mesh, curved_plane_mesh, cylinder_mesh,
-    difference_many, disc_mesh, ellipsoid_mesh, frustum_mesh, half_cylinder_mesh, hemisphere_mesh,
-    icosphere_mesh, lathe_mesh, leaf_card_mesh, mesh_from_glb_bytes, plane_mesh, prism_mesh,
-    pyramid_mesh, quad_mesh, read_glb_bytes, rounded_box_mesh, sphere_mesh, spline_ribbon_mesh,
-    spline_tube_mesh, superellipsoid_mesh, torus_arc_mesh, torus_mesh, transform_mesh, tube_mesh,
-    wedge_mesh,
+    bezier_patch_mesh, box_mesh, capsule_mesh, chamfered_box_mesh, clean_csg_output, coil_mesh,
+    cone_mesh, curved_plane_mesh, cylinder_mesh, difference_many, disc_mesh, ellipsoid_mesh,
+    extrude_mesh, frustum_mesh, half_cylinder_mesh, heightfield_mesh, hemisphere_mesh,
+    icosphere_mesh, inset_box_mesh, lathe_mesh, leaf_card_mesh, loft_mesh, mesh_from_glb_bytes,
+    metaball_mesh, plane_mesh, prism_mesh, pyramid_mesh, quad_mesh, read_glb_bytes,
+    rounded_box_mesh, sphere_mesh, spline_ribbon_mesh, spline_tube_mesh, superellipsoid_mesh,
+    sweep_mesh, torus_arc_mesh, torus_mesh, transform_mesh, tube_mesh, wedge_mesh,
+    CoilHandedness, InsetFace, SweepModulation,
 };
 
 use crate::ast::Node;
@@ -28,7 +30,8 @@ fn deform_density(node: &Node) -> u32 {
         || node.attr("bend_z").is_some()
         || node.attr("twist_y").is_some()
         || node.attr("noise").is_some()
-        || node.attr("droop").is_some();
+        || node.attr("droop").is_some()
+        || node.attr("wave").is_some();
     if needs_dense {
         2
     } else {
@@ -56,6 +59,29 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
         "plane" => {
             let s = resolve_size_xz(node, [1.0, 1.0]);
             plane_mesh(s, uv_mode)
+        }
+        "heightfield" => {
+            let s = resolve_size_xz(node, [1.0, 1.0]);
+            let segments_u = node
+                .attr_number("segments_u")
+                .map(|n| n as u32)
+                .unwrap_or_else(|| seg_default(32, 1));
+            let segments_v = node
+                .attr_number("segments_v")
+                .map(|n| n as u32)
+                .unwrap_or_else(|| seg_default(32, 1));
+            let amplitude = node.attr_number("amplitude").unwrap_or(0.5);
+            let octaves = node
+                .attr_number("octaves")
+                .map(|n| (n as u32).clamp(1, 8))
+                .unwrap_or(3);
+            let frequency = node.attr_number("frequency").unwrap_or(1.0);
+            let persistence = node.attr_number("persistence").unwrap_or(0.5);
+            let seed = node.attr_number("seed").map(|n| n as u32).unwrap_or(1);
+            heightfield_mesh(
+                s, segments_u, segments_v, amplitude,
+                octaves, frequency, persistence, seed, uv_mode,
+            )
         }
         "quad" => {
             let s = resolve_size_xy(node, [1.0, 1.0]);
@@ -149,6 +175,24 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
                 .unwrap_or_else(|| seg_default(4, 1));
             rounded_box_mesh([s.x, s.y, s.z], radius, segments, uv_mode)
         }
+        "chamfered_box" => {
+            let s = resolve_size3(node, Vec3::ONE);
+            let radius = node.attr_number("radius").unwrap_or(0.1);
+            chamfered_box_mesh([s.x, s.y, s.z], radius, uv_mode)
+        }
+        "inset_box" => {
+            let s = resolve_size3(node, Vec3::ONE);
+            let face = match node.attr_string("face") {
+                Some(name) => match parse_inset_face(name) {
+                    Ok(f) => f,
+                    Err(e) => return Some(Err(e)),
+                },
+                None => InsetFace::PosY,
+            };
+            let amount = node.attr_number("amount").unwrap_or(0.1);
+            let depth = node.attr_number("depth").unwrap_or(0.05);
+            inset_box_mesh([s.x, s.y, s.z], face, amount, depth, uv_mode)
+        }
         "wedge" => {
             let s = resolve_size3(node, Vec3::ONE);
             wedge_mesh([s.x, s.y, s.z], uv_mode)
@@ -220,6 +264,60 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
                 .unwrap_or_else(|| seg_default(12, 1));
             curved_plane_mesh(s, bend_u, bend_v, segments_u, segments_v, uv_mode)
         }
+        "bezier_patch" => {
+            // Author supplies exactly 16 vec3 control points, row-major.
+            let points = node.attr_list_vec3("points").unwrap_or_default();
+            if points.len() != 16 {
+                return Some(Err(anyhow!(
+                    "`bezier_patch` requires exactly 16 vec3 control points in `points=`, got {}",
+                    points.len(),
+                )));
+            }
+            let segments_u = node
+                .attr_number("segments_u")
+                .map(|n| n as u32)
+                .unwrap_or_else(|| seg_default(12, 1));
+            let segments_v = node
+                .attr_number("segments_v")
+                .map(|n| n as u32)
+                .unwrap_or_else(|| seg_default(12, 1));
+            bezier_patch_mesh(&points, segments_u, segments_v, uv_mode)
+        }
+        "metaball" => {
+            let points = node.attr_list_vec3("points").unwrap_or_default();
+            if points.is_empty() {
+                return Some(Err(anyhow!(
+                    "`metaball` requires at least one point in `points=[[x,y,z], …]`",
+                )));
+            }
+            // `radii` (per-point list) takes precedence; else fall back to
+            // scalar `radius`. One of the two is required so the author
+            // can't accidentally request a metaball with no radii.
+            // The grammar parses 3-element lists as `Vec3`, so accept that
+            // shape too — same fallback `loft.heights` uses.
+            let radii: Vec<f32> = match node.attr("radii") {
+                Some(crate::ast::Value::List(v)) => v.to_vec(),
+                Some(crate::ast::Value::Vec3(v)) => v.to_vec(),
+                _ => match node.attr_number("radius") {
+                    Some(r) => vec![r],
+                    None => {
+                        return Some(Err(anyhow!(
+                            "`metaball` requires either a scalar `radius=` or a per-point `radii=[…]`",
+                        )));
+                    }
+                },
+            };
+            let blend = node.attr_number("blend").unwrap_or(0.0);
+            let rings = node
+                .attr_number("rings")
+                .map(|n| n as u32)
+                .unwrap_or_else(|| seg_default(12, 2));
+            let segments = node
+                .attr_number("segments")
+                .map(|n| n as u32)
+                .unwrap_or_else(|| seg_default(16, 3));
+            metaball_mesh(&points, &radii, blend, rings, segments, uv_mode)
+        }
         "wall" => {
             // Box cut through along Z by any number of rectangular holes
             // declared as [x, y, w, h] in the wall's local frame.
@@ -273,6 +371,37 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
             let cap_ends = node.attr_number("cap_ends").map(|n| n != 0.0).unwrap_or(true);
             spline_tube_mesh(&points, &radii, segments, samples, cap_ends, uv_mode)
         }
+        "coil" => {
+            let radius = node.attr_number("radius").unwrap_or(0.5);
+            let height = node.attr_number("height").unwrap_or(1.0);
+            let turns = node.attr_number("turns").unwrap_or(3.0);
+            let profile_radius = node.attr_number("profile_radius").unwrap_or(0.05);
+            let segments = node
+                .attr_number("segments")
+                .map(|n| n as u32)
+                .unwrap_or_else(|| seg_default(12, 3));
+            let samples = node
+                .attr_number("samples")
+                .map(|n| n as u32)
+                .unwrap_or_else(|| seg_default(16, 4));
+            let cap_ends = node.attr_number("cap_ends").map(|n| n != 0.0).unwrap_or(true);
+            let handedness = match node.attr_string("handedness") {
+                Some(s) => match s.to_ascii_lowercase().as_str() {
+                    "right" | "rh" | "ccw" => CoilHandedness::Right,
+                    "left"  | "lh" | "cw"  => CoilHandedness::Left,
+                    other => {
+                        return Some(Err(anyhow!(
+                            "coil.handedness: expected \"right\" or \"left\", got \"{other}\""
+                        )));
+                    }
+                },
+                None => CoilHandedness::Right,
+            };
+            coil_mesh(
+                radius, height, turns, profile_radius,
+                segments, samples, cap_ends, handedness, uv_mode,
+            )
+        }
         "spline_ribbon" => {
             let points = node
                 .attr_list_vec3("points")
@@ -291,6 +420,98 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
             // Author writes degrees (per the prompt), the mesh builder takes radians.
             let twist = node.attr_number("twist").unwrap_or(0.0).to_radians();
             spline_ribbon_mesh(&points, &widths, samples, twist, uv_mode)
+        }
+        "extrude" => {
+            let outer = node.attr_list_pair("points").unwrap_or_else(|| {
+                vec![[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]]
+            });
+            // Single optional inner contour (CW). Multi-hole support is
+            // gated on a future grammar change — three-level nested lists
+            // can't be expressed in the parser today, so authoring two or
+            // more holes today means stacking two `extrude` calls or
+            // following up with a `difference`.
+            let hole = node.attr_list_pair("hole").unwrap_or_default();
+            let holes: Vec<Vec<[f32; 2]>> = if hole.is_empty() {
+                Vec::new()
+            } else {
+                vec![hole]
+            };
+            let height = node.attr_number("height").unwrap_or(1.0);
+            let taper = node.attr_number("taper").unwrap_or(1.0);
+            let twist = node.attr_number("twist").unwrap_or(0.0).to_radians();
+            let caps = node.attr_number("caps").map(|n| n != 0.0).unwrap_or(true);
+            extrude_mesh(&outer, &holes, height, taper, twist, caps, uv_mode)
+        }
+        "sweep" => {
+            let profile = node.attr_list_pair("profile").unwrap_or_else(|| {
+                vec![[-0.05, -0.05], [0.05, -0.05], [0.05, 0.05], [-0.05, 0.05]]
+            });
+            let path = node
+                .attr_list_vec3("path")
+                .unwrap_or_else(|| vec![[-0.5, 0.0, 0.0], [0.5, 0.0, 0.0]]);
+            let samples = node
+                .attr_number("samples")
+                .map(|n| n as u32)
+                .unwrap_or_else(|| seg_default(8, 2));
+            let twist = node.attr_number("twist").unwrap_or(0.0).to_radians();
+            // Author-supplied per-control-point modulation lists. `roll` is
+            // in degrees per the prompt, converted to radians here so the
+            // kernel can stay in radians throughout.
+            let roll: Vec<f32> = node
+                .attr_list("roll")
+                .map(|s| s.iter().map(|d| d.to_radians()).collect())
+                .unwrap_or_default();
+            let scale: Vec<f32> = node.attr_list("scale_along")
+                .map(|s| s.to_vec())
+                .unwrap_or_default();
+            let modulation = SweepModulation { roll, scale };
+            let caps = node.attr_number("caps").map(|n| n != 0.0).unwrap_or(true);
+            sweep_mesh(&profile, &path, samples, twist, &modulation, caps, uv_mode)
+        }
+        "loft" => {
+            // Sections are flat-packed into one `points` list, in section
+            // order. `heights` lists the Y of each section. The number of
+            // points must be a multiple of `heights.len()` and the per-
+            // section vertex count must be ≥ 3.
+            let all_points = node.attr_list_pair("points").unwrap_or_default();
+            let heights: Vec<f32> = match node.attr("heights") {
+                Some(crate::ast::Value::List(v)) => v.to_vec(),
+                // 3-element heights parse as Vec3 (grammar prefers vec3
+                // over list when arity matches), so honour that shape too.
+                Some(crate::ast::Value::Vec3(v)) => v.to_vec(),
+                Some(crate::ast::Value::Number(n)) => vec![*n],
+                _ => Vec::new(),
+            };
+            if heights.len() < 2 {
+                return Some(Err(anyhow!(
+                    "`loft` requires at least 2 entries in `heights=`, got {}",
+                    heights.len(),
+                )));
+            }
+            if all_points.is_empty() || all_points.len() % heights.len() != 0 {
+                return Some(Err(anyhow!(
+                    "`loft` `points=` length ({}) must be a non-zero multiple of \
+                     `heights=` length ({}); pack each section's vertices in order \
+                     and they must all share the same vertex count",
+                    all_points.len(),
+                    heights.len(),
+                )));
+            }
+            let per_section = all_points.len() / heights.len();
+            if per_section < 3 {
+                return Some(Err(anyhow!(
+                    "`loft` sections must have at least 3 vertices, got {per_section}"
+                )));
+            }
+            let sections: Vec<Vec<[f32; 2]>> = (0..heights.len())
+                .map(|i| all_points[i * per_section..(i + 1) * per_section].to_vec())
+                .collect();
+            let samples = node
+                .attr_number("samples")
+                .map(|n| n as u32)
+                .unwrap_or_else(|| seg_default(4, 1));
+            let caps = node.attr_number("caps").map(|n| n != 0.0).unwrap_or(true);
+            return Some(loft_mesh(&sections, &heights, samples, caps, uv_mode));
         }
         "mesh" => {
             let src = match node.attr_string("src") {
@@ -313,4 +534,24 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
         _ => return None,
     };
     Some(Ok(m))
+}
+
+/// Resolve a user-supplied face name (`"+y"`, `"top"`, `"-x"`, …) to the
+/// internal `InsetFace` enum. Aliases are case-insensitive and accept both
+/// the axis-sign form and English directional names so authors don't have
+/// to remember which is which.
+fn parse_inset_face(s: &str) -> Result<InsetFace> {
+    match s.to_ascii_lowercase().as_str() {
+        "+x" | "right" | "east"        => Ok(InsetFace::PosX),
+        "-x" | "left"  | "west"        => Ok(InsetFace::NegX),
+        "+y" | "top"   | "up"          => Ok(InsetFace::PosY),
+        "-y" | "bottom"| "down"        => Ok(InsetFace::NegY),
+        "+z" | "front" | "south"       => Ok(InsetFace::PosZ),
+        "-z" | "back"  | "north"       => Ok(InsetFace::NegZ),
+        other => Err(anyhow!(
+            "inset_box.face: expected one of \
+             \"+x\"/\"-x\"/\"+y\"/\"-y\"/\"+z\"/\"-z\" \
+             (or top/bottom/left/right/front/back), got \"{other}\""
+        )),
+    }
 }

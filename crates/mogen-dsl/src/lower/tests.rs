@@ -893,6 +893,166 @@ fn lod_scale_default_keeps_existing_vertex_counts() {
 }
 
 #[test]
+fn per_node_lod_doubles_segment_count_on_marked_subtree() {
+    // `lod=2.0` on a single primitive doubles its default segment count
+    // (matches the behaviour of `lod_scale (value=2)` but scoped to that
+    // subtree only — see lod.rs::LodMultiplierGuard).
+    let baseline = lower_src(r#"scene { cylinder "c" (radius=0.5, height=1) }"#);
+    let scaled = lower_src(r#"scene { cylinder "c" (radius=0.5, height=1, lod=2) }"#);
+    let base_verts = find_mesh_node(&baseline, "c").mesh.as_ref().unwrap().positions.len();
+    let scaled_verts = find_mesh_node(&scaled, "c").mesh.as_ref().unwrap().positions.len();
+    assert!(
+        scaled_verts > base_verts,
+        "per-node lod=2 should increase cylinder vert count (base={base_verts}, scaled={scaled_verts})"
+    );
+}
+
+#[test]
+fn per_node_lod_does_not_leak_to_siblings() {
+    // The multiplier guard is RAII-scoped to the marked subtree. A `lod=2`
+    // group must not boost a sibling that lives outside it.
+    let g = lower_src(
+        r#"scene {
+            group "hi" (lod=2) { sphere "s" (radius=0.5) }
+            sphere "lo" (radius=0.5)
+        }"#,
+    );
+    let hi = find_mesh_node(&g, "s").mesh.as_ref().unwrap().positions.len();
+    let lo = find_mesh_node(&g, "lo").mesh.as_ref().unwrap().positions.len();
+    let baseline = lower_src(r#"scene { sphere "b" (radius=0.5) }"#);
+    let base = find_mesh_node(&baseline, "b").mesh.as_ref().unwrap().positions.len();
+    assert!(hi > base, "lod=2 group should boost child sphere (hi={hi}, base={base})");
+    assert_eq!(lo, base, "sibling outside the lod=2 group must use baseline detail");
+}
+
+#[test]
+fn per_node_lod_compounds_with_global_lod_scale() {
+    // `lod=2.0` on top of `lod_scale (value=0.5)` cancels out — effective
+    // multiplier is 1.0, so the marked subtree returns to the default
+    // vertex count even though the file's global setting is 0.5.
+    let baseline = lower_src(r#"scene { sphere "s" (radius=0.5) }"#);
+    let compound = lower_src(
+        r#"lod_scale (value=0.5) scene { sphere "s" (radius=0.5, lod=2) }"#,
+    );
+    let base_verts = find_mesh_node(&baseline, "s").mesh.as_ref().unwrap().positions.len();
+    let compound_verts = find_mesh_node(&compound, "s").mesh.as_ref().unwrap().positions.len();
+    assert_eq!(
+        base_verts, compound_verts,
+        "lod=2 should cancel a global lod_scale=0.5 (base={base_verts}, compound={compound_verts})"
+    );
+}
+
+#[test]
+fn extrude_lowers_with_default_attrs() {
+    let g = lower_src(r#"scene { extrude "block" () }"#);
+    let m = find_mesh_node(&g, "block").mesh.as_ref().unwrap();
+    assert!(!m.positions.is_empty(), "extrude default mesh missing positions");
+    assert!(!m.indices.is_empty(), "extrude default mesh missing indices");
+    // Default outline is a unit square 1×1 in XZ; default height 1.
+    let (min, max) = mesh_aabb(&g, "block");
+    assert!((max.y - min.y - 1.0).abs() < 1e-3, "Y span should be 1");
+}
+
+#[test]
+fn extrude_with_explicit_polygon_shape() {
+    // L-shaped polygon: not convex, exercises earcut.
+    let g = lower_src(
+        r#"scene {
+            extrude "ell" (
+                points=[[0, 0], [2, 0], [2, 1], [1, 1], [1, 2], [0, 2]],
+                height=0.5
+            )
+        }"#,
+    );
+    let (_min, max) = mesh_aabb(&g, "ell");
+    assert!((max.x - 2.0).abs() < 1e-3 && (max.z - 2.0).abs() < 1e-3,
+        "L-shape should span 2 units on X and Z");
+    // Concave triangulation must still emit non-trivial tri count — earcut
+    // on a 6-vert poly emits 4 cap tris × 2 caps + 12 side rib tris.
+    let m = find_mesh_node(&g, "ell").mesh.as_ref().unwrap();
+    assert!(m.indices.len() / 3 > 8, "concave extrude should emit > 8 tris");
+}
+
+#[test]
+fn sweep_lowers_along_path() {
+    let g = lower_src(
+        r#"scene {
+            sweep "rail" (
+                profile=[[-0.05, -0.02], [0.05, -0.02], [0.05, 0.02], [-0.05, 0.02]],
+                path=[[-1, 0, 0], [0, 0, 0], [1, 0, 0]],
+                samples=8
+            )
+        }"#,
+    );
+    let (min, max) = mesh_aabb(&g, "rail");
+    assert!(min.x < -0.9 && max.x > 0.9, "swept rail should span ±1 along path");
+    let m = find_mesh_node(&g, "rail").mesh.as_ref().unwrap();
+    assert!(!m.indices.is_empty(), "sweep produced no triangles");
+}
+
+#[test]
+fn loft_lowers_three_sections() {
+    let g = lower_src(
+        r#"scene {
+            loft "hull" (
+                points=[
+                    [-0.5, -0.2], [0.5, -0.2], [0.5, 0.2], [-0.5, 0.2],
+                    [-1.0, -0.4], [1.0, -0.4], [1.0, 0.4], [-1.0, 0.4],
+                    [-0.6, -0.1], [0.6, -0.1], [0.6, 0.1], [-0.6, 0.1]
+                ],
+                heights=[0.0, 1.0, 2.0]
+            )
+        }"#,
+    );
+    let (min, max) = mesh_aabb(&g, "hull");
+    assert!(min.y.abs() < 1e-3 && (max.y - 2.0).abs() < 1e-3,
+        "Y span should be [0, 2] (got [{}, {}])", min.y, max.y);
+    // Middle section reaches ±1 on X.
+    assert!(max.x > 0.95, "mid section X extent should reach ~1 (got {})", max.x);
+}
+
+#[test]
+fn loft_rejects_inconsistent_section_lengths() {
+    // points contains 5 vertices, heights demands 2 sections — 5 % 2 ≠ 0.
+    let src = r#"scene {
+        loft "bad" (
+            points=[[0, 0], [1, 0], [1, 1], [0, 1], [0.5, 0.5]],
+            heights=[0.0, 1.0]
+        )
+    }"#;
+    let ast = crate::parser::parse(src).unwrap();
+    assert!(lower(&ast).is_err(), "loft must reject mismatched section lengths");
+}
+
+#[test]
+fn loft_rejects_single_section() {
+    // heights with fewer than 2 entries leaves nothing to interpolate
+    // between — must error rather than emit a degenerate mesh.
+    let src = r#"scene {
+        loft "bad" (
+            points=[[0, 0], [1, 0], [1, 1], [0, 1]],
+            heights=[0.0]
+        )
+    }"#;
+    let ast = crate::parser::parse(src).unwrap();
+    assert!(lower(&ast).is_err(), "loft must reject heights.len() < 2");
+}
+
+#[test]
+fn loft_rejects_section_with_fewer_than_three_vertices() {
+    // 2 sections × 2 verts per section → per_section=2 < 3 (a loft section
+    // needs to be a closed polygon with at least 3 vertices).
+    let src = r#"scene {
+        loft "bad" (
+            points=[[0, 0], [1, 0], [0, 1], [1, 1]],
+            heights=[0.0, 1.0]
+        )
+    }"#;
+    let ast = crate::parser::parse(src).unwrap();
+    assert!(lower(&ast).is_err(), "loft must reject per-section vertex count < 3");
+}
+
+#[test]
 fn light_directional_lowers_with_color_and_intensity() {
     let g = lower_src(
         r#"scene { light "sun" (kind=directional, color=[1, 0.95, 0.85], intensity=3) }"#,
@@ -1100,3 +1260,658 @@ fn mirror_bakes_reflection_into_subtree_so_chain_stays_positive_det() {
 }
 
 
+#[test]
+fn bend_z_range_only_bends_tip() {
+    // Cylinder from y=-0.5 to y=0.5; bend_z bends along Y. With range
+    // [0.75, 1.0] the lower 75 % of the column stays at x≈0; only the upper
+    // 25 % gets perturbed. Compare against the unranged form so we can see
+    // the lower ring stayed put while the upper ring moved.
+    let baseline = lower_src(
+        r#"scene { cylinder "c" (radius=0.1, height=1.0, segments=8) }"#,
+    );
+    let ranged = lower_src(
+        r#"scene { cylinder "c" (radius=0.1, height=1.0, segments=8, bend_z=60, bend_z_range=[0.75, 1.0]) }"#,
+    );
+    let base_mesh = find_mesh_node(&baseline, "c").mesh.as_ref().unwrap();
+    let bent_mesh = find_mesh_node(&ranged, "c").mesh.as_ref().unwrap();
+    assert_eq!(base_mesh.positions.len(), bent_mesh.positions.len());
+    let mut max_base_shift = 0.0_f32;
+    let mut max_tip_shift = 0.0_f32;
+    for (b, p) in base_mesh.positions.iter().zip(bent_mesh.positions.iter()) {
+        let dx = p[0] - b[0];
+        let dy = p[1] - b[1];
+        let dz = p[2] - b[2];
+        let shift = (dx * dx + dy * dy + dz * dz).sqrt();
+        // Use the unbent y to bucket: vertices originally below the column
+        // midpoint are "base"; above are "tip". (After bending the tip
+        // slides downward, so post-bend `p[1]` would mis-bucket.)
+        if b[1] < 0.0 {
+            max_base_shift = max_base_shift.max(shift);
+        } else {
+            max_tip_shift = max_tip_shift.max(shift);
+        }
+    }
+    assert!(
+        max_base_shift < 1e-3,
+        "lower half should stay put with smoothstep ramp at 0.75 (got {max_base_shift})"
+    );
+    assert!(
+        max_tip_shift > 0.3,
+        "upper half should bend appreciably (got {max_tip_shift})"
+    );
+}
+
+#[test]
+fn taper_range_leaves_lower_half_unscaled() {
+    // Sphere has dense Y rings, so we can probe both the unranged taper=0.5
+    // result and the ranged form at the same y. With taper_range=[0.5, 1.0]
+    // the lower hemisphere stays pristine (weight=0) and the upper
+    // hemisphere ramps in via smoothstep.
+    let plain = lower_src(r#"scene { sphere "s" (radius=0.5) }"#);
+    let ranged = lower_src(
+        r#"scene { sphere "s" (radius=0.5, taper=0.5, taper_range=[0.5, 1.0]) }"#,
+    );
+    let p = find_mesh_node(&plain, "s").mesh.as_ref().unwrap();
+    let r = find_mesh_node(&ranged, "s").mesh.as_ref().unwrap();
+    assert_eq!(p.positions.len(), r.positions.len());
+
+    let mut max_lower_xz_diff = 0.0_f32;
+    let mut max_upper_xz_diff = 0.0_f32;
+    for (pl, ra) in p.positions.iter().zip(r.positions.iter()) {
+        let xz_diff = ((ra[0] - pl[0]).powi(2) + (ra[2] - pl[2]).powi(2)).sqrt();
+        if pl[1] < -0.05 {
+            max_lower_xz_diff = max_lower_xz_diff.max(xz_diff);
+        } else if pl[1] > 0.3 {
+            max_upper_xz_diff = max_upper_xz_diff.max(xz_diff);
+        }
+    }
+    assert!(
+        max_lower_xz_diff < 1e-4,
+        "lower hemisphere should match the un-tapered sphere (got {max_lower_xz_diff})"
+    );
+    assert!(
+        max_upper_xz_diff > 0.05,
+        "upper hemisphere should be tapered noticeably (got {max_upper_xz_diff})"
+    );
+}
+
+#[test]
+fn noise_range_only_roughens_top() {
+    // Tall box; with noise_range=[0.7, 1.0] only the top 30 % gets bumpy.
+    // The bottom face vertices lie at y=-0.5; their (x, z) should match the
+    // pristine box — within float noise of zero.
+    let g = lower_src(
+        r#"scene { box "b" (size=[1, 1, 1], noise=0.5, seed=11, noise_range=[0.7, 1.0]) }"#,
+    );
+    let mesh = find_mesh_node(&g, "b").mesh.as_ref().unwrap();
+    let mut max_base_dx = 0.0_f32;
+    let mut max_top_dx = 0.0_f32;
+    for p in &mesh.positions {
+        // Box default has corners at ±0.5 on every axis; subtracting the
+        // sign-aware nominal corner gives the displacement magnitude.
+        let dx = p[0].abs() - 0.5;
+        let dz = p[2].abs() - 0.5;
+        let max_xy = dx.abs().max(dz.abs());
+        if p[1] < -0.4 {
+            max_base_dx = max_base_dx.max(max_xy);
+        } else if p[1] > 0.4 {
+            max_top_dx = max_top_dx.max(max_xy);
+        }
+    }
+    assert!(
+        max_base_dx < 1e-3,
+        "bottom face should stay at exactly ±0.5 (got {max_base_dx})"
+    );
+    assert!(
+        max_top_dx > 0.01,
+        "top face should be perturbed by noise (got {max_top_dx})"
+    );
+}
+
+#[test]
+fn range_reversed_endpoints_are_normalised() {
+    // [1.0, 0.5] is a user typo for [0.5, 1.0]. set_range sorts the pair so
+    // the kernel sees a soft ramp instead of a hard step at 1.0 (which would
+    // give zero deformation everywhere because t < 1.0 everywhere except
+    // the topmost row).
+    let a = lower_src(
+        r#"scene { cylinder "c" (radius=0.1, height=1.0, segments=8, bend_z=60, bend_z_range=[0.5, 1.0]) }"#,
+    );
+    let b = lower_src(
+        r#"scene { cylinder "c" (radius=0.1, height=1.0, segments=8, bend_z=60, bend_z_range=[1.0, 0.5]) }"#,
+    );
+    let pa = find_mesh_node(&a, "c").mesh.as_ref().unwrap();
+    let pb = find_mesh_node(&b, "c").mesh.as_ref().unwrap();
+    assert_eq!(pa.positions.len(), pb.positions.len());
+    for (p, q) in pa.positions.iter().zip(pb.positions.iter()) {
+        for k in 0..3 {
+            assert!(
+                (p[k] - q[k]).abs() < 1e-5,
+                "swapped endpoints produced different geometry at axis {k}"
+            );
+        }
+    }
+}
+#[test]
+fn chamfered_box_lowers_with_default_attrs() {
+    let g = lower_src(r#"scene { chamfered_box "b" () }"#);
+    let m = find_mesh_node(&g, "b").mesh.as_ref().unwrap();
+    // 6 face rects (12 tris) + 12 bevel quads (24 tris) + 8 corner tris (8) = 44.
+    assert_eq!(m.indices.len() / 3, 44);
+    // Default size is 1×1×1 so the AABB sits in [-0.5, 0.5] on every axis.
+    let mut mn = [f32::INFINITY; 3];
+    let mut mx = [f32::NEG_INFINITY; 3];
+    for p in &m.positions {
+        for k in 0..3 {
+            mn[k] = mn[k].min(p[k]);
+            mx[k] = mx[k].max(p[k]);
+        }
+    }
+    for k in 0..3 {
+        assert!((mx[k] - 0.5).abs() < 1e-5, "axis {k} mx {} not 0.5", mx[k]);
+        assert!((mn[k] + 0.5).abs() < 1e-5, "axis {k} mn {} not -0.5", mn[k]);
+    }
+}
+
+#[test]
+fn chamfered_box_radius_zero_matches_plain_box() {
+    let chamfered = lower_src(r#"scene { chamfered_box "b" (radius=0) }"#);
+    let plain = lower_src(r#"scene { box "b" () }"#);
+    let cm = find_mesh_node(&chamfered, "b").mesh.as_ref().unwrap();
+    let pm = find_mesh_node(&plain, "b").mesh.as_ref().unwrap();
+    assert_eq!(cm.positions.len(), pm.positions.len());
+    assert_eq!(cm.indices.len(), pm.indices.len());
+}
+
+#[test]
+fn inset_box_lowers_with_default_face() {
+    let g = lower_src(r#"scene { inset_box "b" (size=[1, 1, 1]) }"#);
+    let m = find_mesh_node(&g, "b").mesh.as_ref().unwrap();
+    // Default face is +y; the sunken floor should sit at y = 0.5 - 0.05 = 0.45.
+    let mut floor_y_seen = false;
+    for p in &m.positions {
+        if (p[1] - 0.45).abs() < 1e-5 {
+            floor_y_seen = true;
+            break;
+        }
+    }
+    assert!(floor_y_seen, "expected a vertex at the default sunken Y=0.45");
+}
+
+#[test]
+fn inset_box_face_aliases_resolve() {
+    // "top" must resolve to +y; the resulting mesh should be identical
+    // to the canonical "+y" form vertex-for-vertex.
+    let a = lower_src(r#"scene { inset_box "b" (face="+y", amount=0.2, depth=0.1) }"#);
+    let b = lower_src(r#"scene { inset_box "b" (face="top", amount=0.2, depth=0.1) }"#);
+    let pa = find_mesh_node(&a, "b").mesh.as_ref().unwrap();
+    let pb = find_mesh_node(&b, "b").mesh.as_ref().unwrap();
+    assert_eq!(pa.positions, pb.positions);
+    assert_eq!(pa.indices, pb.indices);
+}
+
+#[test]
+fn inset_box_unknown_face_errors() {
+    let ast = parse(r#"scene { inset_box "b" (face="diagonal") }"#).expect("parse");
+    let err = lower(&ast).expect_err("unknown face must error");
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("inset_box.face") && msg.contains("diagonal"),
+        "error should name the bad face value, got: {msg}"
+    );
+}
+
+#[test]
+fn inset_box_minus_x_face_sinks_along_negative_x() {
+    // face="-x" should produce a sunken floor at x = -hx + depth = -0.5 + 0.1 = -0.4.
+    let g = lower_src(r#"scene { inset_box "b" (face="-x", amount=0.2, depth=0.1) }"#);
+    let m = find_mesh_node(&g, "b").mesh.as_ref().unwrap();
+    let mut floor_x_seen = false;
+    for p in &m.positions {
+        if (p[0] + 0.4).abs() < 1e-5 {
+            floor_x_seen = true;
+            break;
+        }
+    }
+    assert!(floor_x_seen, "expected vertex at sunken X=-0.4");
+}
+// ─── Phase C3: control flow + string interpolation ──────────────────────
+
+#[test]
+fn for_loop_emits_n_copies_with_loop_var_in_pos() {
+    // Outside of a module, `for` still works because expand_modules walks
+    // the top-level child list through expand_children_into.
+    let g = lower_src(
+        r#"scene {
+            for (var="i", from=0, to=4) {
+                box "leg" (size=[0.05, 0.5, 0.05], pos=[$i * 0.3, 0, 0])
+            }
+        }"#,
+    );
+    let legs: Vec<_> = g.nodes.iter().filter(|n| n.name == "leg").collect();
+    assert_eq!(legs.len(), 4, "for(0..4) should emit 4 nodes");
+    let xs: Vec<f32> = legs.iter().map(|n| n.transform.translation.x).collect();
+    let mut want = vec![0.0, 0.3, 0.6, 0.9];
+    let mut got = xs.clone();
+    want.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    got.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    for (a, b) in want.iter().zip(got.iter()) {
+        assert!((a - b).abs() < 1e-5, "expected x={a}, got {b}");
+    }
+}
+
+#[test]
+fn for_loop_step_2_skips_odd_indices() {
+    let g = lower_src(
+        r#"scene {
+            for (var="i", from=0, to=6, step=2) {
+                box "even_$i" (size=[0.1, 0.1, 0.1])
+            }
+        }"#,
+    );
+    let names: Vec<_> = g.nodes.iter().filter(|n| n.name.starts_with("even_")).map(|n| n.name.clone()).collect();
+    assert_eq!(names.len(), 3, "0,2,4 = 3 iterations");
+    assert!(names.contains(&"even_0".to_string()));
+    assert!(names.contains(&"even_2".to_string()));
+    assert!(names.contains(&"even_4".to_string()));
+}
+
+#[test]
+fn for_loop_zero_iterations_when_from_eq_to() {
+    let g = lower_src(
+        r#"scene {
+            for (var="i", from=3, to=3) {
+                box "shouldnt_appear" ()
+            }
+        }"#,
+    );
+    assert!(g.nodes.iter().all(|n| n.name != "shouldnt_appear"));
+}
+
+#[test]
+fn for_loop_step_zero_errors() {
+    let ast = parse(r#"scene { for (var="i", from=0, to=5, step=0) { box "b" () } }"#).expect("parse");
+    let err = lower(&ast).expect_err("step=0 must error");
+    assert!(format!("{err}").contains("step must not be zero"));
+}
+
+#[test]
+fn for_loop_negative_step_iterates_downward() {
+    // Mirrors Python's `range(5, 1, -1)` → 5, 4, 3, 2 (open on the bound).
+    let g = lower_src(
+        r#"scene {
+            for (var="i", from=5, to=1, step=-1) {
+                box "down_$i" (size=[0.1, 0.1, 0.1])
+            }
+        }"#,
+    );
+    let names: Vec<_> = g.nodes.iter().filter(|n| n.name.starts_with("down_")).map(|n| n.name.clone()).collect();
+    assert_eq!(names.len(), 4, "from=5, to=1, step=-1 should emit 5,4,3,2");
+    assert!(names.contains(&"down_5".to_string()));
+    assert!(names.contains(&"down_2".to_string()));
+    assert!(!names.contains(&"down_1".to_string()), "to is exclusive");
+}
+
+#[test]
+fn for_loop_iteration_cap_protects_against_runaway_input() {
+    // A `for` loop with a million iterations would grind the host. The
+    // expand-time cap turns it into a friendly error instead.
+    let ast = parse(r#"scene { for (var="i", from=0, to=1000000) { box "b_$i" () } }"#).expect("parse");
+    let err = lower(&ast).expect_err("iteration cap must fire");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("iteration cap") || msg.contains("cap of"),
+        "expected cap error, got: {msg}"
+    );
+}
+
+#[test]
+fn if_truthy_cond_emits_then_branch() {
+    let g = lower_src(
+        r#"scene {
+            if (cond=1) {
+                box "yes" (size=[1, 1, 1])
+            }
+        }"#,
+    );
+    assert!(g.nodes.iter().any(|n| n.name == "yes"));
+}
+
+#[test]
+fn if_falsy_cond_skips_then_branch() {
+    let g = lower_src(
+        r#"scene {
+            if (cond=0) {
+                box "no" (size=[1, 1, 1])
+            }
+            box "after" (size=[1, 1, 1])
+        }"#,
+    );
+    assert!(g.nodes.iter().all(|n| n.name != "no"));
+    assert!(g.nodes.iter().any(|n| n.name == "after"));
+}
+
+#[test]
+fn if_else_picks_else_branch_when_falsy() {
+    let g = lower_src(
+        r#"scene {
+            if (cond=0) {
+                box "then_branch" ()
+            }
+            else {
+                box "else_branch" ()
+            }
+        }"#,
+    );
+    assert!(g.nodes.iter().all(|n| n.name != "then_branch"));
+    assert!(g.nodes.iter().any(|n| n.name == "else_branch"));
+}
+
+#[test]
+fn else_without_preceding_if_errors() {
+    let ast = parse(r#"scene { else { box "lonely" () } }"#).expect("parse");
+    let err = lower(&ast).expect_err("else without if must error");
+    assert!(format!("{err}").contains("`else` must immediately follow"));
+}
+
+#[test]
+fn comparison_operator_in_cond_works() {
+    // `cond=$n > 1` is the canonical authoring shape for "draw extras only
+    // when there's more than one of something".
+    let make = |n: i32| {
+        let src = format!(
+            r#"module "demo" (n=1) {{
+                box "always" ()
+                if (cond=$n > 1) {{ box "many" () }}
+            }}
+            scene {{ use "demo" (n={n}) }}"#
+        );
+        lower_src(&src)
+    };
+    let one = make(1);
+    let two = make(2);
+    assert!(one.nodes.iter().all(|n| n.name != "many"));
+    assert!(two.nodes.iter().any(|n| n.name == "many"));
+}
+
+#[test]
+fn string_interpolation_in_node_name() {
+    let g = lower_src(
+        r#"scene {
+            for (var="i", from=0, to=3) {
+                box "leg_$i" (size=[0.05, 0.5, 0.05])
+            }
+        }"#,
+    );
+    let names: Vec<_> = g.nodes.iter().map(|n| n.name.clone()).collect();
+    assert!(names.contains(&"leg_0".to_string()));
+    assert!(names.contains(&"leg_1".to_string()));
+    assert!(names.contains(&"leg_2".to_string()));
+    // Integer-valued var should NOT render as "leg_0.0".
+    assert!(!names.contains(&"leg_0.0".to_string()));
+}
+
+#[test]
+fn string_interpolation_with_braces() {
+    // ${name} form delimits the binding so authors can compose names like
+    // "${prefix}_panel" without the parser mistaking the underscore for
+    // part of the binding name.
+    let g = lower_src(
+        r#"module "panel" (i=0) {
+            box "${i}_panel" (size=[0.5, 0.1, 0.5])
+        }
+        scene { use "panel" (i=7) }"#,
+    );
+    assert!(g.nodes.iter().any(|n| n.name == "7_panel"));
+}
+
+#[test]
+fn string_interpolation_preserves_multibyte_utf8() {
+    // Regression test for the second-pass review: `interpolate_string`
+    // walked source bytes and used `byte as char`, which corrupts every
+    // UTF-8 continuation byte (0x80..=0xBF) into a U+0080..U+00FF
+    // codepoint. `"pièce_$i"` would render as `"piÃ¨ce_0"` etc. The fix
+    // flushes literal runs via string slicing so multi-byte chars stay
+    // intact.
+    let g = lower_src(
+        r#"scene {
+            for (var="i", from=0, to=2) {
+                box "pièce_$i" (size=[0.05, 0.5, 0.05])
+            }
+        }"#,
+    );
+    let names: Vec<_> = g.nodes.iter().map(|n| n.name.clone()).collect();
+    assert!(
+        names.contains(&"pièce_0".to_string()),
+        "multi-byte char must survive interpolation; got names: {names:?}"
+    );
+    assert!(names.contains(&"pièce_1".to_string()));
+    // Also exercise the `${name}` branch with non-ASCII content around it.
+    let g2 = lower_src(
+        r#"module "p" (i=0) {
+            box "${i}号_部品" (size=[0.5, 0.1, 0.5])
+        }
+        scene { use "p" (i=42) }"#,
+    );
+    assert!(
+        g2.nodes.iter().any(|n| n.name == "42号_部品"),
+        "CJK + ${{name}} interpolation must preserve trailing multi-byte chars; got: {:?}",
+        g2.nodes.iter().map(|n| &n.name).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn module_with_for_inside_expands_per_use() {
+    // `for` inside a module body should expand against the call's params.
+    let g = lower_src(
+        r#"module "fence" (posts=1) {
+            for (var="i", from=0, to=$posts) {
+                box "post_$i" (size=[0.05, 0.6, 0.05], pos=[$i * 0.4, 0, 0])
+            }
+        }
+        scene { use "fence" (posts=3) }"#,
+    );
+    let posts: Vec<_> = g.nodes.iter().filter(|n| n.name.starts_with("post_")).collect();
+    assert_eq!(posts.len(), 3);
+}
+
+#[test]
+fn coil_winds_through_full_revolution_via_dsl() {
+    // End-to-end check: parse → validate → lower → mesh. A 1-turn coil
+    // must reach all four cardinal sweeps in XZ; if `coil_mesh` ever
+    // started silently early-returning (turns clamp, samples too low),
+    // this assertion would catch it before the geometry test does.
+    let g = lower_src(
+        r#"scene { coil "spring" (radius=0.5, height=1.0, turns=1, profile_radius=0.05, samples=24) }"#,
+    );
+    let n = find_mesh_node(&g, "spring");
+    let mesh = n.mesh.as_ref().expect("coil produced no mesh");
+    let max_x = mesh.positions.iter().map(|p| p[0]).fold(f32::NEG_INFINITY, f32::max);
+    let min_x = mesh.positions.iter().map(|p| p[0]).fold(f32::INFINITY, f32::min);
+    let max_z = mesh.positions.iter().map(|p| p[2]).fold(f32::NEG_INFINITY, f32::max);
+    let min_z = mesh.positions.iter().map(|p| p[2]).fold(f32::INFINITY, f32::min);
+    assert!(max_x > 0.4 && min_x < -0.4, "coil missing X sweep: [{min_x}, {max_x}]");
+    assert!(max_z > 0.4 && min_z < -0.4, "coil missing Z sweep: [{min_z}, {max_z}]");
+    // Helix climbs from 0 to height — small slack for the parallel-transport
+    // tilt at the endpoints.
+    let max_y = mesh.positions.iter().map(|p| p[1]).fold(f32::NEG_INFINITY, f32::max);
+    let min_y = mesh.positions.iter().map(|p| p[1]).fold(f32::INFINITY, f32::min);
+    assert!(min_y.abs() < 0.1 && (max_y - 1.0).abs() < 0.1, "coil Y range wrong: [{min_y}, {max_y}]");
+}
+
+#[test]
+fn coil_handedness_string_validates() {
+    // Both spellings should parse and lower cleanly.
+    let _ = lower_src(
+        r#"scene { coil "lh" (radius=0.3, height=0.6, turns=2, handedness="left") }"#,
+    );
+    let _ = lower_src(
+        r#"scene { coil "rh" (radius=0.3, height=0.6, turns=2, handedness="right") }"#,
+    );
+}
+
+#[test]
+fn coil_unknown_handedness_errors_at_lower() {
+    use crate::parser::parse;
+    let ast = parse(
+        r#"scene { coil "x" (radius=0.3, height=0.6, turns=2, handedness="diagonal") }"#,
+    ).expect("parse");
+    let err = lower(&ast).expect_err("expected lowering error for bad handedness");
+    assert!(format!("{err:#}").contains("handedness"), "wrong error: {err:#}");
+}
+
+#[test]
+fn wave_deformer_displaces_dense_plane() {
+    // A coarse plane has only 4 corner vertices, so to actually see the
+    // wave displacement we use a dense `curved_plane` (zero bend, lots of
+    // segments). The wave attribute should produce non-trivial Y movement
+    // along the X axis on at least some interior vertices.
+    let g = lower_src(
+        r#"scene { curved_plane "water" (size=[4, 1], segments_u=32, segments_v=8,
+            wave=0.15, wave_frequency=0.5, wave_axis="x") }"#,
+    );
+    let mesh = find_mesh_node(&g, "water").mesh.as_ref().unwrap();
+    let max_y = mesh.positions.iter().map(|p| p[1]).fold(f32::NEG_INFINITY, f32::max);
+    let min_y = mesh.positions.iter().map(|p| p[1]).fold(f32::INFINITY, f32::min);
+    // A flat plane has y=0 everywhere; a `wave=0.15` has a peak crest of
+    // ~0.15 m. A noticeable spread means the wave actually fired.
+    assert!(
+        max_y - min_y > 0.05,
+        "wave should have produced visible Y spread: [{min_y}, {max_y}]",
+    );
+}
+
+#[test]
+fn wave_axis_string_attribute_lowers() {
+    // `wave_axis="x"` is the canonical valid case — confirms the deformer
+    // attribute is wired through the lowering path. The invalid-string
+    // case (e.g. `wave_axis="diagonal"`) is currently a validator warning
+    // rather than a lowering error: the deformer's `parse_axis` returns
+    // `None` and lowering falls back to X, so a typo builds and ships.
+    // If a future change tightens that to a hard error, add a separate
+    // test asserting `lower_src(...invalid...).is_err()` here.
+    let g = lower_src(
+        r#"scene { curved_plane "ok" (size=[2, 1], segments_u=16, segments_v=4,
+            wave=0.05, wave_axis="x") }"#,
+    );
+    assert!(find_mesh_node(&g, "ok").mesh.is_some());
+}
+
+#[test]
+fn heightfield_lowers_with_displacement() {
+    // The defining property: a heightfield with non-zero amplitude must
+    // produce a Y-spread mesh — proves the noise sampling actually fires
+    // through the lowering path.
+    let g = lower_src(
+        r#"scene { heightfield "ground" (size=[4, 4], segments_u=16, segments_v=16,
+            amplitude=0.5, octaves=3, frequency=0.6, seed=7) }"#,
+    );
+    let mesh = find_mesh_node(&g, "ground").mesh.as_ref().unwrap();
+    let max_y = mesh.positions.iter().map(|p| p[1]).fold(f32::NEG_INFINITY, f32::max);
+    let min_y = mesh.positions.iter().map(|p| p[1]).fold(f32::INFINITY, f32::min);
+    assert!(max_y - min_y > 0.1, "heightfield Y spread too small: [{min_y}, {max_y}]");
+    // 17×17 vertex grid → 289 verts.
+    assert_eq!(mesh.positions.len(), 17 * 17);
+}
+
+#[test]
+fn heightfield_zero_amplitude_is_flat() {
+    let g = lower_src(
+        r#"scene { heightfield "flat" (size=[2, 2], segments_u=4, segments_v=4, amplitude=0) }"#,
+    );
+    let mesh = find_mesh_node(&g, "flat").mesh.as_ref().unwrap();
+    for p in &mesh.positions {
+        assert!(p[1].abs() < 1e-5, "expected flat patch, got y={}", p[1]);
+    }
+}
+
+#[test]
+fn bezier_patch_corners_match_corner_control_points() {
+    // Defining property of bicubic Bézier: P(0,0)=P00, P(1,0)=P30,
+    // P(0,1)=P03, P(1,1)=P33. End-to-end test through the DSL — proves
+    // we wired the `points=` flat list into the right row-major layout.
+    let src = r#"scene {
+        bezier_patch "p" (
+            points = [
+                [-1, 0, -1], [-0.3, 0, -1], [0.3, 0, -1], [1, 0, -1],
+                [-1, 0, -0.3], [-0.3, 1, -0.3], [0.3, 1, -0.3], [1, 0, -0.3],
+                [-1, 0,  0.3], [-0.3, 1,  0.3], [0.3, 1,  0.3], [1, 0,  0.3],
+                [-1, 0,  1], [-0.3, 0,  1], [0.3, 0,  1], [1, 0,  1],
+            ],
+            segments_u = 4, segments_v = 4,
+        )
+    }"#;
+    let g = lower_src(src);
+    let mesh = find_mesh_node(&g, "p").mesh.as_ref().unwrap();
+    // 5×5 vertex grid, row-major along u (5 vertices per row).
+    let nu = 5usize;
+    let nv = 5usize;
+    assert_eq!(mesh.positions.len(), nu * nv);
+    let p00 = mesh.positions[0];
+    let p10 = mesh.positions[(nu - 1) * nv];
+    let p01 = mesh.positions[nv - 1];
+    let p11 = mesh.positions[(nu - 1) * nv + nv - 1];
+    // Corners of the control net are at ±1 on X and Z, y=0.
+    let close = |a: f32, b: f32| (a - b).abs() < 1e-4;
+    assert!(close(p00[0], -1.0) && close(p00[2], -1.0));
+    assert!(close(p10[0], -1.0) && close(p10[2],  1.0));
+    assert!(close(p01[0],  1.0) && close(p01[2], -1.0));
+    assert!(close(p11[0],  1.0) && close(p11[2],  1.0));
+    assert!(p00[1].abs() < 1e-4 && p11[1].abs() < 1e-4);
+    // Centre vertex bulges up — interior control points are at y=1.
+    let centre = mesh.positions[(nu / 2) * nv + nv / 2];
+    assert!(centre[1] > 0.4, "expected centre to bulge, got {}", centre[1]);
+}
+
+#[test]
+fn bezier_patch_wrong_point_count_errors() {
+    use crate::parser::parse;
+    let ast = parse(
+        r#"scene { bezier_patch "x" (points=[[0, 0, 0], [1, 0, 0], [0, 0, 1]]) }"#,
+    ).expect("parse");
+    let err = lower(&ast).expect_err("bezier_patch with 3 points must reject at lower");
+    assert!(format!("{err:#}").contains("16"), "wrong error: {err:#}");
+}
+
+#[test]
+fn metaball_three_centres_unite_into_one_mesh() {
+    // Three overlapping spheres along X with a smooth blend should
+    // produce a single connected mesh whose extent matches the union.
+    let g = lower_src(
+        r#"scene { metaball "blob" (
+            points = [[-0.4, 0, 0], [0, 0, 0], [0.4, 0, 0]],
+            radius = 0.4, blend = 0.1
+        ) }"#,
+    );
+    let mesh = find_mesh_node(&g, "blob").mesh.as_ref().unwrap();
+    assert!(!mesh.positions.is_empty(), "metaball produced no vertices");
+    let max_x = mesh.positions.iter().map(|p| p[0]).fold(f32::NEG_INFINITY, f32::max);
+    let min_x = mesh.positions.iter().map(|p| p[0]).fold(f32::INFINITY, f32::min);
+    assert!(max_x > 0.7, "metaball missing +X extent: {max_x}");
+    assert!(min_x < -0.7, "metaball missing -X extent: {min_x}");
+}
+
+#[test]
+fn metaball_per_point_radii_apply() {
+    let g = lower_src(
+        r#"scene { metaball "asym" (
+            points = [[-1, 0, 0], [1, 0, 0]],
+            radii = [0.3, 0.7], blend = 0
+        ) }"#,
+    );
+    let mesh = find_mesh_node(&g, "asym").mesh.as_ref().unwrap();
+    let max_x = mesh.positions.iter().map(|p| p[0]).fold(f32::NEG_INFINITY, f32::max);
+    let min_x = mesh.positions.iter().map(|p| p[0]).fold(f32::INFINITY, f32::min);
+    assert!((max_x - 1.7).abs() < 0.05, "max_x off: {max_x}");
+    assert!((min_x - (-1.3)).abs() < 0.05, "min_x off: {min_x}");
+}
+
+#[test]
+fn metaball_no_radius_or_radii_errors() {
+    use crate::parser::parse;
+    let ast = parse(
+        r#"scene { metaball "x" (points=[[0, 0, 0]]) }"#,
+    ).expect("parse");
+    let err = lower(&ast).expect_err("metaball without radius/radii must reject");
+    assert!(format!("{err:#}").contains("radius"), "wrong error: {err:#}");
+}

@@ -108,6 +108,7 @@ impl MogenStudioApp {
         };
         let model = self.settings.provider_fast_model();
         let claude_code_path = self.settings.claude_code_path();
+        let zai_base_url = self.settings.zai_base_url().to_string();
         let sys_instr = self.cached_system_instruction();
         let code = self.ask_code_context.clone();
         let context_label = self.ask_context_label.clone();
@@ -129,6 +130,7 @@ impl MogenStudioApp {
                 model,
                 sys_instr,
                 claude_code_path,
+                zai_base_url,
             );
             let _ = tx.send(result);
             ctx.request_repaint();
@@ -167,8 +169,9 @@ fn run_ask_question(
     model: String,
     sys_instr: Arc<String>,
     claude_code_path: String,
+    zai_base_url: String,
 ) -> Result<String, String> {
-    let client = super::util::build_provider_client(provider, credential, &claude_code_path);
+    let client = super::util::build_provider_client(provider, credential, &claude_code_path, &zai_base_url);
 
     // Tag the code so the model knows whether it's looking at a snippet or
     // the whole file. The "do not rewrite" guidance keeps replies pedagogical

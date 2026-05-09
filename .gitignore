@@ -57,6 +57,11 @@ examples/textures
 !examples/sword.glb
 !examples/drone.glb
 !examples/simple_house.glb
+!examples/bezier_fender.glb
+!examples/coil_spring.glb
+!examples/heightfield_terrain.glb
+!examples/metaball_blob.glb
+!examples/wave_water.glb
 
 *.blend
 
@@ -68,3 +73,7 @@ examples/textures
 
 # Stray Claude Code tool-result dumps that landed at repo root
 *tool-results*.txt
+
+# Local CLI scratch outputs (regenerated on each run)
+/test_outputs/
+/target-wasm-check/

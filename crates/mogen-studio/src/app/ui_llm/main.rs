@@ -217,6 +217,122 @@ impl MogenStudioApp {
         }
 
         ui.add_space(8.0);
+        // Refine current — feeds the rendered scene back to the
+        // reviewer agent (mirrors `mogen generate --auto-refine N` /
+        // `mogen modify --auto-refine N` from the CLI). Gated on the
+        // active provider supporting images: today only Gemini does.
+        let provider = self.settings.provider();
+        let provider_name = provider.display_name();
+        let provider_supports_images = provider.supports_images();
+        let scene_renderable = self
+            .active()
+            .last_result
+            .as_ref()
+            .map(|r| r.scene.is_some() && !mogen_core::has_errors(&r.diagnostics))
+            .unwrap_or(false);
+        ui.label("Refine current:");
+        ui.label(
+            egui::RichText::new(format!(
+                "render the current scene, hand it back to {provider_name} with the \
+                 original prompt, and let it propose corrections based on what it can see",
+            ))
+            .weak(),
+        );
+        let refine_enabled = has_key
+            && !busy
+            && !src_empty
+            && scene_renderable
+            && provider_supports_images;
+        let refine_tip = if !provider_supports_images {
+            format!(
+                "Switch to Gemini or Z.ai in Edit → Preferences — \
+                 {provider_name} cannot read images, so it cannot critique a \
+                 render. Only vision-capable providers can refine."
+            )
+        } else if src_empty {
+            "Open or paste a .mog file first".to_string()
+        } else if !scene_renderable {
+            "Fix validation errors first — the reviewer needs a renderable scene to look at"
+                .to_string()
+        } else if busy {
+            "Another LLM call is already running on this file".to_string()
+        } else {
+            format!(
+                "Render the current scene, hand the PNG back to {provider_name} as a \
+                 self-critique pass, and apply the corrected DSL"
+            )
+        };
+        ui.horizontal(|ui| {
+            // Always-enabled spinbox so the user can pick the next-click
+            // count even while a previous run is still in flight.
+            ui.label("Iterations");
+            ui.add(
+                egui::DragValue::new(&mut self.files[self.active].refine_iters)
+                    .range(
+                        crate::app::llm::refine::MIN_REFINE_ITERS
+                            ..=crate::app::llm::refine::MAX_REFINE_ITERS,
+                    )
+                    .speed(0.05),
+            )
+            .on_hover_text(
+                "How many render → reviewer → repair passes to chain. Each \
+                 iteration spends one round-trip plus any repair calls.",
+            );
+            // The button label echoes the iteration count so a glance
+            // tells the user how much work the click queues — same
+            // shape `Repair (N errors)` uses.
+            let iters = self.files[self.active]
+                .refine_iters
+                .clamp(
+                    crate::app::llm::refine::MIN_REFINE_ITERS,
+                    crate::app::llm::refine::MAX_REFINE_ITERS,
+                );
+            let refine_label = if iters == 1 {
+                "Refine".to_string()
+            } else {
+                format!("Refine {iters}×")
+            };
+            if ui
+                .add_enabled(refine_enabled, egui::Button::new(refine_label))
+                .on_hover_text(refine_tip)
+                .clicked()
+            {
+                let ctx = ui.ctx().clone();
+                self.start_llm_refine(ctx, iters);
+            }
+        });
+
+        // Z.ai-only: opt out of the automatic vision-model swap so the
+        // user can pin the Reviewer to whatever they configured under
+        // Generation › Model. Default-on because the only reason to opt
+        // out is debugging — the Reviewer is image-driven by
+        // construction, so any non-vision model just fails loudly.
+        if matches!(provider, mogen_llm::Provider::Zai) {
+            let mut zai_use_vision = self.settings.zai_refine_use_vision();
+            if ui
+                .checkbox(&mut zai_use_vision, "Use GLM-5V-Turbo for refine")
+                .on_hover_text(
+                    "Force the Reviewer to run on `glm-5v-turbo` (Z.ai's \
+                     vision model). Required for refine on Z.ai — text \
+                     models can't see the rendered scene.",
+                )
+                .changed()
+            {
+                self.settings.set_zai_refine_use_vision(zai_use_vision);
+                let _ = self.settings.save();
+            }
+        }
+
+        if !provider_supports_images {
+            ui.colored_label(
+                egui::Color32::from_rgb(230, 200, 100),
+                format!(
+                    "{provider_name} has no vision input — switch to Gemini or Z.ai to enable Refine",
+                ),
+            );
+        }
+
+        ui.add_space(8.0);
         ui.label("Textures:");
         ui.label(
             egui::RichText::new(

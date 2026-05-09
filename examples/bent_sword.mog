@@ -1,0 +1,41 @@
+meta (
+  description = "Curved scimitar — straight grip and crossguard with a blade that bows toward the tip via bend_z_range, a worked example of selective deformation.",
+  tags = ["weapon", "sword", "scimitar", "curved", "fantasy"],
+)
+
+material "blade_steel"  (color=[0.62, 0.65, 0.72], metallic=1.0, roughness=0.18)
+material "guard_brass"  (color=[0.78, 0.55, 0.20], metallic=1.0, roughness=0.30)
+material "grip_wrap"    (color=[0.20, 0.10, 0.06], roughness=0.85)
+
+scene {
+  group "scimitar" {
+    // Grip: straight wrapped cylinder.
+    cylinder "grip" (radius=0.018, height=0.20, mat="grip_wrap", segments=16)
+
+    // Crossguard: short bar perpendicular to the blade's length.
+    box "guard" (
+      size=[0.16, 0.022, 0.04],
+      above="grip",
+      mat="guard_brass"
+    )
+
+    // Pommel: small ball on the back end of the grip.
+    sphere "pommel" (
+      radius=0.025,
+      below="grip",
+      mat="guard_brass"
+    )
+
+    // Blade: tall thin slab. `bend_z=22` tilts it sideways, but
+    // `bend_z_range=[0.35, 1.0]` keeps the lower 35 % of the blade
+    // straight (so it lines up with the crossguard) and ramps the
+    // curve in along the upper two-thirds via smoothstep.
+    box "blade" (
+      size=[0.05, 0.78, 0.012],
+      above="guard",
+      bend_z=22,
+      bend_z_range=[0.35, 1.0],
+      mat="blade_steel"
+    )
+  }
+}

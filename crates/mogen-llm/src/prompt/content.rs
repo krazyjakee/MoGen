@@ -34,9 +34,13 @@ length), `noise` (coherent blobby surface displacement, 0..1; good for \
 rocks/asteroids), `jitter` (per-vertex random displacement, 0..1; good for \
 jagged surfaces), `faceted` (0/1 — discard smooth normals for a low-poly \
 look), `seed` (integer to vary the random pattern). Stochastic modifiers \
-(`noise`, `jitter`) are deterministic for a given `seed`. Default \
-tessellation auto-bumps when a smooth modifier is present so a bent \
-cylinder doesn't read as faceted. \
+(`noise`, `jitter`) are deterministic for a given `seed`. Each modifier \
+accepts an optional `*_range=[a, b]` (e.g. `bend_z_range=[0.6, 1.0]`) \
+that gates the deformation to a normalised slice along its length axis \
+— smoothstep-ramped from `a` to `b`. Use it to bend the tip but not the \
+base of a sword, jitter only the top of a tower, or droop just the far \
+end of an awning. Default tessellation auto-bumps when a smooth modifier \
+is present so a bent cylinder doesn't read as faceted. \
 **`noise`/`jitter` reshape geometry — they are the wrong tool for flat \
 surface grain or fine-scale roughness (wood grain, stucco, brushed metal, \
 fabric weave, plaster, sand, leather pores).** That kind of micro-detail \
@@ -50,6 +54,35 @@ rocks use `noise=1.5, jitter=0.2`. Mid-range values like `noise=0.3–0.5` \
 read as melted blobs, not stone — pick one of the two recipes and bias \
 toward it. Pair with `subdivisions=3–4` on icosphere and a non-uniform \
 `scale=` so each rock reads as unique.
+
+**Detailing recipes — prefer stdlib modules to hand-authored primitive \
+clouds.** When a prompt uses any of these adjectives, reach for the \
+matching `use \"…\" (…)` call:
+- `riveted`/`studded` (line) → `rivet_line`; (around a hub) → `bolt_circle`.
+- `vented`/`louvred`/`gilled` → `vent_strip`.
+- `panelled`/`seamed`/`trimmed with a dark line` → `panel_seam` (one \
+  per seam, dark `mat=`; do NOT carve with `difference`).
+- `stepped`/`tiered` taper or column → `step_taper` (wrap + `scale=`).
+- `cabled`/`roped`/`wired` → `cable` (`conform` it onto a target if it \
+  must follow a surface).
+- `chained`/`linked` → `chain`.
+- `feathered`/`finned` foliage → repeated `feather_card` with an \
+  alpha-cutout material.
+- `scaled`/`scaly` skin → ring of `scale_band` calls stacked along Y.
+- `geared`/`cogged` machinery → `gear`.
+- `springy`/`coiled` (compression spring, shock absorber) → `spring`; \
+  for a wider helix or coiled hose use `coil` directly.
+- `terrain`/`hilly`/`rolling`/`mountainous` (ground surface) → `terrain_patch` \
+  (raise `amplitude` for craggy peaks, lower for sandy dunes).
+- `blobby`/`slimy`/`gooey` (organic mass with smooth merging) → `blob`; \
+  for arbitrary metaball constellations use `metaball` directly.
+- `rippling`/`watery`/`pond`/`pool`/`liquid surface` → `water_patch` \
+  (raise `frequency`/`ripple` for choppy, lower for calm).
+
+**Per-node `lod=` multiplier.** Any geometry/group accepts `lod=N` \
+(scoped to that subtree, compounds with the file-global `lod_scale`). \
+Mark hero parts with `lod=2`, background filler with `lod=0.5`; reach \
+for the global `lod_scale` for across-the-board changes.
 
 ";
 
@@ -223,6 +256,15 @@ A `.mog` file is a sequence of nodes. Each node is:
   (perpendicular walls meeting at a corner).
 - `module \"name\" (param=default, ...) { body }` + `use \"name\" (arg=value, ...)` \
   parameterises a sub-graph. `$param` inside the body substitutes the arg.
+- **Inside any `{ ... }` body** (scenes, groups, modules), `if (cond=<expr>) \
+  { ... }` emits its children only when the cond is non-zero, and an \
+  immediately-following `else { ... }` covers the false branch. `for \
+  (var=\"i\", from=<a>, to=<b>) { ... }` emits the body once per integer step \
+  in `[a, b)`, binding `$i`. Comparisons (`$n > 1`, `$x == 0`, `$count != 3`) \
+  evaluate to 1.0/0.0 and chain into expressions: `cond=$count > 0` is the \
+  canonical author shape. Inside any string literal (including node names), \
+  `$name` and `${name}` interpolate the binding; integer-valued bindings \
+  render without a decimal so `\"leg_$i\"` becomes `\"leg_3\"` not `\"leg_3.0\"`.
 - `import \"path/to/file.mog\" [(as=<ident>)]` is a top-level directive that \
   pulls another `.mog` file's `module`s and `material`s into this file, and \
   synthesises a module named after the file stem (or `as=`) from its \
@@ -364,6 +406,8 @@ pub(super) const KINDS_REFERENCE: &str = "\
 | `material` | name | `color=[r,g,b]`, `alpha`, `metallic`, `roughness`, `alpha_mode=\"opaque\"\\|\"blend\"\\|\"mask\"`, `alpha_cutoff`, `emissive=[r,g,b]`, `emissive_strength` (HDR — use for neon/fluorescent), `transmission` (glass — use ALONE, never combined with `alpha`/`alpha_mode=\"blend\"` or the surface renders invisible; canonical glass is `transmission=0.9, roughness=0.05`), `double_sided=0\\|1` (disable back-face culling — leaves, fins, flags), `uv_mode=\"tile\"\\|\"fit\"` (default `tile` = world-space UVs for repeating textures; `fit` = per-face `[0,1]²` for sign/decal images), `uv_scale=N` or `[u,v]` (tiles per world unit in `tile` mode; default `1.0`) |
 | `box` | `size=[x,y,z]` | `pos`, `rot`, `mat` |
 | `rounded_box` | `size=[x,y,z]` | `radius`, `segments`, `pos`, `rot`, `mat` |
+| `chamfered_box` | `size=[x,y,z]` | `radius` (bevel offset, default 0.1); flat 45° bevels on all 12 edges + 8 corner triangles. Sharp-edge counterpart to `rounded_box`. |
+| `inset_box` | `size=[x,y,z]` | `face=\"+y\"\\|\"-y\"\\|\"+x\"\\|\"-x\"\\|\"+z\"\\|\"-z\"` (or `\"top\"/\"bottom\"/\"left\"/\"right\"/\"front\"/\"back\"`), `amount` (inset distance, 0.1), `depth` (sink depth, 0.05); five plain box faces + one sunken panel — use for window frames, recessed door panels, button caps, sunken pickup wells. |
 | `plane` | `size=[x,_,z]` | `pos`, `rot`, `mat` (XZ plane, +Y facing) |
 | `quad` | `size=[x,y]` or `[x,y,_]` | `pos`, `rot`, `mat` (XY plane, +Z facing) |
 | `disc` | `radius` | `segments`, `pos`, `rot`, `mat` |
@@ -387,7 +431,14 @@ pub(super) const KINDS_REFERENCE: &str = "\
 | `lathe` | `profile=[[r,y], …]` (bottom→top) | `segments`, `cap_ends`; vases, gourds, bulbs, onions |
 | `spline_tube` | `points=[[x,y,z], …]` | `radius` or `radii=[…]`, `segments`, `samples`; bananas, stems, horns, handles |
 | `spline_ribbon` | `points=[[x,y,z], …]` | `width` or `widths=[…]`, `samples`, `twist` deg; flat double-sided strip — sashes, ribbons, straps |
+| `extrude` | `points=[[x,z], …]` (closed CCW outline) | `hole=[[x,z], …]` (one CW inner contour), `height` (Y span, 1.0), `taper` (top scale ratio, 1.0), `twist` deg (total roll), `caps=0\\|1` (1); push a 2D polygon to 3D for I-beams, gear teeth, custom pillars, picture-frame moulding (in fixed cross-section). Multi-hole authoring not yet supported — chain `extrude` + `difference` for now. |
+| `sweep` | `profile=[[x,y], …]` (closed CCW), `path=[[x,y,z], …]` (Catmull–Rom centreline) | `samples` (8), `twist` deg (uniform total roll), `roll=[deg, …]` (per-control-point roll), `scale_along=[s, …]` (per-control-point uniform scale), `caps=0\\|1`; generalises `spline_tube` (always circular) and `spline_ribbon` (flat) — square pipes, picture-frame moulding on a curved path, gun rails. |
+| `loft` | `points=[[x,z], …]` (all sections flat-packed, same vertex count each), `heights=[y, …]` (Y of each section) | `samples` (rings between adjacent sections, 4), `caps=0\\|1`; closes the gap that `frustum` (two rectangles only) and `lathe` (axisymmetric only) cannot reach — boat hulls, fuselages, shaped bottles. Section vertex counts MUST match. |
 | `leaf_card` | `size=[w,h]` | `cards` (2 cross / 3 fan); paired alpha-cutout planes for foliage — pair with `alpha_mode=\"mask\", double_sided=1` |
+| `coil` | `radius`, `height`, `turns` | `profile_radius` (tube radius, 0.02), `samples` (per turn, 24), `segments` (around tube, 8), `cap_ends=0\\|1` (1), `handedness=\"right\"\\|\"left\"`; helix swept by a circular cross-section — springs, screw threads, snail-shell ribs, twisted vines. |
+| `heightfield` | `size=[x,z]` | `segments_u`/`segments_v` (64 each, capped at 4096), `amplitude` (Y relief, 0.5), `octaves` (fbm depth, 1\\|..\\|8, default 4), `frequency` (base spatial freq, 1.0), `persistence` (octave amplitude falloff, 0.5), `seed`; tessellated XZ grid displaced along +Y by deterministic fbm value-noise. Hash mixer is byte-compatible with `noise=` deformer's `cell_noise`, so a heightfield and a `noise=`-deformed mesh share the same bumps for the same seed. Use for terrain, dunes, scaled rooftops, organic stone slabs. |
+| `bezier_patch` | `points=[[x,y,z], …]` (exactly 16, row-major 4×4) | `segments_u`/`segments_v` (16 each); bicubic Bézier surface — organic skin panels, faces, hoods, fenders, sails, fabric, pillows. Wrong point count is a friendly lower-time error. |
+| `metaball` | `points=[[x,y,z], …]` (centres) | `radius` (uniform across all centres) OR `radii=[r0, r1, …]` (one per centre — must match `points` length); `blend` (smooth-union distance, 0 = hard union), `rings`/`segments` (sphere tessellation, 16/24); N implicit spheres unioned with smooth blending — soft creatures, slimes, blobs, jellyfish bodies, pumpkin lobes. Requires `csg` feature. |
 | `decal` | name (acts as prompt fallback) | `size=[w,h]` (default `[0.5, 0.5]`), `prompt` (Gemini description), `image` (path; wins over `prompt`), `tint=[r,g,b]`, `roughness` (0.6), `offset` (+Z gap from surface, 0.001), **`on`/`at`/`up`/`lift`** (curved-surface shortcut — see below), `pos`, `rot`. Synthesizes its own transparent `alpha_mode=\"blend\"` material — DO NOT set `mat=`. Use for logos, labels, stickers, handwritten notes, patches: anything that's a transparent image overlaid on another surface. For flat hosts (a panel, a box face), parent the decal under the host and set `pos=`. For curved hosts (a bag, a bottle, a helmet), use `on=\"<host>\", at=\"<connector>\"` so the decal's vertices bend onto the surface — much better than floating a flat quad above curvature. |
 | `branch` | `length`, `radius`, `depth` | `splits`, `length_falloff`, `radius_falloff`, `branch_angle`, `roll`, `tropism`, `bend`, `seed`, `jitter`, `leaves`, `leaf_size`, `leaf_cards`, `leaf_mat`; **recursive procedural tree — one declaration becomes a whole tree** |
 | `slab` | `size=[x,y,z]` | `box` alias; default `anchor=bottom` (sits on ground) |
@@ -401,6 +452,9 @@ pub(super) const KINDS_REFERENCE: &str = "\
 | `array` | `count`, `around=x|y|z` | `start_angle`, children |
 | `module` | name, optional params | body |
 | `use` | module name | args |
+| `if` | `cond=<expr>` | body emitted only when `cond` is non-zero. Pair with a sibling `else { … }` (immediately following) for the false branch. Use comparisons (`$n > 1`, `$role == 1`) — they evaluate to 1.0/0.0. |
+| `else` | — | body for the immediately-preceding `if`'s false branch. Standalone `else` (no `if` in front of it) errors at expand time. |
+| `for` | `var=\"i\"` (or `var=i`), `from=<expr>`, `to=<expr>` | optional `step=<expr>` (default 1, must be non-zero). Emits the body once per integer step in `[from, to)` with `$i` (or whatever name `var` chose) bound. Use for fence posts, regular grids, repeating modules: `for (var=\"i\", from=0, to=$count) { use \"post\" (i=$i, x=$i * 0.5) }`. Inside the body, `\"name_$i\"` interpolates the loop var into node names. |
 | `import` | quoted `\"path/to/file.mog\"` | optional `(as=<ident>)`; top-level only — pulls another `.mog` file's `module`s + `material`s and synthesises a module from its `scene { ... }`. **Preserve verbatim when editing — never rewrite as `module \"X\" {}`.** |
 | `union`, `difference`, `intersect` | — | children are operands |
 | `joint` | name, `type`, `pivot` | `axis`, `limits=[lo,hi]` |
@@ -418,7 +472,7 @@ pub(super) const KINDS_REFERENCE: &str = "\
 
 | primitive | connectors |
 |-----------|------------|
-| `box`, `rounded_box`, `prism` | `top`, `bottom`, `left`, `right`, `front`, `back` |
+| `box`, `rounded_box`, `chamfered_box`, `inset_box`, `prism` | `top`, `bottom`, `left`, `right`, `front`, `back` |
 | `cylinder` | `top`, `bottom`, `side` (at +X on the wall) |
 | `cone`, `pyramid` | `apex` / `top` (pointy end), `base` / `bottom` |
 | `sphere`, `icosphere`, `ellipsoid`, `superellipsoid` | `top`, `bottom`, `left`, `right`, `front`, `back` |
@@ -435,7 +489,8 @@ pub(super) const KINDS_REFERENCE: &str = "\
 | `tube` | `top`, `bottom`, `side` (at outer wall +X) |
 | `hemisphere` | `top` / `apex` (+Y), `bottom` / `base` (flat face at y=0, facing -Y) |
 | `half_cylinder` | `top`, `bottom`, `side` (+X curve peak), `flat` (x=0 face, -X) |
-| `torus_arc` | `top`, `bottom`, `start` (cap at phi=0, -Z), `end` (cap at phi=arc) |";
+| `torus_arc` | `top`, `bottom`, `start` (cap at phi=0, -Z), `end` (cap at phi=arc) |
+| `extrude`, `sweep`, `loft` | `top`, `bottom`, `left`, `right`, `front`, `back` (synthesized from the lowered mesh AABB — same as `group`) |";
 
 pub(super) const FEWSHOT: &str = "\
 Ten prompt / output pairs spanning mechanical, architectural, and organic \
@@ -699,6 +754,43 @@ scene {
     leaves=1, leaf_size=0.32, leaf_cards=2, leaf_mat=\"oak_leaf\",
     mat=\"oak_bark\"
   )
+}
+
+### Prompt: \"a steel I-beam\"
+### Output:
+meta (name = \"i_beam\", description = \"a 3-meter steel I-beam structural member\", tags = [\"structural\", \"steel\", \"i_beam\"])
+
+material \"steel\" (color=[0.6, 0.62, 0.65], metallic=0.85, roughness=0.35)
+
+scene {
+  extrude \"i_beam\" (
+    points=[
+      [-0.5, -0.05], [0.5, -0.05], [0.5, 0.05], [0.1, 0.05],
+      [0.1, 0.45], [0.5, 0.45], [0.5, 0.55], [-0.5, 0.55],
+      [-0.5, 0.45], [-0.1, 0.45], [-0.1, 0.05], [-0.5, 0.05]
+    ],
+    height=3.0,
+    mat=\"steel\"
+  )
+}
+
+### Prompt: \"a small wooden boat hull\"
+### Output:
+meta (name = \"boat_hull\", description = \"a 2-meter wooden boat hull lofted from three rectangular sections\", tags = [\"vehicle\", \"boat\", \"hull\", \"wood\"])
+
+material \"hull\" (color=[0.55, 0.4, 0.25], roughness=0.7)
+
+scene {
+  loft \"hull\" (
+    points=[
+      [-0.5, -0.2], [0.5, -0.2], [0.5, 0.2], [-0.5, 0.2],
+      [-1.0, -0.4], [1.0, -0.4], [1.0, 0.4], [-1.0, 0.4],
+      [-0.6, -0.1], [0.6, -0.1], [0.6, 0.1], [-0.6, 0.1]
+    ],
+    heights=[0.0, 1.0, 2.0],
+    samples=12,
+    mat=\"hull\"
+  )
 }";
 
 pub(super) const OUTPUT_CONTRACT: &str = "\n\n## Output contract\n\n\
@@ -747,3 +839,104 @@ Before you emit, silently verify:
     wooden stool\", tags = [\"furniture\", \"stool\", \"wood\"])`.
 
 If the prompt is ambiguous, make a reasonable choice and commit to it.\n";
+
+/// System instruction for the **Architect agent** invoked by `--plan`.
+///
+/// We never want this agent to emit DSL — it produces a Markdown breakdown
+/// of the asset (parts, dimensions, attachment graph, material palette) that
+/// the Coder agent then translates into `mogen` syntax in a second pass.
+/// Splitting the work this way is the steering trick that keeps the model
+/// from "drowning in primitives": the heavy spatial reasoning happens in
+/// natural language where the model is strongest, and the second pass is
+/// reduced to a near-mechanical translation step.
+pub const PLANNER_PREAMBLE: &str = "\
+You are the Architect agent in a two-stage pipeline. Your only job is to \
+plan a 3D asset in plain natural language so a downstream Coder agent can \
+translate the plan into a `mogen` DSL file. You do NOT write DSL yourself \
+— if any DSL keywords (`scene`, `attach`, `material`, `box`, `cylinder`, \
+`use`, `joint`, `clip`, `track`, etc.) appear in your output, the pipeline \
+has failed.
+
+Reply with a Markdown plan and nothing else. Use this exact section order:
+
+## Subject
+One sentence restating the asset, its scale (rough overall bounding box in \
+metres), and the dominant material vibe.
+
+## Parts
+A bulleted list of the discrete parts the asset decomposes into. Pick the \
+smallest set that captures the silhouette — a chair has seat, four legs, \
+and a back, not 47 dowel rods. For each part give:
+- a short identifier (`seat`, `front_left_leg`, `back_rest`)
+- the canonical primitive shape (box / cylinder / sphere / cone / capsule \
+  / icosphere / loft / wedge / module call) and its size in metres along \
+  X / Y / Z (or radius/height for round shapes)
+- the material palette name (`wood_dark`, `metal_brass`, `cloth_red`)
+
+## Hierarchy & joins
+A bulleted list describing how the parts attach to each other. Each line \
+names a parent part, a child part, and the connection — e.g. \
+`back_rest sits on top of seat, centred along Z` or \
+`each leg hangs below seat at its four corners`. Avoid hand-computed \
+coordinates; describe joins relative to other parts.
+
+## Materials
+One short paragraph or bullet list naming each material the parts share \
+plus the colour family and surface feel (matte / glossy / metallic / \
+rough). Two to four palette entries is the sweet spot — do not invent a \
+unique material per part.
+
+## Animation (optional)
+Skip this section if the asset is static. Otherwise: one sentence per \
+motion, naming the part that moves and the kind of motion (`spin`, \
+`open_close`, `wave`, `flap`, custom keyframes). Mechanical assets stay \
+rigid — only describe a skeleton + skin if the subject is organic.
+
+## Notes
+At most three short bullets calling out anything the Coder agent must NOT \
+miss: required `tags=\"floating\"` exemptions, modules to reuse from the \
+stdlib, glass / transmission rules, character detail floor (hands / feet \
+/ face), etc.
+
+Be terse. The Coder agent is paying for every token. Plan a compact scene \
+— a handful of primitives or a small number of stdlib modules, never a \
+hundred shapes.";
+
+/// System-instruction prefix for the **Reviewer agent** invoked by
+/// `--auto-refine N`.
+///
+/// Prepended to the regular DSL system instruction so the model still
+/// knows the grammar / kinds / fewshots when it emits its revised file.
+/// The user turn carries the original prompt, the previous DSL, and the
+/// rendered PNG; this preamble explains how to use them.
+pub const REVIEWER_PREAMBLE: &str = "\
+You are the Reviewer agent in a self-refinement loop. The user turn \
+contains:
+  1. The original natural-language prompt the asset is supposed to satisfy.
+  2. The DSL file your previous attempt produced.
+  3. A rendered PNG of that DSL, captured from a 3/4 orbit camera by the \
+     project's headless renderer.
+
+Look at the image first. Compare it against the original prompt. Identify \
+concrete failures of geometry, proportion, attachment, or material — \
+floating limbs, wrong silhouette, missing parts, parts inside one another, \
+obvious scale errors, the wrong colour family, etc. Be honest: if the \
+render already matches the prompt, change as little as possible.
+
+Then emit a corrected DSL file. Reuse names, materials, attaches, and \
+animation tracks from the previous attempt verbatim wherever they were \
+already correct — do not rename, reorder, or restyle parts the critique \
+did not flag. The downstream pipeline parses your output and re-runs the \
+validator + repair loop, so the file must be a complete, self-contained \
+`.mog` file (not a diff, not a patch).
+
+Output contract is unchanged from the Coder agent: reply with ONLY the \
+revised DSL — no commentary, no markdown fences, no diff markers, no \
+description of what you changed. Re-emit the entire file.
+
+The rest of this system instruction is the standard DSL grammar and \
+conventions reference.
+
+---
+
+";

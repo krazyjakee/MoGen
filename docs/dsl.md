@@ -113,6 +113,30 @@ in place — drag it down to iterate quickly on big scenes, then drag back to
 `1.0` for export. The slider clears the directive when it returns to `1.0` so
 saved files stay clean by default.
 
+### Per-node `lod=` overrides
+
+Any geometry/group node accepts a `lod=N` attribute that **multiplies**
+the active LOD scale for the duration of that node and its subtree. Use
+it to mark hero parts (`lod=2`) and background filler (`lod=0.5`) without
+touching the file-global `lod_scale`. The override is RAII-scoped — it
+does not leak into siblings — and compounds with the global setting:
+`lod=2` on top of `lod_scale (value=0.5)` yields an effective multiplier
+of `1.0` for that subtree.
+
+```
+scene {
+  group "hero" (lod=2) {                  // boosted detail
+    sphere "face" (radius=0.12)
+  }
+  sphere "background_rock" (radius=0.4, lod=0.5)  // halved detail
+  sphere "default_rock" (radius=0.4)              // baseline
+}
+```
+
+Like `lod_scale`, explicit per-primitive `segments=` / `rings=` /
+`subdivisions=` win over the multiplier — the override only acts on
+defaults.
+
 ---
 
 ## Values and expressions
@@ -243,6 +267,11 @@ melted candles, jelly blobs — using one or two extra attrs.
 | `jitter` | 0..1 | per-vertex random displacement along the normal. Higher-frequency than `noise`, looks "jagged". |
 | `faceted` | 0/1 | rebuild the mesh with three unique vertices per triangle and face-flat normals; reads as low-poly. |
 | `seed` | integer | RNG seed for the stochastic modifiers (`noise`, `jitter`); same seed always reproduces the same shape. |
+| `wave` | peak displacement (m) | sinusoidal displacement along the vertex normal — periodic ripples for water, jelly, ribbed metal, fabric. Pair with `wave_frequency`, `wave_axis`, `wave_phase`, `wave_range`. |
+| `wave_frequency` | cycles/unit, default `1.0` | spatial frequency along `wave_axis`. `0.5` puts a crest every 2 m. |
+| `wave_axis` | `"x"`/`"y"`/`"z"`, default `"x"` | axis the wave propagates along. |
+| `wave_phase` | radians, default `0.0` | phase offset; lets sibling waves desync without animation. |
+| `wave_range` | `[a, b]` | gates the wave to a normalised slice along `wave_axis` via smoothstep, matching `*_range` convention. |
 
 Common combinations:
 
@@ -262,6 +291,24 @@ reproducible. Two unnamed primitives with `noise=0.3` and no `seed` share the
 same `seed` default (1) and therefore the same surface — set distinct seeds
 when you want sibling rocks to differ.
 
+Each modifier accepts an optional `*_range=[a, b]` (`bend_x_range`,
+`bend_y_range`, `bend_z_range`, `twist_y_range`, `taper_range`,
+`droop_range`, `noise_range`, `jitter_range`) that gates the deformation
+to a normalised slice along its length axis. Vertices below `a` are
+unchanged, vertices inside `[a, b]` ramp in via smoothstep, and vertices
+above `b` get the full effect. Use it to bend the tip but not the base of
+a sword, twist only the upper half of a tower, or jitter just the top
+third of a column. Endpoints can be in either order; `[1.0, 0.5]` is
+normalised to `[0.5, 1.0]` automatically.
+
+```
+// Sword that bows toward its tip but keeps a straight grip.
+box "blade" (size=[0.06, 1.4, 0.01], bend_z=18, bend_z_range=[0.55, 1.0])
+// Tower that twists only above the cornice.
+cylinder "spire" (radius=0.4, height=4.0, twist_y=70, twist_y_range=[0.6, 1.0])
+// Cliff face that's smooth at the foot, jagged at the crown.
+box "cliff" (size=[3, 4, 1], jitter=0.4, jitter_range=[0.5, 1.0], seed=11)
+```
 Default tessellation auto-bumps (×2 segments / +1 icosphere subdivision) when
 a smooth deformer (`bend_*`, `twist_y`, `noise`, `droop`) is present so a
 bent cylinder doesn't read as faceted. Author's explicit `segments=`,
@@ -310,6 +357,8 @@ All primitives accept the common attributes above (`pos`, `rot`, `scale`,
 | `disc` | `radius` | `segments` (24) |
 | `icosphere` | `radius` | `subdivisions` (2) |
 | `rounded_box` | `size=[x,y,z]`, `radius` | `segments` per corner (4) |
+| `chamfered_box` | `size=[x,y,z]` | `radius` (bevel offset, 0.1) — sharp 45° bevels on all 12 edges + 8 corner triangles. Use for hard-edged industrial parts where a fully-rounded `rounded_box` reads as too organic |
+| `inset_box` | `size=[x,y,z]` | `face` (`"+y"\|"-y"\|"+x"\|"-x"\|"+z"\|"-z"` or `"top"/"bottom"/"left"/"right"/"front"/"back"`, default `"+y"`), `amount` (inset distance, 0.1), `depth` (sink depth, 0.05) — five plain box faces + one sunken panel; window frames, recessed door panels, button caps, sunken pickup wells |
 | `wedge` | `size=[x,y,z]` | right-triangle prism — flat bottom on -Y, hypotenuse climbing toward +Y/+Z. Useful for ramps, roof pitches, doorstops |
 | `frustum` | `bottom=[w,d]`, `top=[w,d]`, `height` | truncated rectangular pyramid (defaults `bottom=[1,1]`, `top=[0.5,0.5]`, `height=1`) |
 | `tube` | `outer`, `inner`, `height` | hollow cylinder (pipe / ring); `segments` (24) |
@@ -322,6 +371,13 @@ All primitives accept the common attributes above (`pos`, `rot`, `scale`,
 | `lathe` | `profile=[[r,y], …]` | `segments` (24), `cap_ends` (1 = capped); profile authored bottom-to-top in `(radius, y)` pairs |
 | `spline_tube` | `points=[[x,y,z], …]` | `radius` (scalar) or `radii=[…]` (per-point), `segments` (12), `samples` (8), `cap_ends` (1) |
 | `spline_ribbon` | `points=[[x,y,z], …]` | `width` (scalar) or `widths=[…]` (per-point), `samples` (8), `twist` (degrees, default `0`); flat strip along a Catmull–Rom curve |
+| `coil` | — | `radius` (helix, 0.5), `height` (Y rise, 1.0), `turns` (revolutions, 3), `profile_radius` (cross-section, 0.05), `segments` (cross-section sides, 12), `samples` (per turn, 16), `cap_ends` (1), `handedness` (`"right"`/`"left"`, default `"right"`). Helical sweep — springs, screw threads, snail-shell ribs, twisted vines. Builds on `spline_tube` under the hood; the helix path is generated for you instead of authored point-by-point. |
+| `heightfield` | — | `size=[w,d]` (XZ extent, default `[1, 1]`), `segments_u`/`segments_v` (32 each), `amplitude` (peak Y, 0.5), `octaves` (1..=8, default 3), `frequency` (cycles/unit, 1.0), `persistence` (per-octave amplitude falloff, 0.5), `seed` (1). Tessellated XZ grid displaced by deterministic fBm value-noise — terrain patches, dunes, rooftops, bumpy stone slabs. Layer the `wave` deformer on top for water surfaces. |
+| `bezier_patch` | `points=[[x,y,z], …]` (exactly 16 control points, row-major u rows × v columns) | `segments_u`/`segments_v` (12 each). Bicubic Bézier surface — `points[0]`/`[3]`/`[12]`/`[15]` pin the patch corners, the inner four `points[5]/[6]/[9]/[10]` shape the bulge, and the eight edge points control curvature along each side. Use for organic skin panels: faces, hoods, fenders, pillows, sails, soft plates, leaves with controlled silhouette. |
+| `metaball` | `points=[[x,y,z], …]` (≥1) plus one of `radius=` (scalar) or `radii=[…]` (per-point) | `blend` (smooth-union radius in m, default `0`), `rings` (per-sphere, 12), `segments` (per-sphere, 16). N implicit-field spheres unioned with smooth blending — creature bodies (torso + thigh masses), slime, clouds, cell clusters, pumpkin lobes, soft ammo pouches, asymmetric organic props. Sugar over `union (smooth=k) { sphere … }`; reuses the same vertex-fillet kernel as `union`'s `smooth=`. |
+| `extrude` | `points=[[x,z], …]` | closed CCW outline; `hole=[[x,z], …]` (one CW inner contour), `height` (Y span, 1.0), `taper` (top scale ratio, 1.0), `twist` (degrees, 0), `caps` (1). Push a 2D polygon up — I-beams, gear teeth, custom pillars. Multi-hole authoring not yet supported (chain `extrude` + `difference`). |
+| `sweep` | `profile=[[x,y], …]`, `path=[[x,y,z], …]` | closed CCW profile in the path's local XY plane; `samples` (8) per path segment, `twist` (degrees uniform), `roll=[deg, …]` and `scale_along=[s, …]` modulators (per-control-point), `caps` (1). Generalises `spline_tube` (always circular) and `spline_ribbon` (always flat). |
+| `loft` | `points=[[x,z], …]`, `heights=[y, …]` | sections flat-packed in `points` (each section's vertices in order; counts must match across sections); `samples` (rings between adjacent sections, 4), `caps` (1). Boat hulls, fuselages, shaped bottles. |
 | `leaf_card` | `size=[w,h]` | `cards` (default `2`); alpha-cutout foliage card cluster — one quad plus `cards-1` rotated copies sharing the same XY plane. Pair with a `mat="…"` whose `alpha_mode="mask"` and `double_sided=1` |
 | `mesh` | `src="path.glb"` | load and embed an external glTF binary as a single mesh. Path is relative to the calling `.mog`. Materials, skinning, and animations on the source GLB are dropped — set them in the DSL instead |
 | `branch` | — | procedural tree / vine / antler. See [Branch](#branch) below |
@@ -1141,6 +1197,91 @@ Rules:
 - Omitted arguments fall back to declared defaults. Unknown argument names are a hard error (catches typos).
 - Modules may call other modules. Recursion is detected and rejected.
 - Expansion is lexically scoped — `$param` references outside a module body are rejected.
+
+## Control flow: `if`, `else`, `for`, string interpolation
+
+Inside any `{ … }` body — including `scene`, `group`, `solid`, and `module`
+bodies — three control-flow constructs let you branch and repeat at
+module-expansion time. They run before lowering, so the resulting scene
+graph never sees `if` or `for`; only the geometry they emit.
+
+### `if (cond=…)` and `else`
+
+```
+module "switch" (has_label=0) {
+  cylinder "shaft" (radius=0.02, height=0.05)
+  if (cond=$has_label) {
+    box "label" (size=[0.04, 0.005, 0.02])
+  }
+}
+scene {
+  use "switch" (has_label=0)            // no label
+  use "switch" (has_label=1, x=0.10)    // with label
+}
+```
+
+`cond=` accepts any expression. Comparisons (`<`, `<=`, `>`, `>=`, `==`,
+`!=`) evaluate to `1.0` (true) or `0.0` (false), so `cond=$count > 1`
+works directly. An immediately-following sibling `else { … }` covers the
+false branch:
+
+```
+if (cond=$is_glass) {
+  box "pane" (size=[0.6, 1.0, 0.01], mat="glass")
+}
+else {
+  box "panel" (size=[0.6, 1.0, 0.04], mat="oak")
+}
+```
+
+A standalone `else` with no preceding `if` is rejected at expansion time.
+
+### `for (var=…, from=…, to=…[, step=…])`
+
+```
+for (var="i", from=0, to=4) {
+  box "fence_post_$i" (size=[0.04, 0.6, 0.04],
+                       pos=[$i * 0.30, 0, 0],
+                       mat="oak")
+}
+```
+
+- `var` is the loop binding name (string or bare identifier).
+- `from`/`to` are the bounds; iteration covers `[from, to)` like Python's
+  `range`. `from == to` produces zero iterations.
+- `step` defaults to `1.0`. Must be non-zero. Negative `step` walks
+  downward as long as `from > to`.
+- Inside the body, `$<var>` resolves to the current loop value.
+- `for` blocks inside module bodies see both module parameters and the
+  loop variable in scope; nested `for` loops compose normally.
+
+### String interpolation
+
+Inside any string literal (including node names), `$name` and `${name}`
+are replaced with the named binding's value at expansion time:
+
+```
+for (var="i", from=0, to=3) {
+  cylinder "leg_$i" (radius=0.05, height=0.6, pos=[$i * 0.4, 0, 0])
+}
+// Names: leg_0, leg_1, leg_2
+```
+
+- Integer-valued bindings render without a decimal: `leg_$i` becomes
+  `leg_3`, not `leg_3.0`.
+- The `${name}` form delimits the binding explicitly so `${prefix}_panel`
+  is unambiguous when followed by underscore characters.
+- A `$` not followed by an identifier (or referencing an unbound name)
+  is left literal — handy for prompts that include the dollar sign.
+
+Limitations (deliberate, demand-driven):
+
+- Comparisons can't be chained: `a < b < c` does not parse. Combine with
+  multiplication for AND (`($a > 0) * ($b > 0)`) or addition for OR
+  (`($a > 0) + ($b > 0)`).
+- No boolean `&&` / `||` / `!` operators yet.
+- Expressions remain numeric; there are no string concatenation operators
+  beyond interpolation.
 
 ---
 

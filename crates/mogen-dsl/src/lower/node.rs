@@ -14,7 +14,7 @@ use super::helpers::{
 };
 use super::layout::{apply_relative_placement, expand_grid, expand_replicator, expand_stack};
 use super::light::lower_light;
-use super::lod::LodOriginScaleGuard;
+use super::lod::{LodMultiplierGuard, LodOriginScaleGuard};
 use super::primitive::primitive_mesh;
 
 pub(super) fn lower_into(
@@ -28,6 +28,12 @@ pub(super) fn lower_into(
     // top-level `LOD_SCALE`. The guard restores the previous scale on drop
     // so children with a different origin still get their own override.
     let _lod = LodOriginScaleGuard::for_origin(node.origin.as_deref());
+    // Stack a per-node `lod=N` multiplier on top of the origin scale so a
+    // `lod=2.0` group can boost detail in a hero subtree (and `lod=0.5`
+    // can drop background parts) without touching the file-global
+    // `lod_scale`. The multiplier guard compounds with whatever the
+    // origin guard set up; both restore previous values on drop.
+    let _lod_mul = LodMultiplierGuard::for_node(node);
     if node.kind == "mirror" || node.kind == "array" {
         return expand_replicator(node, parent, graph);
     }
@@ -204,7 +210,15 @@ pub(super) fn lower_into(
     // synthesized from the subtree AABB. User-declared connectors with the
     // same name already took precedence via `add_connector`'s replace-by-name,
     // so we only push names that aren't present.
-    if node.kind == "group" || node.kind == "solid" {
+    if matches!(
+        node.kind.as_str(),
+        "group" | "solid" | "extrude" | "sweep" | "loft",
+    ) {
+        // Primitives whose geometry derives from arbitrary author-supplied
+        // 2D contours (extrude / sweep / loft) don't have a closed-form
+        // top/bottom/side connector layout the way `cylinder` or `box`
+        // does, so we mirror the group fallback: synthesize the six face
+        // connectors from the subtree AABB.
         add_aabb_connectors_if_missing(id, graph);
     }
 

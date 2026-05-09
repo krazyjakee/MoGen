@@ -10,9 +10,10 @@ pub const KNOWN_KINDS: &[&str] = &[
     "stack", "grid",
     "meta",
     "box", "plane", "quad", "cylinder", "cone", "sphere", "capsule", "torus",
-    "prism", "pyramid", "disc", "icosphere", "rounded_box",
-    "wedge", "frustum", "tube", "hemisphere", "half_cylinder", "torus_arc", "ellipsoid",
-    "superellipsoid", "curved_plane", "lathe", "spline_tube", "spline_ribbon", "leaf_card", "mesh",
+    "prism", "pyramid", "disc", "icosphere", "rounded_box", "chamfered_box", "inset_box",
+    "wedge", "frustum", "tube", "hemisphere", "half_cylinder", "torus_arc", "ellipsoid", "heightfield", "bezier_patch", "metaball",
+    "superellipsoid", "curved_plane", "lathe", "spline_tube", "spline_ribbon", "coil", "leaf_card", "mesh",
+    "extrude", "sweep", "loft",
     "slab", "post", "panel", "wall",
     "branch",
     "decal",
@@ -22,6 +23,7 @@ pub const KNOWN_KINDS: &[&str] = &[
     "spin", "open_close", "wave", "flap", "idle",
     "skeleton", "bone",
     "lod_scale",
+    "if", "else", "for",
     "light",
 ];
 
@@ -46,9 +48,20 @@ pub const GEOMETRY_COMMON_ATTRS: &[&str] = &[
     // Deformation modifiers — composable variety knobs that work on any
     // primitive. Apply between primitive construction and anchor shift, so
     // the deformed mesh is what attach/connector logic sees. Stochastic
-    // modifiers (`noise`, `jitter`) are seeded by `seed`.
+    // modifiers (`noise`, `jitter`) are seeded by `seed`. The matching
+    // `*_range=[a,b]` attrs gate each deformation to a normalised slice
+    // along its length axis (smoothstep ramp from `a` to `b`).
     "seed", "noise", "jitter", "bend_x", "bend_y", "bend_z", "twist_y",
     "taper", "droop", "faceted",
+    // Periodic-wave deformer (sinusoidal displacement along the vertex
+    // normal). Composes with the other modifiers; see deform.rs::wave.
+    "wave", "wave_frequency", "wave_axis", "wave_phase",
+    "noise_range", "jitter_range",
+    "bend_x_range", "bend_y_range", "bend_z_range", "twist_y_range",
+    "taper_range", "droop_range", "wave_range",
+    // Per-node LOD multiplier — compounds with the file-global `lod_scale`
+    // for the duration of this node and its subtree (see lod.rs guards).
+    "lod",
 ];
 
 /// Transform-only subset. Used by `skeleton` (places the whole rig) and `bone`
@@ -92,7 +105,10 @@ pub fn common_attrs_for_kind(kind: &str) -> &'static [&'static str] {
         "material" | "connector" | "attach"
         | "joint" | "clip" | "track"
         | "spin" | "open_close" | "wave" | "flap" | "idle"
-        | "lod_scale" | "meta" => &[],
+        | "lod_scale" | "meta"
+        // Control-flow constructs are pre-expansion only — they don't
+        // accept transforms or material binding, just their control attrs.
+        | "if" | "else" | "for" => &[],
         _ => GEOMETRY_COMMON_ATTRS,
     }
 }
@@ -121,6 +137,8 @@ pub fn attrs_for_kind(kind: &str) -> &'static [&'static str] {
         "disc" => &["radius", "segments"],
         "icosphere" => &["radius", "subdivisions"],
         "rounded_box" => &["size", "radius", "segments"],
+        "chamfered_box" => &["size", "radius"],
+        "inset_box" => &["size", "face", "amount", "depth"],
         "wedge" => &["size"],
         "frustum" => &["bottom", "top", "height"],
         "tube" => &["outer", "inner", "height", "segments"],
@@ -135,7 +153,22 @@ pub fn attrs_for_kind(kind: &str) -> &'static [&'static str] {
             "points", "radius", "radii", "segments", "samples", "cap_ends",
         ],
         "spline_ribbon" => &["points", "width", "widths", "samples", "twist"],
+        "coil" => &[
+            "radius", "height", "turns", "profile_radius",
+            "segments", "samples", "cap_ends", "handedness",
+        ],
+        "heightfield" => &[
+            "size", "segments_u", "segments_v",
+            "amplitude", "octaves", "frequency", "persistence", "seed",
+        ],
+        "bezier_patch" => &["points", "segments_u", "segments_v"],
+        "metaball" => &["points", "radius", "radii", "blend", "rings", "segments"],
         "leaf_card" => &["size", "cards"],
+        "extrude" => &["points", "hole", "height", "taper", "twist", "caps"],
+        "sweep" => &[
+            "profile", "path", "samples", "twist", "roll", "scale_along", "caps",
+        ],
+        "loft" => &["points", "heights", "samples", "caps"],
         "mesh" => &["src"],
         "branch" => &[
             "length", "radius", "depth", "splits", "length_falloff", "radius_falloff",
@@ -189,6 +222,9 @@ pub fn attrs_for_kind(kind: &str) -> &'static [&'static str] {
             "direction", "curve", "via",
         ],
         "lod_scale" => &["value"],
+        "if" => &["cond"],
+        "else" => &[],
+        "for" => &["var", "from", "to", "step"],
         "light" => &["kind", "color", "intensity", "range", "inner_cone", "outer_cone", "dir"],
         // `smooth` blends limb-to-torso seams for organic shapes.
         // `difference`/`intersect` reject it via attr_type below.
@@ -226,6 +262,9 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         // `from`/`to` as AABB-corner vec3 shortcuts.
         ("track", "from") | ("track", "to") => "number",
         ("conform", "from") | ("conform", "to") => "string",
+        // `for.from`/`to`/`step` are scalar bounds; carve them out before
+        // the generic vec3 fallback below.
+        ("for", "from") | ("for", "to") | ("for", "step") => "number",
         (_, "from") | (_, "to") => "vec3",
         // Deformation modifier types. `seed` overlaps with the meta-block's
         // string seed (handled above), so this arm only applies to geometry
@@ -239,13 +278,33 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         | (_, "twist_y")
         | (_, "taper")
         | (_, "droop")
+        | (_, "wave")
+        | (_, "wave_frequency")
+        | (_, "wave_phase")
         | (_, "faceted")
-        | (_, "cast_shadow") => "number",
+        | (_, "cast_shadow")
+        | (_, "lod") => "number",
+        ("chamfered_box", "radius") => "number",
+        ("inset_box", "face") => "string",
+        (_, "wave_axis") => "string",
+        ("inset_box", "amount") | ("inset_box", "depth") => "number",
+        // 2-element `[start, end]` ranges along the deformation's length axis.
+        (_, "bend_x_range")
+        | (_, "bend_y_range")
+        | (_, "bend_z_range")
+        | (_, "twist_y_range")
+        | (_, "taper_range")
+        | (_, "droop_range")
+        | (_, "noise_range")
+        | (_, "jitter_range")
+        | (_, "wave_range") => "list",
         ("box", "size")
         | ("plane", "size")
         | ("quad", "size")
         | ("prism", "size")
         | ("rounded_box", "size")
+        | ("chamfered_box", "size")
+        | ("inset_box", "size")
         | ("wedge", "size")
         | ("ellipsoid", "size")
         | ("superellipsoid", "size")
@@ -260,11 +319,26 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         ("grid", "center") => "number",
         ("curved_plane", "size") => "list",
         ("frustum", "bottom") | ("frustum", "top") => "list",
+        ("heightfield", "size") => "list",
+        ("bezier_patch", "points") => "list",
+        ("metaball", "points") => "list",
+        ("metaball", "radii") => "list of number",
         ("lathe", "profile") => "list",
         ("spline_tube", "points") => "list",
         ("spline_tube", "radii") => "list",
         ("spline_ribbon", "points") => "list",
         ("spline_ribbon", "widths") => "list",
+        ("extrude", "points") => "list",
+        ("extrude", "hole") => "list",
+        ("extrude", "height") | ("extrude", "twist") => "number",
+        ("extrude", "caps") => "number",
+        ("sweep", "profile") => "list",
+        ("sweep", "path") => "list",
+        ("sweep", "samples") | ("sweep", "twist") | ("sweep", "caps") => "number",
+        ("sweep", "roll") | ("sweep", "scale_along") => "list",
+        ("loft", "points") => "list",
+        ("loft", "heights") => "list of number",
+        ("loft", "samples") | ("loft", "caps") => "number",
         ("leaf_card", "size") => "number or vec3",
         ("leaf_card", "cards") => "number",
         ("decal", "size") => "list",
@@ -353,6 +427,25 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         | ("spline_ribbon", "width")
         | ("spline_ribbon", "samples")
         | ("spline_ribbon", "twist")
+        | ("coil", "radius")
+        | ("coil", "height")
+        | ("coil", "turns")
+        | ("coil", "profile_radius")
+        | ("coil", "segments")
+        | ("coil", "samples")
+        | ("coil", "cap_ends")
+        | ("heightfield", "segments_u")
+        | ("heightfield", "segments_v")
+        | ("heightfield", "amplitude")
+        | ("heightfield", "octaves")
+        | ("heightfield", "frequency")
+        | ("heightfield", "persistence")
+        | ("bezier_patch", "segments_u")
+        | ("bezier_patch", "segments_v")
+        | ("metaball", "radius")
+        | ("metaball", "blend")
+        | ("metaball", "rings")
+        | ("metaball", "segments")
         | ("frustum", "height")
         | ("union", "smooth")
         | ("material", "alpha")
@@ -364,6 +457,7 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         | ("material", "emissive_strength")
         | ("material", "transmission")
         | ("material", "double_sided") => "number",
+        ("coil", "handedness") => "string",
         ("material", "color") | ("material", "emissive") => "vec3",
         ("material", "alpha_mode") | ("material", "uv_mode") | ("material", "shader") => "string",
         ("material", "uv_scale") => "number or vec2",
@@ -420,6 +514,12 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         // `via=[c1, c2]` reserved for future multi-segment paths.
         ("conform", "via") => "list",
         ("lod_scale", "value") => "number",
+        // Module control flow attrs. `if.cond` is numeric (truthy ≠ 0);
+        // `for.var` names the binding and accepts ident-or-string;
+        // `for.from`/`to`/`step` are the bounds.
+        ("if", "cond") => "number",
+        ("for", "var") => "string",
+        // (`for.from`/`to`/`step` handled above the generic vec3 arm.)
         ("light", "kind") => "string",
         ("light", "color") | ("light", "dir") => "vec3",
         ("light", "intensity")
@@ -445,6 +545,12 @@ pub(super) fn value_matches(v: &Value, expected: &str) -> bool {
         (Value::String(_), "string") => true,
         (Value::Ident(_), "string") => true,
         (Value::List(_) | Value::ListExpr(_) | Value::ListVec3(_) | Value::ListPair(_) | Value::ListQuad(_), "list") => true,
+        // `list of number` attrs accept Vec3 as a 3-number list (the
+        // grammar prefers `vec3` over `list` for exactly 3 components, so
+        // `loft.heights=[0, 1, 2]` enters the type system as a Vec3 even
+        // though the schema declares it a list).
+        (Value::List(_) | Value::ListExpr(_), "list of number") => true,
+        (Value::Vec3(_) | Value::Vec3Expr(_), "list of number") => true,
         (Value::ListString(_), "list of string") => true,
         (Value::String(_) | Value::Ident(_), "list of string") => true,
         // Deferred expressions: accept as their natural type; evaluation errors

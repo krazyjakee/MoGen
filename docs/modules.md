@@ -321,3 +321,209 @@ No parameters. **Connectors:** `base` (trunk end), `tip`.
 For a fully procedural recursive tree (multiple levels of splits and
 auto-emitted leaves), use the `branch` *primitive* instead — see
 [`dsl.md` §Branch](./dsl.md#branch).
+
+---
+
+### Detailing modules
+
+Small parametric details for hard-surface, organic, and decorative parts.
+Each one collapses a frequently hand-authored "cloud of primitives" pattern
+into a single `use` call so the LLM can spend its token budget on the
+scene structure instead of re-deriving the same array of cylinders or
+cards.
+
+All ten modules expand into geometry the caller wraps with a `mat=`
+(usually via a parent `group`) — none of them carry a default material so
+the same module composes equally well into a steel rivet line, a brass
+bolt circle, or a copper vent strip.
+
+#### `bolt_circle`
+
+Ring of cylindrical bolt heads arranged around +Y. Heads sit on top of
+`y=0` (`anchor=bottom`) so the whole ring drops onto a flat host face.
+
+| parameter | default | meaning |
+|---|---|---|
+| `count` | `6` | number of bolt heads in the ring |
+| `ring_radius` | `0.1` | distance from origin to each head |
+| `head_radius` | `0.012` | radius of one cylindrical head |
+| `head_height` | `0.008` | head thickness along +Y |
+
+#### `vent_strip`
+
+Vertical stack of thin parallel slats (cooling vents, gills, louvers).
+Slats run along X; the stack grows along Y.
+
+| parameter | default | meaning |
+|---|---|---|
+| `count` | `6` | number of slats |
+| `length` | `0.4` | slat length along X |
+| `slat_thickness` | `0.005` | slat thickness along Y |
+| `slat_height` | `0.05` | slat depth along Z |
+| `gap` | `0.012` | spacing between slats |
+
+#### `panel_seam`
+
+Thin dark line for hard-surface panel joins (car body seams, robot armor
+splits, console trim). Sits with its top face at `y=0` (`anchor=top`) so
+it lies flush on the +Y face of a host.
+
+| parameter | default | meaning |
+|---|---|---|
+| `length` | `0.5` | seam length along X |
+| `width` | `0.002` | seam width along Z |
+| `depth` | `0.0005` | seam depth into the host |
+
+#### `rivet_line`
+
+Evenly spaced row of low hemispherical rivet heads along X. Each rivet's
+flat base sits on `y=0`, dome up to `y=+radius`.
+
+| parameter | default | meaning |
+|---|---|---|
+| `count` | `8` | number of rivets |
+| `length` | `0.4` | total span end-to-end along X |
+| `radius` | `0.006` | rivet head radius |
+
+#### `step_taper`
+
+Lathed column with four visible steps, base radius `0.5` → top radius
+`0.1` across height `1.0`. Use for rocket nozzles, tapered chimneys,
+segmented pillars. Wrap in a group + `scale=` (or per-axis `w/h/d`) to
+resize.
+
+No parameters — the profile is unitised so a single `scale` propagates
+uniformly.
+
+#### `cable`
+
+Thin spline_tube spanning `1m` along X with a gentle gravity dip at the
+centre. Use for power cables, ropes, hoses, wires.
+
+| parameter | default | meaning |
+|---|---|---|
+| `radius` | `0.008` | tube radius |
+
+**Connectors:** `start` (`-X` end), `end` (`+X` end). For a cable that
+runs between two specific anchor points, place this module via
+`pos=`/`scale=` or run `conform` to drape it along a target surface.
+
+#### `chain`
+
+Interlocked torus links along X with alternating 90° orientation. `pairs`
+is the number of A/B link pairs (default 4 → 8 links total).
+
+| parameter | default | meaning |
+|---|---|---|
+| `pairs` | `4` | number of A/B link pairs along X |
+| `link_radius` | `0.05` | inner radius of one torus link |
+| `wire` | `0.012` | tube radius of the link wire |
+| `gap` | `0.005` | spacing between links |
+
+#### `feather_card`
+
+Single curved-plane cupped along its length, like a feather or fish-fin
+ray. Pair with an alpha-cutout feather/fin material (`alpha_mode="mask",
+double_sided=1`).
+
+| parameter | default | meaning |
+|---|---|---|
+| `length` | `0.15` | feather length along Z |
+| `width` | `0.04` | feather width along X |
+
+**Connector:** `stem` at the base.
+
+#### `scale_band`
+
+Wraparound array of curved-plane scales for snake / fish / dragon skin.
+`count` scales encircle Y at `ring_radius`, each cupped outward (+X).
+Stack multiple bands along Y for a full body.
+
+| parameter | default | meaning |
+|---|---|---|
+| `count` | `12` | number of scales in the ring |
+| `ring_radius` | `0.06` | radius of the scale ring |
+| `scale_w` | `0.04` | scale width |
+| `scale_h` | `0.06` | scale height |
+
+#### `gear`
+
+Coarse Phase-A gear: cylindrical hub plus an array of rectangular teeth.
+Approximation only; once `extrude` (Phase B) lands, prefer it for proper
+involute gears.
+
+| parameter | default | meaning |
+|---|---|---|
+| `teeth` | `16` | number of teeth around the hub |
+| `hub_radius` | `0.1` | radius of the central disc |
+| `tooth_height` | `0.014` | radial extent of one tooth |
+| `tooth_width` | `0.014` | tangential width of one tooth |
+| `thickness` | `0.02` | gear thickness along Y |
+
+---
+
+### Organic shape wrappers
+
+Sensible-default wrappers over the Phase D organic primitives (`coil`,
+`heightfield`, `metaball`, `wave`-deformed `curved_plane`). Each one
+collapses the parameter sprawl of the underlying primitive into a small
+set of intent-shaped knobs so the LLM can reach for the right shape
+without re-tuning fbm octaves or metaball blend factors from scratch.
+
+Like the detailing modules, none of these carry a default `mat=` — wrap
+in a parent `group` with a steel/water/earth/slime material as needed.
+
+#### `spring`
+
+Tight helical compression spring along +Y, centred on origin. Wraps
+`coil` with spring-typical defaults (small radius, short height, many
+turns, thin wire). Wrap with a metal `mat=` (`steel`/`brass`).
+
+| parameter | default | meaning |
+|---|---|---|
+| `radius` | `0.025` | helix radius (distance from spring axis to wire centre) |
+| `length` | `0.1` | total height along Y |
+| `turns` | `8` | number of full revolutions over the height |
+| `wire_radius` | `0.004` | tube radius of the wire |
+
+#### `terrain_patch`
+
+Square terrain patch using `heightfield` with natural-fbm defaults baked
+in (4 octaves, mid-frequency, 0.5 persistence). Reads as rolling hills
+out of the box. Bump `amplitude` to ~1.4 + `segments` to ~96 for craggy
+peaks; lower `amplitude` to ~0.3 for sandy dunes.
+
+| parameter | default | meaning |
+|---|---|---|
+| `size` | `4.0` | side length of the square patch (XZ) |
+| `segments` | `64` | grid resolution along U and V |
+| `amplitude` | `0.6` | peak-to-peak relief along Y |
+| `seed` | `1` | noise seed; change for variation |
+
+#### `blob`
+
+Three slightly-offset metaballs unioned with smooth blending. One
+`radius` controls per-ball size, `blend=` controls how much the
+spheres merge. Reads as a slime, soft-creature mass, or jellyfish
+body. Wrap with an organic `mat=` (`alpha=0.85` for slime; opaque
+flesh-tone for creatures); follow with `scale=[1.6, 0.9, 0.9]` for an
+elongated body.
+
+| parameter | default | meaning |
+|---|---|---|
+| `radius` | `0.30` | per-sphere radius (all three the same) |
+| `blend` | `0.15` | smooth-union blend distance — 0 is a hard union, larger numbers melt the spheres further |
+
+#### `water_patch`
+
+Flat XZ surface with low-amplitude `wave=` deformer for water, lava,
+jelly, or any rippling pool. Wrap with a transparent water-style
+`mat=` (`alpha=0.85, transmission=0.6` for water; opaque green
+`alpha=0.85` for jelly).
+
+| parameter | default | meaning |
+|---|---|---|
+| `size` | `2.0` | side length of the square patch (XZ) |
+| `segments` | `64` | grid resolution along U and V — keep dense so the wave reads smoothly |
+| `ripple` | `0.04` | wave amplitude along the surface normal |
+| `frequency` | `0.6` | wave spatial frequency along X — raise to ~1.5 for choppy, lower for calm |

@@ -1,0 +1,28 @@
+// summary: Chain — alternating torus links along X with perpendicular orientations, suggesting a real chain visually. `pairs` is the number of A/B link pairs (default 4 → 8 links total). Default link inner radius 0.05m, wire 0.012m. Adjacent links overlap by `wire` so the rings appear to thread through each other; this is decorative geometry rather than a topologically interlocked Hopf link (geometrically interlocking equal-radius perpendicular tori is impossible — the rings would collide). Wrap in a group with a metal `mat=`. For a chain following a path, generate the chain unit and `conform` it onto a target.
+module "chain" (pairs=4, link_radius=0.05, wire=0.012) {
+  // Per pair: link_a at the pair origin, link_b shifted by `link_radius`
+  // along X and rotated 90° around Z so its tube ring sits in the YZ
+  // plane. The shift equals the major radius so link_b's ring intersects
+  // link_a's plane right at the inside edge of link_a's tube — the rings
+  // visually overlap by one wire diameter, which reads as interlocked.
+  // Pair-to-pair step is twice the per-pair shift so successive pairs
+  // line up edge-to-edge with no extra gap.
+  grid "chain" (
+    count=[$pairs, 1, 1],
+    step=[$link_radius * 2, 0, 0],
+    center=1
+  ) {
+    group "pair" {
+      torus "link_a" (
+        major=$link_radius, minor=$wire,
+        major_segments=16, minor_segments=8
+      )
+      torus "link_b" (
+        pos=[$link_radius, 0, 0],
+        rot=[0, 0, 90],
+        major=$link_radius, minor=$wire,
+        major_segments=16, minor_segments=8
+      )
+    }
+  }
+}

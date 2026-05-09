@@ -8,7 +8,7 @@ use mogen_llm::{
     StdlibIndex, ThinkingLevel, DEFAULT_TTL_SECONDS,
 };
 
-use crate::common::{build_llm_client, resolve_model};
+use crate::common::{build_llm_client, resolve_model, GeminiAuthMode};
 
 pub(crate) fn bench(
     prompts_path: PathBuf,
@@ -19,8 +19,9 @@ pub(crate) fn bench(
     api_key: Option<String>,
     no_cache: bool,
     thinking: ThinkingLevel,
+    auth: GeminiAuthMode,
 ) -> Result<()> {
-    let client = build_llm_client(provider, api_key)?;
+    let client = build_llm_client(provider, api_key, auth)?;
     let model = resolve_model(provider, model);
 
     let content = fs::read_to_string(&prompts_path)

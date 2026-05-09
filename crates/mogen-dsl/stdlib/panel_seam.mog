@@ -1,0 +1,4 @@
+// summary: Panel seam — thin dark line for hard-surface panel joins (car body seams, robot armor splits, console trim). Sits with its top face at y=0 (anchor=top) so it lies flush on the +Y face of a host. Default 0.5m long, 2mm wide, 0.5mm deep. Wrap in a group with a dark `mat=` ("seam_dark") and rotate as needed for vertical/diagonal seams.
+module "panel_seam" (length=0.5, width=0.002, depth=0.0005) {
+  box "panel_seam" (size=[$length, $depth, $width], anchor=top)
+}

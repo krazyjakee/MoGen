@@ -16,6 +16,10 @@ fn span_of(p: &Pair<Rule>) -> Span {
 struct DslParser;
 
 pub fn parse(source: &str) -> Result<Vec<Node>> {
+    // BOM tolerance lives in the grammar (`bom_? ` in the `file` rule),
+    // not here — stripping the BOM in this function would shift all
+    // returned `Span` byte offsets by 3 vs the source the caller renders
+    // diagnostics against.
     let mut pairs = DslParser::parse(Rule::file, source).context("parse error")?;
     let file = pairs.next().ok_or_else(|| anyhow!("empty parse"))?;
     let mut nodes = Vec::new();
@@ -272,6 +276,21 @@ fn build_list(val_pair: Pair<Rule>) -> Result<Value> {
 fn build_expr(pair: Pair<Rule>) -> Result<Expr> {
     debug_assert_eq!(pair.as_rule(), Rule::expr);
     let mut inner = pair.into_inner();
+    let lhs = build_sum(inner.next().unwrap())?;
+    if let Some(op_pair) = inner.next() {
+        // The single optional comparison: `lhs <op> rhs`. The grammar
+        // forbids chained comparisons (`a < b < c` won't parse) — keep
+        // the C-vs-Python ambiguity out of v1.
+        let op = parse_cmp_op(op_pair.as_str())?;
+        let rhs = build_sum(inner.next().unwrap())?;
+        return Ok(Expr::Bin(Box::new(lhs), op, Box::new(rhs)));
+    }
+    Ok(lhs)
+}
+
+fn build_sum(pair: Pair<Rule>) -> Result<Expr> {
+    debug_assert_eq!(pair.as_rule(), Rule::sum);
+    let mut inner = pair.into_inner();
     let mut lhs = build_term(inner.next().unwrap())?;
     while let Some(op_pair) = inner.next() {
         let op = parse_op(op_pair.as_str())?;
@@ -314,6 +333,38 @@ fn parse_op(s: &str) -> Result<BinOp> {
     }
 }
 
+fn parse_cmp_op(s: &str) -> Result<BinOp> {
+    match s {
+        "<"  => Ok(BinOp::Lt),
+        "<=" => Ok(BinOp::Le),
+        ">"  => Ok(BinOp::Gt),
+        ">=" => Ok(BinOp::Ge),
+        "==" => Ok(BinOp::Eq),
+        "!=" => Ok(BinOp::Ne),
+        other => Err(anyhow!("unknown comparison operator {other}")),
+    }
+}
+
 fn unquote(s: &str) -> String {
     s.trim_matches('"').to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse;
+
+    #[test]
+    fn parses_source_with_leading_bom() {
+        let src = "\u{feff}meta (name=\"x\")\n";
+        let nodes = parse(src).expect("BOM-prefixed source should parse");
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].kind, "meta");
+        // Spans must reference the *original* source (with BOM still in
+        // place) so that diagnostics rendered against `src` highlight the
+        // correct text. A previous implementation stripped the BOM in
+        // parse() and shifted every span 3 bytes early — the assertion
+        // below rejects that regression.
+        let s = nodes[0].kind_span;
+        assert_eq!(&src[s.start..s.end], "meta");
+    }
 }

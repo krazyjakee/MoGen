@@ -33,6 +33,23 @@ const STDLIB_FILES: &[(&str, &str)] = &[
     ("eye.mog",                   include_str!("../stdlib/eye.mog")),
     ("leaf.mog",                  include_str!("../stdlib/leaf.mog")),
     ("branch.mog",                include_str!("../stdlib/branch.mog")),
+    // Detailing modules — small parametric details that compose into hard-surface,
+    // organic, or decorative parts. Each is documented in `docs/modules.md`.
+    ("bolt_circle.mog",           include_str!("../stdlib/bolt_circle.mog")),
+    ("vent_strip.mog",            include_str!("../stdlib/vent_strip.mog")),
+    ("panel_seam.mog",            include_str!("../stdlib/panel_seam.mog")),
+    ("rivet_line.mog",            include_str!("../stdlib/rivet_line.mog")),
+    ("step_taper.mog",            include_str!("../stdlib/step_taper.mog")),
+    ("cable.mog",                 include_str!("../stdlib/cable.mog")),
+    ("chain.mog",                 include_str!("../stdlib/chain.mog")),
+    ("feather_card.mog",          include_str!("../stdlib/feather_card.mog")),
+    ("scale_band.mog",            include_str!("../stdlib/scale_band.mog")),
+    ("gear.mog",                  include_str!("../stdlib/gear.mog")),
+    // Organic shape wrappers — sensible defaults over Phase D primitives.
+    ("spring.mog",                include_str!("../stdlib/spring.mog")),
+    ("terrain_patch.mog",         include_str!("../stdlib/terrain_patch.mog")),
+    ("blob.mog",                  include_str!("../stdlib/blob.mog")),
+    ("water_patch.mog",           include_str!("../stdlib/water_patch.mog")),
 ];
 
 static STDLIB: OnceLock<ModuleRegistry> = OnceLock::new();
@@ -147,6 +164,10 @@ mod tests {
             assert!(
                 !scene.nodes.is_empty(),
                 "stdlib module `{name}` produced an empty scene graph",
+            );
+            assert!(
+                scene.nodes.iter().any(|n| n.mesh.is_some()),
+                "stdlib module `{name}` lowered without producing any mesh",
             );
         }
     }
