@@ -85,8 +85,8 @@ pub fn extrude_mesh(
         let (flat, hole_idx) = pack_polygon_for_earcut(outer, holes);
         match earcutr::earcut(&flat, &hole_idx, 2) {
             Ok(tri) => {
-                // Bottom cap (normal -Y) — wind triangles CW so the front
-                // face points down. Top cap (normal +Y) — keep CCW.
+                // Bottom cap (normal -Y) uses earcut's natural winding;
+                // top cap (normal +Y) reverses it. See [`push_cap`].
                 push_cap(
                     &mut mesh,
                     outer,
@@ -242,16 +242,18 @@ fn push_cap(
     }
 
     // Emit triangles — earcut returns indices into the packed vertex
-    // sequence (outer first, then each hole concatenated). Reverse the
-    // winding for the bottom cap so its front face points -Y.
+    // sequence (outer first, then each hole concatenated). Earcut's CCW
+    // output, read as 3D positions in the XZ plane, gives a -Y face
+    // normal (CCW in [x,z] = CW when viewed from +Y). So earcut's natural
+    // winding lands on the bottom cap, and the top cap reverses it.
     for c in tri.chunks(3) {
         let a = base + c[0] as u32;
         let b = base + c[1] as u32;
         let d = base + c[2] as u32;
         if top {
-            mesh.indices.extend_from_slice(&[a, b, d]);
-        } else {
             mesh.indices.extend_from_slice(&[a, d, b]);
+        } else {
+            mesh.indices.extend_from_slice(&[a, b, d]);
         }
     }
 }
@@ -406,6 +408,30 @@ mod tests {
             }
         }
         assert!(found_rotation, "twist should rotate the top ring 45°");
+    }
+
+    #[test]
+    fn caps_face_outward() {
+        // Bottom cap should have -Y face normals; top cap should have +Y.
+        let mesh = extrude_mesh(&unit_square(), &[], 1.0, 1.0, 0.0, true, UvMode::default());
+        let mut top_ny = 0.0f32;
+        let mut bot_ny = 0.0f32;
+        let mut top_n = 0;
+        let mut bot_n = 0;
+        for tri in mesh.indices.chunks_exact(3) {
+            let pa = mesh.positions[tri[0] as usize];
+            let pb = mesh.positions[tri[1] as usize];
+            let pc = mesh.positions[tri[2] as usize];
+            let avg_y = (pa[1] + pb[1] + pc[1]) / 3.0;
+            let e1 = [pb[0]-pa[0], pb[1]-pa[1], pb[2]-pa[2]];
+            let e2 = [pc[0]-pa[0], pc[1]-pa[1], pc[2]-pa[2]];
+            let ny = e1[2]*e2[0] - e1[0]*e2[2];
+            if avg_y > 0.4 { top_ny += ny; top_n += 1; }
+            if avg_y < -0.4 { bot_ny += ny; bot_n += 1; }
+        }
+        assert!(top_n > 0 && bot_n > 0, "expected both caps present");
+        assert!(top_ny > 0.0, "top cap normal should be +Y, got Ny sum {top_ny}");
+        assert!(bot_ny < 0.0, "bottom cap normal should be -Y, got Ny sum {bot_ny}");
     }
 
     fn aabb(positions: &[[f32; 3]]) -> ([f32; 3], [f32; 3]) {
