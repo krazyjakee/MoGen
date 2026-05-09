@@ -159,6 +159,12 @@ impl Viewer {
         st.pick_cycle = None;
     }
 
+    /// True when no scene is loaded yet (fresh launch with an empty buffer).
+    /// Used by the viewport overlay to render a help message.
+    pub fn has_scene(&self) -> bool {
+        self.state.lock().unwrap().scene.is_some()
+    }
+
     /// Replace the selection with a single node (or clear it). Equivalent
     /// to a plain click in the viewport.
     pub fn set_primary_selection(&self, id: Option<NodeId>) {

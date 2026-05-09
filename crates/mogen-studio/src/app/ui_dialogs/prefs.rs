@@ -309,10 +309,18 @@ impl MogenStudioApp {
                     // expose a binary-path override for non-PATH installs.
                     ui.heading("Claude Code binary");
                     ui.label(
-                        "Auth is handled by your local `claude` install \
-                         (run `claude /login` if you haven't yet). Used by \
-                         Generate / Modify / Animate / Ask. Image generation \
-                         (Textures) still requires Gemini.",
+                        "Auth is handled by your local `claude` install — \
+                         run `claude` in a terminal and use the `/login` \
+                         slash command if you haven't yet. Used by Generate \
+                         / Modify / Animate / Ask.",
+                    );
+                    ui.label(
+                        egui::RichText::new(
+                            "Note: image generation (Textures) always uses \
+                             Gemini. Set a Gemini API key on the Gemini slot \
+                             above.",
+                        )
+                        .weak(),
                     );
                     ui.add_space(6.0);
                     ui.label("Path (optional)").on_hover_text(
@@ -344,15 +352,21 @@ impl MogenStudioApp {
                     ui.label(match active_provider {
                         Provider::Gemini => {
                             "Used by Generate / Modify / Animate / Textures. Stored in your \
-                             user config directory and persists between sessions."
+                             user config directory and persists between sessions. The \
+                             $GEMINI_API_KEY environment variable is used when this field \
+                             is blank."
                         }
                         Provider::OpenAI => {
                             "Used by Generate / Modify / Animate / Ask. Stored in your \
-                             user config directory and persists between sessions."
+                             user config directory and persists between sessions. The \
+                             $OPENAI_API_KEY environment variable is used when this field \
+                             is blank."
                         }
                         Provider::Anthropic => {
                             "Used by Generate / Modify / Animate / Ask. Stored in your \
-                             user config directory and persists between sessions."
+                             user config directory and persists between sessions. The \
+                             $ANTHROPIC_API_KEY environment variable is used when this \
+                             field is blank."
                         }
                         Provider::Ollama => {
                             "Optional bearer token for an Ollama endpoint behind an \

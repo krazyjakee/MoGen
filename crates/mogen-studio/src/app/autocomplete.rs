@@ -286,7 +286,7 @@ fn render_item(ui: &mut egui::Ui, c: &Candidate, selected: bool) -> bool {
         // Narrow, fixed-width tag column so the labels align.
         let tag_fmt = egui::TextFormat {
             color: tag_color,
-            font_id: egui::TextStyle::Small.resolve(ui.style()),
+            font_id: egui::TextStyle::Body.resolve(ui.style()),
             ..Default::default()
         };
         job.append(&format!("{tag:<5}"), 0.0, tag_fmt);
@@ -299,7 +299,7 @@ fn render_item(ui: &mut egui::Ui, c: &Candidate, selected: bool) -> bool {
         if let Some(detail) = c.detail {
             let detail_fmt = egui::TextFormat {
                 color: ui.visuals().weak_text_color(),
-                font_id: egui::TextStyle::Small.resolve(ui.style()),
+                font_id: egui::TextStyle::Body.resolve(ui.style()),
                 ..Default::default()
             };
             job.append(&format!("   {detail}"), 0.0, detail_fmt);

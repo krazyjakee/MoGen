@@ -580,7 +580,15 @@ impl MogenStudioApp {
                                     }
                                 }
                                 if picker.entries.is_empty() {
-                                    ui.weak("(no .mog files here)");
+                                    ui.add_space(8.0);
+                                    ui.label(
+                                        egui::RichText::new("No .mog files in this folder")
+                                            .strong(),
+                                    );
+                                    ui.label(
+                                        "Browse to a different directory using the path \
+                                         bar above, or use \"New folder\" to create one.",
+                                    );
                                 }
                             });
                         });
@@ -871,8 +879,8 @@ fn paint_cell(
     painter.text(
         label_rect.center_top() + egui::vec2(0.0, 2.0),
         egui::Align2::CENTER_TOP,
-        truncate_for_cell(&entry.name, 22),
-        egui::TextStyle::Small.resolve(ui.style()),
+        truncate_for_cell(&entry.name, 18),
+        egui::TextStyle::Body.resolve(ui.style()),
         label_color,
     );
 
@@ -936,7 +944,7 @@ fn paint_thumb_placeholder(
         rect.center(),
         egui::Align2::CENTER_CENTER,
         label,
-        egui::TextStyle::Small.resolve(&egui::Style::default()),
+        egui::TextStyle::Body.resolve(&egui::Style::default()),
         visuals.weak_text_color(),
     );
 }

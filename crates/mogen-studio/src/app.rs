@@ -100,7 +100,7 @@ struct InitProgress {
 /// Floor on splash visibility (ms). Shorter and the splash flashes; longer
 /// and it feels like the app is dragging. Tuned to feel deliberate without
 /// holding up users on cold launch with no tabs to restore.
-const SPLASH_MIN_DWELL_MS: u128 = 4000;
+const SPLASH_MIN_DWELL_MS: u128 = 1800;
 
 /// Maximum recently-closed paths held for Ctrl+Shift+T reopen. Matches the
 /// settings `recent_files` cap so the two lists feel comparable; older
