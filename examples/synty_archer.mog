@@ -1,0 +1,14 @@
+scene {
+  use "humanoid_full" (
+    height=1.7,
+    skin=[0.82, 0.62, 0.50],
+    shirt=[0.30, 0.45, 0.25],
+    pants=[0.22, 0.28, 0.18],
+    boot=[0.12, 0.10, 0.08],
+    hair=[0.30, 0.20, 0.10]
+  )
+  use "outfit_hat_brimmed" (color=[0.30, 0.45, 0.25])
+  use "outfit_backpack" (color=[0.50, 0.32, 0.20])
+  use "outfit_belt" ()
+  use "humanoid_run" ()
+}

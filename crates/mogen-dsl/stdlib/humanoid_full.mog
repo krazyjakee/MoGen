@@ -103,7 +103,7 @@ module "humanoid_full" (
 
   // Head (skin material). Single chamfered_box block — the cranium.
   chamfered_box "head" (
-    pos=[0, $height * 0.920, 0],
+    pos=[0, $height * 0.890, 0],
     size=[$height * 0.105, $height * 0.118, $height * 0.105],
     radius=$height * 0.010,
     mat="skin", skin="rig", bind="neck", faceted=1
@@ -114,25 +114,34 @@ module "humanoid_full" (
     connector "face"  (at=[0,                0,                $height * -0.052], dir=[0,  0, -1], tag=face)
   }
 
+  // Neck — short chamfered_box bridging the head and the torso so there's
+  // no visible gap. Bound to neck so it tracks the head with no shear.
+  chamfered_box "neck_block" (
+    pos=[0, $height * 0.815, 0],
+    size=[$height * 0.055, $height * 0.040, $height * 0.055],
+    radius=$height * 0.006,
+    mat="skin", skin="rig", bind="neck", faceted=1
+  )
+
   // Hybrid face: subtle nose/brow geometry + flat painted face panel.
   // Painted on a quad sitting just in front of the head's front face (-Z
   // forward in glTF). Quad is NOT unioned with the head — CSG strips UVs,
   // and the panel needs a clean [0,1]² UV layout for the texture pipeline.
   quad "face_panel" (
-    pos=[0, $height * 0.920, $height * -0.054],
+    pos=[0, $height * 0.890, $height * -0.054],
     size=[$height * 0.090, $height * 0.082],
     mat="face", uv_mode="fit", skin="rig", bind="neck", faceted=1
   )
   // Nose: small chamfered_box protruding forward (-Z) from the face center.
   chamfered_box "nose" (
-    pos=[0, $height * 0.915, $height * -0.062],
+    pos=[0, $height * 0.885, $height * -0.062],
     size=[$height * 0.014, $height * 0.025, $height * 0.022],
     radius=$height * 0.004,
     mat="skin", skin="rig", bind="neck", faceted=1
   )
   // Brow ridge: thin chamfered_box across the upper face.
   chamfered_box "brow" (
-    pos=[0, $height * 0.945, $height * -0.058],
+    pos=[0, $height * 0.915, $height * -0.058],
     size=[$height * 0.080, $height * 0.012, $height * 0.014],
     radius=$height * 0.003,
     mat="skin", skin="rig", bind="neck", faceted=1

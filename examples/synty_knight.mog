@@ -1,0 +1,15 @@
+scene {
+  use "humanoid_full" (
+    height=1.7,
+    skin=[0.85, 0.65, 0.55],
+    shirt=[0.50, 0.52, 0.55],
+    pants=[0.30, 0.30, 0.32],
+    boot=[0.10, 0.10, 0.10]
+  )
+  use "outfit_helmet" (color=[0.65, 0.66, 0.70], visor_color=[0.30, 0.32, 0.34])
+  use "outfit_cape" (color=[0.62, 0.18, 0.18])
+  use "outfit_belt" ()
+  use "equip_sword" ()
+  use "equip_shield" ()
+  use "humanoid_walk" ()
+}
