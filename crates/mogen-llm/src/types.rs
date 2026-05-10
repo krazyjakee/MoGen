@@ -84,9 +84,11 @@ impl ThinkingLevel {
 }
 
 /// One image attached to the user turn. Sent to providers that support
-/// vision input (currently Gemini only) as a base64-encoded inline-data part
-/// alongside the text prompt; non-vision providers silently ignore the field.
-/// Used by Studio's "New from Prompt" dialog to enable image-to-3D generation.
+/// vision input (see [`crate::Provider::supports_images`]) as a base64-encoded
+/// inline part alongside the text prompt — `inline_data` for Gemini,
+/// `image_url` data-URI for OpenAI Chat Completions. Non-vision providers
+/// silently ignore the field. Used by Studio's "New from Prompt" dialog to
+/// enable image-to-3D generation.
 #[derive(Debug, Clone)]
 pub struct ImageInput {
     /// MIME type, e.g. `"image/png"` or `"image/jpeg"`. Must start with

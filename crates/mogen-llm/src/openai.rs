@@ -1,23 +1,30 @@
 //! OpenAI Chat Completions client.
 //!
 //! Talks to `POST {base_url}/chat/completions` with the standard
-//! `messages: [{role, content}]` shape. Supports the GPT-4/4o/4.1/5 line and
-//! the o-series reasoning models — the latter pick up [`ThinkingLevel`] via
-//! the `reasoning.effort` field, which non-reasoning models silently ignore.
+//! `messages: [{role, content}]` shape. Supports the GPT-4o/4.1/5/5.5 line
+//! and the o-series reasoning models — the latter pick up [`ThinkingLevel`]
+//! via the top-level `reasoning_effort` field. We only emit that field for
+//! models that accept it: current OpenAI Chat Completions rejects unknown
+//! parameters with a 400, so sending it unconditionally would break
+//! non-reasoning models like `gpt-4o`. Vision input (`cfg.user_images`) is
+//! sent as `image_url` content parts on the user turn.
 
 use std::time::Duration;
 
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::Deserialize;
 use thiserror::Error;
 
-use crate::types::{GenerateConfig, GenerateResponse, ThinkingLevel, Usage};
+use crate::types::{GenerateConfig, GenerateResponse, Usage};
 
-/// Default heavy text model. Picked for broad availability and a sensible
-/// quality/cost ratio for structured-output tasks like DSL generation.
-pub const DEFAULT_MODEL: &str = "gpt-4o";
+/// Default heavy text model. GPT-5.5 (Apr 2026) — current frontier model
+/// with a 1M+ token context window and native multimodal input.
+pub const DEFAULT_MODEL: &str = "gpt-5.5";
 
 /// Default fast model used by the Studio Prompt Enhancer / Ask modal.
-pub const DEFAULT_FAST_MODEL: &str = "gpt-4o-mini";
+/// `gpt-5-mini` is the cheapest current-generation multimodal option; no
+/// `gpt-5.5-mini` exists yet.
+pub const DEFAULT_FAST_MODEL: &str = "gpt-5-mini";
 
 const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
 
@@ -121,6 +128,17 @@ impl OpenAIClient {
     }
 }
 
+/// Whether the model accepts the `reasoning_effort` field. Non-reasoning
+/// models (`gpt-4o`, `gpt-4.1`, …) now 400 on unknown params, so we gate.
+/// Prefix-matched so dated suffixes like `gpt-5.5-2026-04-23` still hit.
+fn is_reasoning_model(model: &str) -> bool {
+    let m = model.trim();
+    m.starts_with("o1")
+        || m.starts_with("o3")
+        || m.starts_with("o4")
+        || m.starts_with("gpt-5")
+}
+
 fn build_request(cfg: &GenerateConfig) -> serde_json::Value {
     let mut messages: Vec<serde_json::Value> = Vec::new();
     if let Some(sys) = &cfg.system_instruction {
@@ -132,10 +150,28 @@ fn build_request(cfg: &GenerateConfig) -> serde_json::Value {
             "content": turn.text,
         }));
     }
-    messages.push(serde_json::json!({
-        "role": "user",
-        "content": cfg.user_prompt,
-    }));
+
+    // User turn: a plain string when no images are attached (cheaper to
+    // serialize, matches what we send on repair iterations), or an array of
+    // typed content parts when there are. OpenAI accepts `image_url` parts
+    // with either an https URL or a `data:` URI; we always inline as base64
+    // so callers don't need an upload step.
+    let user_content = if cfg.user_images.is_empty() {
+        serde_json::json!(cfg.user_prompt)
+    } else {
+        let mut parts: Vec<serde_json::Value> =
+            Vec::with_capacity(cfg.user_images.len() + 1);
+        for img in &cfg.user_images {
+            let url = format!("data:{};base64,{}", img.mime_type, STANDARD.encode(&img.data));
+            parts.push(serde_json::json!({
+                "type": "image_url",
+                "image_url": { "url": url },
+            }));
+        }
+        parts.push(serde_json::json!({ "type": "text", "text": cfg.user_prompt }));
+        serde_json::json!(parts)
+    };
+    messages.push(serde_json::json!({ "role": "user", "content": user_content }));
 
     let mut req = serde_json::json!({
         "model": cfg.model,
@@ -146,16 +182,13 @@ fn build_request(cfg: &GenerateConfig) -> serde_json::Value {
         req["temperature"] = serde_json::json!(t);
     }
     if let Some(s) = cfg.seed {
-        // OpenAI accepts seed as a 64-bit signed integer.
         req["seed"] = serde_json::json!(s as i64);
     }
     if let Some(level) = cfg.thinking_level {
-        // o-series and gpt-5 reasoning models accept this; non-reasoning
-        // models silently ignore unknown top-level fields. We send it
-        // unconditionally to keep the request shape uniform.
-        req["reasoning"] = serde_json::json!({ "effort": level.openai_effort() });
+        if is_reasoning_model(&cfg.model) {
+            req["reasoning_effort"] = serde_json::json!(level.openai_effort());
+        }
     }
-    let _ = ThinkingLevel::Low; // keep ThinkingLevel imported even if pruned later
     req
 }
 
@@ -214,12 +247,12 @@ struct RawPromptDetails {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{Role, Turn};
+    use crate::types::{ImageInput, Role, ThinkingLevel, Turn};
 
     #[test]
     fn request_body_includes_system_message() {
         let mut cfg = GenerateConfig::new("hello");
-        cfg.model = "gpt-4o".into();
+        cfg.model = "gpt-5.5".into();
         cfg.system_instruction = Some("be helpful".into());
         let body = build_request(&cfg);
         let messages = body["messages"].as_array().unwrap();
@@ -232,7 +265,7 @@ mod tests {
     #[test]
     fn request_body_threads_history_with_assistant_role() {
         let mut cfg = GenerateConfig::new("again");
-        cfg.model = "gpt-4o".into();
+        cfg.model = "gpt-5.5".into();
         cfg.history.push(Turn { role: Role::User, text: "make a chair".into() });
         cfg.history.push(Turn { role: Role::Model, text: "scene { box }".into() });
         let body = build_request(&cfg);
@@ -244,7 +277,7 @@ mod tests {
     #[test]
     fn request_body_includes_seed_and_temperature() {
         let mut cfg = GenerateConfig::new("x");
-        cfg.model = "gpt-4o".into();
+        cfg.model = "gpt-5.5".into();
         cfg.seed = Some(7);
         cfg.temperature = Some(0.42);
         let body = build_request(&cfg);
@@ -253,12 +286,57 @@ mod tests {
     }
 
     #[test]
-    fn request_body_emits_reasoning_effort_for_thinking_level() {
-        let mut cfg = GenerateConfig::new("x");
-        cfg.model = "gpt-4o".into();
-        cfg.thinking_level = Some(ThinkingLevel::High);
+    fn reasoning_effort_emitted_for_reasoning_models() {
+        for model in ["o3", "o4-mini", "gpt-5", "gpt-5-mini", "gpt-5.5", "gpt-5.5-pro"] {
+            let mut cfg = GenerateConfig::new("x");
+            cfg.model = model.into();
+            cfg.thinking_level = Some(ThinkingLevel::High);
+            let body = build_request(&cfg);
+            assert_eq!(body["reasoning_effort"], "high", "{model} should accept reasoning_effort");
+            assert!(body.get("reasoning").is_none(), "{model} must not emit nested reasoning");
+        }
+    }
+
+    #[test]
+    fn reasoning_effort_omitted_for_non_reasoning_models() {
+        for model in ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini"] {
+            let mut cfg = GenerateConfig::new("x");
+            cfg.model = model.into();
+            cfg.thinking_level = Some(ThinkingLevel::High);
+            let body = build_request(&cfg);
+            assert!(
+                body.get("reasoning_effort").is_none(),
+                "{model} must not receive reasoning_effort (server 400s on unknown params)",
+            );
+        }
+    }
+
+    #[test]
+    fn user_turn_is_string_when_no_images() {
+        let mut cfg = GenerateConfig::new("hello");
+        cfg.model = "gpt-5.5".into();
         let body = build_request(&cfg);
-        assert_eq!(body["reasoning"]["effort"], "high");
+        let last = body["messages"].as_array().unwrap().last().unwrap();
+        assert_eq!(last["content"], "hello");
+    }
+
+    #[test]
+    fn user_turn_emits_image_url_parts_when_images_attached() {
+        let mut cfg = GenerateConfig::new("describe this");
+        cfg.model = "gpt-5.5".into();
+        cfg.user_images.push(ImageInput {
+            mime_type: "image/png".into(),
+            data: vec![0x89, 0x50, 0x4e, 0x47],
+        });
+        let body = build_request(&cfg);
+        let last = body["messages"].as_array().unwrap().last().unwrap();
+        let parts = last["content"].as_array().expect("content should be array of parts");
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0]["type"], "image_url");
+        let url = parts[0]["image_url"]["url"].as_str().unwrap();
+        assert!(url.starts_with("data:image/png;base64,"), "got {url}");
+        assert_eq!(parts[1]["type"], "text");
+        assert_eq!(parts[1]["text"], "describe this");
     }
 
     #[test]

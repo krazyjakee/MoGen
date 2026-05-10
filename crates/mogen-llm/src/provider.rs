@@ -176,10 +176,11 @@ impl Provider {
     /// attach a reference image alongside the text prompt and the model
     /// will read it. Drives the Studio's image-to-3D Generate flow and
     /// gates the auto-refine button (which feeds rendered scene PNGs
-    /// back to the model). Today: Gemini, Z.ai (`glm-5v-turbo`),
-    /// Fireworks (Kimi K2.5/K2.6 are native multimodal), and Claude Code
-    /// (`claude --print` resolves filesystem-path image references via
-    /// the model's built-in `Read` tool).
+    /// back to the model). Today: Gemini, OpenAI (all current `gpt-4o`/
+    /// `gpt-4.1`/`gpt-5`/`gpt-5.5` models are multimodal), Z.ai
+    /// (`glm-5v-turbo`), Fireworks (Kimi K2.5/K2.6 are native multimodal),
+    /// and Claude Code (`claude --print` resolves filesystem-path image
+    /// references via the model's built-in `Read` tool).
     ///
     /// This is **not** about image *generation* (the textures pipeline) —
     /// that lives behind the `ImageProvider` enum in the Studio settings.
@@ -187,6 +188,7 @@ impl Provider {
         matches!(
             self,
             Provider::Gemini
+                | Provider::OpenAI
                 | Provider::Zai
                 | Provider::Fireworks
                 | Provider::ClaudeCode

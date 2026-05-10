@@ -196,7 +196,7 @@ The file is plain JSON. A minimal example:
 | Provider     | `--provider` value | Default model                              | Env var               |
 | ------------ | ------------------ | ------------------------------------------ | --------------------- |
 | Gemini       | `gemini`           | `gemini-pro-latest`                        | `GEMINI_API_KEY`      |
-| OpenAI       | `openai`           | `gpt-4o`                                   | `OPENAI_API_KEY`      |
+| OpenAI       | `openai`           | `gpt-5.5`                                  | `OPENAI_API_KEY`      |
 | Anthropic    | `anthropic`        | `claude-sonnet-4-5`                        | `ANTHROPIC_API_KEY`   |
 | Ollama       | `ollama`           | `llama3.1`                                 | `OLLAMA_API_KEY` \*   |
 | Claude Code  | `claude-code`      | `sonnet` (delegates to `claude` CLI)       | — (subscription)      |
