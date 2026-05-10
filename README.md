@@ -1,7 +1,5 @@
 # MoGen — procedural 3D model generator
 
-Website: <https://krazyjakee.github.io/MoGen/>
-
 `mogen` turns a compact, declarative DSL into `.glb` assets. It is designed to be the
 deterministic backend of an LLM-driven 3D generation pipeline: the language model writes
 high-level structured scenes, `mogen` expands them into real geometry.
@@ -92,8 +90,7 @@ wasm-pack build crates/mogen-wasm --target web \
 
 The first wasm-pack invocation clones Manifold + Clipper2 + wasm-cxx-shim
 and runs three cmake cross-compiles; subsequent builds use the cached
-artifacts. `./site/build.sh` automates the full playground bundle (wasm-pack
-+ Vite) for the gh-pages deploy.
+artifacts.
 
 Currently disabled in the browser: texture packing (no fs / no oxipng cross-
 compile), the LLM `generate`/`modify`/`animate` flows (server-only), and
