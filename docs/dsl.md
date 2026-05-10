@@ -72,6 +72,12 @@ meta (
 | `description` | string | author | one-line summary |
 | `tags` | list of string | author | free-form labels |
 | `style` | string | toolchain | visual-style hint stamped by `mogen generate --style …` (or Studio's "New from Prompt" dropdown). One of `ps1`, `n64`, `low_poly`, `high_detail`, `arcade`, `voxel`, `cel_shaded`, `stylized_fantasy`, `cyberpunk`, `pixel_art`. The validator accepts any string so hand-edited experimental keys still load; `mogen` and Studio inherit the value on `modify` / `animate` / `repair` so styled files stay styled. |
+| `seed` | string | toolchain | random seed stamped by `mogen generate` / `modify` so rebuilds are reproducible. Round-trips through edits. |
+| `thinking` | string | toolchain | per-file Gemini thinking budget stamped alongside `seed`; survives `modify` so the original budget keeps applying. |
+| `prompt` | string | toolchain | original natural-language prompt that produced the file; round-trips through `modify` so the LLM can revise against the source intent. |
+| `moghub_model_id` | string | toolchain | stamped by Studio's Publish dialog after a successful MoGHub upload; reused on subsequent publishes to republish into the same model. |
+| `moghub_slug` | string | toolchain | MoGHub slug for the published model — paired with `moghub_model_id`. |
+| `moghub_version` | string | toolchain | last-published MoGHub version string — paired with `moghub_model_id`. |
 
 The block is purely informational — it's not consumed by the geometry
 pipeline. It survives lowering on `SceneGraph::meta` so tooling (Studio,
@@ -154,10 +160,12 @@ Every `value` on the right side of an attribute is one of:
 | string | `"wood"` | used for names and references |
 | ident | `wood`, `y` | no quotes; used for axes and enum-like values |
 | expression | `$height * 0.5`, `$r + 0.1`, `($a - $b) / 2` | arithmetic over `$param` refs |
+| comparison | `$h > 0`, `$count == 4`, `$a != $b` | `<`, `<=`, `>`, `>=`, `==`, `!=` — used in `if` conditions and `for` ranges |
 
 Inside `module` bodies, any expression may reference a declared parameter as
 `$name`. Expressions support `+ - * /` with conventional precedence and
-parentheses. An expression is evaluated at module-expansion time — by the
+parentheses, plus the six comparison operators above for control-flow
+conditions. An expression is evaluated at module-expansion time — by the
 time the scene graph is built, every `$name` has been replaced with a
 concrete number.
 
@@ -1205,9 +1213,11 @@ module "leg" (height=0.5, radius=0.05) {
 
 Parameters:
 
-- Each parameter has a **scalar default** (number or expression). `vec3`,
-  `list`, string, or ident defaults are rejected — `$param` substitution is
-  numeric.
+- Each parameter has a default that is either a **scalar** (number or
+  `$param`-expression) or a **constant `vec3`** (e.g. `offset=[0, 1, 0]`).
+  vec3 defaults must be fully constant — components referencing other
+  parameters are rejected because parameter defaults are evaluated before
+  the binding scope exists. `list`, string, and ident defaults are rejected.
 - Parameters are referenced inside the body as `$name`. They participate in
   `pos`, `rot`, `scale`, `radius`, `height`, etc., and inside nested `vec3`
   expressions like `[0, $h * 0.5, 0]`.
