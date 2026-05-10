@@ -88,6 +88,20 @@ pub fn framed_section<R>(
     resp.inner
 }
 
+/// Lightweight subsection divider for sidebar panels. Draws a thin
+/// horizontal rule, a small spacer, and a bold heading. Use *inside*
+/// an existing `CollapsingHeader` (for example, to break the LLM
+/// panel into Modify / Animate / Repair / Textures groups) where
+/// another nested collapsible would feel cluttered. For top-level
+/// inspector sections use [`section`] instead.
+pub fn sub_section_header(ui: &mut egui::Ui, title: &str) {
+    ui.add_space(8.0);
+    ui.separator();
+    ui.add_space(4.0);
+    ui.label(egui::RichText::new(title).strong());
+    ui.add_space(2.0);
+}
+
 /// Inline ⓘ + weak-text hint row. Replaces `colored_label` for
 /// informational notes (env-var precedence, "Auto → resolved to …", etc.)
 /// so only true alerts get colour.

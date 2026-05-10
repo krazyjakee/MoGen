@@ -1,0 +1,187 @@
+meta (name = "usa_suburban_house", description = "a typical USA suburban house with attached garage, porch, driveway, lawn, and gabled roofs", tags = ["architecture", "house", "suburban", "usa", "residential"], seed = "1778453749749783000", thinking = "high", prompt = "a typical usa suburban house", mogen_version = "0.1.5")
+
+material "grass" (color=[0.20, 0.48, 0.18], roughness=0.85, uv_mode="tile", uv_scale=2.5, prompt="neatly mowed suburban lawn grass")
+material "concrete" (color=[0.58, 0.56, 0.52], roughness=0.9, uv_mode="tile", uv_scale=1.2)
+material "siding" (color=[0.78, 0.72, 0.62], roughness=0.75, uv_mode="tile", uv_scale=2.0, prompt="cream vinyl clapboard siding")
+material "roof_shingle" (color=[0.18, 0.19, 0.20], roughness=0.9, uv_mode="tile", uv_scale=4.0, prompt="dark gray asphalt roof shingles")
+material "trim_white" (color=[0.92, 0.91, 0.86], roughness=0.65)
+material "window_glass" (color=[0.55, 0.75, 0.90], transmission=0.55, roughness=0.04)
+material "door_red" (color=[0.55, 0.10, 0.08], roughness=0.55)
+material "brass" (color=[0.95, 0.70, 0.25], metallic=0.8, roughness=0.25)
+material "brick" (color=[0.50, 0.18, 0.12], roughness=0.85, uv_mode="tile", uv_scale=3.0)
+material "utility_metal" (color=[0.62, 0.64, 0.65], metallic=0.4, roughness=0.45)
+material "dark_metal" (color=[0.12, 0.13, 0.14], metallic=0.7, roughness=0.35)
+
+scene {
+  slab "lawn" (size=[12.0, 0.04, 9.0], mat="grass") {
+    connector "foundation_pad" (at=[0, 0.04, 0], dir=[0, 1, 0])
+    connector "driveway_pad" (at=[2.8, 0.04, -4.0], dir=[0, 1, 0])
+  }
+
+  slab "foundation" (size=[8.8, 0.20, 4.8], mat="concrete") {
+    connector "main_pad" (at=[-1.4, 0.20, 0.0], dir=[0, 1, 0])
+    connector "garage_pad" (at=[2.8, 0.20, -0.2], dir=[0, 1, 0])
+  }
+
+  slab "driveway" (size=[3.3, 0.035, 4.0], mat="concrete")
+
+  box "main_body" (size=[5.4, 4.2, 4.2], mat="siding") {
+    connector "door_mount" (at=[0.00, -1.125, -2.10], dir=[0, 0, -1])
+    connector "window_fl_mount" (at=[-1.65, -0.65, -2.10], dir=[0, 0, -1])
+    connector "window_fr_mount" (at=[1.65, -0.65, -2.10], dir=[0, 0, -1])
+    connector "window_ul_mount" (at=[-1.65, 0.95, -2.10], dir=[0, 0, -1])
+    connector "window_ur_mount" (at=[1.65, 0.95, -2.10], dir=[0, 0, -1])
+    connector "rear_window_l_mount" (at=[-1.35, 0.30, 2.10], dir=[0, 0, 1])
+    connector "rear_window_r_mount" (at=[1.35, 0.30, 2.10], dir=[0, 0, 1])
+    connector "porch_slab_mount" (at=[0.00, -2.04, -2.10], dir=[0, 0, -1])
+    connector "porch_roof_mount" (at=[0.00, 0.225, -2.10], dir=[0, 0, -1])
+  }
+
+  box "garage_body" (size=[3.0, 2.4, 3.6], mat="siding") {
+    connector "garage_door_mount" (at=[0, -0.30, -1.80], dir=[0, 0, -1])
+    connector "ac_mount" (at=[1.50, -0.85, 0.80], dir=[1, 0, 0])
+  }
+
+  prism "main_roof" (size=[5.9, 1.3, 4.7], mat="roof_shingle") {
+    connector "front_gutter_mount" (at=[0, -0.42, -2.35], dir=[0, 0, -1])
+    connector "rear_gutter_mount" (at=[0, -0.42, 2.35], dir=[0, 0, 1])
+    connector "aerial_mount" (at=[1.75, 0.65, 0.35], dir=[0, 1, 0])
+  }
+  prism "garage_roof" (size=[3.4, 0.9, 4.0], mat="roof_shingle") {
+    connector "front_gutter_mount" (at=[0, -0.30, -2.00], dir=[0, 0, -1])
+  }
+
+  group "front_door" {
+    chamfered_box "door_slab" (size=[0.90, 1.95, 0.06], radius=0.025, mat="door_red") {
+      connector "knob_mount" (at=[0.32, 0, -0.03], dir=[0, 0, -1])
+    }
+    sphere "doorknob" (radius=0.04, mat="brass")
+    connector "wall_back" (at=[0, 0, 0.03], dir=[0, 0, 1], tag=plug)
+  }
+
+  group "window_fl" {
+    chamfered_box "window_fl_trim" (size=[1.05, 0.95, 0.07], radius=0.018, mat="trim_white")
+    box "window_fl_glass" (size=[0.78, 0.68, 0.075], mat="window_glass")
+    connector "wall_back" (at=[0, 0, 0.035], dir=[0, 0, 1], tag=plug)
+  }
+
+  group "window_fr" {
+    chamfered_box "window_fr_trim" (size=[1.05, 0.95, 0.07], radius=0.018, mat="trim_white")
+    box "window_fr_glass" (size=[0.78, 0.68, 0.075], mat="window_glass")
+    connector "wall_back" (at=[0, 0, 0.035], dir=[0, 0, 1], tag=plug)
+  }
+
+  group "window_ul" {
+    chamfered_box "window_ul_trim" (size=[1.05, 0.95, 0.07], radius=0.018, mat="trim_white")
+    box "window_ul_glass" (size=[0.78, 0.68, 0.075], mat="window_glass")
+    connector "wall_back" (at=[0, 0, 0.035], dir=[0, 0, 1], tag=plug)
+  }
+
+  group "window_ur" {
+    chamfered_box "window_ur_trim" (size=[1.05, 0.95, 0.07], radius=0.018, mat="trim_white")
+    box "window_ur_glass" (size=[0.78, 0.68, 0.075], mat="window_glass")
+    connector "wall_back" (at=[0, 0, 0.035], dir=[0, 0, 1], tag=plug)
+  }
+
+  group "rear_window_l" {
+    chamfered_box "rear_window_l_trim" (size=[1.05, 0.95, 0.07], radius=0.018, mat="trim_white")
+    box "rear_window_l_glass" (size=[0.78, 0.68, 0.075], mat="window_glass")
+    connector "wall_front" (at=[0, 0, -0.035], dir=[0, 0, -1], tag=plug)
+  }
+
+  group "rear_window_r" {
+    chamfered_box "rear_window_r_trim" (size=[1.05, 0.95, 0.07], radius=0.018, mat="trim_white")
+    box "rear_window_r_glass" (size=[0.78, 0.68, 0.075], mat="window_glass")
+    connector "wall_front" (at=[0, 0, -0.035], dir=[0, 0, -1], tag=plug)
+  }
+
+  group "garage_door" {
+    inset_box "garage_door_panel" (size=[2.55, 1.75, 0.08], face="front", amount=0.08, depth=0.02, mat="trim_white") {
+      connector "handle_mount" (at=[0, -0.45, -0.04], dir=[0, 0, -1])
+    }
+    chamfered_box "garage_door_handle" (size=[0.42, 0.05, 0.04], radius=0.01, mat="dark_metal") {
+      connector "wall_back" (at=[0, 0, 0.02], dir=[0, 0, 1], tag=plug)
+    }
+    connector "wall_back" (at=[0, 0, 0.04], dir=[0, 0, 1], tag=plug)
+  }
+
+  box "porch_slab" (size=[1.50, 0.12, 0.85], mat="concrete") {
+    connector "post_l" (at=[-0.55, 0.06, -0.28], dir=[0, 1, 0])
+    connector "post_r" (at=[0.55, 0.06, -0.28], dir=[0, 1, 0])
+  }
+
+  box "porch_roof" (size=[1.70, 0.15, 0.95], mat="roof_shingle")
+  cylinder "porch_post_l" (radius=0.05, height=2.13, segments=12, mat="trim_white")
+  cylinder "porch_post_r" (radius=0.05, height=2.13, segments=12, mat="trim_white")
+
+  box "chimney" (size=[0.45, 0.90, 0.45], mat="brick", pos=[0, -0.1278, 0])
+  slab "chimney_cap" (size=[0.58, 0.10, 0.58], mat="concrete")
+
+  box "main_front_gutter" (size=[5.9, 0.08, 0.10], mat="trim_white") {
+    connector "down_left" (at=[-2.70, -0.04, 0], dir=[0, -1, 0])
+    connector "down_right" (at=[2.70, -0.04, 0], dir=[0, -1, 0])
+  }
+  box "main_rear_gutter" (size=[5.9, 0.08, 0.10], mat="trim_white")
+  box "garage_front_gutter" (size=[3.4, 0.07, 0.09], mat="trim_white") {
+    connector "down_right" (at=[1.50, -0.035, 0], dir=[0, -1, 0])
+  }
+  cylinder "downspout_l" (radius=0.035, height=4.55, segments=12, mat="trim_white")
+  cylinder "downspout_r" (radius=0.035, height=4.55, segments=12, mat="trim_white")
+  cylinder "garage_downspout" (radius=0.03, height=2.70, segments=12, mat="trim_white")
+
+  group "ac_unit" {
+    rounded_box "ac_cabinet" (size=[0.65, 0.55, 0.55], radius=0.04, mat="utility_metal") {
+      connector "fan_mount" (at=[0.325, 0, 0], dir=[1, 0, 0])
+    }
+    disc "ac_fan_grille" (radius=0.18, segments=24, rot=[0, 0, -90], mat="dark_metal")
+    connector "house_side" (at=[-0.325, 0, 0], dir=[-1, 0, 0], tag=plug)
+  }
+
+  group "aerial" {
+    cylinder "aerial_mast" (radius=0.018, height=0.90, segments=10, mat="dark_metal", pos=[0, -0.8581, 0]) {
+      connector "tip_mount" (at=[0, 0.45, 0], dir=[0, 1, 0])
+    }
+    sphere "aerial_tip" (radius=0.035, mat="dark_metal")
+    connector "base" (at=[0, -0.45, 0], dir=[0, -1, 0], tag=plug)
+  }
+
+  attach (parent="lawn", child="foundation", socket="foundation_pad", plug="bottom")
+  attach (parent="lawn", child="driveway", socket="driveway_pad", plug="bottom")
+
+  attach (parent="foundation", child="main_body", socket="main_pad", plug="bottom")
+  attach (parent="foundation", child="garage_body", socket="garage_pad", plug="bottom")
+
+  attach (parent="main_body", child="main_roof", socket="top", plug="bottom")
+  attach (parent="garage_body", child="garage_roof", socket="top", plug="bottom")
+  attach (parent="main_roof", child="main_front_gutter", socket="front_gutter_mount", plug="back")
+  attach (parent="main_roof", child="main_rear_gutter", socket="rear_gutter_mount", plug="front")
+  attach (parent="garage_roof", child="garage_front_gutter", socket="front_gutter_mount", plug="back")
+  attach (parent="main_front_gutter", child="downspout_l", socket="down_left", plug="top")
+  attach (parent="main_front_gutter", child="downspout_r", socket="down_right", plug="top")
+  attach (parent="garage_front_gutter", child="garage_downspout", socket="down_right", plug="top")
+  attach (parent="aerial_mast", child="aerial_tip", socket="tip_mount", plug="bottom")
+  attach (parent="main_roof", child="aerial", socket="aerial_mount", plug="base")
+  attach (parent="ac_cabinet", child="ac_fan_grille", socket="fan_mount", plug="bottom")
+  attach (parent="garage_body", child="ac_unit", socket="ac_mount", plug="house_side")
+
+  attach (parent="door_slab", child="doorknob", socket="knob_mount", plug="back")
+  attach (parent="main_body", child="front_door", socket="door_mount", plug="wall_back")
+
+  attach (parent="main_body", child="window_fl", socket="window_fl_mount", plug="wall_back")
+  attach (parent="main_body", child="window_fr", socket="window_fr_mount", plug="wall_back")
+  attach (parent="main_body", child="window_ul", socket="window_ul_mount", plug="wall_back")
+  attach (parent="main_body", child="window_ur", socket="window_ur_mount", plug="wall_back")
+  attach (parent="main_body", child="rear_window_l", socket="rear_window_l_mount", plug="wall_front")
+  attach (parent="main_body", child="rear_window_r", socket="rear_window_r_mount", plug="wall_front")
+
+  attach (parent="garage_door_panel", child="garage_door_handle", socket="handle_mount", plug="wall_back")
+  attach (parent="garage_body", child="garage_door", socket="garage_door_mount", plug="wall_back")
+
+  attach (parent="main_body", child="porch_slab", socket="porch_slab_mount", plug="back")
+  attach (parent="main_body", child="porch_roof", socket="porch_roof_mount", plug="back")
+  attach (parent="porch_slab", child="porch_post_l", socket="post_l", plug="bottom")
+  attach (parent="porch_slab", child="porch_post_r", socket="post_r", plug="bottom")
+
+  attach (parent="main_roof", child="chimney", socket="top", plug="bottom")
+  attach (parent="chimney", child="chimney_cap", socket="top", plug="bottom")
+}

@@ -338,21 +338,9 @@ pub struct Settings {
     #[serde(default)]
     pub plan_first: bool,
 
-    /// When `Some(true)` (or unset) and the active provider is Z.ai, the
-    /// Refine button forces the Reviewer call onto `glm-5v-turbo`
-    /// regardless of the user's per-provider model override. The default
-    /// is "swap on" because the only reason to opt out is "I want the
-    /// call to fail loudly so I can see what model my override resolves
-    /// to" — useful for debugging, useless in production. Read by
-    /// `run_llm_refine`; surfaced as a checkbox in the Refine section
-    /// when the active slot is Z.ai. `None` falls back to `true` at read
-    /// time so existing settings files keep the new behaviour without a
-    /// migration step.
-    #[serde(default)]
-    pub zai_refine_use_vision: Option<bool>,
     /// When `Some(true)` (or absent — defaults to `true`), Z.ai chat
-    /// calls (Generate / Modify / Animate / Ask, plus the Refine pass)
-    /// route through the dedicated GLM Coding Plan endpoint
+    /// calls (Generate / Modify / Animate / Ask) route through the
+    /// dedicated GLM Coding Plan endpoint
     /// (`/api/coding/paas/v4`) instead of the general PaaS surface
     /// (`/api/paas/v4`). The coding endpoint is purpose-built for tools
     /// like Claude Code, Cline, Crush, MoGen Studio and avoids the
@@ -624,17 +612,6 @@ impl Settings {
 
     pub fn set_plan_first(&mut self, on: bool) {
         self.plan_first = on;
-    }
-
-    /// Whether the Refine button forces `glm-5v-turbo` when the active
-    /// provider is Z.ai. `None` (unset) → `true`, so existing settings
-    /// files inherit the new behaviour without a migration.
-    pub fn zai_refine_use_vision(&self) -> bool {
-        self.zai_refine_use_vision.unwrap_or(true)
-    }
-
-    pub fn set_zai_refine_use_vision(&mut self, on: bool) {
-        self.zai_refine_use_vision = Some(on);
     }
 
     /// Whether Z.ai chat calls should target the dedicated GLM Coding

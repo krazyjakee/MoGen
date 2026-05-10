@@ -5,30 +5,30 @@ use crate::app::types::SessionUsage;
 use crate::app::MogenStudioApp;
 
 impl MogenStudioApp {
-    /// Session meter right-aligned in the footer. Hidden when no calls have
-    /// been made yet; the Reset button zeroes the counter.
+    /// Session meter for the footer. Hidden when no calls have been made
+    /// yet; the Reset button zeroes the counter. Caller is expected to be
+    /// in a `right_to_left` layout — items are added rightmost-first
+    /// (Reset, then the summary label).
     pub(in crate::app) fn ui_session_meter(&mut self, ui: &mut egui::Ui) {
         let u = self.session_usage.clone();
         if u.text_calls == 0 && u.image_calls == 0 {
             return;
         }
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui
-                .small_button("Reset")
-                .on_hover_text("Clear the session token / cost counters")
-                .clicked()
-            {
-                self.session_usage = Default::default();
-            }
-            let tooltip = session_tooltip(&u, &self.settings.gemini_model());
-            ui.label(format!(
-                "· {} ({} tok, {})",
-                calls_label(&u),
-                u.prompt_tokens + u.response_tokens,
-                format_usd(u.estimated_usd),
-            ))
-            .on_hover_text(tooltip);
-        });
+        if ui
+            .small_button("Reset")
+            .on_hover_text("Clear the session token / cost counters")
+            .clicked()
+        {
+            self.session_usage = Default::default();
+        }
+        let tooltip = session_tooltip(&u, &self.settings.gemini_model());
+        ui.label(format!(
+            "· {} ({} tok, {})",
+            calls_label(&u),
+            u.prompt_tokens + u.response_tokens,
+            format_usd(u.estimated_usd),
+        ))
+        .on_hover_text(tooltip);
     }
 }
 

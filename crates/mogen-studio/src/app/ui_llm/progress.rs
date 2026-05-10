@@ -203,9 +203,6 @@ fn kind_color(k: LlmKind) -> egui::Color32 {
         LlmKind::Animate => egui::Color32::from_rgb(200, 140, 220),
         LlmKind::Repair => egui::Color32::from_rgb(220, 130, 130),
         LlmKind::Textures => egui::Color32::from_rgb(230, 160, 100),
-        // Amber — distinct from Textures' orange, signals "look at the
-        // render" without colliding with the existing palette.
-        LlmKind::Refine => egui::Color32::from_rgb(220, 180, 100),
     }
 }
 
@@ -340,8 +337,7 @@ fn stage_headline(p: &Option<LlmProgress>, kind: LlmKind, provider: Provider) ->
             LlmKind::Generate
             | LlmKind::Modify
             | LlmKind::Animate
-            | LlmKind::Repair
-            | LlmKind::Refine => format!("waiting for {provider_name}…"),
+            | LlmKind::Repair => format!("waiting for {provider_name}…"),
             LlmKind::Textures => "preparing texture plan…".into(),
         },
     }

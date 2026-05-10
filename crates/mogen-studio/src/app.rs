@@ -341,12 +341,14 @@ pub struct MogenStudioApp {
     /// the receiver and the cleanup paths we need on completion.
     video_encode: Option<self::generate::VideoEncode>,
 
-    /// Set while an LLM auto-refine iteration's screenshot capture is
-    /// pumping through the GL worker. Carries the file index the
-    /// capture was submitted for so the outcome can be routed back to
-    /// that file even if the user has switched tabs in the meantime.
-    /// `None` when no refine capture is in flight.
-    pending_refine_capture: Option<self::llm::refine::PendingRefineCapture>,
+    /// Set while a Modify-with-screenshot capture is pumping through
+    /// the GL worker. Carries the file index, the prompt the user
+    /// typed, and the DSL snapshot at click time so the outcome can be
+    /// routed back to that file even if the user has switched tabs in
+    /// the meantime — and so the LLM call sees the same source the
+    /// screenshot was rendered from. `None` when no capture is in
+    /// flight.
+    pending_modify_capture: Option<self::llm::modify_screenshot::PendingModifyCapture>,
 
     /// "Render MP4" options modal visibility. Opened from the File menu /
     /// spotlight before kicking the actual render off so the user can pick
@@ -565,7 +567,7 @@ impl MogenStudioApp {
             pending_external: None,
             init: Some(init),
             pending_video: None,
-            pending_refine_capture: None,
+            pending_modify_capture: None,
             video_encode: None,
             show_video_options: false,
             video_opts_draft: self::generate::VideoOptions::default(),
@@ -878,13 +880,13 @@ impl eframe::App for MogenStudioApp {
                         if n == 1 { "" } else { "s" }
                     ));
                 }
-                self.ui_session_meter(ui);
-                // MoGHub auth chip lives at the right edge of the status
-                // bar so it's always visible — not just when the
-                // Community window is open. Right-to-left layout pins it
-                // there without a fixed-width spacer.
+                // Right-aligned cluster: MoGHub auth chip pinned to the
+                // right edge, then the session meter to its left. Both
+                // share one right_to_left scope so they don't fight for
+                // the same right slot and overlap.
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     self.draw_moghub_status_chip(ui, ctx);
+                    self.ui_session_meter(ui);
                 });
             });
         });
@@ -1102,18 +1104,67 @@ impl eframe::App for MogenStudioApp {
     }
 }
 
-/// Extend the default proportional font family with `Hack` as a fallback.
-/// egui 0.29's bundled `Ubuntu-Light` covers Latin/Cyrillic/Greek but not
-/// Geometric Shapes (▲ ▼), Arrows (↑ ↓), or Dingbats (✕) — the icon-shaped
-/// glyphs UI buttons reach for. `Hack` is already loaded for the monospace
-/// family and covers all of those blocks, so adding it as a tail fallback
-/// rescues otherwise-missing glyphs without bundling another font.
+/// Extend the default proportional font family with a chain of icon-coverage
+/// fallbacks so the UI never renders tofu (□) for the iconographic glyphs
+/// the codebase reaches for.
+///
+/// egui 0.29's bundled `Ubuntu-Light` covers Latin/Cyrillic/Greek only.
+/// `Hack` (already loaded for monospace) backfills Geometric Shapes (▲ ▼),
+/// Arrows (↑ ↓), and basic Dingbats (✕). Beyond that, four bundled Noto/DejaVu
+/// fonts cover the blocks Studio actually uses across panels, dialogs, and
+/// status indicators:
+///
+/// - `NotoSansSymbols`  — Letterlike Symbols, Enclosed Alphanumerics
+///                        (ⓘ ⓢ ℹ — the section-header info indicators).
+/// - `NotoSansSymbols2` — Misc Symbols (♥ ♡ ⚠), Misc Technical (⏸),
+///                        Enclosed Alphanumerics Supplement (⑂ — fork count),
+///                        Misc Symbols and Pictographs.
+/// - `NotoEmoji`        — emoji-style Dingbats NSS2 deliberately skips
+///                        (✨ — the prompt-enhance button).
+/// - `DejaVuSans`       — Supplemental Arrows-A (⟳ — AI-in-flight spinner)
+///                        and broad legacy symbol coverage as a last-resort
+///                        fallback.
+///
+/// New iconographic glyphs added to the codebase should "just render" as
+/// long as they fall in any of those blocks. If a future glyph still tofus,
+/// extend the chain rather than ASCII-substituting the source.
 fn install_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
+
+    const FALLBACKS: &[(&str, &[u8])] = &[
+        (
+            "NotoSansSymbols",
+            include_bytes!("../assets/fonts/NotoSansSymbols-Regular.ttf"),
+        ),
+        (
+            "NotoSansSymbols2",
+            include_bytes!("../assets/fonts/NotoSansSymbols2-Regular.ttf"),
+        ),
+        (
+            "NotoEmoji",
+            include_bytes!("../assets/fonts/NotoEmoji-Regular.ttf"),
+        ),
+        (
+            "DejaVuSans",
+            include_bytes!("../assets/fonts/DejaVuSans.ttf"),
+        ),
+    ];
+    for (name, bytes) in FALLBACKS {
+        fonts
+            .font_data
+            .insert((*name).to_owned(), egui::FontData::from_static(bytes));
+    }
+
     if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
         if !family.iter().any(|n| n == "Hack") {
             family.push("Hack".to_owned());
         }
+        for (name, _) in FALLBACKS {
+            if !family.iter().any(|n| n == name) {
+                family.push((*name).to_owned());
+            }
+        }
     }
+
     ctx.set_fonts(fonts);
 }

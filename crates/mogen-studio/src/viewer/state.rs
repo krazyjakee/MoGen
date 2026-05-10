@@ -244,20 +244,20 @@ pub(super) fn snap_scale_factor(factor: f32) -> f32 {
 /// background thumbnail engine can pump captures through the viewer without
 /// `poll_generate` stealing the outcome and treating it as the user-driven
 /// "Generate Thumbnail" menu action. `Publish` does the same for the publish
-/// dialog's preview capture. `Refine` does the same for the LLM auto-refine
-/// loop's source-image capture: the renderer treats it identically to a
+/// dialog's preview capture. `ModifyScreenshot` does the same for the LLM
+/// modify-with-screenshot path: the renderer treats it identically to a
 /// thumbnail (single static frame, no animation override), the variant only
-/// tells `app/llm.rs::on_refine_render_done` "this PNG is mine". All four
-/// single-frame kinds behave identically inside the GL paint callback (no
-/// animation override, single frame); the variant only carries "who owns
-/// this outcome".
+/// tells `app/llm/modify_screenshot.rs::on_modify_screenshot_render_done`
+/// "this PNG is mine". All four single-frame kinds behave identically inside
+/// the GL paint callback (no animation override, single frame); the variant
+/// only carries "who owns this outcome".
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CaptureKind {
     Thumbnail,
     Video,
     PickerThumb,
     Publish,
-    Refine,
+    ModifyScreenshot,
 }
 
 /// One frame the renderer should produce as part of a capture. Yaw/pitch

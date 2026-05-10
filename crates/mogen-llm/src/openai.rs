@@ -6,8 +6,10 @@
 //! via the top-level `reasoning_effort` field. We only emit that field for
 //! models that accept it: current OpenAI Chat Completions rejects unknown
 //! parameters with a 400, so sending it unconditionally would break
-//! non-reasoning models like `gpt-4o`. Vision input (`cfg.user_images`) is
-//! sent as `image_url` content parts on the user turn.
+//! non-reasoning models like `gpt-4o`. Reasoning models also reject any
+//! non-default `temperature` (only `1` is allowed), so we drop the field
+//! entirely for that family. Vision input (`cfg.user_images`) is sent as
+//! `image_url` content parts on the user turn.
 
 use std::time::Duration;
 
@@ -178,14 +180,17 @@ fn build_request(cfg: &GenerateConfig) -> serde_json::Value {
         "messages": messages,
     });
 
+    let reasoning = is_reasoning_model(&cfg.model);
     if let Some(t) = cfg.temperature {
-        req["temperature"] = serde_json::json!(t);
+        if !reasoning {
+            req["temperature"] = serde_json::json!(t);
+        }
     }
     if let Some(s) = cfg.seed {
         req["seed"] = serde_json::json!(s as i64);
     }
     if let Some(level) = cfg.thinking_level {
-        if is_reasoning_model(&cfg.model) {
+        if reasoning {
             req["reasoning_effort"] = serde_json::json!(level.openai_effort());
         }
     }
@@ -277,12 +282,27 @@ mod tests {
     #[test]
     fn request_body_includes_seed_and_temperature() {
         let mut cfg = GenerateConfig::new("x");
-        cfg.model = "gpt-5.5".into();
+        cfg.model = "gpt-4o".into();
         cfg.seed = Some(7);
         cfg.temperature = Some(0.42);
         let body = build_request(&cfg);
         assert_eq!(body["seed"], 7);
         assert!((body["temperature"].as_f64().unwrap() - 0.42).abs() < 1e-6);
+    }
+
+    #[test]
+    fn temperature_omitted_for_reasoning_models() {
+        // o-series and gpt-5.x reject any temperature except the default (1).
+        for model in ["o3", "o4-mini", "gpt-5", "gpt-5-mini", "gpt-5.5", "gpt-5.5-pro"] {
+            let mut cfg = GenerateConfig::new("x");
+            cfg.model = model.into();
+            cfg.temperature = Some(0.3);
+            let body = build_request(&cfg);
+            assert!(
+                body.get("temperature").is_none(),
+                "{model} must not receive temperature (server 400s on non-default values)",
+            );
+        }
     }
 
     #[test]

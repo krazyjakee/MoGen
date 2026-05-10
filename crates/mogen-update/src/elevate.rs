@@ -267,7 +267,7 @@ fn interpret_status(status: std::process::ExitStatus, tool: &str) -> Result<()> 
     }
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn which(name: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
     for dir in std::env::split_paths(&path) {

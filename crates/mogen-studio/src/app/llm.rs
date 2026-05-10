@@ -14,8 +14,8 @@
 mod credentials;
 mod enhance;
 mod meta_generate;
+pub(in crate::app) mod modify_screenshot;
 mod poll;
-pub(in crate::app) mod refine;
 mod spawn;
 mod textures;
 
@@ -36,12 +36,19 @@ impl MogenStudioApp {
     }
 
     pub(super) fn start_llm_modify(&mut self, ctx: egui::Context) {
-        let (prompt, src_empty, existing) = {
+        let (prompt, src_empty, existing, want_screenshot, scene_renderable) = {
             let f = self.active();
+            let scene_ok = f
+                .last_result
+                .as_ref()
+                .map(|r| r.scene.is_some() && !mogen_core::has_errors(&r.diagnostics))
+                .unwrap_or(false);
             (
                 f.mod_prompt.trim().to_string(),
                 f.source.trim().is_empty(),
                 f.source.clone(),
+                f.mod_include_screenshot,
+                scene_ok,
             )
         };
         if prompt.is_empty() {
@@ -50,6 +57,16 @@ impl MogenStudioApp {
         }
         if src_empty {
             self.active_mut().status = "modify needs existing DSL to edit".into();
+            return;
+        }
+        // Screenshot path: only when the toggle is on, the active
+        // provider can read images, AND the scene actually renders.
+        // Falling back silently to text-only otherwise so flipping the
+        // provider or breaking the file doesn't hide the Modify
+        // button.
+        let provider_supports_images = self.settings.provider().supports_images();
+        if want_screenshot && provider_supports_images && scene_renderable {
+            self.submit_modify_screenshot_capture(&ctx, prompt, existing);
             return;
         }
         self.spawn_llm(ctx, LlmKind::Modify, prompt, Some(existing), None);
@@ -121,10 +138,10 @@ impl MogenStudioApp {
             LlmKind::Generate => self.active().gen_prompt.clone(),
             LlmKind::Modify => self.active().mod_prompt.clone(),
             LlmKind::Animate => self.active().anim_prompt.clone(),
-            // Repair / Textures / Refine have no editable prompt field —
-            // their `llm_last_prompt` carries a synthetic label that the
+            // Repair / Textures have no editable prompt field — their
+            // `llm_last_prompt` carries a synthetic label that the
             // retry path falls back to via `draft_prompt`.
-            LlmKind::Repair | LlmKind::Textures | LlmKind::Refine => String::new(),
+            LlmKind::Repair | LlmKind::Textures => String::new(),
         };
         let prompt = if current_prompt.trim().is_empty() {
             draft_prompt
@@ -172,19 +189,6 @@ impl MogenStudioApp {
                     _ => self.start_llm_textures(ctx),
                 }
             }
-            LlmKind::Refine => {
-                // Refine retry re-kicks the loop with the same iteration
-                // count as the failed run. The session is cleared by the
-                // failure path in `apply_llm_outcome`, so there's no
-                // stale `iters_remaining` to leak across retries.
-                let iters = self
-                    .active()
-                    .refine_session
-                    .as_ref()
-                    .map(|s| s.iters_total.max(1))
-                    .unwrap_or(1);
-                self.start_llm_refine(ctx, iters);
-            }
         }
     }
 
@@ -202,11 +206,6 @@ impl MogenStudioApp {
         f.llm_progress = None;
         f.llm_started_at = None;
         f.llm_events.clear();
-        // Drop the multi-iter refine session too — without this, a cancel
-        // mid-iteration would leave `iters_remaining > 0` and the next
-        // capture outcome could re-enter `apply_llm_outcome`'s "queue
-        // another iteration" branch and silently kick a new pass.
-        f.refine_session = None;
         f.status =
             "llm: cancelled (background call may still finish but result is dropped)".into();
     }
