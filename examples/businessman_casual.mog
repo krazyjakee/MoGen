@@ -1,3 +1,20 @@
+// Low-poly businessman in an open dark suit with a white shirt, grey hair
+// and stubble, walking. Demonstrates the slot-based authoring pattern: the
+// stdlib gives you `humanoid_full` (body + skeleton + slot connectors +
+// body-shape params) and the animation clips, and the *outfit* — jacket,
+// dress shirt, cuffs, shoes, hair, beard — is hand-built here as a set of
+// local modules that bind into the same `rig` skeleton.
+//
+// Each local module mirrors what an LLM (or a human author) would emit:
+// a small `material` declaration with a baked colour, plus chamfered_box
+// (or `union`) panels positioned in scene space at the figure's body
+// landmarks (`$height * 0.660` for chest centre, `$height * 0.135` for the
+// shoulder line, etc.) and rigid-bound to the matching bone (`spine_chest`,
+// `shoulder_l/r`, `elbow_l/r`, `ankle_l/r`, `toe_l/r`, `neck`) so the
+// outfit follows the walk cycle. To recolour any layer, declare the
+// matching material at the top of the scene — first-wins dedup makes the
+// scene-level declaration take precedence over the module's own.
+
 meta (
   name = "businessman_casual",
   description = "low-poly businessman in an open dark suit with a white shirt, grey hair and stubble, walking",
@@ -6,7 +23,181 @@ meta (
   style = "low_poly"
 )
 
+// ---------- Outfit materials ----------
+// Declared at file scope so the geometry below — and any reader who wants
+// to recolour the outfit — has one place to look. To restyle the suit,
+// edit the colour values here.
+material "jacket_outer" (color=[0.06, 0.06, 0.06], roughness=0.78)
+material "dress_shirt"  (color=[0.92, 0.92, 0.92], roughness=0.82)
+material "dress_shoe"   (color=[0.04, 0.04, 0.04], roughness=0.55, metallic=0.05)
+material "beard_hair"   (color=[0.85, 0.83, 0.80], roughness=0.88)
+material "short_hair"   (color=[0.85, 0.83, 0.80], roughness=0.85)
+
+// ---------- Outfit modules ----------
+// All five take `height` and `weight` matching the host `humanoid_full`
+// so the layered geometry tracks the figure's silhouette.
+
+// Open-front blazer: back-and-sides shell, two flat front lapels with a
+// V-shaped centre gap, four sleeve panels.
+module "outfit_blazer_open" (height=1.7, weight=1.0) {
+  chamfered_box "blazer_back_sides" (
+    pos=[0, $height * 0.660, $height * 0.022],
+    size=[$height * 0.226 * $weight, $height * 0.276, $height * 0.094 * $weight],
+    radius=$height * 0.014,
+    mat="jacket_outer", skin="rig", bind="spine_chest", faceted=1
+  )
+  chamfered_box "blazer_front_l" (
+    pos=[$height *  0.062 * $weight, $height * 0.660, $height * -0.064 * $weight],
+    size=[$height * 0.082 * $weight, $height * 0.276, $height * 0.018],
+    radius=$height * 0.006,
+    mat="jacket_outer", skin="rig", bind="spine_chest", faceted=1
+  )
+  chamfered_box "blazer_front_r" (
+    pos=[$height * -0.062 * $weight, $height * 0.660, $height * -0.064 * $weight],
+    size=[$height * 0.082 * $weight, $height * 0.276, $height * 0.018],
+    radius=$height * 0.006,
+    mat="jacket_outer", skin="rig", bind="spine_chest", faceted=1
+  )
+  // Sleeves are 8mm taller than the bare arms (`humanoid_full`'s
+  // arm_l_upper / arm_l_fore use `size_y = $height * 0.150`) so the
+  // jacket fully envelops the arm in y too — without this, the sleeve
+  // top face shares y with the arm top face and z-fights at the
+  // shoulder ("shoulder pad" flicker).
+  chamfered_box "blazer_sleeve_l_upper" (
+    pos=[$height *  0.135, $height * 0.695, 0],
+    size=[$height * 0.052 * $weight, $height * 0.158, $height * 0.052 * $weight],
+    radius=$height * 0.009,
+    mat="jacket_outer", skin="rig", bind="shoulder_l", faceted=1
+  )
+  chamfered_box "blazer_sleeve_l_fore" (
+    pos=[$height *  0.135, $height * 0.545, 0],
+    size=[$height * 0.046 * $weight, $height * 0.158, $height * 0.046 * $weight],
+    radius=$height * 0.008,
+    mat="jacket_outer", skin="rig", bind="elbow_l", faceted=1
+  )
+  chamfered_box "blazer_sleeve_r_upper" (
+    pos=[$height * -0.135, $height * 0.695, 0],
+    size=[$height * 0.052 * $weight, $height * 0.158, $height * 0.052 * $weight],
+    radius=$height * 0.009,
+    mat="jacket_outer", skin="rig", bind="shoulder_r", faceted=1
+  )
+  chamfered_box "blazer_sleeve_r_fore" (
+    pos=[$height * -0.135, $height * 0.545, 0],
+    size=[$height * 0.046 * $weight, $height * 0.158, $height * 0.046 * $weight],
+    radius=$height * 0.008,
+    mat="jacket_outer", skin="rig", bind="elbow_r", faceted=1
+  )
+}
+
+// Dress-shirt pieces: a thin chest panel that fills the V gap left by the
+// open blazer, plus shirt cuffs at each forearm wrist.
+module "outfit_dress_shirt" (height=1.7, weight=1.0) {
+  chamfered_box "shirt_panel" (
+    pos=[0, $height * 0.730, $height * -0.080 * $weight],
+    size=[$height * 0.064 * $weight, $height * 0.150, $height * 0.020],
+    radius=$height * 0.005,
+    mat="dress_shirt", skin="rig", bind="spine_chest", faceted=1
+  )
+  chamfered_box "shirt_cuff_l" (
+    pos=[$height *  0.135, $height * 0.478, 0],
+    size=[$height * 0.052 * $weight, $height * 0.020, $height * 0.052 * $weight],
+    radius=$height * 0.005,
+    mat="dress_shirt", skin="rig", bind="elbow_l", faceted=1
+  )
+  chamfered_box "shirt_cuff_r" (
+    pos=[$height * -0.135, $height * 0.478, 0],
+    size=[$height * 0.052 * $weight, $height * 0.020, $height * 0.052 * $weight],
+    radius=$height * 0.005,
+    mat="dress_shirt", skin="rig", bind="elbow_r", faceted=1
+  )
+}
+
+// Low-profile dress shoes: shoe shell over each foot plus a forward toe
+// cap so the toe flexes during the walk cycle.
+module "outfit_dress_shoes" (height=1.7) {
+  chamfered_box "shoe_l" (
+    pos=[$height *  0.060, $height * 0.027, $height * -0.010],
+    size=[$height * 0.078, $height * 0.054, $height * 0.130],
+    radius=$height * 0.010,
+    mat="dress_shoe", skin="rig", bind="ankle_l", faceted=1
+  )
+  chamfered_box "shoe_r" (
+    pos=[$height * -0.060, $height * 0.027, $height * -0.010],
+    size=[$height * 0.078, $height * 0.054, $height * 0.130],
+    radius=$height * 0.010,
+    mat="dress_shoe", skin="rig", bind="ankle_r", faceted=1
+  )
+  chamfered_box "shoe_l_toe" (
+    pos=[$height *  0.060, $height * 0.022, $height * -0.105],
+    size=[$height * 0.072, $height * 0.044, $height * 0.044],
+    radius=$height * 0.012,
+    mat="dress_shoe", skin="rig", bind="toe_l", faceted=1
+  )
+  chamfered_box "shoe_r_toe" (
+    pos=[$height * -0.060, $height * 0.022, $height * -0.105],
+    size=[$height * 0.072, $height * 0.044, $height * 0.044],
+    radius=$height * 0.012,
+    mat="dress_shoe", skin="rig", bind="toe_r", faceted=1
+  )
+}
+
+// Short stubble: chin block + sideburns. All three pieces bind to `neck`
+// so the beard tracks head turns through the walk clip. The head's outer
+// surface in `humanoid_full` is at `±$height * 0.055` in x/z (cranium
+// `chamfered_box` size = `$height * 0.110`), so each beard piece is
+// nudged slightly past those bounds — chin pushed forward, sideburns
+// pushed both outward and forward — so no beard face shares a coordinate
+// with a head face (z-fights would otherwise flicker on the cheeks and
+// the head sides).
+module "outfit_stubble_beard" (height=1.7) {
+  chamfered_box "beard_chin" (
+    pos=[0, $height * 0.846, $height * -0.072],
+    size=[$height * 0.080, $height * 0.028, $height * 0.022],
+    radius=$height * 0.004,
+    mat="beard_hair", skin="rig", bind="neck", faceted=1
+  )
+  chamfered_box "beard_sideburn_l" (
+    pos=[$height *  0.054, $height * 0.870, $height * -0.054],
+    size=[$height * 0.018, $height * 0.054, $height * 0.022],
+    radius=$height * 0.003,
+    mat="beard_hair", skin="rig", bind="neck", faceted=1
+  )
+  chamfered_box "beard_sideburn_r" (
+    pos=[$height * -0.054, $height * 0.870, $height * -0.054],
+    size=[$height * 0.018, $height * 0.054, $height * 0.022],
+    radius=$height * 0.003,
+    mat="beard_hair", skin="rig", bind="neck", faceted=1
+  )
+}
+
+// Short hair cap: skullcap smooth-unioned with a back-and-down ellipsoid
+// so the silhouette has clear occiput / nape bulk. Bound to `neck` so the
+// hair tracks head rotations. The cap sphere is offset backward by
+// `$size * 0.22` along z so its forward extent stops behind the head's
+// front face (`z = -$height * 0.055` ≈ `-0.096` at $height=1.75) — without
+// the offset the sphere extends to `z = -$size = -0.115` and overlaps the
+// face features (eye / brow / nose blocks live at `z ≈ -$height * 0.057
+// .. -0.062`), producing skin-through-hair z-fight splotches around the
+// hairline. The occiput ellipsoid is biased back and down already, so
+// it doesn't need the same nudge.
+module "outfit_short_hair" (height=1.7, size=0.115) {
+  union "hair_cap" (smooth=$size * 0.04, skin="rig", bind="neck") {
+    sphere "cap" (
+      pos=[0, $height * 0.920, $size * 0.22],
+      radius=$size, rings=10, segments=16, mat="short_hair"
+    )
+    ellipsoid "occiput" (
+      pos=[0, $height * 0.920 + $size * -0.18, $size * 0.32],
+      size=[$size * 1.95, $size * 1.50, $size * 1.85],
+      rings=10, segments=16,
+      mat="short_hair"
+    )
+  }
+}
+
 scene {
+  // Body + skeleton + slot connectors. Body-shape params shape the
+  // silhouette; the colour params drive the figure's built-in materials.
   use "humanoid_full" (
     height=1.75,
     weight=0.95,
@@ -17,12 +208,14 @@ scene {
     boot =[0.04, 0.04, 0.04]
   )
 
-  use "humanoid_top_blazer_open" (height=1.75, weight=0.95, colour=[0.06, 0.06, 0.06])
-  use "humanoid_top_tshirt_panel" (height=1.75, weight=0.95, colour=[0.92, 0.92, 0.92])
-  use "humanoid_cuffs"            (height=1.75, weight=0.95, colour=[0.92, 0.92, 0.92])
-  use "humanoid_shoes_low"        (height=1.75, colour=[0.04, 0.04, 0.04])
-  use "humanoid_beard_short"      (height=1.75, colour=[0.85, 0.83, 0.80])
-  use "humanoid_hair_short"       (height=1.75, colour=[0.85, 0.83, 0.80])
+  // Outfit. Each local module uses the same `height` / `weight` as the
+  // figure so the layered geometry tracks the body silhouette, and binds
+  // into the `rig` skeleton so it animates with the walk cycle.
+  use "outfit_blazer_open"   (height=1.75, weight=0.95)
+  use "outfit_dress_shirt"   (height=1.75, weight=0.95)
+  use "outfit_dress_shoes"   (height=1.75)
+  use "outfit_stubble_beard" (height=1.75)
+  use "outfit_short_hair"    (height=1.75)
 
   use "humanoid_walk" ()
 }
