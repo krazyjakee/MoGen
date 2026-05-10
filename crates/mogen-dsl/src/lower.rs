@@ -1,6 +1,6 @@
 mod anim;
 mod branch;
-mod connector;
+pub(crate) mod connector;
 mod csg;
 mod deform;
 mod helpers;

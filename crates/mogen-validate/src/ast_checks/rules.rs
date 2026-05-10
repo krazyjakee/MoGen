@@ -184,11 +184,14 @@ pub(super) fn check_anim_required(n: &Node, diags: &mut Vec<Diagnostic>) {
                 );
             }
             for c in &n.children {
-                if c.kind != "bone" {
+                if !matches!(c.kind.as_str(), "bone" | "connector") {
                     diags.push(
                         Diagnostic::error(
                             "E0505",
-                            format!("bone children must be `bone` nodes, got `{}`", c.kind),
+                            format!(
+                                "bone children must be `bone` or `connector` nodes, got `{}`",
+                                c.kind
+                            ),
                         )
                         .with_span(c.span),
                     );

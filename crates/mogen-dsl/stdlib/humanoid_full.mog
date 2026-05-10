@@ -1,4 +1,4 @@
-// summary: Complete rigged Synty/Quaternius-style low-poly humanoid in one declaration. Faceted chamfered-box body, mitten hands, painted face panel. All colours pass-through as vec3 params (`skin`, `hair`, `eye`, `mouth`, `shirt`, `pants`, `boot`, `face`) — the module declares matching materials internally so a bare `use "humanoid_full" ()` produces a fully-coloured character. Skeleton is 17 bones (`hip`, `spine_lower`, `spine_mid`, `spine_chest`, `neck`, `shoulder_l/r`, `elbow_l/r`, `wrist_l/r`, `hip_l/r`, `knee_l/r`, `ankle_l/r`, `toe_l/r`) named to drive `humanoid_walk` / `humanoid_run` / `humanoid_idle` / `humanoid_jump` clips. Outfit modules (`outfit_shirt`, `outfit_helmet`, `equip_sword`, …) socket-snap to the figure's `crown`, `back`, `waist`, `shoulder_back`, `wrist_l_grip`, `wrist_r_grip` connectors. Use only ONCE per scene (single "rig" skeleton).
+// summary: Synty/Quaternius-style low-poly humanoid in one declaration. Faceted chamfered-box body parts each rigid-bound to one bone for crisp joint motion. Visible eyes/brows/nose/mouth blocks (no textured face panel) so an untextured build still reads as a face. Colours pass-through as vec3 params (`skin`, `hair`, `eye`, `mouth`, `shirt`, `pants`, `boot`); the module declares matching materials internally so a bare `use "humanoid_full" ()` produces a fully-coloured character. Skeleton is 17 bones (`hip`, `spine_lower`, `spine_mid`, `spine_chest`, `neck`, `shoulder_l/r`, `elbow_l/r`, `wrist_l/r`, `hip_l/r`, `knee_l/r`, `ankle_l/r`, `toe_l/r`) named to drive the shipped `humanoid_walk` / `humanoid_run` / `humanoid_idle` / `humanoid_jump` clips. Slot connectors live ON THE BONES so attached items inherit each joint's animated transform: `slot_crown / slot_face / slot_jaw / slot_ear_l / slot_ear_r / slot_neck_back` on bone `neck`; `slot_chest_front / slot_chest_back / slot_back_lower / slot_shoulder_l / slot_shoulder_r` on bone `spine_chest`; `slot_waist_front / slot_waist_back / slot_waist_l / slot_waist_r / slot_pelvis_front` on bone `hip`; `slot_hand_l_grip / slot_hand_l_back` on bone `wrist_l`; `slot_hand_r_grip / slot_hand_r_back` on bone `wrist_r`; `slot_foot_l_top / slot_foot_l_heel / slot_foot_l_toe` on bone `ankle_l`; `slot_foot_r_top / slot_foot_r_heel / slot_foot_r_toe` on bone `ankle_r`. Always use the bone name as the `attach (parent=...)` target — `attach (parent="neck", child="helmet", socket="slot_crown", plug="rim")` — so the item rides the joint through the walk / run / idle / jump clips. Use only ONCE per scene (single "rig" skeleton).
 module "humanoid_full" (
   height=1.7,
   skin =[0.85, 0.65, 0.55],
@@ -7,16 +7,12 @@ module "humanoid_full" (
   mouth=[0.55, 0.20, 0.20],
   shirt=[0.30, 0.45, 0.65],
   pants=[0.20, 0.22, 0.28],
-  boot =[0.15, 0.10, 0.07],
-  face =[0.92, 0.72, 0.62]
+  boot =[0.15, 0.10, 0.07]
 ) {
-  // ---------- Materials (internal defaults; caller-declared materials win) ----------
-  // The material-collector dedupes by name with first-wins semantics, so a
-  // user-supplied `material "skin" (...)` at the top of the scene overrides
-  // any of these. The `face` material is special — when the texture pipeline
-  // runs, its prompt is character-specific (eyes/brows/mouth painted on a
-  // flat panel) so the LLM can supply a face texture without the caller
-  // doing anything beyond `mogen textures`.
+  // ---------- Materials ----------
+  // Internal defaults; the material collector dedupes by name with first-wins
+  // semantics, so a user-supplied `material "skin" (...)` at the top of the
+  // scene overrides any of these.
   material "skin"  (color=$skin,  roughness=0.75)
   material "hair"  (color=$hair,  roughness=0.85)
   material "eye"   (color=$eye,   roughness=0.30)
@@ -24,46 +20,87 @@ module "humanoid_full" (
   material "shirt" (color=$shirt, roughness=0.80)
   material "pants" (color=$pants, roughness=0.85)
   material "boot"  (color=$boot,  roughness=0.70)
-  material "face"  (color=$face,  roughness=0.65)
 
   // ---------- Skeleton ----------
-  // 17 bones. spine is split into spine_lower/spine_mid/spine_chest so all
-  // four shipped clips drive bones that exist (idle references spine_chest,
-  // walk/run reference spine_mid, run/jump reference spine_lower). Toe leaves
-  // on the feet pick up walk's toe_l/toe_r tracks. Bone offsets are
-  // parent-relative; envelopes are sized so neighbouring bones overlap at
-  // joints (rule of thumb: envelope ≈ 0.7× the bone's own length) so the
-  // linear distance/envelope falloff doesn't leave a "dead zone" mid-limb.
-  skeleton "rig" (pos=[0, $height * 0.55, 0]) {
-    bone "hip" (pos=[0, 0, 0], envelope=$height * 0.13) {
-      bone "spine_lower" (pos=[0, $height * 0.06, 0], envelope=$height * 0.10) {
-        bone "spine_mid" (pos=[0, $height * 0.06, 0], envelope=$height * 0.10) {
-          bone "spine_chest" (pos=[0, $height * 0.06, 0], envelope=$height * 0.12) {
-            bone "neck" (pos=[0, $height * 0.13, 0], envelope=$height * 0.10)
-            bone "shoulder_l" (pos=[ $height * 0.115, $height * 0.04, 0], envelope=$height * 0.14) {
-              bone "elbow_l" (pos=[$height *  0.0513, $height * -0.1410, 0], envelope=$height * 0.16) {
-                bone "wrist_l" (pos=[$height *  0.0547, $height * -0.1504, 0], envelope=$height * 0.10)
+  // Rooted at the pelvis ($height * 0.45) so foot soles meet world Y = 0 and
+  // the figure stands upright by default. Bone offsets are parent-relative
+  // and align with the geometry below — every visible part rigid-binds to one
+  // specific bone, so animations transform the part exactly with its joint.
+  // Slot connectors live on the bones (not the visible mesh blocks): glTF
+  // ignores a skinned-mesh node's TRS at render, so children of a skinned
+  // mesh stay frozen in bind pose. Bones, on the other hand, get the
+  // animation tracks, and a non-skinned `attach` child of a bone inherits
+  // the bone's animated transform via standard parent/child semantics.
+  skeleton "rig" (pos=[0, $height * 0.45, 0]) {
+    bone "hip" (pos=[0, 0, 0], envelope=$height * 0.10) {
+      // Belt / pelvis / loincloth slots ride the pelvis bone so they follow
+      // root-motion bob and any hip rotation.
+      connector "slot_waist_front"  (at=[0,                $height *  0.065, $height * -0.058], dir=[0,  0, -1], tag=slot)
+      connector "slot_waist_back"   (at=[0,                $height *  0.065, $height *  0.058], dir=[0,  0,  1], tag=slot)
+      connector "slot_waist_l"      (at=[$height *  0.097, $height *  0.055, 0],                dir=[ 1, 0,  0], tag=slot)
+      connector "slot_waist_r"      (at=[$height * -0.097, $height *  0.055, 0],                dir=[-1, 0,  0], tag=slot)
+      connector "slot_pelvis_front" (at=[0,                $height *  0.005, $height * -0.058], dir=[0,  0, -1], tag=slot)
+      bone "spine_lower" (pos=[0, $height * 0.05, 0], envelope=$height * 0.08) {
+        bone "spine_mid" (pos=[0, $height * 0.10, 0], envelope=$height * 0.08) {
+          bone "spine_chest" (pos=[0, $height * 0.10, 0], envelope=$height * 0.10) {
+            // Cape / badge / pack / pauldron slots ride the chest bone so
+            // upper-body accessories follow torso twist and lean.
+            connector "slot_chest_front" (at=[0,                $height * -0.060, $height * -0.066], dir=[0,  0, -1], tag=slot)
+            connector "slot_chest_back"  (at=[0,                $height * -0.020, $height *  0.066], dir=[0,  0,  1], tag=slot)
+            connector "slot_back_lower"  (at=[0,                $height * -0.130, $height *  0.066], dir=[0,  0,  1], tag=slot)
+            connector "slot_shoulder_l"  (at=[$height *  0.105, $height *  0.095, 0],                dir=[0,  1,  0], tag=slot)
+            connector "slot_shoulder_r"  (at=[$height * -0.105, $height *  0.095, 0],                dir=[0,  1,  0], tag=slot)
+            bone "neck" (pos=[0, $height * 0.10, 0], envelope=$height * 0.08) {
+              // Hat / mask / beard / earring / neck-back slots ride the neck
+              // bone so head accessories rotate with head turns.
+              connector "slot_crown"     (at=[0,                $height *  0.150, 0],                dir=[0,  1,  0], tag=slot)
+              connector "slot_face"      (at=[0,                $height *  0.090, $height * -0.055], dir=[0,  0, -1], tag=slot)
+              connector "slot_jaw"       (at=[0,                $height *  0.030, $height * -0.020], dir=[0, -1,  0], tag=slot)
+              connector "slot_ear_l"     (at=[$height *  0.055, $height *  0.090, 0],                dir=[ 1, 0,  0], tag=slot)
+              connector "slot_ear_r"     (at=[$height * -0.055, $height *  0.090, 0],                dir=[-1, 0,  0], tag=slot)
+              connector "slot_neck_back" (at=[0,                $height *  0.030, $height *  0.040], dir=[0,  0,  1], tag=slot)
+            }
+            bone "shoulder_l" (pos=[$height *  0.135, $height * 0.07, 0], envelope=$height * 0.08) {
+              bone "elbow_l" (pos=[0, $height * -0.150, 0], envelope=$height * 0.08) {
+                bone "wrist_l" (pos=[0, $height * -0.150, 0], envelope=$height * 0.06) {
+                  // Held-prop and gauntlet slots ride the wrist bone so a
+                  // sword/shield/torch swings with the arm and follows the
+                  // hand through the walk cycle.
+                  connector "slot_hand_l_grip" (at=[0, $height * -0.075, 0],                dir=[0, -1, 0], tag=slot)
+                  connector "slot_hand_l_back" (at=[0, $height * -0.035, $height *  0.024], dir=[0,  0, 1], tag=slot)
+                }
               }
             }
-            bone "shoulder_r" (pos=[$height * -0.115, $height * 0.04, 0], envelope=$height * 0.14) {
-              bone "elbow_r" (pos=[$height * -0.0513, $height * -0.1410, 0], envelope=$height * 0.16) {
-                bone "wrist_r" (pos=[$height * -0.0547, $height * -0.1504, 0], envelope=$height * 0.10)
+            bone "shoulder_r" (pos=[$height * -0.135, $height * 0.07, 0], envelope=$height * 0.08) {
+              bone "elbow_r" (pos=[0, $height * -0.150, 0], envelope=$height * 0.08) {
+                bone "wrist_r" (pos=[0, $height * -0.150, 0], envelope=$height * 0.06) {
+                  connector "slot_hand_r_grip" (at=[0, $height * -0.075, 0],                dir=[0, -1, 0], tag=slot)
+                  connector "slot_hand_r_back" (at=[0, $height * -0.035, $height *  0.024], dir=[0,  0, 1], tag=slot)
+                }
               }
             }
           }
         }
       }
-      bone "hip_l" (pos=[ $height * 0.06, 0, 0], envelope=$height * 0.18) {
-        bone "knee_l" (pos=[0, $height * -0.24, 0], envelope=$height * 0.18) {
-          bone "ankle_l" (pos=[0, $height * -0.24, 0], envelope=$height * 0.10) {
-            bone "toe_l" (pos=[0, 0, $height * -0.07], envelope=$height * 0.06)
+      bone "hip_l" (pos=[$height *  0.060, 0, 0], envelope=$height * 0.10) {
+        bone "knee_l" (pos=[0, $height * -0.215, 0], envelope=$height * 0.10) {
+          bone "ankle_l" (pos=[0, $height * -0.215, 0], envelope=$height * 0.06) {
+            // Boot top / heel / toe slots ride the ankle bone so anything
+            // attached follows the foot through the walk cycle.
+            connector "slot_foot_l_top"  (at=[0, $height *  0.030, $height * -0.015], dir=[0,  1,  0], tag=slot)
+            connector "slot_foot_l_heel" (at=[0, $height *  0.005, $height *  0.055], dir=[0,  0,  1], tag=slot)
+            connector "slot_foot_l_toe"  (at=[0, $height *  0.005, $height * -0.085], dir=[0,  0, -1], tag=slot)
+            bone "toe_l" (pos=[0, 0, $height * -0.075], envelope=$height * 0.04)
           }
         }
       }
-      bone "hip_r" (pos=[$height * -0.06, 0, 0], envelope=$height * 0.18) {
-        bone "knee_r" (pos=[0, $height * -0.24, 0], envelope=$height * 0.18) {
-          bone "ankle_r" (pos=[0, $height * -0.24, 0], envelope=$height * 0.10) {
-            bone "toe_r" (pos=[0, 0, $height * -0.07], envelope=$height * 0.06)
+      bone "hip_r" (pos=[$height * -0.060, 0, 0], envelope=$height * 0.10) {
+        bone "knee_r" (pos=[0, $height * -0.215, 0], envelope=$height * 0.10) {
+          bone "ankle_r" (pos=[0, $height * -0.215, 0], envelope=$height * 0.06) {
+            connector "slot_foot_r_top"  (at=[0, $height *  0.030, $height * -0.015], dir=[0,  1,  0], tag=slot)
+            connector "slot_foot_r_heel" (at=[0, $height *  0.005, $height *  0.055], dir=[0,  0,  1], tag=slot)
+            connector "slot_foot_r_toe"  (at=[0, $height *  0.005, $height * -0.085], dir=[0,  0, -1], tag=slot)
+            bone "toe_r" (pos=[0, 0, $height * -0.075], envelope=$height * 0.04)
           }
         }
       }
@@ -71,195 +108,199 @@ module "humanoid_full" (
   }
 
   // ---------- Geometry ----------
-  // Each part sits at its rest world position (the position of the bone it
-  // skins to). At runtime, skinning + bone animations drive deformation; the
-  // scene-tree parent of each part is the scene root, NOT another part. We
-  // use explicit `pos=` rather than connector-`attach` chains because the
-  // chain would have to traverse multiple modules to wire face/nose/brow
-  // onto the head, and explicit world positions are easier to read and
-  // tweak. Outfit modules use connectors+attach to snap to the figure.
+  // Heights (in fractions of $height): foot 0–0.05, shin 0.05–0.27,
+  // thigh 0.265–0.485, hip 0.4425–0.5275, torso 0.525–0.795, neck 0.7925–
+  // 0.8375, head 0.83–0.95. Adjacent parts overlap by a few millimetres at
+  // joints so the silhouette has no visible seams. Legs are 51 % of the
+  // figure (realistic adult-Synty proportions) and the waist meets the
+  // torso flush. Arms hang from shoulder bone X = ±0.135 so the bone axis
+  // sits inside the arm geometry — animations rotate the arm around its
+  // own centreline rather than swinging it sideways.
 
-  // Torso (shirt material). Carries figure-level sockets for outfits.
-  chamfered_box "torso" (
-    pos=[0, $height * 0.70, 0],
-    size=[$height * 0.21, $height * 0.20, $height * 0.12],
-    radius=$height * 0.012,
-    mat="shirt", skin="rig", bind="spine_chest", faceted=1
-  ) {
-    connector "neck"          (at=[0,                  $height *  0.10, 0],               dir=[0,  1, 0], tag=neck)
-    connector "back"          (at=[0,                  0,               $height *  0.06], dir=[0,  0, 1], tag=back)
-    connector "shoulder_back" (at=[0,                  $height *  0.07, $height *  0.06], dir=[0,  0, 1], tag=shoulder_back)
-  }
-
-  // Hips (pants material). Carries leg sockets and waist socket.
-  chamfered_box "hips" (
-    pos=[0, $height * 0.555, 0],
-    size=[$height * 0.20, $height * 0.07, $height * 0.12],
-    radius=$height * 0.012,
-    mat="pants", skin="rig", bind="hip", faceted=1
-  ) {
-    connector "waist" (at=[0, $height * 0.035, 0], dir=[0, 1, 0], tag=waist)
-  }
-
-  // Head (skin material). Single chamfered_box block — the cranium.
-  chamfered_box "head" (
-    pos=[0, $height * 0.890, 0],
-    size=[$height * 0.105, $height * 0.118, $height * 0.105],
-    radius=$height * 0.010,
-    mat="skin", skin="rig", bind="neck", faceted=1
-  ) {
-    connector "crown" (at=[0,                $height *  0.059, 0],               dir=[0,  1, 0], tag=crown)
-    connector "ear_l" (at=[$height *  0.052, 0,                0],               dir=[ 1, 0, 0], tag=ear)
-    connector "ear_r" (at=[$height * -0.052, 0,                0],               dir=[-1, 0, 0], tag=ear)
-    connector "face"  (at=[0,                0,                $height * -0.052], dir=[0,  0, -1], tag=face)
-  }
-
-  // Neck — short chamfered_box bridging the head and the torso so there's
-  // no visible gap. Bound to neck so it tracks the head with no shear.
-  chamfered_box "neck_block" (
-    pos=[0, $height * 0.815, 0],
-    size=[$height * 0.055, $height * 0.040, $height * 0.055],
-    radius=$height * 0.006,
-    mat="skin", skin="rig", bind="neck", faceted=1
-  )
-
-  // Hybrid face: subtle nose/brow geometry + flat painted face panel.
-  // Painted on a quad sitting just in front of the head's front face (-Z
-  // forward in glTF). Quad is NOT unioned with the head — CSG strips UVs,
-  // and the panel needs a clean [0,1]² UV layout for the texture pipeline.
-  quad "face_panel" (
-    pos=[0, $height * 0.890, $height * -0.054],
-    size=[$height * 0.090, $height * 0.082],
-    mat="face", uv_mode="fit", skin="rig", bind="neck", faceted=1
-  )
-  // Nose: small chamfered_box protruding forward (-Z) from the face center.
-  chamfered_box "nose" (
-    pos=[0, $height * 0.885, $height * -0.062],
-    size=[$height * 0.014, $height * 0.025, $height * 0.022],
-    radius=$height * 0.004,
-    mat="skin", skin="rig", bind="neck", faceted=1
-  )
-  // Brow ridge: thin chamfered_box across the upper face.
-  chamfered_box "brow" (
-    pos=[0, $height * 0.915, $height * -0.058],
-    size=[$height * 0.080, $height * 0.012, $height * 0.014],
-    radius=$height * 0.003,
-    mat="skin", skin="rig", bind="neck", faceted=1
-  )
-
-  // Arms: wrapping `group` so the two chamfered_boxes share skin attrs and
-  // expose a single `shoulder` socket for outfit attaches at the shoulder.
-  // No `bind` — envelope skinning lets shoulder_l/elbow_l/wrist_l blend
-  // smoothly along the arm. Arm origin is at the shoulder bone's world
-  // position; geometry hangs in -Y from there.
-  group "arm_l" (pos=[$height *  0.115, $height * 0.77, 0], skin="rig") {
-    chamfered_box "arm_l_upper" (
-      pos=[0, $height * -0.072, 0],
-      size=[$height * 0.045, $height * 0.150, $height * 0.045],
-      radius=$height * 0.008,
-      mat="skin", faceted=1
-    )
-    chamfered_box "arm_l_fore" (
-      pos=[0, $height * -0.224, 0],
-      size=[$height * 0.040, $height * 0.150, $height * 0.040],
-      radius=$height * 0.007,
-      mat="skin", faceted=1
-    )
-    connector "shoulder" (at=[0, 0,                0], dir=[0,  1, 0], tag=shoulder)
-  }
-  group "arm_r" (pos=[$height * -0.115, $height * 0.77, 0], skin="rig") {
-    chamfered_box "arm_r_upper" (
-      pos=[0, $height * -0.072, 0],
-      size=[$height * 0.045, $height * 0.150, $height * 0.045],
-      radius=$height * 0.008,
-      mat="skin", faceted=1
-    )
-    chamfered_box "arm_r_fore" (
-      pos=[0, $height * -0.224, 0],
-      size=[$height * 0.040, $height * 0.150, $height * 0.040],
-      radius=$height * 0.007,
-      mat="skin", faceted=1
-    )
-    connector "shoulder" (at=[0, 0,                0], dir=[0,  1, 0], tag=shoulder)
-  }
-
-  // Hands: Synty mitten — palm chamfered_box + small thumb stub.
-  // 5-finger geometry is gone — at Synty silhouette scale fingers disappear
-  // and double the vertex count. The grip connector is what equip_sword /
-  // equip_shield / equip_staff snap to.
-  group "hand_l" (pos=[$height *  0.155, $height * 0.47, 0], skin="rig", bind="wrist_l") {
-    chamfered_box "hand_l_palm" (
-      pos=[0, $height * -0.030, 0],
-      size=[$height * 0.030, $height * 0.060, $height * 0.045],
-      radius=$height * 0.006,
-      mat="skin", faceted=1
-    )
-    chamfered_box "hand_l_thumb" (
-      pos=[$height * -0.022, $height * -0.018, 0],
-      size=[$height * 0.018, $height * 0.030, $height * 0.020],
-      radius=$height * 0.004,
-      mat="skin", faceted=1
-    )
-    connector "wrist_l_grip" (at=[$height *  0.005, $height * -0.030, 0], dir=[0, -1, 0], tag=grip)
-  }
-  group "hand_r" (pos=[$height * -0.155, $height * 0.47, 0], skin="rig", bind="wrist_r") {
-    chamfered_box "hand_r_palm" (
-      pos=[0, $height * -0.030, 0],
-      size=[$height * 0.030, $height * 0.060, $height * 0.045],
-      radius=$height * 0.006,
-      mat="skin", faceted=1
-    )
-    chamfered_box "hand_r_thumb" (
-      pos=[$height *  0.022, $height * -0.018, 0],
-      size=[$height * 0.018, $height * 0.030, $height * 0.020],
-      radius=$height * 0.004,
-      mat="skin", faceted=1
-    )
-    connector "wrist_r_grip" (at=[$height * -0.005, $height * -0.030, 0], dir=[0, -1, 0], tag=grip)
-  }
-
-  // Legs (pants material). Envelope-skinned so hip_l/knee_l/ankle_l blend.
-  group "leg_l" (pos=[$height *  0.06, $height * 0.55, 0], skin="rig") {
-    chamfered_box "leg_l_thigh" (
-      pos=[0, $height * -0.120, 0],
-      size=[$height * 0.058, $height * 0.240, $height * 0.058],
-      radius=$height * 0.009,
-      mat="pants", faceted=1
-    )
-    chamfered_box "leg_l_shin" (
-      pos=[0, $height * -0.360, 0],
-      size=[$height * 0.050, $height * 0.240, $height * 0.050],
-      radius=$height * 0.008,
-      mat="pants", faceted=1
-    )
-  }
-  group "leg_r" (pos=[$height * -0.06, $height * 0.55, 0], skin="rig") {
-    chamfered_box "leg_r_thigh" (
-      pos=[0, $height * -0.120, 0],
-      size=[$height * 0.058, $height * 0.240, $height * 0.058],
-      radius=$height * 0.009,
-      mat="pants", faceted=1
-    )
-    chamfered_box "leg_r_shin" (
-      pos=[0, $height * -0.360, 0],
-      size=[$height * 0.050, $height * 0.240, $height * 0.050],
-      radius=$height * 0.008,
-      mat="pants", faceted=1
-    )
-  }
-
-  // Feet (boot material). Single chunky chamfered_box per foot. The toe_l/r
-  // bone drives the front part via envelope overlap.
+  // Feet (boot). Each is a chunky chamfered box; the toe_l/r bone drives
+  // the front via envelope overlap so the walk cycle's toe flex reads.
+  // Slots: top of foot, heel, toe — declared on bones `ankle_l/ankle_r`.
   chamfered_box "foot_l" (
-    pos=[$height *  0.06, $height * 0.05, $height * -0.025],
-    size=[$height * 0.060, $height * 0.040, $height * 0.130],
+    pos=[$height *  0.060, $height * 0.025, $height * -0.015],
+    size=[$height * 0.072, $height * 0.050, $height * 0.140],
     radius=$height * 0.008,
     mat="boot", skin="rig", bind="ankle_l", faceted=1
   )
   chamfered_box "foot_r" (
-    pos=[$height * -0.06, $height * 0.05, $height * -0.025],
-    size=[$height * 0.060, $height * 0.040, $height * 0.130],
+    pos=[$height * -0.060, $height * 0.025, $height * -0.015],
+    size=[$height * 0.072, $height * 0.050, $height * 0.140],
     radius=$height * 0.008,
     mat="boot", skin="rig", bind="ankle_r", faceted=1
   )
+
+  // Legs (pants). Thigh binds to hip_l/r, shin to knee_l/r — rigid binding
+  // so the knee bends crisply during walk/run/jump.
+  chamfered_box "leg_l_thigh" (
+    pos=[$height *  0.060, $height * 0.375, 0],
+    size=[$height * 0.062, $height * 0.220, $height * 0.062],
+    radius=$height * 0.009,
+    mat="pants", skin="rig", bind="hip_l", faceted=1
+  )
+  chamfered_box "leg_l_shin" (
+    pos=[$height *  0.060, $height * 0.160, 0],
+    size=[$height * 0.052, $height * 0.220, $height * 0.052],
+    radius=$height * 0.008,
+    mat="pants", skin="rig", bind="knee_l", faceted=1
+  )
+  chamfered_box "leg_r_thigh" (
+    pos=[$height * -0.060, $height * 0.375, 0],
+    size=[$height * 0.062, $height * 0.220, $height * 0.062],
+    radius=$height * 0.009,
+    mat="pants", skin="rig", bind="hip_r", faceted=1
+  )
+  chamfered_box "leg_r_shin" (
+    pos=[$height * -0.060, $height * 0.160, 0],
+    size=[$height * 0.052, $height * 0.220, $height * 0.052],
+    radius=$height * 0.008,
+    mat="pants", skin="rig", bind="knee_r", faceted=1
+  )
+
+  // Hips/pelvis (pants). Sits flush against the torso bottom — no waist gap.
+  // Slots: belt-front/back, side hip (sheath/holster), pelvis-front
+  // (loincloth) — declared on bone `hip`.
+  chamfered_box "hips" (
+    pos=[0, $height * 0.485, 0],
+    size=[$height * 0.190, $height * 0.085, $height * 0.115],
+    radius=$height * 0.012,
+    mat="pants", skin="rig", bind="hip", faceted=1
+  )
+
+  // Torso (shirt). Spans from the waist up to the shoulder line. Slots:
+  // chest-front (badges/medals), upper-back (cape, banner), back-lower
+  // (pack), shoulder-tops (pauldrons, straps) — declared on bone `spine_chest`.
+  chamfered_box "torso" (
+    pos=[0, $height * 0.660, 0],
+    size=[$height * 0.220, $height * 0.270, $height * 0.130],
+    radius=$height * 0.014,
+    mat="shirt", skin="rig", bind="spine_chest", faceted=1
+  )
+
+  // Neck block (skin) bridging the head to the torso so there's no visible
+  // gap. Bound to neck so it tracks head rotations cleanly.
+  chamfered_box "neck_block" (
+    pos=[0, $height * 0.815, 0],
+    size=[$height * 0.062, $height * 0.045, $height * 0.062],
+    radius=$height * 0.006,
+    mat="skin", skin="rig", bind="neck", faceted=1
+  )
+
+  // Head (skin). Single chamfered_box block — the cranium. Slots: crown
+  // (hats), face-front (masks/visors), jaw (beards/chinstraps), ears,
+  // neck-back — declared on bone `neck`.
+  chamfered_box "head" (
+    pos=[0, $height * 0.890, 0],
+    size=[$height * 0.110, $height * 0.120, $height * 0.110],
+    radius=$height * 0.012,
+    mat="skin", skin="rig", bind="neck", faceted=1
+  )
+
+  // ---------- Face features ----------
+  // Visible eye / brow / nose / mouth blocks so an untextured build still
+  // reads as a face. All bound to neck so they ride with the head bone.
+  chamfered_box "eye_l" (
+    pos=[$height *  0.025, $height * 0.910, $height * -0.057],
+    size=[$height * 0.020, $height * 0.014, $height * 0.005],
+    radius=$height * 0.002,
+    mat="eye", skin="rig", bind="neck", faceted=1
+  )
+  chamfered_box "eye_r" (
+    pos=[$height * -0.025, $height * 0.910, $height * -0.057],
+    size=[$height * 0.020, $height * 0.014, $height * 0.005],
+    radius=$height * 0.002,
+    mat="eye", skin="rig", bind="neck", faceted=1
+  )
+  chamfered_box "brow_l" (
+    pos=[$height *  0.025, $height * 0.928, $height * -0.057],
+    size=[$height * 0.024, $height * 0.006, $height * 0.005],
+    radius=$height * 0.001,
+    mat="hair", skin="rig", bind="neck", faceted=1
+  )
+  chamfered_box "brow_r" (
+    pos=[$height * -0.025, $height * 0.928, $height * -0.057],
+    size=[$height * 0.024, $height * 0.006, $height * 0.005],
+    radius=$height * 0.001,
+    mat="hair", skin="rig", bind="neck", faceted=1
+  )
+  chamfered_box "nose" (
+    pos=[0, $height * 0.890, $height * -0.062],
+    size=[$height * 0.014, $height * 0.025, $height * 0.020],
+    radius=$height * 0.003,
+    mat="skin", skin="rig", bind="neck", faceted=1
+  )
+  chamfered_box "mouth" (
+    pos=[0, $height * 0.866, $height * -0.057],
+    size=[$height * 0.030, $height * 0.008, $height * 0.005],
+    radius=$height * 0.001,
+    mat="mouth", skin="rig", bind="neck", faceted=1
+  )
+
+  // ---------- Arms ----------
+  // Upper arm rigid-binds to shoulder_l/r and hangs straight down at
+  // X = ±0.135 — the same X as the shoulder bone — so swing rotations
+  // pivot through the arm's own centreline (no sideways drift). Forearm
+  // binds to elbow, hand binds to wrist; arm geometry meets at every joint
+  // so the limb reads as one continuous shape.
+  chamfered_box "arm_l_upper" (
+    pos=[$height *  0.135, $height * 0.695, 0],
+    size=[$height * 0.045, $height * 0.150, $height * 0.045],
+    radius=$height * 0.008,
+    mat="skin", skin="rig", bind="shoulder_l", faceted=1
+  )
+  chamfered_box "arm_l_fore" (
+    pos=[$height *  0.135, $height * 0.545, 0],
+    size=[$height * 0.040, $height * 0.150, $height * 0.040],
+    radius=$height * 0.007,
+    mat="skin", skin="rig", bind="elbow_l", faceted=1
+  )
+  chamfered_box "arm_r_upper" (
+    pos=[$height * -0.135, $height * 0.695, 0],
+    size=[$height * 0.045, $height * 0.150, $height * 0.045],
+    radius=$height * 0.008,
+    mat="skin", skin="rig", bind="shoulder_r", faceted=1
+  )
+  chamfered_box "arm_r_fore" (
+    pos=[$height * -0.135, $height * 0.545, 0],
+    size=[$height * 0.040, $height * 0.150, $height * 0.040],
+    radius=$height * 0.007,
+    mat="skin", skin="rig", bind="elbow_r", faceted=1
+  )
+
+  // ---------- Hands ----------
+  // Synty mitten: palm chamfered_box + small thumb stub. Wrapping group
+  // rigid-binds to the wrist, so the whole hand follows wrist_l/r. Slots:
+  // grip (held items — sword, staff, torch) and back-of-hand (gauntlets,
+  // signet rings) — declared on bones `wrist_l`/`wrist_r`.
+  group "hand_l" (pos=[$height * 0.135, $height * 0.435, 0], skin="rig", bind="wrist_l") {
+    chamfered_box "hand_l_palm" (
+      pos=[0, 0, 0],
+      size=[$height * 0.040, $height * 0.075, $height * 0.045],
+      radius=$height * 0.006,
+      mat="skin", faceted=1
+    )
+    chamfered_box "hand_l_thumb" (
+      pos=[$height * -0.022, $height * 0.012, 0],
+      size=[$height * 0.018, $height * 0.030, $height * 0.020],
+      radius=$height * 0.004,
+      mat="skin", faceted=1
+    )
+  }
+  group "hand_r" (pos=[$height * -0.135, $height * 0.435, 0], skin="rig", bind="wrist_r") {
+    chamfered_box "hand_r_palm" (
+      pos=[0, 0, 0],
+      size=[$height * 0.040, $height * 0.075, $height * 0.045],
+      radius=$height * 0.006,
+      mat="skin", faceted=1
+    )
+    chamfered_box "hand_r_thumb" (
+      pos=[$height * 0.022, $height * 0.012, 0],
+      size=[$height * 0.018, $height * 0.030, $height * 0.020],
+      radius=$height * 0.004,
+      mat="skin", faceted=1
+    )
+  }
 }
