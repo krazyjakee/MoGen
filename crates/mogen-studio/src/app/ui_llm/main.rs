@@ -1,5 +1,6 @@
 use eframe::egui;
 
+use crate::app::style;
 use crate::app::types::EnhanceTarget;
 use crate::app::MogenStudioApp;
 
@@ -31,7 +32,7 @@ impl MogenStudioApp {
             // (paste / env var) gets its own line.
             let provider = self.settings.provider().display_name();
             ui.colored_label(
-                egui::Color32::from_rgb(230, 200, 100),
+                ui.visuals().warn_fg_color,
                 format!("{provider}: no API key — every LLM action below is disabled."),
             );
             ui.label(
@@ -79,7 +80,7 @@ impl MogenStudioApp {
 
         // Generate lives in the File → New from Prompt modal now; the
         // inspector only exposes transformations of the current MOG file.
-        ui.label("Modify current:");
+        ui.label("Modify this file");
         let mod_id = egui::Id::new(("mog_llm_mod_prompt", self.active));
         crate::app::text_menu::text_edit_with_menu(
             ui,
@@ -88,7 +89,7 @@ impl MogenStudioApp {
             |ui, text| {
                 ui.add(
                     egui::TextEdit::multiline(text)
-                        .hint_text("e.g. make the legs taller")
+                        .hint_text(style::placeholder("e.g. make the legs taller"))
                         .desired_rows(4)
                         .desired_width(f32::INFINITY)
                         .id(mod_id),
@@ -103,7 +104,7 @@ impl MogenStudioApp {
         ]);
         ui.horizontal(|ui| {
             let resp = ui
-                .add_enabled(mod_enabled, egui::Button::new("Modify"))
+                .add_enabled(mod_enabled, style::primary_button(ui, "Modify"))
                 .on_hover_text(
                     mod_reason
                         .as_deref()
@@ -116,12 +117,13 @@ impl MogenStudioApp {
             self.ui_enhance_button(
                 ui,
                 EnhanceTarget::Modify,
-                "Rewrite the Modify prompt with the fast model",
+                "Rewrite the Modify prompt with the fast model — \
+                 the model expands and clarifies your prompt before sending.",
             );
         });
 
         ui.add_space(8.0);
-        ui.label("Animate current:");
+        ui.label("Animate this file");
         let anim_id = egui::Id::new(("mog_llm_anim_prompt", self.active));
         crate::app::text_menu::text_edit_with_menu(
             ui,
@@ -130,7 +132,7 @@ impl MogenStudioApp {
             |ui, text| {
                 ui.add(
                     egui::TextEdit::multiline(text)
-                        .hint_text("e.g. spin the rotor at 120 rpm")
+                        .hint_text(style::placeholder("e.g. spin the rotor at 120 rpm"))
                         .desired_rows(4)
                         .desired_width(f32::INFINITY)
                         .id(anim_id),
@@ -145,7 +147,7 @@ impl MogenStudioApp {
         ]);
         ui.horizontal(|ui| {
             let resp = ui
-                .add_enabled(anim_enabled, egui::Button::new("Animate"))
+                .add_enabled(anim_enabled, style::primary_button(ui, "Animate"))
                 .on_hover_text(
                     anim_reason
                         .as_deref()
@@ -158,7 +160,8 @@ impl MogenStudioApp {
             self.ui_enhance_button(
                 ui,
                 EnhanceTarget::Animate,
-                "Rewrite the Animate prompt with the fast model",
+                "Rewrite the Animate prompt with the fast model — \
+                 the model expands and clarifies your prompt before sending.",
             );
         });
 
@@ -178,7 +181,7 @@ impl MogenStudioApp {
             })
             .unwrap_or(0);
         let provider_name = self.settings.provider().display_name();
-        ui.label("Repair current:");
+        ui.label("Repair this file");
         ui.label(
             egui::RichText::new(format!(
                 "hand the current file's validation errors back to {provider_name} — \
@@ -208,7 +211,7 @@ impl MogenStudioApp {
             "Feed the diagnostics (with spans and fix hints) back to {provider_name}"
         );
         if ui
-            .add_enabled(repair_enabled, egui::Button::new(repair_label))
+            .add_enabled(repair_enabled, style::primary_button(ui, &repair_label))
             .on_hover_text(repair_reason.as_deref().unwrap_or(&repair_default_tip))
             .clicked()
         {
@@ -230,7 +233,7 @@ impl MogenStudioApp {
             .as_ref()
             .map(|r| r.scene.is_some() && !mogen_core::has_errors(&r.diagnostics))
             .unwrap_or(false);
-        ui.label("Refine current:");
+        ui.label("Refine this file");
         ui.label(
             egui::RichText::new(format!(
                 "render the current scene, hand it back to {provider_name} with the \
@@ -293,7 +296,7 @@ impl MogenStudioApp {
                 format!("Refine {iters}×")
             };
             if ui
-                .add_enabled(refine_enabled, egui::Button::new(refine_label))
+                .add_enabled(refine_enabled, style::primary_button(ui, &refine_label))
                 .on_hover_text(refine_tip)
                 .clicked()
             {
@@ -325,7 +328,7 @@ impl MogenStudioApp {
 
         if !provider_supports_images {
             ui.colored_label(
-                egui::Color32::from_rgb(230, 200, 100),
+                ui.visuals().warn_fg_color,
                 format!(
                     "{provider_name} has no vision input — switch to Gemini or Z.ai to enable Refine",
                 ),
@@ -333,7 +336,7 @@ impl MogenStudioApp {
         }
 
         ui.add_space(8.0);
-        ui.label("Textures:");
+        ui.label("Textures");
         ui.label(
             egui::RichText::new(
                 "generates a base_color PNG per material, writes to ./textures/ \
@@ -371,7 +374,7 @@ impl MogenStudioApp {
                             |ui, text| {
                                 ui.add(
                                     egui::TextEdit::singleline(text)
-                                        .hint_text("photorealistic")
+                                        .hint_text(style::placeholder("photorealistic"))
                                         .desired_width(f32::INFINITY)
                                         .id(style_id),
                                 )
@@ -440,7 +443,10 @@ impl MogenStudioApp {
             );
         }
         if ui
-            .add_enabled(tex_enabled, egui::Button::new("Generate Textures"))
+            .add_enabled(
+                tex_enabled,
+                style::primary_button(ui, "Generate Textures"),
+            )
             .on_hover_text(tex_reason.as_deref().unwrap_or(
                 "Run the textures pipeline with the options above. \
                  Writes PNGs to ./textures/ next to the .mog.",
@@ -452,7 +458,7 @@ impl MogenStudioApp {
         }
         if !has_path && !src_empty {
             ui.colored_label(
-                egui::Color32::from_rgb(230, 200, 100),
+                ui.visuals().warn_fg_color,
                 "save the file first — textures writes PNGs next to it",
             );
         }

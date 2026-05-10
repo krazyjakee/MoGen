@@ -19,8 +19,9 @@ impl MogenStudioApp {
                 .on_hover_text(
                     "Per-file cap on the model's reasoning budget (applies to \
                      providers / models that support a thinking budget). \
-                     Saved into the .mog header so it applies to CLI runs too. \
-                     Leave as \"Use global default\" to defer to Options.",
+                     Saved into the .mog header (meta thinking=…) so it \
+                     applies to CLI runs too. Leave as \"Use global default\" \
+                     to defer to Options.",
                 );
             egui::ComboBox::from_id_salt(("mog_thinking_override", self.active))
                 .selected_text(preview)
@@ -42,14 +43,12 @@ impl MogenStudioApp {
                             self.active_mut().thinking_override = Some(level);
                         }
                     }
-                });
-            // Tiny hint about how the override is persisted. Quiet so it
-            // doesn't shout at users who never touched the dropdown.
-            if current.is_some() {
-                ui.label(
-                    egui::RichText::new("(saved in file header)").weak(),
+                })
+                .response
+                .on_hover_text(
+                    "Saved into the .mog header so the same budget applies \
+                     to CLI runs of this file.",
                 );
-            }
         });
     }
 }
