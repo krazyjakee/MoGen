@@ -6,43 +6,32 @@ module "humanoid_top_blazer_open" (
 ) {
   material "jacket_outer" (color=$colour, roughness=0.78)
 
-  // Back / side wrap-around — three panels that together form a "U" that
-  // covers the back, sides, and shoulders of the torso while leaving the
-  // front open for the lapels.
-  chamfered_box "blazer_back" (
-    pos=[0, $height * 0.660, $height * 0.040],
-    size=[$height * 0.226 * $weight, $height * 0.276, $height * 0.060 * $weight],
+  // Back-and-sides shell — a single wide chamfered_box that wraps the
+  // back ¾ of the torso (back face + sides + back-of-shoulders),
+  // shifted rearward in Z so the front of the chest stays uncovered for
+  // the lapels to sit on.
+  chamfered_box "blazer_back_sides" (
+    pos=[0, $height * 0.660, $height * 0.022],
+    size=[$height * 0.226 * $weight, $height * 0.276, $height * 0.094 * $weight],
     radius=$height * 0.014,
     mat="jacket_outer", skin="rig", bind="spine_chest", faceted=1
   )
-  chamfered_box "blazer_side_l" (
-    pos=[$height * 0.105 * $weight, $height * 0.660, 0],
-    size=[$height * 0.030 * $weight, $height * 0.276, $height * 0.140 * $weight],
-    radius=$height * 0.012,
-    mat="jacket_outer", skin="rig", bind="spine_chest", faceted=1
-  )
-  chamfered_box "blazer_side_r" (
-    pos=[$height * -0.105 * $weight, $height * 0.660, 0],
-    size=[$height * 0.030 * $weight, $height * 0.276, $height * 0.140 * $weight],
-    radius=$height * 0.012,
-    mat="jacket_outer", skin="rig", bind="spine_chest", faceted=1
-  )
 
-  // Front lapels — thin panels with a Z-axis tilt so their inner edges
-  // diverge at the top, opening a V-shaped gap at the upper chest where
-  // the undershirt panel shows through.
+  // Front lapels — two flat panels offset off-centre so a V-shaped gap
+  // runs down the chest centre. The undershirt panel below shows
+  // through. Each lapel is shifted slightly forward of the body torso
+  // surface so it reads as a separate jacket layer rather than blending
+  // into the body mesh.
   chamfered_box "blazer_front_l" (
-    pos=[$height * 0.075 * $weight, $height * 0.660, $height * -0.066 * $weight],
-    rot=[0, 0, 10],
-    size=[$height * 0.090 * $weight, $height * 0.276, $height * 0.014],
-    radius=$height * 0.005,
+    pos=[$height * 0.062 * $weight, $height * 0.660, $height * -0.064 * $weight],
+    size=[$height * 0.082 * $weight, $height * 0.276, $height * 0.018],
+    radius=$height * 0.006,
     mat="jacket_outer", skin="rig", bind="spine_chest", faceted=1
   )
   chamfered_box "blazer_front_r" (
-    pos=[$height * -0.075 * $weight, $height * 0.660, $height * -0.066 * $weight],
-    rot=[0, 0, -10],
-    size=[$height * 0.090 * $weight, $height * 0.276, $height * 0.014],
-    radius=$height * 0.005,
+    pos=[$height * -0.062 * $weight, $height * 0.660, $height * -0.064 * $weight],
+    size=[$height * 0.082 * $weight, $height * 0.276, $height * 0.018],
+    radius=$height * 0.006,
     mat="jacket_outer", skin="rig", bind="spine_chest", faceted=1
   )
 

@@ -6,9 +6,14 @@ module "humanoid_top_tshirt_panel" (
 ) {
   material "undershirt" (color=$colour, roughness=0.82)
 
+  // Inner edges of `humanoid_top_blazer_open`'s lapels sit ~3.5 % of
+  // height in from the chest centre, so this panel is sized to fill the
+  // V gap and pushed in front of the lapel surfaces (which span
+  // z ≈ -0.122 .. -0.090 at $height=1.75, $weight=0.95) so the white
+  // shirt clearly reads against the dark jacket fabric.
   chamfered_box "tshirt_panel" (
-    pos=[0, $height * 0.730, $height * -0.062 * $weight],
-    size=[$height * 0.072 * $weight, $height * 0.130, $height * 0.014],
+    pos=[0, $height * 0.730, $height * -0.080 * $weight],
+    size=[$height * 0.064 * $weight, $height * 0.150, $height * 0.020],
     radius=$height * 0.005,
     mat="undershirt", skin="rig", bind="spine_chest", faceted=1
   )
