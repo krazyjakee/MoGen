@@ -160,12 +160,6 @@ mogen-dsl  ──parse──►  AST  ──validate_ast──►  lower  ──
   snapshots.
 - MoGHub web community. The actual repo lives at `../moghub` (sibling to this checkout); cross-repo work happens there.
 
-## Agent-Specific Notes
-
-This repository includes a compiled documentation database/knowledgebase at `AGENTS.db`.
-For context for any task, you MUST use MCP `agents_search` to look up context including architectural, API, and historical changes.
-Treat `AGENTS.db` layers as immutable; avoid in-place mutation utilities unless required by the design.
-
 ## Git
 
 - **Never use `git stash`** unless the user explicitly requests it. Stashed work is easy to
