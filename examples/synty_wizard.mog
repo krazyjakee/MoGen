@@ -18,7 +18,7 @@ scene {
     chamfered_box "hat_dome" (pos=[0, 0.105, 0], size=[0.153, 0.102, 0.153], radius=0.020, mat="wizard_hat", faceted=1)
     connector "rim" (at=[0, 0, 0], dir=[0, -1, 0], tag=plug)
   }
-  attach (parent="head", child="hat", socket="slot_crown", plug="rim")
+  attach (parent="neck", child="hat", socket="slot_crown", plug="rim")
 
   // Cape — drapes from the upper back.
   chamfered_box "cape" (
@@ -27,7 +27,7 @@ scene {
   ) {
     connector "neck_edge" (at=[0, 0.382, -0.012], dir=[0, 1, 0], tag=plug)
   }
-  attach (parent="torso", child="cape", socket="slot_chest_back", plug="neck_edge")
+  attach (parent="spine_chest", child="cape", socket="slot_chest_back", plug="neck_edge")
 
   // Staff — long shaft + glowing crystal finial, gripped in the right hand.
   group "staff" {
@@ -35,7 +35,7 @@ scene {
     chamfered_box "staff_crystal" (pos=[0, 0.867, 0], size=[0.077, 0.102, 0.077], radius=0.020, mat="wizard_crystal", faceted=1)
     connector "grip" (at=[0, 0.085, 0], dir=[0, 1, 0], tag=plug)
   }
-  attach (parent="hand_r", child="staff", socket="slot_hand_r_grip", plug="grip")
+  attach (parent="wrist_r", child="staff", socket="slot_hand_r_grip", plug="grip")
 
   use "humanoid_idle" ()
 }

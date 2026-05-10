@@ -97,13 +97,13 @@ fn lower_bone(
     joints.push(id);
     envelopes.push(node.attr_number("envelope").unwrap_or(DEFAULT_ENVELOPE));
     for c in &node.children {
-        if c.kind != "bone" {
-            bail!(
-                "bone \"{name}\" children must be `bone` nodes (got `{}`)",
-                c.kind
-            );
+        match c.kind.as_str() {
+            "bone" => lower_bone(c, id, graph, joints, envelopes)?,
+            "connector" => crate::lower::connector::add_connector(c, id, graph)?,
+            other => bail!(
+                "bone \"{name}\" children must be `bone` or `connector` nodes (got `{other}`)"
+            ),
         }
-        lower_bone(c, id, graph, joints, envelopes)?;
     }
     Ok(())
 }

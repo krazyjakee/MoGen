@@ -204,7 +204,7 @@ pub(super) fn default_connectors(node: &Node) -> Vec<(&'static str, Vec3, Vec3)>
     out
 }
 
-pub(super) fn add_connector(node: &Node, parent: NodeId, graph: &mut SceneGraph) -> Result<()> {
+pub(crate) fn add_connector(node: &Node, parent: NodeId, graph: &mut SceneGraph) -> Result<()> {
     let name = node.name.clone().ok_or_else(|| anyhow!("connector requires a name"))?;
     let at = node.attr_vec3("at").unwrap_or(Vec3::ZERO);
     let dir = node.attr_vec3("dir").unwrap_or(Vec3::Y);

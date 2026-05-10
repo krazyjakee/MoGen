@@ -285,7 +285,7 @@ pub fn fix_hint(code: &str) -> Option<&'static str> {
         "E0502" => "A skeleton must contain at least one `bone`.",
         "E0503" => "Only `bone` nodes belong inside a `skeleton` — no primitives or groups.",
         "E0504" => "Bone needs a name — tracks and `skin=` binding reference bones by name.",
-        "E0505" => "Only `bone` nodes nest inside another `bone` — that's how the hierarchy is built.",
+        "E0505" => "Inside a `bone`, only nest other `bone` nodes (children of that joint) or `connector` blocks (attachment slots that follow the joint when it animates).",
         "E0601" => "`attach` requires `parent=\"<node name>\"`.",
         "E0602" => "`attach` requires `child=\"<node name>\"`.",
         "E0701" => "Lowering/config error — usually an unresolved reference (`attach`/`track`/`skin` pointing at a name that doesn't exist) or an invalid enum value. Read the message for the specific name.",
