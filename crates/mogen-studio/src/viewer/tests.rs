@@ -564,13 +564,19 @@
     /// Build a scene mirroring the office assetpack pattern:
     ///   group "lptp" { use "laptop" }
     /// — a user-authored wrapper group with one imported child carrying a
-    /// non-`None` `use_id`. The wrapper has `use_id = None`; the imported
-    /// child has `use_id = Some(7)`. Returns `(wrapper_id, imported_id)`.
+    /// non-`None` `use_id` AND `origin = Some(path)` (the latter is what
+    /// distinguishes a real cross-file import from a same-file `use`
+    /// expansion: only imported nodes have a foreign source path stamped
+    /// on them by `set_origin_recursive`). The wrapper has
+    /// `use_id = None`; the imported child has `use_id = Some(7)` and
+    /// `origin = Some("laptop.mog")`. Returns `(wrapper_id, imported_id)`.
     fn scene_with_imported_child() -> (SceneGraph, NodeId, NodeId) {
         let mut scene = SceneGraph::new();
         let wrapper = scene.add_root("lptp", "group", Transform::IDENTITY);
         let imported = scene.add_child(wrapper, "laptop_body", "box", Transform::IDENTITY);
         scene.nodes[imported.0 as usize].use_id = Some(7);
+        scene.nodes[imported.0 as usize].origin =
+            Some(std::path::PathBuf::from("laptop.mog"));
         (scene, wrapper, imported)
     }
 
@@ -606,11 +612,33 @@
         // `scene { use "desk" }` with no wrapping group: the imported node
         // is a root, every parent walk halts immediately with no
         // user-authored wrapper. The redirect bails to `None` so picking
-        // doesn't latch onto a node we can't safely write back.
+        // doesn't latch onto a node we can't safely write back. `origin`
+        // must be `Some(...)` here — that's what marks the node as
+        // imported (its `source_span` lives in another file). A
+        // locally-expanded `use` of a module declared in the same `.mog`
+        // would have `origin = None` and the redirect would return self.
         let mut scene = SceneGraph::new();
         let imported = scene.add_root("desk_top", "box", Transform::IDENTITY);
         scene.nodes[imported.0 as usize].use_id = Some(1);
+        scene.nodes[imported.0 as usize].origin =
+            Some(std::path::PathBuf::from("desk.mog"));
         assert_eq!(redirect_pick(&scene, imported), None);
+    }
+
+    #[test]
+    fn redirect_pick_returns_self_for_local_module_top_level_node() {
+        // `module "outfit" () { box "panel" (...) }` followed by
+        // `use "outfit" ()` — the expanded `panel` lands at scene root with
+        // `use_id = Some(...)` and `origin = None` (its `source_span`
+        // points at editable bytes in the active file). The redirect must
+        // return the panel itself; otherwise the viewport click wipes the
+        // selection and the user can't grab the gizmo handle on local
+        // outfit / clothing modules.
+        let mut scene = SceneGraph::new();
+        let panel = scene.add_root("panel", "box", Transform::IDENTITY);
+        scene.nodes[panel.0 as usize].use_id = Some(7);
+        // origin stays None — local module body sits in the active source.
+        assert_eq!(redirect_pick(&scene, panel), Some(panel));
     }
 
     #[test]
@@ -632,11 +660,16 @@
     #[test]
     fn replace_selection_clears_selection_when_redirect_finds_no_wrapper() {
         // Bare imported root (no enclosing user-authored group): the
-        // redirect returns `None`, so the viewer should clear its selection
-        // rather than latch onto an un-editable node.
+        // redirect returns `None`, so the viewer should clear its
+        // selection rather than latch onto an un-editable node. Imported
+        // nodes carry `origin = Some(path)`; without that flag the
+        // redirect treats the node as a local module body and returns
+        // self.
         let mut scene = SceneGraph::new();
         let imported = scene.add_root("desk_top", "box", Transform::IDENTITY);
         scene.nodes[imported.0 as usize].use_id = Some(1);
+        scene.nodes[imported.0 as usize].origin =
+            Some(std::path::PathBuf::from("desk.mog"));
         let mut st = ViewerState::default();
         st.scene = Some(Arc::new(scene));
         replace_selection(&mut st, Some(imported));
@@ -827,6 +860,26 @@
         assert!(gizmo_handles_supported(
             &scene,
             wrapper,
+            crate::gizmo::GizmoMode::Translate,
+        ));
+    }
+
+    #[test]
+    fn gizmo_handles_allowed_on_local_module_expansion() {
+        // `module "outfit" () { box "panel" (...) }` followed by
+        // `use "outfit" ()` — the expanded `panel` has
+        // `use_id = Some(...)` (it came from a `use` call) but
+        // `origin = None` (the module body lives in the active source, so
+        // the panel's `source_span` is still editable). The gizmo must be
+        // allowed; without this, drag-to-edit on local outfit / clothing
+        // modules silently no-ops.
+        let mut scene = SceneGraph::new();
+        let panel = scene.add_root("panel", "box", Transform::IDENTITY);
+        scene.nodes[panel.0 as usize].use_id = Some(7);
+        // origin stays None.
+        assert!(gizmo_handles_supported(
+            &scene,
+            panel,
             crate::gizmo::GizmoMode::Translate,
         ));
     }
@@ -1111,9 +1164,14 @@
         // Imported root with no editable ancestor: cycling must mirror
         // `replace_selection`'s clear-on-None behavior so a click never
         // latches onto a node whose source span lives in another file.
+        // `origin = Some(...)` is what flags the node as imported — a
+        // local `use "module" ()` expansion has `origin = None` and the
+        // redirect would return the node itself.
         let mut scene = SceneGraph::new();
         let imported = scene.add_root("desk_top", "box", Transform::IDENTITY);
         scene.nodes[imported.0 as usize].use_id = Some(1);
+        scene.nodes[imported.0 as usize].origin =
+            Some(std::path::PathBuf::from("desk.mog"));
         let mut st = ViewerState::default();
         st.scene = Some(Arc::new(scene));
         replace_selection_cycling(&mut st, imported, egui::pos2(100.0, 100.0));

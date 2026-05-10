@@ -605,20 +605,28 @@ pub(super) fn gizmo_handles_supported(
     if !node.editable {
         return false;
     }
-    // Imported subtree (`use_id != None`): the node's source span points at
-    // the imported file, not the active source. `replace_selection` redirects
-    // picks to the nearest user-authored wrapper, but a stale selection
-    // (set before the redirect existed, or restored from a path that now
-    // resolves into an imported subtree) can still land here. Refusing the
-    // gizmo handles is the same affordance as for replicators: no draggable
-    // handle, so the user can't initiate an edit that would be silently
-    // dropped or corrupt the wrong file.
+    // Imported subtree (`use_id != None` AND `origin = Some(path)`): the
+    // node's source span points at the imported file, not the active
+    // source. `replace_selection` redirects picks to the nearest
+    // user-authored wrapper, but a stale selection (set before the
+    // redirect existed, or restored from a path that now resolves into an
+    // imported subtree) can still land here. Refusing the gizmo handles
+    // is the same affordance as for replicators: no draggable handle, so
+    // the user can't initiate an edit that would be silently dropped or
+    // corrupt the wrong file.
     //
-    // Exception: the synthesised wrapper group of `use "X" (pos=...)` for
-    // an imported file also has `use_id = Some(...)`, but its source span
-    // is the `use` line in the active source — set_attr can write the
-    // `pos=`/`rot=`/`scale=` back through it cleanly, so allow the gizmo.
-    if node.use_id.is_some() && !is_import_wrapper(scene, node_id) {
+    // Exceptions:
+    //   - The synthesised wrapper group of `use "X" (pos=...)` for an
+    //     imported file has `use_id = Some(...)` but its source span is
+    //     the `use` line in the active source — set_attr writes the
+    //     `pos=`/`rot=`/`scale=` back through it cleanly.
+    //   - A `use "local_module" ()` call expands to nodes with
+    //     `use_id = Some(...)` and `origin = None`; their `source_span`
+    //     IS in the active source (the module body lives in the same
+    //     `.mog`), so the gizmo writeback is safe. Stdlib expansions are
+    //     distinguished by `origin = Some("<stdlib>/…")` and continue to
+    //     bail out.
+    if node.use_id.is_some() && node.origin.is_some() && !is_import_wrapper(scene, node_id) {
         return false;
     }
     // Relative placement (`above`/`below`/`left_of`/...) re-shifts one axis
@@ -1128,7 +1136,21 @@ pub(super) fn redirect_pick(scene: &SceneGraph, id: NodeId) -> Option<NodeId> {
         prev_origin_some = parent.origin.is_some();
         cur = parent.parent;
     }
-    import_wrapper
+    // Fallback: a node authored in the active source (origin=None) but
+    // expanded out of a `use "local_module" ()` call has `use_id=Some` and
+    // sits at scene root with no wrapper to walk up to. Its `source_span`
+    // still points at editable bytes in the active file (the module body
+    // is right there in the same `.mog`), so let the click select it
+    // directly. Imported nodes (origin=Some(path)) keep bailing to None —
+    // their span is in another file and a span-based set_attr would
+    // splice into the wrong source.
+    import_wrapper.or_else(|| {
+        if node.origin.is_none() {
+            Some(id)
+        } else {
+            None
+        }
+    })
 }
 
 /// True when `id` is the synthesised wrapper group of a `use "..."` of an

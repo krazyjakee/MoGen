@@ -1,6 +1,9 @@
 // summary: Synty/Quaternius-style low-poly humanoid in one declaration. Faceted chamfered-box body parts each rigid-bound to one bone for crisp joint motion. Visible eyes/brows/nose/mouth blocks (no textured face panel) so an untextured build still reads as a face. Colours pass-through as vec3 params (`skin`, `hair`, `eye`, `mouth`, `shirt`, `pants`, `boot`); the module declares matching materials internally so a bare `use "humanoid_full" ()` produces a fully-coloured character. Skeleton is 17 bones (`hip`, `spine_lower`, `spine_mid`, `spine_chest`, `neck`, `shoulder_l/r`, `elbow_l/r`, `wrist_l/r`, `hip_l/r`, `knee_l/r`, `ankle_l/r`, `toe_l/r`) named to drive the shipped `humanoid_walk` / `humanoid_run` / `humanoid_idle` / `humanoid_jump` clips. Slot connectors live ON THE BONES so attached items inherit each joint's animated transform: `slot_crown / slot_face / slot_jaw / slot_ear_l / slot_ear_r / slot_neck_back` on bone `neck`; `slot_chest_front / slot_chest_back / slot_back_lower / slot_shoulder_l / slot_shoulder_r` on bone `spine_chest`; `slot_waist_front / slot_waist_back / slot_waist_l / slot_waist_r / slot_pelvis_front` on bone `hip`; `slot_hand_l_grip / slot_hand_l_back` on bone `wrist_l`; `slot_hand_r_grip / slot_hand_r_back` on bone `wrist_r`; `slot_foot_l_top / slot_foot_l_heel / slot_foot_l_toe` on bone `ankle_l`; `slot_foot_r_top / slot_foot_r_heel / slot_foot_r_toe` on bone `ankle_r`. Always use the bone name as the `attach (parent=...)` target — `attach (parent="neck", child="helmet", socket="slot_crown", plug="rim")` — so the item rides the joint through the walk / run / idle / jump clips. Use only ONCE per scene (single "rig" skeleton).
 module "humanoid_full" (
   height=1.7,
+  weight=1.0,
+  head_size=1.0,
+  leg_taper=0.0,
   skin =[0.85, 0.65, 0.55],
   hair =[0.20, 0.15, 0.10],
   eye  =[0.08, 0.08, 0.10],
@@ -137,25 +140,25 @@ module "humanoid_full" (
   // so the knee bends crisply during walk/run/jump.
   chamfered_box "leg_l_thigh" (
     pos=[$height *  0.060, $height * 0.375, 0],
-    size=[$height * 0.062, $height * 0.220, $height * 0.062],
+    size=[$height * 0.062 * $weight, $height * 0.220, $height * 0.062 * $weight],
     radius=$height * 0.009,
     mat="pants", skin="rig", bind="hip_l", faceted=1
   )
   chamfered_box "leg_l_shin" (
     pos=[$height *  0.060, $height * 0.160, 0],
-    size=[$height * 0.052, $height * 0.220, $height * 0.052],
+    size=[$height * (0.052 - 0.0148 * $leg_taper) * $weight, $height * 0.220, $height * (0.052 - 0.0148 * $leg_taper) * $weight],
     radius=$height * 0.008,
     mat="pants", skin="rig", bind="knee_l", faceted=1
   )
   chamfered_box "leg_r_thigh" (
     pos=[$height * -0.060, $height * 0.375, 0],
-    size=[$height * 0.062, $height * 0.220, $height * 0.062],
+    size=[$height * 0.062 * $weight, $height * 0.220, $height * 0.062 * $weight],
     radius=$height * 0.009,
     mat="pants", skin="rig", bind="hip_r", faceted=1
   )
   chamfered_box "leg_r_shin" (
     pos=[$height * -0.060, $height * 0.160, 0],
-    size=[$height * 0.052, $height * 0.220, $height * 0.052],
+    size=[$height * (0.052 - 0.0148 * $leg_taper) * $weight, $height * 0.220, $height * (0.052 - 0.0148 * $leg_taper) * $weight],
     radius=$height * 0.008,
     mat="pants", skin="rig", bind="knee_r", faceted=1
   )
@@ -165,7 +168,7 @@ module "humanoid_full" (
   // (loincloth) — declared on bone `hip`.
   chamfered_box "hips" (
     pos=[0, $height * 0.485, 0],
-    size=[$height * 0.190, $height * 0.085, $height * 0.115],
+    size=[$height * 0.190 * $weight, $height * 0.085, $height * 0.115 * $weight],
     radius=$height * 0.012,
     mat="pants", skin="rig", bind="hip", faceted=1
   )
@@ -175,7 +178,7 @@ module "humanoid_full" (
   // (pack), shoulder-tops (pauldrons, straps) — declared on bone `spine_chest`.
   chamfered_box "torso" (
     pos=[0, $height * 0.660, 0],
-    size=[$height * 0.220, $height * 0.270, $height * 0.130],
+    size=[$height * 0.220 * $weight, $height * 0.270, $height * 0.130 * $weight],
     radius=$height * 0.014,
     mat="shirt", skin="rig", bind="spine_chest", faceted=1
   )
@@ -194,8 +197,8 @@ module "humanoid_full" (
   // neck-back — declared on bone `neck`.
   chamfered_box "head" (
     pos=[0, $height * 0.890, 0],
-    size=[$height * 0.110, $height * 0.120, $height * 0.110],
-    radius=$height * 0.012,
+    size=[$height * 0.110 * $head_size, $height * 0.120 * $head_size, $height * 0.110 * $head_size],
+    radius=$height * 0.012 * $head_size,
     mat="skin", skin="rig", bind="neck", faceted=1
   )
 
@@ -247,25 +250,25 @@ module "humanoid_full" (
   // so the limb reads as one continuous shape.
   chamfered_box "arm_l_upper" (
     pos=[$height *  0.135, $height * 0.695, 0],
-    size=[$height * 0.045, $height * 0.150, $height * 0.045],
+    size=[$height * 0.045 * $weight, $height * 0.150, $height * 0.045 * $weight],
     radius=$height * 0.008,
     mat="skin", skin="rig", bind="shoulder_l", faceted=1
   )
   chamfered_box "arm_l_fore" (
     pos=[$height *  0.135, $height * 0.545, 0],
-    size=[$height * 0.040, $height * 0.150, $height * 0.040],
+    size=[$height * 0.040 * $weight, $height * 0.150, $height * 0.040 * $weight],
     radius=$height * 0.007,
     mat="skin", skin="rig", bind="elbow_l", faceted=1
   )
   chamfered_box "arm_r_upper" (
     pos=[$height * -0.135, $height * 0.695, 0],
-    size=[$height * 0.045, $height * 0.150, $height * 0.045],
+    size=[$height * 0.045 * $weight, $height * 0.150, $height * 0.045 * $weight],
     radius=$height * 0.008,
     mat="skin", skin="rig", bind="shoulder_r", faceted=1
   )
   chamfered_box "arm_r_fore" (
     pos=[$height * -0.135, $height * 0.545, 0],
-    size=[$height * 0.040, $height * 0.150, $height * 0.040],
+    size=[$height * 0.040 * $weight, $height * 0.150, $height * 0.040 * $weight],
     radius=$height * 0.007,
     mat="skin", skin="rig", bind="elbow_r", faceted=1
   )

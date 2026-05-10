@@ -9,7 +9,7 @@ downstream composition. The full language is documented in
 - [How modules resolve](#how-modules-resolve)
 - [Authoring a new module](#authoring-a-new-module)
 - [Stdlib catalog](#stdlib-catalog)
-  - [Humanoid](#humanoid) — body, head, limbs, hands, feet, face, hair
+  - [Humanoid](#humanoid) — body, head, limbs, hands, feet, face
   - [Humanoid animations](#humanoid-animations) — idle, walk, run, jump
   - [Animals](#animals) — quadruped torso/leg, tail, ear, eye
   - [Foliage](#foliage) — leaf, branch
@@ -109,6 +109,9 @@ binding so each body part follows exactly one bone.
 | parameter | default | meaning |
 |---|---|---|
 | `height` | `1.7` | overall scale (figure stands ~ this tall in metres) |
+| `weight` | `1.0` | girth multiplier on torso, hips, thigh, shin, upper-arm, forearm — clamp to ~ `0.7..1.3` to avoid arm/torso intersections at the extremes |
+| `head_size` | `1.0` | uniform multiplier on the cranium chamfered_box; face features stay at their absolute positions, so values away from `1.0` will displace eyes/nose/mouth relative to the cranium |
+| `leg_taper` | `0.0` | shin taper from current 84 % of thigh (`0.0`) to 60 % (`1.0`) for a tailored-pant break |
 | `skin` | `[0.85, 0.65, 0.55]` | skin colour |
 | `hair` | `[0.20, 0.15, 0.10]` | brow / hair colour |
 | `eye` | `[0.08, 0.08, 0.10]` | eye-block colour |
@@ -158,9 +161,41 @@ Each slot's `dir=` points outward from the figure; an attached child
 should expose a `connector "..." (dir=[opposite], tag=plug)` so the
 attach pass aligns the surfaces.
 
-Hair is not bundled — `use "humanoid_hair_short"` (or
-`humanoid_hair_long`) and attach to `slot_crown` if the figure needs
-hair.
+Clothing, hair, beards, and other accessories are intentionally **not
+bundled as stdlib modules** — those are style choices that belong to
+the user (or the LLM driving the prompt). The stdlib gives you the
+slot connectors and the body-shape parameters (`height`, `weight`,
+`head_size`, `leg_taper`) that locate them; the geometry that fills
+each slot is yours to author.
+
+To layer an accessory onto the figure, declare a primitive (or a
+`group`/module) at the right scene-space position with `skin="rig"`
+and `bind="<bone>"` — the slot connector tells you the position and
+the parent bone:
+
+```mog
+// e.g. a hat on slot_crown — chamfered_box at the crown's scene-space
+// position (head sits at $height * 0.890; crown is +$height * 0.150
+// above the head's neck-bone origin), bound to `neck` so it follows
+// head rotations through the walk / run / idle / jump clips.
+chamfered_box "hat" (
+  pos=[0, 1.7 * 0.890 + 1.7 * 0.150, 0],
+  size=[1.7 * 0.130, 1.7 * 0.040, 1.7 * 0.130],
+  radius=1.7 * 0.010,
+  mat="hat", skin="rig", bind="neck", faceted=1
+)
+```
+
+`humanoid_full` declares `material "skin"`, `"hair"`, `"eye"`,
+`"mouth"`, `"shirt"`, `"pants"`, `"boot"` internally; declare any
+other materials your accessories need at the top of the scene
+(scene-level declarations win under the first-wins dedup, so they
+also override the figure's defaults).
+
+See `examples/businessman_casual.mog` for a worked example that adds
+a jacket, dress-shirt panel, cuffs, dress shoes, beard, and hair cap
+onto a `humanoid_full` rig using only slot connectors and inline
+geometry.
 
 #### `humanoid_torso`
 
@@ -244,28 +279,6 @@ nodes**. Attach each to its matching connector on `humanoid_head`.
 | `size` | `0.11` | head reference size; drives feature scale |
 
 Caller declares materials `eye`, `skin`, `mouth`.
-
-#### `humanoid_hair_short`
-
-Skullcap with substantial occiput / nape bulk. Sits on the head's `crown`
-socket.
-
-| parameter | default | meaning |
-|---|---|---|
-| `size` | `0.115` | hair-cap radius |
-
-Caller declares material `hair`.
-
-#### `humanoid_hair_long`
-
-Skullcap + back-falling drape past the shoulders.
-
-| parameter | default | meaning |
-|---|---|---|
-| `size` | `0.115` | cap radius |
-| `length` | `0.45` | drape length |
-
-Caller declares material `hair`.
 
 ---
 

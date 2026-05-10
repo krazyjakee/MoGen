@@ -9,8 +9,10 @@
 //! registry. Adding a new module = drop a `.mog` file in the dir and append
 //! one entry to `STDLIB_FILES`.
 
+use std::path::PathBuf;
 use std::sync::OnceLock;
 
+use crate::ast::Node;
 use crate::module::{collect_modules, ModuleRegistry};
 use crate::parser::parse;
 
@@ -23,8 +25,6 @@ const STDLIB_FILES: &[(&str, &str)] = &[
     ("humanoid_hand_5fingers.mog",include_str!("../stdlib/humanoid_hand_5fingers.mog")),
     ("humanoid_foot.mog",         include_str!("../stdlib/humanoid_foot.mog")),
     ("humanoid_face.mog",         include_str!("../stdlib/humanoid_face.mog")),
-    ("humanoid_hair_short.mog",   include_str!("../stdlib/humanoid_hair_short.mog")),
-    ("humanoid_hair_long.mog",    include_str!("../stdlib/humanoid_hair_long.mog")),
     ("humanoid_full.mog",         include_str!("../stdlib/humanoid_full.mog")),
     ("humanoid_idle.mog",         include_str!("../stdlib/humanoid_idle.mog")),
     ("humanoid_walk.mog",         include_str!("../stdlib/humanoid_walk.mog")),
@@ -77,17 +77,50 @@ fn build_stdlib_registry() -> ModuleRegistry {
         let mut reg = collect_modules(&ast).unwrap_or_else(|e| {
             panic!("stdlib collect_modules failed in {filename}: {e}");
         });
+        // Synthetic origin so expanded stdlib nodes are tagged the same way
+        // imported nodes are. Studio uses `origin.is_none()` as "this node
+        // was authored in the active source"; without this tag, stdlib
+        // bodies (which are NOT in the active source — their `source_span`
+        // bytes are local to the embedded stdlib `.mog` string, not to
+        // whatever file the user is editing) would get treated as
+        // editable, and span-based set_attr writeback would splice into
+        // the wrong offsets in the active source.
+        let stdlib_origin = stdlib_origin_path(filename);
         // Each stdlib file declares one module; attach its summary doc and
         // fold it into the combined registry.
         let names: Vec<String> = reg.names().cloned().collect();
         for name in names {
             if let Some(mut def) = reg.remove(&name) {
                 def.doc = summary.clone();
+                for body_node in &mut def.body {
+                    set_origin_recursive(body_node, &stdlib_origin);
+                }
                 combined.insert(def);
             }
         }
     }
     combined
+}
+
+/// Synthetic path identifying a stdlib `.mog` file. Not a real filesystem
+/// path — the `<stdlib>/…` prefix exists so anything inspecting `origin`
+/// (Studio's per-file sidebar, error rendering) can recognise stdlib
+/// nodes without confusing them for an imported relative path the user
+/// could open.
+fn stdlib_origin_path(filename: &str) -> PathBuf {
+    PathBuf::from(format!("<stdlib>/{filename}"))
+}
+
+/// Same shape as `module::imports::helpers::set_origin_recursive`,
+/// duplicated here to avoid making that helper crate-public for a single
+/// caller.
+fn set_origin_recursive(node: &mut Node, origin: &std::path::Path) {
+    if node.origin.is_none() {
+        node.origin = Some(origin.to_path_buf());
+    }
+    for c in &mut node.children {
+        set_origin_recursive(c, origin);
+    }
 }
 
 /// Extract the first `// summary: …` comment line from a stdlib source.
