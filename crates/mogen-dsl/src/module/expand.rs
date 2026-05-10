@@ -8,7 +8,7 @@ use anyhow::{anyhow, bail, Result};
 
 use crate::ast::{Expr, Node, Value};
 
-use super::ModuleRegistry;
+use super::{ModuleRegistry, ParamDefault};
 
 /// Map from each minted `use_id` to the `use_id` of the surrounding `use`
 /// expansion (or `None` for the outermost). Lets attach/anim resolvers walk
@@ -56,11 +56,23 @@ pub fn expand_modules(ast: &[Node], reg: &ModuleRegistry) -> Result<(Vec<Node>, 
 #[derive(Default, Clone)]
 struct Scope {
     bindings: Vec<(String, f32)>,
+    /// Vec3-valued bindings (colour / size parameters) live in a parallel
+    /// table so they don't have to flow through the scalar `Expr::eval` path.
+    /// A vec3 param can ONLY be referenced as a whole-attribute `$param` —
+    /// per-component arithmetic (`$skin * 0.5`) is not supported.
+    vec3_bindings: Vec<(String, [f32; 3])>,
 }
 
 impl Scope {
     fn lookup(&self, name: &str) -> Option<f32> {
         self.bindings.iter().rfind(|(k, _)| k == name).map(|(_, v)| *v)
+    }
+
+    fn lookup_vec3(&self, name: &str) -> Option<[f32; 3]> {
+        self.vec3_bindings
+            .iter()
+            .rfind(|(k, _)| k == name)
+            .map(|(_, v)| *v)
     }
 }
 
@@ -139,22 +151,49 @@ fn expand_use(
     }
 
     // Partition caller args. Anything matching a declared parameter binds into
-    // the call scope (and must be a scalar); transform shortcuts (`pos`, `rot`,
-    // `scale`, `x/y/z`, `rx/ry/rz`, `from/to`) that are *not* declared params
-    // are pulled aside and applied as a wrapping group transform around the
-    // expanded body — same effect as `group (pos=…) { use "m" () }` but
-    // without the ceremony. Anything else is an unknown-parameter error.
+    // the call scope (as a scalar OR vec3 depending on the param's declared
+    // default); transform shortcuts (`pos`, `rot`, `scale`, `x/y/z`,
+    // `rx/ry/rz`, `from/to`) that are *not* declared params are pulled aside
+    // and applied as a wrapping group transform around the expanded body —
+    // same effect as `group (pos=…) { use "m" () }` but without the ceremony.
+    // Anything else is an unknown-parameter error.
     let param_names: Vec<&str> = def.params.iter().map(|p| p.name.as_str()).collect();
-    let mut supplied: HashMap<String, f32> = HashMap::new();
+    let mut supplied_scalar: HashMap<String, f32> = HashMap::new();
+    let mut supplied_vec3: HashMap<String, [f32; 3]> = HashMap::new();
     let mut wrapper_attrs: Vec<(String, Value)> = Vec::new();
     for (k, v) in &node.attrs {
         if param_names.contains(&k.as_str()) {
-            let n = scalar_value(v, scope).ok_or_else(|| {
-                anyhow!(
-                    "argument `{k}` for module \"{module_name}\" must be a number or expression"
-                )
-            })?;
-            supplied.insert(k.clone(), n);
+            // Determine the param's expected kind from its declared default.
+            // Required params (no default) accept whichever kind the caller
+            // supplies — rare case, kept permissive.
+            let p = def.params.iter().find(|p| p.name == *k).expect("param exists");
+            let expects_vec3 = matches!(&p.default, Some(ParamDefault::Vec3(_)));
+            if expects_vec3 {
+                let arr = vec3_value(v, scope).ok_or_else(|| {
+                    anyhow!(
+                        "argument `{k}` for module \"{module_name}\" expects a vec3 like `[r,g,b]`"
+                    )
+                })?;
+                supplied_vec3.insert(k.clone(), arr);
+            } else {
+                // Try scalar first; if that fails and the value is a vec3,
+                // accept it for required params (no default to disambiguate).
+                if let Some(n) = scalar_value(v, scope) {
+                    supplied_scalar.insert(k.clone(), n);
+                } else if p.default.is_none() {
+                    if let Some(arr) = vec3_value(v, scope) {
+                        supplied_vec3.insert(k.clone(), arr);
+                    } else {
+                        bail!(
+                            "argument `{k}` for module \"{module_name}\" must be a number, expression, or vec3"
+                        );
+                    }
+                } else {
+                    bail!(
+                        "argument `{k}` for module \"{module_name}\" must be a number or expression"
+                    );
+                }
+            }
         } else if is_wrapper_attr(k) {
             wrapper_attrs.push((k.clone(), substitute_value(v, scope)?));
         } else {
@@ -169,10 +208,18 @@ fn expand_use(
 
     let mut call_scope = Scope::default();
     for p in &def.params {
-        let value = match supplied.get(&p.name) {
-            Some(v) => *v,
-            None => match &p.default {
-                Some(e) => e
+        if let Some(arr) = supplied_vec3.get(&p.name) {
+            call_scope.vec3_bindings.push((p.name.clone(), *arr));
+            continue;
+        }
+        if let Some(v) = supplied_scalar.get(&p.name) {
+            call_scope.bindings.push((p.name.clone(), *v));
+            continue;
+        }
+        // Fall back to the declared default.
+        match &p.default {
+            Some(ParamDefault::Scalar(e)) => {
+                let value = e
                     .eval(&|n| call_scope.lookup(n))
                     .ok_or_else(|| {
                         anyhow!(
@@ -180,15 +227,18 @@ fn expand_use(
                             p.name,
                             module_name
                         )
-                    })?,
-                None => bail!(
-                    "module \"{}\" missing required parameter `{}`",
-                    module_name,
-                    p.name
-                ),
-            },
-        };
-        call_scope.bindings.push((p.name.clone(), value));
+                    })?;
+                call_scope.bindings.push((p.name.clone(), value));
+            }
+            Some(ParamDefault::Vec3(arr)) => {
+                call_scope.vec3_bindings.push((p.name.clone(), *arr));
+            }
+            None => bail!(
+                "module \"{}\" missing required parameter `{}`",
+                module_name,
+                p.name
+            ),
+        }
     }
 
     // Every `use` mints its own frame so two instances of the same inner
@@ -285,7 +335,17 @@ fn substitute_value(value: &Value, scope: &Scope) -> Result<Value> {
                 .map(|s| interpolate_string(s, scope))
                 .collect::<Result<_>>()?,
         )),
-        Value::Expr(e) => Ok(substitute_expr(e, scope)?),
+        Value::Expr(e) => {
+            // Whole-attribute `$param` referencing a vec3 binding: splice the
+            // vec3 in directly so module bodies can write
+            // `material "skin" (color=$skin)` and have it land as a Vec3.
+            if let Expr::Param(name) = e {
+                if let Some(v) = scope.lookup_vec3(name) {
+                    return Ok(Value::Vec3(v));
+                }
+            }
+            Ok(substitute_expr(e, scope)?)
+        }
         Value::Vec3Expr(components) => {
             let resolved: Vec<Value> = components
                 .iter()
@@ -370,6 +430,25 @@ fn scalar_value(v: &Value, scope: &Scope) -> Option<f32> {
     match v {
         Value::Number(n) => Some(*n),
         Value::Expr(e) => e.eval(&|n| scope.lookup(n)),
+        _ => None,
+    }
+}
+
+/// Evaluate a Value to a `[f32; 3]` (used for vec3 module arguments).
+/// Accepts a Vec3 literal, a Vec3Expr whose components fully resolve in scope,
+/// or a single `$param` reference that points at a vec3 binding.
+fn vec3_value(v: &Value, scope: &Scope) -> Option<[f32; 3]> {
+    match v {
+        Value::Vec3(arr) => Some(*arr),
+        Value::Vec3Expr(components) => {
+            let mut out = [0.0f32; 3];
+            for (i, c) in components.iter().enumerate() {
+                out[i] = c.eval(&|n| scope.lookup(n))?;
+            }
+            Some(out)
+        }
+        // `use "x" (color=$other_vec3)` — pass-through one vec3 binding to another.
+        Value::Expr(Expr::Param(name)) => scope.lookup_vec3(name),
         _ => None,
     }
 }

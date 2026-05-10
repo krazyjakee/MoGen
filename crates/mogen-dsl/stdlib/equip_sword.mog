@@ -1,0 +1,43 @@
+// summary: Sword (chamfered_box blade + crossguard + cylindrical hilt + sphere pommel) for humanoid_full. Snaps into the right hand's `wrist_r_grip` socket and follows the wrist_r bone. Two color params: `blade_color` (steel default) and `hilt_color` (leather wrap).
+module "equip_sword" (
+  height=1.7,
+  blade_color=[0.78, 0.80, 0.84],
+  hilt_color =[0.32, 0.20, 0.10]
+) {
+  material "equip_sword_blade" (color=$blade_color, roughness=0.30, metallic=0.85)
+  material "equip_sword_hilt"  (color=$hilt_color,  roughness=0.80)
+
+  // Sword hangs straight down from the right hand: hilt at top (wrist), blade
+  // pointing in -Y. Bound to wrist_r so it follows arm swings during walk/run.
+  group "equip_sword" (pos=[$height * -0.155, $height * 0.40, 0], skin="rig", bind="wrist_r") {
+    // Pommel — small sphere just above the grip.
+    sphere "equip_sword_pommel" (
+      pos=[0, $height * 0.040, 0],
+      radius=$height * 0.014,
+      rings=4, segments=8,
+      mat="equip_sword_hilt", faceted=1
+    )
+    // Hilt — short cylinder for the grip.
+    cylinder "equip_sword_hilt" (
+      pos=[0, 0, 0],
+      radius=$height * 0.011,
+      height=$height * 0.060,
+      segments=10,
+      mat="equip_sword_hilt", faceted=1
+    )
+    // Crossguard — a thin chamfered_box across the hilt.
+    chamfered_box "equip_sword_guard" (
+      pos=[0, $height * -0.038, 0],
+      size=[$height * 0.060, $height * 0.012, $height * 0.018],
+      radius=$height * 0.002,
+      mat="equip_sword_blade", faceted=1
+    )
+    // Blade — long, thin, tapering chamfered_box hanging in -Y.
+    chamfered_box "equip_sword_blade" (
+      pos=[0, $height * -0.220, 0],
+      size=[$height * 0.022, $height * 0.340, $height * 0.006],
+      radius=$height * 0.002,
+      mat="equip_sword_blade", faceted=1
+    )
+  }
+}

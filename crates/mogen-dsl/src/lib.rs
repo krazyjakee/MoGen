@@ -18,6 +18,7 @@ pub use meta::{
 pub use module::{
     collect_local_import_files, collect_modules, expand_modules, resolve_imports,
     resolve_imports_with_loader, FsLoader, LoadedFile, Loader, ModuleDef, ModuleRegistry, Param,
+    ParamDefault,
 };
 pub use parser::parse;
 pub use stdlib::stdlib_registry;

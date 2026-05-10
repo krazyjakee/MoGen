@@ -176,7 +176,53 @@ pub fn build_prompt(hit: &MaterialHit<'_>, style: &str, anatomy: Option<&str>) -
     if is_mask_material(hit.node) {
         return build_cutout_atlas_prompt(hit, style, anatomy);
     }
+    if hit.name == "face" {
+        return build_face_panel_prompt(hit, style);
+    }
     build_surface_swatch_prompt(hit, style, anatomy)
+}
+
+/// Special-case prompt for `humanoid_full`'s painted face panel. The texture
+/// is NOT tileable — it lands on a single front-face quad and renders the
+/// character's eyes, brows, nose hint, and mouth as flat painted features.
+/// Background is a solid skin tone so the panel blends with the head's edges.
+fn build_face_panel_prompt(hit: &MaterialHit<'_>, style: &str) -> String {
+    let color = hit.node.attr("color").and_then(|v| match v {
+        Value::Vec3([r, g, b]) => Some([*r, *g, *b]),
+        _ => None,
+    });
+    let mut s = String::new();
+    s.push_str(
+        "Output a single 512×512 PNG of a stylized low-poly character face, \
+         painted onto a flat panel. This will be applied as a base-color \
+         texture to the front face of a Synty/Quaternius-style humanoid head.\n\n\
+         Required composition:\n\
+         - facial features painted in flat colour blocks: two simple \
+         almond eyes (dark sclera or solid dot) at vertical center, \
+         small dark mouth in the lower third, optional thin eyebrow lines \
+         above the eyes\n\
+         - features symmetrical, centered horizontally\n\
+         - background: uniform skin tone fills the entire panel (no \
+         transparency, no border, no margin) so edges blend seamlessly \
+         with the head geometry\n\n\
+         Hard exclusions:\n\
+         - no nose geometry (the head model carries a separate nose mesh)\n\
+         - no hair, no ears, no neck, no head silhouette outline\n\
+         - no scenery, props, text, watermarks, or signatures\n\
+         - no rim lighting, drop shadows, or 3D shading on the features — \
+         flat painted look only\n\n",
+    );
+    if let Some([r, g, b]) = color {
+        s.push_str(&format!(
+            "Background skin tone (approximate, hex): {}\n",
+            rgb_to_hex(r, g, b)
+        ));
+    }
+    s.push_str(&format!("Style: {style}\n"));
+    if let Some(note) = material_prompt(hit.node) {
+        s.push_str(&format!("{NOTE_PREFIX}{note}\n"));
+    }
+    s
 }
 
 fn build_surface_swatch_prompt(

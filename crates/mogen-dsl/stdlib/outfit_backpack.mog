@@ -1,0 +1,32 @@
+// summary: Slung backpack (chamfered_box body + strap blocks) for humanoid_full. Sits on the upper back, follows the chest bone. Color defaults to weathered leather brown. Use with travellers / adventurers.
+module "outfit_backpack" (
+  height=1.7,
+  color=[0.42, 0.28, 0.18]
+) {
+  material "outfit_backpack" (color=$color, roughness=0.80)
+
+  group "outfit_backpack" (skin="rig", bind="spine_chest") {
+    // Main pack body — sits behind the upper torso.
+    chamfered_box "outfit_backpack_body" (
+      pos=[0, $height * 0.72, $height * 0.115],
+      size=[$height * 0.180, $height * 0.250, $height * 0.090],
+      radius=$height * 0.012,
+      mat="outfit_backpack", faceted=1
+    )
+    // Two over-shoulder straps — small chamfered_boxes crossing the chest.
+    chamfered_box "outfit_backpack_strap_l" (
+      pos=[$height *  0.06, $height * 0.78, $height * 0.045],
+      rot=[20, 0, 8],
+      size=[$height * 0.022, $height * 0.180, $height * 0.012],
+      radius=$height * 0.003,
+      mat="outfit_backpack", faceted=1
+    )
+    chamfered_box "outfit_backpack_strap_r" (
+      pos=[$height * -0.06, $height * 0.78, $height * 0.045],
+      rot=[20, 0, -8],
+      size=[$height * 0.022, $height * 0.180, $height * 0.012],
+      radius=$height * 0.003,
+      mat="outfit_backpack", faceted=1
+    )
+  }
+}

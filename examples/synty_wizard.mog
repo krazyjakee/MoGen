@@ -1,0 +1,12 @@
+scene {
+  use "humanoid_full" (
+    height=1.7,
+    skin=[0.78, 0.68, 0.58],
+    shirt=[0.20, 0.18, 0.45],
+    pants=[0.15, 0.12, 0.30]
+  )
+  use "outfit_hat_brimmed" (color=[0.20, 0.15, 0.40])
+  use "outfit_cape" (color=[0.25, 0.20, 0.55])
+  use "equip_staff" ()
+  use "humanoid_idle" ()
+}
