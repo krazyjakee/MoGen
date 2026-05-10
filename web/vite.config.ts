@@ -7,9 +7,7 @@ const repoRoot = path.resolve(here, "..");
 
 export default defineConfig({
   // Build with relative asset URLs so the same `dist/` works whether it's
-  // served from the site root (Vite preview / `npm run dev`) or from a
-  // sub-path like `https://krazyjakee.github.io/MoGen/playground/` once
-  // `site/build.sh` copies it under `_site/playground/`.
+  // served from the site root or from a sub-path.
   base: "./",
   // Allow `import.meta.glob` to reach the example .mog files that live in
   // `<repo>/examples` — outside Vite's normal root.
