@@ -1,0 +1,20 @@
+const n=`// Zip on a sports bag — the canonical conform use case.
+//
+// The bag is an ellipsoid. Two connectors define the zip's start and end
+// positions on the curved surface. The \`zip\` is authored as a flat box
+// with the long axis on X; conform deforms it so each vertex sits on the
+// bag surface, lifted slightly to avoid z-fighting.
+
+material "leather" (color=[0.18, 0.16, 0.14], roughness=0.85)
+material "rubber"  (color=[0.08, 0.08, 0.08], roughness=0.7)
+
+scene {
+  ellipsoid "bag" (size=[1.0, 0.5, 0.5], mat="leather") {
+    connector "zip_a" (at=[-0.4, 0.20, 0.22], dir=[0, 0, 1])
+    connector "zip_b" (at=[ 0.4, 0.20, 0.22], dir=[0, 0, 1])
+  }
+  box "zip" (size=[0.8, 0.012, 0.04], mat="rubber")
+  conform (target="bag", child="zip", from="zip_a", to="zip_b",
+           along=x, lift=0.005)
+}
+`;export{n as default};

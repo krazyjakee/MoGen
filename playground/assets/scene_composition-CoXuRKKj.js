@@ -1,0 +1,22 @@
+const e=`// Compose two object .mog files into a single glTF scene. Each \`import\`
+// pulls in the file's \`scene { … }\` body as an implicit module named after
+// the file stem, so \`use "wooden_crate_simple" ()\` instances the imported
+// crate at the location of the surrounding \`group\`'s transform.
+//
+// Build with:
+//   ./scripts/run-mogen.sh build examples/scene_composition.mog
+//
+// Texture paths inside an imported file resolve relative to the *defining*
+// file's directory, so a re-skinned object module continues to find its
+// PNGs no matter where the composing scene lives.
+
+import "wooden_crate_simple.mog" (as=crate)
+import "drone.mog"
+
+scene {
+  // Each composed object stands on its own; tag both groups \`floating\` so
+  // the connectivity validator doesn't flag the gap between them.
+  group (pos=[-0.6, 0, 0], tags="floating")                  { use "crate" () }
+  group (pos=[ 0.6, 0.4, 0], rot=[0, 30, 0], tags="floating") { use "drone" () }
+}
+`;export{e as default};

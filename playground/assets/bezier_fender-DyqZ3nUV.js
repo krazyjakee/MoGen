@@ -1,0 +1,57 @@
+const e=`// Bézier patch primitive — a 4×4 control-point grid evaluated as a
+// tensor-product cubic surface. Use for organic skin panels: faces, hoods,
+// fenders, sails, fabric, pillows, leaves with controlled silhouette.
+
+meta (
+  name = "bezier_fender",
+  description = "Three Bézier patches — a flat panel, a domed pillow, and a curved fender — showing the bezier_patch primitive.",
+  tags = ["bezier_patch", "patch", "primitive"],
+)
+
+material "fabric" (color=[0.78, 0.32, 0.22], roughness=0.85, double_sided=1)
+material "vinyl" (color=[0.16, 0.16, 0.18], roughness=0.55, double_sided=1)
+material "steel" (color=[0.45, 0.46, 0.50], roughness=0.35, metallic=0.85, double_sided=1)
+
+scene {
+  group "field" (tags="floating") {
+    // Flat reference panel — every interior control point sits in the
+    // patch corners' plane, so the surface is dead flat.
+    bezier_patch "panel" (
+      points = [
+        [-1, 0, -1], [-0.33, 0, -1],   [0.33, 0, -1],   [1, 0, -1],
+        [-1, 0, -0.33], [-0.33, 0, -0.33], [0.33, 0, -0.33], [1, 0, -0.33],
+        [-1, 0,  0.33], [-0.33, 0,  0.33], [0.33, 0,  0.33], [1, 0,  0.33],
+        [-1, 0,  1], [-0.33, 0,  1],   [0.33, 0,  1],   [1, 0,  1],
+      ],
+      segments_u=12, segments_v=12,
+      mat="vinyl", pos=[-2.4, 0, 0]
+    )
+
+    // Domed pillow — interior 4 control points pulled up on Y so the patch
+    // bulges outward in the middle while edges stay pinned.
+    bezier_patch "pillow" (
+      points = [
+        [-1, 0, -1],     [-0.33, 0,    -1],    [0.33, 0,    -1],    [1, 0, -1],
+        [-1, 0, -0.33],  [-0.33, 0.85, -0.33], [0.33, 0.85, -0.33], [1, 0, -0.33],
+        [-1, 0,  0.33],  [-0.33, 0.85,  0.33], [0.33, 0.85,  0.33], [1, 0,  0.33],
+        [-1, 0,  1],     [-0.33, 0,     1],    [0.33, 0,     1],    [1, 0,  1],
+      ],
+      segments_u=20, segments_v=20,
+      mat="fabric", pos=[0, 0, 0]
+    )
+
+    // Fender — long, curving downward at the back. One side rolls under
+    // (negative Y on the +Z edge), giving a wheel-arch silhouette.
+    bezier_patch "fender" (
+      points = [
+        [-1.5, 0,    -0.6], [-0.5, 0.15,  -0.6], [0.5, 0.15,  -0.6], [1.5, 0,    -0.6],
+        [-1.5, 0.4,  -0.2], [-0.5, 0.7,   -0.2], [0.5, 0.7,   -0.2], [1.5, 0.4,  -0.2],
+        [-1.5, 0.4,   0.2], [-0.5, 0.7,    0.2], [0.5, 0.7,    0.2], [1.5, 0.4,   0.2],
+        [-1.5, 0,     0.6], [-0.5, -0.4,   0.6], [0.5, -0.4,   0.6], [1.5, 0,     0.6],
+      ],
+      segments_u=24, segments_v=24,
+      mat="steel", pos=[2.6, 0, 0]
+    )
+  }
+}
+`;export{e as default};

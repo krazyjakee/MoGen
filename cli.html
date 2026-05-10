@@ -1,0 +1,785 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CLI reference — MoGen</title>
+  <meta name="description" content="Every mogen subcommand and flag, with examples.">
+  <meta property="og:title" content="CLI reference — MoGen">
+  <meta property="og:description" content="Every mogen subcommand and flag, with examples.">
+  <meta property="og:image" content="splash.png">
+  <link rel="icon" href="icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="index.html"><img src="icon.png" alt=""><span>Mo<span class="mark">Gen</span></span></a>
+    <div class="nav-links">
+      <a href="index.html">Home</a>
+      <a href="index.html#gallery">Gallery</a>
+      <a href="playground/index.html">Playground</a>
+      <a href="dsl.html">DSL</a>
+      <a href="cli.html">CLI</a>
+      <a href="studio.html">Studio</a>
+      <a class="gh" href="https://github.com/krazyjakee/MoGen" target="_blank" rel="noopener">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5C5.6.5.5 5.6.5 12c0 5.1 3.3 9.4 7.9 11 .6.1.8-.3.8-.6v-2c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.2-1.7-1.2-1.7-1-.7.1-.7.1-.7 1.1.1 1.7 1.2 1.7 1.2 1 1.7 2.7 1.2 3.4.9.1-.7.4-1.2.7-1.5-2.5-.3-5.2-1.3-5.2-5.7 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2a11 11 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.6 1.6.2 2.8.1 3.1.7.8 1.2 1.8 1.2 3.1 0 4.4-2.7 5.4-5.2 5.7.4.3.8 1 .8 2.1v3.1c0 .3.2.7.8.6 4.6-1.6 7.9-5.9 7.9-11C23.5 5.6 18.4.5 12 .5z"/></svg>
+        GitHub
+      </a>
+    </div>
+  </div>
+</nav>
+
+<main>
+<div class="wrap doc">
+
+<aside class="toc">
+  <h4>CLI reference</h4>
+  <ul>
+  <li><a href="#mogen-cli-reference" id="toc-mogen-cli-reference">MoGen CLI reference</a>
+  <ul>
+  <li><a href="#common-flags-and-conventions" id="toc-common-flags-and-conventions">Common flags and conventions</a></li>
+  <li><a href="#auth" id="toc-auth"><code>auth</code></a></li>
+  <li><a href="#build" id="toc-build"><code>build</code></a>
+  <ul>
+  <li><a href="#fbx-format-notes" id="toc-fbx-format-notes">FBX format notes</a></li>
+  </ul></li>
+  <li><a href="#parse" id="toc-parse"><code>parse</code></a></li>
+  <li><a href="#check" id="toc-check"><code>check</code></a></li>
+  <li><a href="#dump-scene" id="toc-dump-scene"><code>dump-scene</code></a></li>
+  <li><a href="#inspect" id="toc-inspect"><code>inspect</code></a></li>
+  <li><a href="#generate" id="toc-generate"><code>generate</code></a></li>
+  <li><a href="#modify" id="toc-modify"><code>modify</code></a></li>
+  <li><a href="#animate" id="toc-animate"><code>animate</code></a></li>
+  <li><a href="#repair" id="toc-repair"><code>repair</code></a></li>
+  <li><a href="#textures" id="toc-textures"><code>textures</code></a></li>
+  <li><a href="#bench" id="toc-bench"><code>bench</code></a></li>
+  <li><a href="#moghub" id="toc-moghub"><code>moghub</code></a>
+  <ul>
+  <li><a href="#moghub-whoami" id="toc-moghub-whoami"><code>moghub whoami</code></a></li>
+  <li><a href="#moghub-discover" id="toc-moghub-discover"><code>moghub discover</code></a></li>
+  <li><a href="#moghub-info" id="toc-moghub-info"><code>moghub info</code></a></li>
+  <li><a href="#moghub-download" id="toc-moghub-download"><code>moghub download</code></a></li>
+  <li><a href="#moghub-comments" id="toc-moghub-comments"><code>moghub comments</code></a></li>
+  <li><a href="#moghub-comment" id="toc-moghub-comment"><code>moghub comment</code></a></li>
+  <li><a href="#moghub-like--moghub-unlike" id="toc-moghub-like--moghub-unlike"><code>moghub like</code> / <code>moghub unlike</code></a></li>
+  <li><a href="#moghub-notifications" id="toc-moghub-notifications"><code>moghub notifications</code></a></li>
+  <li><a href="#moghub-publish" id="toc-moghub-publish"><code>moghub publish</code></a></li>
+  </ul></li>
+  <li><a href="#environment-variables" id="toc-environment-variables">Environment variables</a></li>
+  <li><a href="#exit-codes" id="toc-exit-codes">Exit codes</a></li>
+  </ul></li>
+  </ul>
+</aside>
+
+<article class="content">
+<h1 id="mogen-cli-reference">MoGen CLI reference</h1>
+<p><code>mogen</code> is a single static binary. Every entry point is a subcommand — <code>mogen &lt;subcommand&gt; …</code>. Run <code>mogen --help</code> for the auto-generated short form, or <code>mogen &lt;subcommand&gt; --help</code> for per-command flags.</p>
+<p>This page is the long-form reference. For the language those commands operate on, see <a href="./dsl.md"><code>dsl.md</code></a>. For the desktop GUI that wraps the same pipeline, see <a href="./studio.md"><code>studio.md</code></a>.</p>
+<ul>
+<li><a href="#common-flags-and-conventions">Common flags and conventions</a></li>
+<li><a href="#auth"><code>auth</code></a> — sign in to Google OAuth + MoGHub</li>
+<li><a href="#build"><code>build</code></a> — compile DSL to GLB</li>
+<li><a href="#parse"><code>parse</code></a> — dump the AST</li>
+<li><a href="#check"><code>check</code></a> — validate a DSL file</li>
+<li><a href="#dump-scene"><code>dump-scene</code></a> — print the lowered scene graph</li>
+<li><a href="#inspect"><code>inspect</code></a> — summarise a GLB</li>
+<li><a href="#generate"><code>generate</code></a> — Gemini-driven scene generation</li>
+<li><a href="#modify"><code>modify</code></a> — Gemini-driven edit of an existing <code>.mog</code></li>
+<li><a href="#animate"><code>animate</code></a> — Gemini edit limited to animation declarations</li>
+<li><a href="#repair"><code>repair</code></a> — auto-fix validation errors with Gemini</li>
+<li><a href="#textures"><code>textures</code></a> — generate PBR textures with Gemini Flash Image</li>
+<li><a href="#bench"><code>bench</code></a> — run a prompt suite and report success rate</li>
+<li><a href="#moghub"><code>moghub</code></a> — browse, download, and publish to the MoGHub community</li>
+<li><a href="#environment-variables">Environment variables</a></li>
+<li><a href="#exit-codes">Exit codes</a></li>
+</ul>
+<hr />
+<h2 id="common-flags-and-conventions">Common flags and conventions</h2>
+<p>A few flag patterns repeat across every LLM-driven subcommand (<code>generate</code>, <code>modify</code>, <code>animate</code>, <code>repair</code>, <code>textures</code>, <code>bench</code>):</p>
+<table>
+<thead>
+<tr class="header">
+<th>flag</th>
+<th>meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>--api-key &lt;KEY&gt;</code></td>
+<td>Override <code>GEMINI_API_KEY</code> for this invocation.</td>
+</tr>
+<tr class="even">
+<td><code>--model &lt;NAME&gt;</code></td>
+<td>Gemini model id. Default <code>gemini-pro-latest</code> for text. For <code>textures</code>, the default depends on credentials: <code>gemini-3-pro-image-preview</code> when authenticated via OAuth (paid plan), otherwise <code>gemini-2.5-flash-image</code>. Pass <code>gemini-3.1-flash-image-preview</code> (or any other image model) to override.</td>
+</tr>
+<tr class="odd">
+<td><code>--temperature &lt;N&gt;</code></td>
+<td>Sampling temperature. Library default is <code>0.3</code> when omitted.</td>
+</tr>
+<tr class="even">
+<td><code>--thinking &lt;low|medium|high|xhigh&gt;</code></td>
+<td>Cap server-side reasoning. <code>low</code> = 512 tokens, <code>medium</code> = 2048, <code>high</code> = 8192 (default), <code>xhigh</code> = 24576 (slowest, most careful).</td>
+</tr>
+<tr class="odd">
+<td><code>--style &lt;ps1|n64|low-poly|high-detail|arcade|voxel|cel-shaded|stylized-fantasy|cyberpunk|pixel-art&gt;</code></td>
+<td>Visual-style hint. Prepends a "## Style" guidance block to the prompt and stamps <code>meta(style="…")</code> into the saved DSL. Sticky across <code>modify</code> / <code>animate</code> / <code>repair</code> runs — once stamped, those subcommands inherit the style from the file unless <code>--style</code> is passed again to override. Omit to send the prompt unchanged.</td>
+</tr>
+<tr class="even">
+<td><code>--budget_tokens &lt;N&gt;</code></td>
+<td>Abort if total prompt + response token count exceeds this limit.</td>
+</tr>
+<tr class="odd">
+<td><code>--max-repair-iters &lt;N&gt;</code></td>
+<td>Repair attempts after the first try. Default <code>2</code>.</td>
+</tr>
+<tr class="even">
+<td><code>--cached-content &lt;NAME&gt;</code></td>
+<td>Reuse an existing <code>cachedContents/...</code> resource for the system instruction (skips re-uploading the grammar/stdlib reference).</td>
+</tr>
+<tr class="odd">
+<td><code>--no-cache</code></td>
+<td>Disable the automatic system-instruction cache. By default <code>mogen</code> creates and reuses a <code>cachedContents</code> resource per-binary so repeated calls skip re-upload.</td>
+</tr>
+<tr class="even">
+<td><code>--seed &lt;U64&gt;</code></td>
+<td>Seed embedded in the DSL header for reproducibility. Defaults to the seed parsed from an existing <code>.mog</code>'s header, or a random one if absent.</td>
+</tr>
+<tr class="odd">
+<td><code>--dry-run</code></td>
+<td>Skip GLB compilation and disk writes — print the generated/edited DSL only.</td>
+</tr>
+</tbody>
+</table>
+<p>The seed, the thinking budget, the original prompt, and (when picked) the visual style are stamped into the top-level <code>meta(...)</code> block of every generated <code>.mog</code>:</p>
+<pre class="mog"><code>meta (
+  mogen_version = &quot;0.1.1&quot;,
+  seed = &quot;1777210527637284168&quot;,
+  thinking = &quot;high&quot;,
+  prompt = &quot;A simple four-legged chair.&quot;,
+  style = &quot;low_poly&quot;,
+)</code></pre>
+<hr />
+<h2 id="auth"><code>auth</code></h2>
+<p>Sign in / out for every credential <code>mogen</code> persists under <code>~/.mogen/</code>. The command is target-aware: <code>mogen auth &lt;target&gt; &lt;verb&gt;</code> where <code>&lt;target&gt;</code> is one of <code>gemini-cli</code>, <code>antigravity</code>, or <code>moghub</code>. The top-level <code>mogen auth status</code> (no target) prints a one-line summary for every target at a glance.</p>
+<pre class="sh"><code>mogen auth status                          # one-line summary per target
+mogen auth gemini-cli  {login,status,logout}
+mogen auth antigravity {login,status,logout}
+mogen auth moghub      {login,status,logout}</code></pre>
+<table>
+<thead>
+<tr class="header">
+<th>target</th>
+<th>what it authenticates</th>
+<th>on-disk file</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>gemini-cli</code></td>
+<td>Google OAuth for text gen via Cloud Code Assist</td>
+<td><code>~/.mogen/google_auth.json</code></td>
+</tr>
+<tr class="even">
+<td><code>antigravity</code></td>
+<td>Google OAuth for image gen via Cloud Code Assist</td>
+<td><code>~/.mogen/antigravity_auth.json</code></td>
+</tr>
+<tr class="odd">
+<td><code>moghub</code></td>
+<td>MoGHub session UUID for community publishing + browsing</td>
+<td><code>~/.mogen/moghub_auth.json</code></td>
+</tr>
+</tbody>
+</table>
+<p>All three login flows use a loopback browser handshake — <code>gemini-cli</code> and <code>antigravity</code> go through Google's OAuth consent screen on a fixed loopback port (<code>51121</code>); <code>moghub</code> opens <code>&lt;server&gt;/api/auth/desktop/start</code> and waits for the redirect back. On Unix the resulting files are written with mode <code>0600</code>.</p>
+<table>
+<thead>
+<tr class="header">
+<th>flag</th>
+<th>applies to</th>
+<th>meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>--force</code></td>
+<td>every target's <code>login</code></td>
+<td>re-authenticate even if a valid token is already on disk.</td>
+</tr>
+<tr class="even">
+<td><code>--no-browser</code></td>
+<td>gemini-cli, antigravity</td>
+<td>print the authorize URL instead of opening a browser (useful over SSH).</td>
+</tr>
+<tr class="odd">
+<td><code>--timeout &lt;SECS&gt;</code></td>
+<td>gemini-cli, antigravity</td>
+<td>how long to wait for the OAuth callback. Clamped to <code>[10, 3600]</code>. Default <code>300</code>.</td>
+</tr>
+<tr class="even">
+<td><code>--server &lt;URL&gt;</code></td>
+<td>moghub</td>
+<td>sign in against a self-hosted MoGHub instance. The URL round-trips into the on-disk session.</td>
+</tr>
+<tr class="odd">
+<td><code>--verbose</code></td>
+<td>every target's <code>status</code></td>
+<td>extra detail — token-store path, OAuth scopes, the chosen <code>cloudcode-pa</code> endpoint, and (for <code>moghub</code>) a live <code>whoami</code> round-trip.</td>
+</tr>
+</tbody>
+</table>
+<pre class="sh"><code>mogen auth gemini-cli login                         # zero-config, opens browser
+mogen auth antigravity login                        # required for OAuth-driven `mogen textures`
+mogen auth moghub login --server https://staging.moghub.org
+
+mogen auth status --verbose                         # show every target with full detail
+mogen auth gemini-cli logout                        # scope sign-out per target</code></pre>
+<p><code>mogen generate</code> / <code>modify</code> / <code>animate</code> / <code>repair</code> automatically use the gemini-cli OAuth bundle whenever <code>GEMINI_API_KEY</code> is unset; <code>mogen textures</code> prefers the antigravity bundle when present (set <code>MOGEN_IMAGE_PROVIDER=antigravity</code> to force it). The MoGHub session file is shared with Studio, so signing in once via the CLI surfaces the session in the desktop's Community window and vice versa.</p>
+<p><code>logout</code> walks every legacy path (<code>~/.cache/mogen/</code>, <code>%LOCALAPPDATA%\mogen\</code>) so a half-cleaned upgrade can't silently re-authenticate. None of the logout commands call the upstream revoke endpoint — refresh tokens stay valid server-side until the user explicitly revokes consent at <a href="https://myaccount.google.com">https://myaccount.google.com</a> or signs out of MoGHub on the web.</p>
+<hr />
+<h2 id="build"><code>build</code></h2>
+<p>Compile a DSL file to a binary scene container — GLB by default, or FBX 7.4 binary when the output path ends in <code>.fbx</code> or <code>--format fbx</code> is passed.</p>
+<pre class="sh"><code>mogen build &lt;input.mog&gt; [--out &lt;output&gt;] [--format glb|fbx]</code></pre>
+<table>
+<thead>
+<tr class="header">
+<th>flag</th>
+<th>meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>--out</code>, <code>-o</code></td>
+<td>Output path. Defaults to <code>&lt;input&gt;.glb</code> (or <code>&lt;input&gt;.fbx</code> when <code>--format fbx</code> is set).</td>
+</tr>
+<tr class="even">
+<td><code>--format</code></td>
+<td>Force a specific container, ignoring the extension hint. One of <code>glb</code> (default) or <code>fbx</code>.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Pipeline.</strong> <code>build</code> runs the canonical front-to-back pipeline:</p>
+<ol type="1">
+<li>Parse the DSL (pest grammar).</li>
+<li>AST validation — referential and typing errors with source spans.</li>
+<li>Lower to <code>SceneGraph</code> — module expansion, placement shortcuts, attach solver, animation/skinning lowering.</li>
+<li>Graph validation — topological invariants (skeleton ancestry, weight sums, …).</li>
+<li>Export — PBR materials, embedded textures, animation channels, optional skin data, optional sibling-mesh merge. The format is picked from <code>--format</code> (when supplied) or sniffed from the output extension; <code>.fbx</code> (case-insensitive) selects FBX, anything else selects GLB.</li>
+</ol>
+<p><code>generate</code>, <code>modify</code>, <code>animate</code>, <code>repair</code>, and <code>textures</code> all converge on this command at the end of their flows. If you've already authored a <code>.mog</code>, <code>build</code> is what you run.</p>
+<pre class="sh"><code>mogen build examples/chair.mog --out chair.glb
+mogen build examples/chair.mog --out chair.fbx          # extension dispatch
+mogen build examples/chair.mog --format fbx             # → chair.fbx</code></pre>
+<h3 id="fbx-format-notes">FBX format notes</h3>
+<p>The FBX exporter emits FBX 7.4 binary that loads in Blender 4.x and other standard FBX importers. Notable mappings (lossy by FBX's spec):</p>
+<ul>
+<li>PBR materials are encoded as Phong; the raw <code>metallic</code> and <code>roughness</code> factors ride along as <code>Properties70</code> entries so PBR-aware importers (Blender's principled BSDF) can recover them.</li>
+<li>Quaternion rotations and rotation tracks are converted to Euler XYZ degrees; the FBX <code>RotationOrder</code> is set to XYZ to match.</li>
+<li>Light intensity passes through verbatim — FBX doesn't distinguish candela (point/spot) from lux (directional) like glTF does.</li>
+<li>DSL extras (<code>role</code>, <code>tags</code>, <code>cast_shadow</code>, <code>kind</code>) are preserved as custom <code>Properties70</code> entries on each Model.</li>
+</ul>
+<hr />
+<h2 id="parse"><code>parse</code></h2>
+<p>Parse a DSL file and print the AST. Useful when debugging grammar errors or checking how a tricky source string lowers.</p>
+<pre class="sh"><code>mogen parse &lt;input.mog&gt;</code></pre>
+<p>No GLB is produced. Lowering and validation are skipped.</p>
+<hr />
+<h2 id="check"><code>check</code></h2>
+<p>Validate a DSL file. Exits non-zero on any error.</p>
+<pre class="sh"><code>mogen check &lt;input.mog&gt; [--json]</code></pre>
+<table>
+<thead>
+<tr class="header">
+<th>flag</th>
+<th>meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>--json</code></td>
+<td>Emit diagnostics as line-delimited JSON instead of human-readable carets.</td>
+</tr>
+</tbody>
+</table>
+<p>Validation is dual: AST-level (typing, references, unknown attributes) and graph-level (topology, weights, skeleton roots). The two phases produce a unified diagnostic list. Human mode renders via <code>codespan-reporting</code>; JSON mode emits one diagnostic per line in the format the LLM repair loop consumes.</p>
+<pre class="sh"><code>mogen check examples/chair.mog                          # human-readable
+mogen check examples/chair.mog --json | jq .            # machine-readable</code></pre>
+<hr />
+<h2 id="dump-scene"><code>dump-scene</code></h2>
+<p>Lower a DSL file and print the resulting scene graph. Useful for inspecting what an LLM actually emitted, or for diffing two <code>.mog</code> files post-lowering.</p>
+<pre class="sh"><code>mogen dump-scene &lt;input.mog&gt; [--json]</code></pre>
+<table>
+<thead>
+<tr class="header">
+<th>flag</th>
+<th>meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>--json</code></td>
+<td>Emit the graph as JSON instead of an indented summary.</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="inspect"><code>inspect</code></h2>
+<p>Read a GLB and print its top-level structure: scenes, meshes, materials, animations, skins, extensions, embedded image sizes.</p>
+<pre class="sh"><code>mogen inspect &lt;output.glb&gt;</code></pre>
+<p>The same machinery that powers MoGen Studio's "GLB summary" panel; useful for verifying what actually landed in a release artifact.</p>
+<hr />
+<h2 id="generate"><code>generate</code></h2>
+<p>Generate a <code>.mog</code> from a natural-language prompt via Gemini, validate it, repair JSON diagnostics in a loop, then compile it to a GLB.</p>
+<pre class="sh"><code>mogen generate &quot;&lt;prompt&gt;&quot; [--out &lt;out.glb&gt;] [--dsl-out &lt;out.mog&gt;] [common LLM flags]</code></pre>
+<table>
+<thead>
+<tr class="header">
+<th>flag</th>
+<th>meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>--out</code>, <code>-o</code></td>
+<td>Output GLB path. Ignored with <code>--dry-run</code>.</td>
+</tr>
+<tr class="even">
+<td><code>--dsl-out</code></td>
+<td>Where to stash the generated DSL. Defaults to the sibling of <code>--out</code> with a <code>.mog</code> extension. Required with <code>--dry-run</code> if you want to keep the DSL on disk.</td>
+</tr>
+<tr class="odd">
+<td><code>--seed</code></td>
+<td>Embedded seed; randomised if omitted.</td>
+</tr>
+<tr class="even">
+<td><code>--model</code></td>
+<td>Gemini model id. Default <code>gemini-pro-latest</code>.</td>
+</tr>
+<tr class="odd">
+<td><code>--dry-run</code></td>
+<td>Print the generated DSL but skip compilation and GLB output.</td>
+</tr>
+<tr class="even">
+<td>Plus all common LLM flags above.</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Repair loop.</strong> If the generated DSL fails validation, <code>generate</code> re-feeds the JSON diagnostics back to Gemini up to <code>--max-repair-iters</code> times. On the final failure it prints the unfixed diagnostics and exits non-zero, leaving the broken <code>.mog</code> on disk for inspection.</p>
+<pre class="sh"><code>mogen generate &quot;a wooden stool&quot; --out stool.glb
+mogen generate &quot;a clockwork dragon&quot; --thinking xhigh --out dragon.glb
+mogen generate &quot;a cube&quot; --thinking low --dry-run                  # no API cost beyond one fast call
+mogen generate &quot;a wooden stool&quot; --style ps1 --out stool.glb       # PS1-style chunky low-poly
+mogen modify stool.mog &quot;make it a barstool&quot;                       # inherits meta(style=&quot;ps1&quot;) automatically</code></pre>
+<hr />
+<h2 id="modify"><code>modify</code></h2>
+<p>Apply a natural-language edit to an existing <code>.mog</code>, then revalidate and recompile. The model receives the full DSL and your prompt; the response replaces the file in place (or writes to <code>--dsl-out</code>).</p>
+<pre class="sh"><code>mogen modify &lt;input.mog&gt; &quot;&lt;prompt&gt;&quot; [common LLM flags]</code></pre>
+<table>
+<thead>
+<tr class="header">
+<th>flag</th>
+<th>meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>--out</code>, <code>-o</code></td>
+<td>Output GLB path. Defaults to <code>&lt;input&gt;.glb</code>.</td>
+</tr>
+<tr class="even">
+<td><code>--dsl-out</code></td>
+<td>Where to write the modified DSL. Defaults to modifying <code>input</code> in place.</td>
+</tr>
+<tr class="odd">
+<td><code>--seed</code></td>
+<td>Defaults to the seed in the input's header, else random.</td>
+</tr>
+<tr class="even">
+<td>Plus all common LLM flags.</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p>The seed embedded in the input header is preserved across edits unless you override it explicitly. That makes <code>modify</code> reproducible for a given prompt + seed pair.</p>
+<pre class="sh"><code>mogen modify examples/chair.mog &quot;make the legs taller&quot;
+mogen modify examples/chair.mog &quot;add armrests&quot; --dsl-out chair_armed.mog --dry-run</code></pre>
+<hr />
+<h2 id="animate"><code>animate</code></h2>
+<p>Same shape as <code>modify</code>, but the LLM is restricted to animation top-level declarations — <code>joint</code>, <code>clip</code> / <code>track</code>, and the procedural templates (<code>spin</code>, <code>open_close</code>, <code>wave</code>, <code>flap</code>, <code>idle</code>). Geometry, materials, and hierarchy are guaranteed not to change.</p>
+<pre class="sh"><code>mogen animate &lt;input.mog&gt; &quot;&lt;prompt&gt;&quot; [common LLM flags]</code></pre>
+<pre class="sh"><code>mogen animate examples/drone.mog &quot;spin every rotor at 120 rpm&quot;
+mogen animate examples/door.mog &quot;make the door swing open over 1.2 seconds&quot;</code></pre>
+<p>The flag set matches <code>modify</code> (<code>--out</code>, <code>--dsl-out</code>, <code>--seed</code>, and the common LLM flags). Use this when you want the model focused on motion and not tempted to reshape the scene.</p>
+<hr />
+<h2 id="repair"><code>repair</code></h2>
+<p>Run the validator against an existing <code>.mog</code> and ask Gemini to fix every diagnostic — with the source excerpt, caret, and fix hint passed in. If the file already validates, <code>repair</code> is a no-op success.</p>
+<pre class="sh"><code>mogen repair &lt;input.mog&gt; [--no-build] [common LLM flags]</code></pre>
+<table>
+<thead>
+<tr class="header">
+<th>flag</th>
+<th>meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>--out</code>, <code>-o</code></td>
+<td>Output GLB path. Defaults to <code>&lt;input&gt;.glb</code>.</td>
+</tr>
+<tr class="even">
+<td><code>--dsl-out</code></td>
+<td>Where to write the repaired DSL. Defaults to in-place.</td>
+</tr>
+<tr class="odd">
+<td><code>--no-build</code></td>
+<td>Stop after rewriting the <code>.mog</code>; don't compile the GLB.</td>
+</tr>
+<tr class="even">
+<td>Plus all common LLM flags.</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p>Use <code>repair</code> after editing a <code>.mog</code> by hand and breaking validation, or after pasting in a snippet from somewhere else. It's the same machinery the <code>generate</code> / <code>modify</code> / <code>animate</code> repair loops use, exposed as a top-level command.</p>
+<hr />
+<h2 id="textures"><code>textures</code></h2>
+<p>Generate PBR textures for every material in a <code>.mog</code>. The albedo is LLM-drawn via Gemini 2.5 Flash Image, then locally derived normal, metallic-roughness, and occlusion maps are computed from the albedo (Sobel-from-luminance, variance-based, cavity-based). PNGs are written next to the <code>.mog</code> and the matching <code>*_texture="…"</code> attrs are spliced back into the source via spans (no reformatting).</p>
+<pre class="sh"><code>mogen textures &lt;input.mog&gt; [--style &quot;&lt;hint&gt;&quot;] [--texture-size &lt;N&gt;]</code></pre>
+<table>
+<thead>
+<tr class="header">
+<th>flag</th>
+<th>meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>--out</code></td>
+<td>Where to write the modified <code>.mog</code>. Defaults to in-place.</td>
+</tr>
+<tr class="even">
+<td><code>--glb</code></td>
+<td>GLB output path. Defaults to <code>&lt;input&gt;.glb</code>.</td>
+</tr>
+<tr class="odd">
+<td><code>--textures-dir</code></td>
+<td>Where PNGs are written. Defaults to <code>textures/&lt;mog-stem&gt;/</code> so sibling assets don't collide on shared material names.</td>
+</tr>
+<tr class="even">
+<td><code>--style</code></td>
+<td>Style hint appended to each image prompt. Default <code>photorealistic</code>.</td>
+</tr>
+<tr class="odd">
+<td><code>--model</code></td>
+<td>Gemini image model id. Default depends on credentials: <code>gemini-3-pro-image-preview</code> when authenticated via OAuth, otherwise <code>gemini-2.5-flash-image</code>. Pass <code>gemini-3.1-flash-image-preview</code> (or any other image model) to override.</td>
+</tr>
+<tr class="even">
+<td><code>--force</code></td>
+<td>Regenerate slots whose attr is already declared in the <code>.mog</code> or whose PNG already exists at the planned path.</td>
+</tr>
+<tr class="odd">
+<td><code>--dry-run</code></td>
+<td>Print the plan and skip all API calls and file writes.</td>
+</tr>
+<tr class="even">
+<td><code>--no-build</code></td>
+<td>Stop after rewriting the <code>.mog</code>; don't run <code>build</code>.</td>
+</tr>
+<tr class="odd">
+<td><code>--no-pbr</code></td>
+<td>Skip every derived PBR map (normal / MR / AO). Albedo is still generated.</td>
+</tr>
+<tr class="even">
+<td><code>--no-normal</code> / <code>--no-metallic-roughness</code> / <code>--no-occlusion</code></td>
+<td>Skip a specific derived map.</td>
+</tr>
+<tr class="odd">
+<td><code>--texture-size &lt;N&gt;</code></td>
+<td>Cap (in pixels) on the longer side of every generated albedo. Derived PBR maps inherit this size — the single lever for embedded-texture footprint. <code>0</code> keeps the model's native resolution (typically 1024²).</td>
+</tr>
+<tr class="even">
+<td><code>--api-key</code></td>
+<td>Override <code>GEMINI_API_KEY</code>.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Idempotency.</strong> Per slot, materials that already declare a given <code>*_texture</code> attr — or whose target PNG already exists at the planned path — are skipped unless <code>--force</code> is passed. Existing on-disk PNGs still get their <code>*_texture</code> attr spliced into the source, just without an API call or a local re-derivation.</p>
+<pre class="sh"><code>mogen textures examples/chair.mog --style &quot;weathered oak&quot;
+mogen textures examples/drone.mog --no-occlusion --texture-size 512
+mogen textures examples/chair.mog --dry-run                          # see the plan first</code></pre>
+<hr />
+<h2 id="bench"><code>bench</code></h2>
+<p>Run a suite of prompts through <code>generate</code> and report success rate and mean token cost. Does not write GLBs.</p>
+<pre class="sh"><code>mogen bench [--prompts &lt;file&gt;] [common LLM flags]</code></pre>
+<table>
+<thead>
+<tr class="header">
+<th>flag</th>
+<th>meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>--prompts</code></td>
+<td>File with one prompt per line. <code>#</code> starts a comment. Defaults to <code>benches/prompts.txt</code>.</td>
+</tr>
+<tr class="even">
+<td><code>--model</code></td>
+<td>Gemini model id. Default <code>gemini-pro-latest</code>.</td>
+</tr>
+<tr class="odd">
+<td><code>--max-repair-iters</code></td>
+<td>Default <code>2</code>.</td>
+</tr>
+<tr class="even">
+<td><code>--budget-tokens</code></td>
+<td>Per-prompt token cap.</td>
+</tr>
+<tr class="odd">
+<td><code>--api-key</code></td>
+<td>Override <code>GEMINI_API_KEY</code>.</td>
+</tr>
+<tr class="even">
+<td><code>--no-cache</code></td>
+<td>Disable the system-instruction cache.</td>
+</tr>
+<tr class="odd">
+<td><code>--thinking</code></td>
+<td>Default <code>high</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>Used as a regression gate during development — the project targets ≥ 80% success rate on the bundled prompt suite.</p>
+<hr />
+<h2 id="moghub"><code>moghub</code></h2>
+<p>Browse, download, like, comment on, and publish to MoGHub — the same community surface MoGen Studio's Community window exposes, driven from the terminal. Authentication reads <code>~/.mogen/moghub_auth.json</code> written by <a href="#auth"><code>mogen auth moghub login</code></a>; read-only verbs (<code>discover</code>, <code>info</code>, <code>download</code>, <code>comments</code>) work without a session. The base URL is taken from the auth file (or <code>--server</code>); production defaults to <code>https://moghub.org</code>.</p>
+<p>Models are addressed by a <code>&lt;user&gt;/&lt;slug&gt;</code> reference (the leading <code>@</code> is optional), e.g. <code>krazyjakee/parametric-chair</code> or <code>@krazyjakee/parametric-chair</code>.</p>
+<p>Every verb accepts <code>--server &lt;URL&gt;</code> to target a self-hosted MoGHub instance instead of the URL stored in the on-disk session.</p>
+<pre class="sh"><code>mogen moghub whoami                          # confirm the active session
+mogen moghub discover --query chair --kind model --tag furniture
+mogen moghub info     @user/cool-stool
+mogen moghub download @user/cool-stool --version 3 --out stool/
+mogen moghub like     @user/cool-stool
+mogen moghub comment  @user/cool-stool &quot;great topology!&quot;
+mogen moghub publish  examples/chair.mog --title &quot;Parametric chair&quot; --tags &quot;chair,furniture&quot;</code></pre>
+<h3 id="moghub-whoami"><code>moghub whoami</code></h3>
+<p>Print the signed-in user's handle and id. Exits non-zero with the message <code>anonymous</code> if no session is active.</p>
+<h3 id="moghub-discover"><code>moghub discover</code></h3>
+<p>Walk the public discover feed.</p>
+<table>
+<thead>
+<tr class="header">
+<th>flag</th>
+<th>meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>--query</code>, <code>-q</code></td>
+<td>Free-text search.</td>
+</tr>
+<tr class="even">
+<td><code>--kind</code></td>
+<td>Filter by kind: <code>scene</code>, <code>model</code>, <code>module</code>, or <code>all</code>.</td>
+</tr>
+<tr class="odd">
+<td><code>--tag</code></td>
+<td>Filter by a single tag.</td>
+</tr>
+<tr class="even">
+<td><code>--limit</code> / <code>--offset</code></td>
+<td>Pagination.</td>
+</tr>
+<tr class="odd">
+<td><code>--json</code></td>
+<td>Emit the raw API response as JSON instead of the columnar summary.</td>
+</tr>
+</tbody>
+</table>
+<p>The default human view prints one line per result: <code>@user/slug  title  [kind]  ♥like_count  #tag1 #tag2</code>. A featured pick, when the API returns one, is shown first prefixed with <code>★</code>.</p>
+<h3 id="moghub-info"><code>moghub info</code></h3>
+<p>Print full detail for a model: kind, license, like + fork counts, the latest version number, description, tags, and the file list (the entry <code>.mog</code> is marked with <code>→</code>).</p>
+<pre class="sh"><code>mogen moghub info @user/cool-stool
+mogen moghub info @user/cool-stool --json</code></pre>
+<h3 id="moghub-download"><code>moghub download</code></h3>
+<p>Fetch a model's <code>.mog</code> files into a directory. Defaults to the latest version; pass <code>--version &lt;N&gt;</code> to pin one.</p>
+<table>
+<thead>
+<tr class="header">
+<th>flag</th>
+<th>meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>--version &lt;N&gt;</code></td>
+<td>Pin a specific version instead of the latest.</td>
+</tr>
+<tr class="even">
+<td><code>--out</code>, <code>-o</code></td>
+<td>Destination directory. Defaults to <code>&lt;slug&gt;-v&lt;version&gt;</code> in the working directory.</td>
+</tr>
+<tr class="odd">
+<td><code>--entry-only</code></td>
+<td>Only fetch the entry <code>.mog</code>; skip imports and the thumbnail.</td>
+</tr>
+</tbody>
+</table>
+<p>The thumbnail (<code>thumbnail.png</code>) is downloaded best-effort alongside the <code>.mog</code> files unless <code>--entry-only</code> is set; versions that were never thumbnailed silently skip it.</p>
+<h3 id="moghub-comments"><code>moghub comments</code></h3>
+<p>List comments on a model. Soft-deleted comments are hidden. Body content can include MoGHub bbcode and is printed verbatim.</p>
+<h3 id="moghub-comment"><code>moghub comment</code></h3>
+<p>Post a comment. Requires login. Body accepts MoGHub bbcode.</p>
+<pre class="sh"><code>mogen moghub comment @user/cool-stool &quot;great topology!&quot;</code></pre>
+<h3 id="moghub-like--moghub-unlike"><code>moghub like</code> / <code>moghub unlike</code></h3>
+<p>Toggle a like on a model. Both verbs are idempotent and print the new <code>liked=</code> / <code>total=</code> state. Requires login.</p>
+<h3 id="moghub-notifications"><code>moghub notifications</code></h3>
+<p>List the signed-in user's notifications, newest first. Each line is prefixed with <code>•</code> for unread or a space for read entries. Pass <code>--mark-read</code> to mark every notification as read instead of just listing.</p>
+<h3 id="moghub-publish"><code>moghub publish</code></h3>
+<p>Publish a <code>.mog</code> to MoGHub. Bundles the entry <code>.mog</code> plus every locally-imported <code>.mog</code> and every referenced PNG / JPG / JPEG / WebP texture into a single submission. Requires login.</p>
+<pre class="sh"><code>mogen moghub publish &lt;input.mog&gt; [flags]</code></pre>
+<table>
+<thead>
+<tr class="header">
+<th>flag</th>
+<th>meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>--title</code></td>
+<td>Override <code>meta(name=…)</code> for this publish. Required if the source has no <code>meta(name=…)</code>.</td>
+</tr>
+<tr class="even">
+<td><code>--description</code></td>
+<td>Override <code>meta(description=…)</code>.</td>
+</tr>
+<tr class="odd">
+<td><code>--tags "a,b,c"</code></td>
+<td>Comma-separated tag list. Lowercased and capped at 8. Overrides <code>meta(tags=[…])</code>.</td>
+</tr>
+<tr class="even">
+<td><code>--license</code></td>
+<td>SPDX-style license id. Defaults to <code>CC0-1.0</code>.</td>
+</tr>
+<tr class="odd">
+<td><code>--visibility</code></td>
+<td><code>public</code>, <code>unlisted</code>, or <code>private</code>. Defaults to <code>public</code>.</td>
+</tr>
+<tr class="even">
+<td><code>--message</code>, <code>-m</code></td>
+<td>Version changelog message.</td>
+</tr>
+<tr class="odd">
+<td><code>--thumbnail</code></td>
+<td>Path to a PNG to attach as the model thumbnail.</td>
+</tr>
+<tr class="even">
+<td><code>--filename</code></td>
+<td>Override the published filename. Defaults to the input file's basename.</td>
+</tr>
+<tr class="odd">
+<td><code>--module</code></td>
+<td>Publish as a registry-importable module. Mutually exclusive with <code>--scene</code>.</td>
+</tr>
+<tr class="even">
+<td><code>--scene</code></td>
+<td>Publish as a scene. Mutually exclusive with <code>--module</code>.</td>
+</tr>
+<tr class="odd">
+<td><code>--new</code></td>
+<td>Force creation of a new model even if the source carries a prior MoGHub stamp.</td>
+</tr>
+<tr class="even">
+<td><code>--server</code></td>
+<td>Target a self-hosted MoGHub instance.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Defaults from <code>meta(...)</code>.</strong> When <code>--title</code>, <code>--description</code>, or <code>--tags</code> are omitted, <code>publish</code> reads the corresponding key from the source's top-level <code>meta(...)</code> block. Any locally-imported <code>.mog</code> (via <code>use "file.mog"</code>) is bundled automatically; their filenames must not collide with the entry filename.</p>
+<p><strong>Scene vs. module.</strong> If neither <code>--module</code> nor <code>--scene</code> is passed, the source is published as a <em>module</em> when it has no <code>import</code> declarations and as a <em>scene</em> when it does. Pass an explicit flag to override.</p>
+<p><strong>Updates round-trip.</strong> On success, <code>publish</code> writes three keys back into the source's <code>meta(...)</code> block:</p>
+<pre class="mog"><code>meta (
+  ...
+  moghub_model_id = &quot;…&quot;,
+  moghub_slug     = &quot;…&quot;,
+  moghub_version  = &quot;2&quot;,
+)</code></pre>
+<p>Subsequent <code>moghub publish</code> runs read those keys and append a new version (<code>moghub_version + 1</code>) to the same model. Pass <code>--new</code> to ignore the stamp and create a fresh model instead.</p>
+<p><strong>Texture bundling.</strong> Every string attribute that ends in <code>.png</code>, <code>.jpg</code>, <code>.jpeg</code>, or <code>.webp</code> is resolved relative to the <code>.mog</code> it appears in (entry or import) and uploaded. All texture paths must resolve inside the entry's directory — references that point to a parent directory are rejected so the upload bundle stays self-contained.</p>
+<pre class="sh"><code>mogen moghub publish examples/chair.mog --title &quot;Parametric chair&quot; --tags &quot;chair,furniture&quot;
+mogen moghub publish examples/chair.mog -m &quot;added armrests&quot;          # appends a new version
+mogen moghub publish examples/chair.mog --new --visibility unlisted  # forks off a fresh model</code></pre>
+<hr />
+<h2 id="environment-variables">Environment variables</h2>
+<table>
+<thead>
+<tr class="header">
+<th>variable</th>
+<th>meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>GEMINI_API_KEY</code></td>
+<td>Required by <code>generate</code> / <code>modify</code> / <code>animate</code> / <code>repair</code> / <code>textures</code> / <code>bench</code> unless <code>--api-key</code> is passed.</td>
+</tr>
+<tr class="even">
+<td><code>MOGEN_CACHE_DIR</code></td>
+<td>Where the system-instruction cache is stored. Defaults to <code>$HOME/.cache/mogen/</code>.</td>
+</tr>
+<tr class="odd">
+<td><code>MOGEN_GOLDENS_UPDATE</code></td>
+<td>When set during tests, regenerates the golden snapshots used by the validator and exporter test suites.</td>
+</tr>
+<tr class="even">
+<td><code>MOGEN_GLTF_VALIDATOR</code></td>
+<td>Path to an external glTF validator binary. When set, the build pipeline runs the output GLB through it as an additional smoke check.</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="exit-codes">Exit codes</h2>
+<table>
+<thead>
+<tr class="header">
+<th>code</th>
+<th>meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>0</code></td>
+<td>success</td>
+</tr>
+<tr class="even">
+<td>non-zero</td>
+<td>validation, parse, IO, or remote-API error — diagnostic written to stderr</td>
+</tr>
+</tbody>
+</table>
+<p><code>check --json</code> and the LLM repair loop emit machine-readable diagnostics; everything else uses human-readable formatting via <code>codespan-reporting</code>.</p>
+</article>
+
+</div>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div>© <span data-year></span> MoGen · MIT licensed</div>
+    <div>
+      <a href="playground/index.html">Playground</a> · <a href="dsl.html">DSL</a> · <a href="cli.html">CLI</a> · <a href="studio.html">Studio</a> ·
+      <a href="https://github.com/krazyjakee/MoGen" target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </div>
+</footer>
+
+<script src="assets/site.js"></script>
+</body>
+</html>

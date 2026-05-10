@@ -1,0 +1,58 @@
+const e=`
+meta (
+  seed = "1777210708197092759",
+  thinking = "medium",
+  prompt = "A detailed royal medieval sword commands presence with an elongated, tapered silhouette and a hilt of burnished gold that radiates the solemn authority of a High Middle Ages coronation. The blade glimmers with the smoky, rippling patterns of Damascus steel, while the heavy disc pommel is inlaid with deep crimson rubies and navy enamel that catch the flickering torchlight of a stone throne room.",
+)
+
+material "damascus_steel" (color=[0.35, 0.35, 0.38], metallic=1.0, roughness=0.3)
+material "gold"           (color=[0.85, 0.65, 0.15], metallic=1.0, roughness=0.2)
+material "ruby"           (color=[0.9, 0.02, 0.05], transmission=0.9, roughness=0.05)
+material "enamel_navy"    (color=[0.05, 0.10, 0.25], metallic=0.2, roughness=0.15)
+material "leather"        (color=[0.12, 0.08, 0.06], roughness=0.85)
+
+scene {
+  group "grip_assembly" (y=-0.5) {
+    cylinder "grip"  (radius=0.014, height=0.18, mat="leather")
+    torus    "ring1" (major=0.015, minor=0.002, pos=[0,  0.05, 0], mat="gold")
+    torus    "ring2" (major=0.015, minor=0.002, pos=[0, -0.05, 0], mat="gold")
+  }
+
+  group "pommel" (below="grip_assembly", pos=[0,-0.39,0]) {
+    // Rotated 90 degrees on X so the flat disc faces front/back
+    cylinder "p_disc"   (radius=0.045, height=0.02, rot=[90, 0, 0], mat="gold")
+    cylinder "p_enamel" (radius=0.032, height=0.022, rot=[90, 0, 0], mat="enamel_navy")
+    sphere   "p_ruby_f" (radius=0.008, pos=[0, 0,  0.011], mat="ruby")
+    sphere   "p_ruby_b" (radius=0.008, pos=[0, 0, -0.011], mat="ruby")
+  }
+
+  group "crossguard" (above="grip_assembly", pos=[0,-0.39,0]) {
+    box  "cg_center" (size=[0.06, 0.03, 0.025], mat="gold")
+    
+    // Cones point outward along X. Center of a 0.1m cone is 0.05m from its base.
+    // Base starts at x=0.03 (edge of the center box), so pos is 0.03 + 0.05 = 0.08.
+    cone "cg_arm_l"  (radius=0.012, height=0.1, pos=[-0.08, 0, 0], rot=[0, 0,  90], mat="gold")
+    cone "cg_arm_r"  (radius=0.012, height=0.1, pos=[ 0.08, 0, 0], rot=[0, 0, -90], mat="gold")
+    
+    sphere "cg_ruby_l" (radius=0.006, pos=[-0.13, 0, 0], mat="ruby")
+    sphere "cg_ruby_r" (radius=0.006, pos=[ 0.13, 0, 0], mat="ruby")
+  }
+
+  group "blade" (above="crossguard", rot=[0, 0, 0]) {
+    cylinder "b_main" (
+      radius=0.025, 
+      height=0.75, 
+      segments=4,
+      scale=[1, 1, 0.2],
+      mat="damascus_steel"
+    )
+    cone "b_tip" (
+      above="b_main", 
+      radius=0.025, 
+      height=0.08, 
+      segments=4,
+      scale=[1, 1, 0.2],
+      mat="damascus_steel"
+    )
+  }
+}`;export{e as default};

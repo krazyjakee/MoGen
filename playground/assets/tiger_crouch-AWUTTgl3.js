@@ -1,0 +1,30 @@
+const e=`// A crouching tiger built from the organic stdlib.
+//
+// Demonstrates: stdlib body modules (\`quadruped_torso\`, \`humanoid_head\`,
+// \`tail\`), smooth-blended joints inside each module (no creases at the jaw or
+// shoulders), and anatomically-named materials so the texture pipeline
+// generates rosette fur on the back vs. cream belly.
+
+material "tiger_back_fur"  (color=[0.85, 0.45, 0.15], roughness=0.85)
+material "tiger_belly_fur" (color=[0.96, 0.92, 0.85], roughness=0.85)
+
+scene {
+  group "body" (y=0.4, mat="tiger_back_fur") {
+    use "quadruped_torso" (length=0.95, height=0.32, width=0.32)
+  }
+
+  group "head" (pos=[0, 0.5, 0.55], mat="tiger_back_fur") {
+    use "humanoid_head" (size=0.13, jaw=0.5)
+  }
+
+  // Crouching pose: front shins compressed under the chest, hips sunk.
+  capsule "leg_fl" (pos=[ 0.13, 0.16,  0.32], radius=0.05, height=0.32, mat="tiger_back_fur")
+  capsule "leg_fr" (pos=[-0.13, 0.16,  0.32], radius=0.05, height=0.32, mat="tiger_back_fur")
+  capsule "leg_bl" (pos=[ 0.13, 0.18, -0.32], radius=0.05, height=0.28, mat="tiger_back_fur")
+  capsule "leg_br" (pos=[-0.13, 0.18, -0.32], radius=0.05, height=0.28, mat="tiger_back_fur")
+
+  group "tail" (pos=[0, 0.45, -0.45], mat="tiger_back_fur") {
+    use "tail" ()
+  }
+}
+`;export{e as default};

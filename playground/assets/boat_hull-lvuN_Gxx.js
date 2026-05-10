@@ -1,0 +1,26 @@
+const e=`// Lofted boat hull. Three rectangular cross-sections (bow narrow, midship
+// widest, stern narrower) interpolate linearly between the supplied
+// heights to produce the classic tapered hull silhouette that \`frustum\`
+// (two rectangles only) and \`lathe\` (axisymmetric only) cannot reach.
+//
+// All sections must share the same vertex count — here, four corners
+// each.
+
+material "hull" (color=[0.55, 0.4, 0.25], roughness=0.7)
+
+scene {
+  loft "hull" (
+    points=[
+      // Bow (Y = 0): narrow rectangle.
+      [-0.5, -0.2], [0.5, -0.2], [0.5, 0.2], [-0.5, 0.2],
+      // Midship (Y = 1): widest.
+      [-1.0, -0.4], [1.0, -0.4], [1.0, 0.4], [-1.0, 0.4],
+      // Stern (Y = 2): narrower again.
+      [-0.6, -0.1], [0.6, -0.1], [0.6, 0.1], [-0.6, 0.1]
+    ],
+    heights=[0.0, 1.0, 2.0],
+    samples=12,
+    mat="hull"
+  )
+}
+`;export{e as default};

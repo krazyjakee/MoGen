@@ -1,0 +1,47 @@
+const n=`// Metaball primitive — N implicit spheres unioned with smooth blending.
+//
+// One node, several centres and radii, one \`blend=\` knob — much less
+// verbose than wrapping N \`sphere\` nodes inside \`union (smooth=k) { … }\`
+// and computing each centre by hand.
+
+meta (
+  name = "metaball_blob",
+  description = "Three metaballs — a slime, a torso-thigh creature mass, and a cluster of pumpkin lobes.",
+  tags = ["metaball", "blob", "primitive"],
+)
+
+material "slime" (color=[0.30, 0.80, 0.40], roughness=0.30, alpha=0.85)
+material "flesh" (color=[0.85, 0.62, 0.50], roughness=0.65)
+material "pumpkin" (color=[0.92, 0.45, 0.10], roughness=0.55)
+
+scene {
+  group "field" (tags="floating") {
+    // Slime — three roughly-equal spheres melting into each other.
+    metaball "slime" (
+      points = [[-0.30, 0.05, 0], [0.05, 0.10, 0.10], [0.30, 0, -0.05]],
+      radius = 0.32, blend = 0.18,
+      mat="slime", pos=[-1.6, 0.4, 0]
+    )
+
+    // Torso + thighs — bigger central blob, two smaller masses below.
+    metaball "torso" (
+      points = [[0, 0.5, 0], [-0.22, 0.05, 0], [0.22, 0.05, 0]],
+      radii  = [0.45, 0.30, 0.30],
+      blend = 0.12,
+      mat="flesh", pos=[0, 0, 0]
+    )
+
+    // Pumpkin lobes — five spheres ringed around a central one, all the
+    // same radius, soft blend so the lobes read as one squat body.
+    metaball "pumpkin" (
+      points = [
+        [0, 0, 0],
+        [0.28, 0, 0], [-0.28, 0, 0],
+        [0, 0, 0.28], [0, 0, -0.28],
+      ],
+      radius = 0.30, blend = 0.10,
+      mat="pumpkin", pos=[1.6, 0.30, 0]
+    )
+  }
+}
+`;export{n as default};

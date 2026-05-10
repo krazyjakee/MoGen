@@ -1,0 +1,70 @@
+const t=`
+meta (
+  seed = "1776974214813150285",
+  thinking = "high",
+  prompt = "robot cat with wings",
+)
+
+material "mat_body"   (color=[0.85, 0.85, 0.88], metallic=0.8, roughness=0.3, base_color_texture="textures/cat/mat_body_albedo.png", normal_texture="textures/cat/mat_body_normal.png", metallic_roughness_texture="textures/cat/mat_body_metallicRoughness.png")
+material "mat_dark"   (color=[0.2, 0.2, 0.22], metallic=0.9, roughness=0.5, base_color_texture="textures/cat/mat_dark_albedo.png", normal_texture="textures/cat/mat_dark_normal.png", metallic_roughness_texture="textures/cat/mat_dark_metallicRoughness.png")
+material "mat_accent" (color=[0.8, 0.6, 0.2], metallic=0.9, roughness=0.3, base_color_texture="textures/cat/mat_accent_albedo.png", normal_texture="textures/cat/mat_accent_normal.png", metallic_roughness_texture="textures/cat/mat_accent_metallicRoughness.png")
+material "mat_eye"    (color=[0.1, 0.8, 0.9], emissive=[0.2, 1.6, 1.8], emissive_strength=2.0, base_color_texture="textures/cat/mat_eye_albedo.png", normal_texture="textures/cat/mat_eye_normal.png", metallic_roughness_texture="textures/cat/mat_eye_metallicRoughness.png")
+
+scene {
+  rounded_box "body" (size=[0.12, 0.12, 0.3], radius=0.02, mat="mat_body") {
+    connector "neck_sock"   (at=[0, 0.03, -0.15], dir=[0, 0.5, -1])
+    connector "tail_sock"   (at=[0, 0.03, 0.15],  dir=[0, 0.5, 1])
+    connector "leg_fl_sock" (at=[-0.05, -0.06, -0.1], dir=[0, -1, 0])
+    connector "leg_fr_sock" (at=[ 0.05, -0.06, -0.1], dir=[0, -1, 0])
+    connector "leg_bl_sock" (at=[-0.05, -0.06,  0.1], dir=[0, -1, 0])
+    connector "leg_br_sock" (at=[ 0.05, -0.06,  0.1], dir=[0, -1, 0])
+    connector "wing_l_sock" (at=[-0.06, 0.06, -0.05], dir=[-1, 0.2, 0])
+    connector "wing_r_sock" (at=[ 0.06, 0.06, -0.05], dir=[ 1, 0.2, 0])
+  }
+
+  rounded_box "head" (size=[0.1, 0.08, 0.1], radius=0.015, anchor=back, mat="mat_body") {
+    connector "ear_l_sock" (at=[-0.03, 0.04, -0.02], dir=[0, 1, 0])
+    connector "ear_r_sock" (at=[ 0.03, 0.04, -0.02], dir=[0, 1, 0])
+    connector "eye_l_sock" (at=[-0.025, 0.01, -0.05], dir=[0, 0, -1])
+    connector "eye_r_sock" (at=[ 0.025, 0.01, -0.05], dir=[0, 0, -1])
+    connector "snout_sock" (at=[0, -0.015, -0.05], dir=[0, 0, -1])
+  }
+
+  prism "ear_l" (size=[0.03, 0.04, 0.02], anchor=bottom, mat="mat_accent")
+  prism "ear_r" (size=[0.03, 0.04, 0.02], anchor=bottom, mat="mat_accent")
+  
+  sphere "eye_l" (radius=0.012, mat="mat_eye")
+  sphere "eye_r" (radius=0.012, mat="mat_eye")
+  
+  rounded_box "snout" (size=[0.04, 0.03, 0.02], radius=0.005, anchor=back, mat="mat_dark")
+
+  capsule "leg_fl" (radius=0.015, height=0.12, anchor=top, mat="mat_dark")
+  capsule "leg_fr" (radius=0.015, height=0.12, anchor=top, mat="mat_dark")
+  capsule "leg_bl" (radius=0.015, height=0.12, anchor=top, mat="mat_dark")
+  capsule "leg_br" (radius=0.015, height=0.12, anchor=top, mat="mat_dark")
+
+  spline_tube "tail" (points=[[0,0,0], [0,0.05,0.08], [0,0.1,0.15], [0,0.05,0.22]], radius=0.008, mat="mat_dark")
+
+  box "wing_l" (size=[0.25, 0.01, 0.1], anchor=right, mat="mat_accent")
+  box "wing_r" (size=[0.25, 0.01, 0.1], anchor=left, mat="mat_accent")
+
+  attach (parent="body", child="head",   socket="neck_sock",   plug="back")
+  attach (parent="body", child="tail",   socket="tail_sock",   plug="start")
+  attach (parent="body", child="leg_fl", socket="leg_fl_sock", plug="top")
+  attach (parent="body", child="leg_fr", socket="leg_fr_sock", plug="top")
+  attach (parent="body", child="leg_bl", socket="leg_bl_sock", plug="top")
+  attach (parent="body", child="leg_br", socket="leg_br_sock", plug="top")
+  attach (parent="body", child="wing_l", socket="wing_l_sock", plug="right")
+  attach (parent="body", child="wing_r", socket="wing_r_sock", plug="left")
+
+  attach (parent="head", child="ear_l", socket="ear_l_sock", plug="bottom")
+  attach (parent="head", child="ear_r", socket="ear_r_sock", plug="bottom")
+  attach (parent="head", child="eye_l", socket="eye_l_sock", plug="back")
+  attach (parent="head", child="eye_r", socket="eye_r_sock", plug="back")
+  attach (parent="head", child="snout", socket="snout_sock", plug="back")
+}
+
+flap "flap_l" (target="wing_l", axis=[0, 0, 1],  amplitude=35, hz=2.5)
+flap "flap_r" (target="wing_r", axis=[0, 0, -1], amplitude=35, hz=2.5)
+wave "wag"    (target="tail",   axis=[0, 1, 0],  amplitude=25, hz=1.5)
+idle "breathe" (target="body", amplitude=0.02, hz=0.5)`;export{t as default};

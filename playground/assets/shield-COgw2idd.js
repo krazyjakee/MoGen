@@ -1,0 +1,85 @@
+const e=`
+
+meta (
+  seed = "1777210848045648837",
+  thinking = "high",
+  prompt = "a medieval royal shield displays a tall, convex heater silhouette of hammered steel, its face layered in weathered crimson enamel and edged with intricate, gilded filigree. A proud heraldic lion is embossed in burnished gold across the center, catching the light with a regal, battle-hardened luster that speaks of high-medieval throne rooms and ancient lineage.",
+)
+
+material "steel" (color=[0.35, 0.35, 0.38], metallic=0.9, roughness=0.6)
+material "crimson" (color=[0.45, 0.08, 0.08], roughness=0.3)
+material "gold" (color=[0.85, 0.65, 0.15], metallic=1.0, roughness=0.3)
+material "leather" (color=[0.25, 0.15, 0.08], roughness=0.9)
+
+scene {
+  // The entire shield assembly is built concentrically around the origin.
+  group "shield" (tags="floating", rot=[0, -15, 0]) {
+    
+    // Hammered steel back and core
+    difference "steel_base" {
+      ellipsoid "steel_body" (size=[0.6, 0.9, 0.08], pos=[0, 0, -0.02], mat="steel")
+      box "top_cut" (pos=[0, 0.35, 0], size=[1.0, 0.5, 0.5])
+    }
+
+    // Weathered crimson enamel face
+    difference "crimson_face" {
+      ellipsoid "crimson_body" (size=[0.58, 0.88, 0.10], pos=[0, 0, 0], mat="crimson")
+      box "top_cut" (pos=[0, 0.35, 0], size=[1.0, 0.5, 0.5])
+    }
+
+    // Outer gilded filigree rim
+    difference "gold_rim_outer" {
+      ellipsoid "rim_body" (size=[0.62, 0.92, 0.12], mat="gold")
+      ellipsoid "rim_hollow" (size=[0.56, 0.86, 0.2])
+      box "top_cut" (pos=[0, 0.35, 0], size=[1.0, 0.5, 0.5])
+    }
+    box "top_rim_outer" (pos=[0, 0.1, 0], size=[0.6, 0.04, 0.12], mat="gold")
+
+    // Inner gilded filigree rim
+    difference "gold_rim_inner" {
+      ellipsoid "inner_rim_body" (size=[0.52, 0.82, 0.115], mat="gold")
+      ellipsoid "inner_rim_hollow" (size=[0.48, 0.78, 0.2])
+      box "top_cut" (pos=[0, 0.35, 0], size=[1.0, 0.5, 0.5])
+    }
+    box "top_rim_inner" (pos=[0, 0.1, 0.01], size=[0.5, 0.02, 0.11], mat="gold")
+
+    // Rivets along the top edge
+    group "rivets" (pos=[0, 0.1, 0.06]) {
+      grid "rivet_row" (count=[5, 1, 1], step=[0.12, 0, 0], center=1) {
+        sphere "rivet" (radius=0.012, mat="gold")
+      }
+    }
+
+    // Embossed heraldic lion rampant in burnished gold
+    solid "lion" (pos=[0, -0.15, 0.045], mat="gold", cleanup="coplanar") {
+      capsule "body" (pos=[0, 0, 0], rot=[0, 0, -20], radius=0.03, height=0.15)
+      sphere "mane" (pos=[-0.03, 0.08, 0], radius=0.045)
+      rounded_box "snout" (pos=[-0.06, 0.09, 0], size=[0.05, 0.04, 0.03], radius=0.01)
+      cone "crown" (pos=[-0.04, 0.13, 0], rot=[0, 0, 15], radius=0.015, height=0.025)
+      
+      // Limbs
+      capsule "arm_high" (pos=[-0.05, 0.04, 0], rot=[0, 0, 60], radius=0.015, height=0.08)
+      capsule "arm_low"  (pos=[0.04, 0.02, 0], rot=[0, 0, -45], radius=0.015, height=0.08)
+      capsule "leg_high" (pos=[-0.04, -0.06, 0], rot=[0, 0, 45], radius=0.02, height=0.08)
+      capsule "leg_low"  (pos=[0.02, -0.08, 0], rot=[0, 0, -10], radius=0.02, height=0.08)
+      
+      // Flourished tail
+      spline_tube "tail" (
+        points=[
+          [0.02, -0.05, 0],
+          [0.08, -0.08, 0],
+          [0.11, 0.02, 0],
+          [0.07, 0.07, 0]
+        ],
+        radius=0.01
+      )
+    }
+
+    // Handle on the back
+    group "handle" (pos=[0, -0.1, -0.06]) {
+      capsule "grip" (pos=[0, 0, -0.04], rot=[0, 0, 90], radius=0.02, height=0.15, mat="leather")
+      capsule "mount_l" (pos=[-0.075, 0, -0.02], rot=[90, 0, 0], radius=0.015, height=0.04, mat="steel")
+      capsule "mount_r" (pos=[0.075, 0, -0.02], rot=[90, 0, 0], radius=0.015, height=0.04, mat="steel")
+    }
+  }
+}`;export{e as default};

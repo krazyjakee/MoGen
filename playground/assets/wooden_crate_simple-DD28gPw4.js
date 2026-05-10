@@ -1,0 +1,32 @@
+const o=`
+meta (
+  seed = "1776953281316799934",
+  prompt = "wooden storage crate",
+)
+
+material "wood" (color=[0.45, 0.32, 0.22], roughness=0.9)
+material "wood_dark" (color=[0.35, 0.25, 0.15], roughness=0.8)
+
+scene {
+  difference "crate_shell" {
+    box "outer" (size=[0.8, 0.6, 0.8], mat="wood")
+    box "inner" (size=[0.72, 0.55, 0.72], pos=[0, 0.05, 0])
+  }
+
+  // Corner reinforcements
+  array "corners" (count=4, around=y) {
+    box "post" (pos=[0.36, 0, 0.36], size=[0.1, 0.602, 0.1], mat="wood_dark")
+  }
+
+  // Horizontal planks on the four sides
+  array "side_frames" (count=4, around=y) {
+    group "side_planks" {
+      // Bottom rail
+      box "rail_bottom" (pos=[0, -0.25, 0.381], size=[0.7, 0.098, 0.04], mat="wood_dark")
+      // Top rail
+      box "rail_top" (pos=[0, 0.25, 0.381], size=[0.7, 0.098, 0.04], mat="wood_dark")
+      // Diagonal brace
+      box "brace" (pos=[0, 0, 0.37], size=[0.8, 0.08, 0.02], rot=[0, 0, 35], mat="wood_dark")
+    }
+  }
+}`;export{o as default};

@@ -1,0 +1,43 @@
+const e=`
+meta (
+  seed = "1776934987142519635",
+  prompt = "realistic hardy wood axe with a wooden handle. Something you'd buy from the hardware store.",
+)
+
+material "wood_handle" (color=[0.75, 0.55, 0.35], roughness=0.8, base_color_texture="textures/axe/wood_handle_albedo.png", normal_texture="textures/axe/wood_handle_normal.png", metallic_roughness_texture="textures/axe/wood_handle_metallicRoughness.png", occlusion_texture="textures/axe/wood_handle_ao.png", uv_scale=[3, 3])
+material "wood_wedge"  (color=[0.85, 0.7, 0.5], roughness=0.9, base_color_texture="textures/axe/wood_wedge_albedo.png", normal_texture="textures/axe/wood_wedge_normal.png", metallic_roughness_texture="textures/axe/wood_wedge_metallicRoughness.png", occlusion_texture="textures/axe/wood_wedge_ao.png")
+material "forged_steel" (color=[0.25, 0.25, 0.28], metallic=0.9, roughness=0.65, base_color_texture="textures/axe/forged_steel_albedo.png", normal_texture="textures/axe/forged_steel_normal.png", metallic_roughness_texture="textures/axe/forged_steel_metallicRoughness.png", occlusion_texture="textures/axe/forged_steel_ao.png", uv_scale=[3, 3])
+
+scene {
+  // The central block of the axe head where the handle passes through
+  box "eye_block" (size=[0.035, 0.06, 0.05], mat="forged_steel")
+
+  // The flat back of the axe head
+  box "poll" (size=[0.035, 0.05, 0.03], mat="forged_steel")
+  attach (parent="eye_block", child="poll", socket="back", plug="front")
+
+  // The flared, sharp blade extending forward
+  // top matches the eye_block dimensions, bottom tapers to a sharp edge
+  frustum "blade" (bottom=[0.004, 0.12], top=[0.035, 0.06], height=0.1, mat="forged_steel")
+  attach (parent="eye_block", child="blade", socket="front", plug="top")
+
+  // The ergonomic curved wooden handle
+  // Scaled non-uniformly to create the classic oval cross-section
+  spline_tube "handle" (
+    points=[
+      [0, -0.65, 0.06],  // Fawn foot base
+      [0, -0.4,  0.01],  // Lower grip curve
+      [0, -0.15, 0.0],   // Mid shaft
+      [0,  0.0,  0.0]    // Top entering the eye
+    ],
+    radii=[0.024, 0.016, 0.018, 0.02],
+    scale=[0.6, 1.0, 1.4],
+    mat="wood_handle"
+  )
+  // Embed the handle up through the eye block so it sits flush with the top
+  attach (parent="eye_block", child="handle", socket="bottom", plug="end", offset=-0.06)
+
+  // The wooden wedge driven into the top of the handle to secure the head
+  box "wedge" (size=[0.006, 0.005, 0.045], mat="wood_wedge")
+  attach (parent="eye_block", child="wedge", socket="top", plug="bottom")
+}`;export{e as default};

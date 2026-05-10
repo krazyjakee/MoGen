@@ -1,0 +1,483 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MoGen Studio — MoGen</title>
+  <meta name="description" content="MoGen Studio — the desktop editor for .mog scenes.">
+  <meta property="og:title" content="MoGen Studio — MoGen">
+  <meta property="og:description" content="MoGen Studio — the desktop editor for .mog scenes.">
+  <meta property="og:image" content="splash.png">
+  <link rel="icon" href="icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="index.html"><img src="icon.png" alt=""><span>Mo<span class="mark">Gen</span></span></a>
+    <div class="nav-links">
+      <a href="index.html">Home</a>
+      <a href="index.html#gallery">Gallery</a>
+      <a href="playground/index.html">Playground</a>
+      <a href="dsl.html">DSL</a>
+      <a href="cli.html">CLI</a>
+      <a href="studio.html">Studio</a>
+      <a class="gh" href="https://github.com/krazyjakee/MoGen" target="_blank" rel="noopener">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5C5.6.5.5 5.6.5 12c0 5.1 3.3 9.4 7.9 11 .6.1.8-.3.8-.6v-2c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.2-1.7-1.2-1.7-1-.7.1-.7.1-.7 1.1.1 1.7 1.2 1.7 1.2 1 1.7 2.7 1.2 3.4.9.1-.7.4-1.2.7-1.5-2.5-.3-5.2-1.3-5.2-5.7 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2a11 11 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.6 1.6.2 2.8.1 3.1.7.8 1.2 1.8 1.2 3.1 0 4.4-2.7 5.4-5.2 5.7.4.3.8 1 .8 2.1v3.1c0 .3.2.7.8.6 4.6-1.6 7.9-5.9 7.9-11C23.5 5.6 18.4.5 12 .5z"/></svg>
+        GitHub
+      </a>
+    </div>
+  </div>
+</nav>
+
+<main>
+<div class="wrap doc">
+
+<aside class="toc">
+  <h4>Studio guide</h4>
+  <ul>
+  <li><a href="#mogen-studio" id="toc-mogen-studio">MoGen Studio</a>
+  <ul>
+  <li><a href="#launching" id="toc-launching">Launching</a></li>
+  <li><a href="#the-window-at-a-glance" id="toc-the-window-at-a-glance">The window at a glance</a></li>
+  <li><a href="#tabs-and-recent-files" id="toc-tabs-and-recent-files">Tabs and recent files</a></li>
+  <li><a href="#the-editor-pane" id="toc-the-editor-pane">The editor pane</a></li>
+  <li><a href="#the-3d-viewer" id="toc-the-3d-viewer">The 3D viewer</a></li>
+  <li><a href="#the-inspector" id="toc-the-inspector">The inspector</a></li>
+  <li><a href="#diagnostics" id="toc-diagnostics">Diagnostics</a></li>
+  <li><a href="#building" id="toc-building">Building</a></li>
+  <li><a href="#llm-tools" id="toc-llm-tools">LLM tools</a></li>
+  <li><a href="#themes-and-preview-shaders" id="toc-themes-and-preview-shaders">Themes and preview shaders</a></li>
+  <li><a href="#settings" id="toc-settings">Settings</a></li>
+  <li><a href="#keyboard-shortcuts" id="toc-keyboard-shortcuts">Keyboard shortcuts</a></li>
+  <li><a href="#file-layout-on-disk" id="toc-file-layout-on-disk">File layout on disk</a></li>
+  <li><a href="#see-also" id="toc-see-also">See also</a></li>
+  </ul></li>
+  </ul>
+</aside>
+
+<article class="content">
+<h1 id="mogen-studio">MoGen Studio</h1>
+<p>A desktop editor for <code>.mog</code> scenes. Studio is a thin GUI on top of the same compile pipeline the CLI uses — every feature you can run from <code>mogen &lt;subcommand&gt;</code> is also available as a button or menu item. It adds a live 3D preview, a span-aware inspector, viewport gizmos, syntax highlighting, and a settings store so per-project knobs stick across sessions.</p>
+<p>Window title is <strong>MoGen Studio</strong>. Settings live at <code>~/.config/mogen/settings.json</code> on Linux (<code>%APPDATA%\mogen\settings.json</code> on Windows; <code>~/Library/Application Support/mogen/settings.json</code> on macOS).</p>
+<ul>
+<li><a href="#launching">Launching</a></li>
+<li><a href="#the-window-at-a-glance">The window at a glance</a></li>
+<li><a href="#tabs-and-recent-files">Tabs and recent files</a></li>
+<li><a href="#the-editor-pane">The editor pane</a></li>
+<li><a href="#the-3d-viewer">The 3D viewer</a></li>
+<li><a href="#the-inspector">The inspector</a></li>
+<li><a href="#diagnostics">Diagnostics</a></li>
+<li><a href="#building">Building</a></li>
+<li><a href="#llm-tools">LLM tools — generate, modify, animate, repair, textures</a></li>
+<li><a href="#themes-and-preview-shaders">Themes and preview shaders</a></li>
+<li><a href="#settings">Settings</a></li>
+<li><a href="#keyboard-shortcuts">Keyboard shortcuts</a></li>
+<li><a href="#file-layout-on-disk">File layout on disk</a></li>
+</ul>
+<hr />
+<h2 id="launching">Launching</h2>
+<pre class="sh"><code>cargo run --release -p mogen-studio          # from a source checkout
+
+# Or from a release artifact:
+mogen-studio                                 # Linux tarball
+open &quot;/Applications/MoGen Studio.app&quot;        # macOS .dmg
+# On Windows: launch from the Start menu after running the .msi installer.</code></pre>
+<p>On first launch, Studio shows an onboarding dialog asking for a Gemini API key. You can skip it — every non-LLM feature still works without one — or paste a key in. The key is stored in the settings file and is the same value <code>GEMINI_API_KEY</code> would supply to the CLI.</p>
+<hr />
+<h2 id="the-window-at-a-glance">The window at a glance</h2>
+<p>Studio's main view is a four-region layout:</p>
+<table>
+<thead>
+<tr class="header">
+<th>region</th>
+<th>what it does</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><strong>menu bar</strong></td>
+<td>File / Edit / View / Generate / Options / Help, plus the active-tab strip just below</td>
+</tr>
+<tr class="even">
+<td><strong>editor pane</strong></td>
+<td><code>.mog</code> source with live syntax highlighting, autocomplete, error squiggles, and a per-file diagnostics footer</td>
+</tr>
+<tr class="odd">
+<td><strong>3D viewer</strong></td>
+<td>Live preview of the most recently built <code>.mog</code>, with translate/rotate/scale gizmos and click-to-select picking</td>
+</tr>
+<tr class="even">
+<td><strong>inspector</strong></td>
+<td>Selected-node attribute editor, material editor, texture roster, and per-file build options</td>
+</tr>
+</tbody>
+</table>
+<p>The editor and viewer are separated by a draggable splitter; the inspector is a collapsible side panel.</p>
+<hr />
+<h2 id="tabs-and-recent-files">Tabs and recent files</h2>
+<p>Multiple <code>.mog</code> files can be open simultaneously, one per tab.</p>
+<ul>
+<li>The tab strip remembers order across sessions — closing Studio with three tabs open reopens all three on the next launch, with the last active tab focused.</li>
+<li>Untitled buffers (no path yet) are not persisted across restarts, but they survive accidental re-runs of Studio because every change is held in memory.</li>
+<li>File → Open Recent shows the last 12 opened paths, newest first. Items are removed automatically if the file no longer exists at that path.</li>
+<li>Save / Save As use a native file dialog. New tabs default to "Untitled" and prompt for a path on first save.</li>
+</ul>
+<hr />
+<h2 id="the-editor-pane">The editor pane</h2>
+<p>The editor is a custom egui-based text view tuned for <code>.mog</code>. It does NOT use a pest-driven highlighter on every keystroke — instead, a loose tokeniser in <code>highlight.rs</code> colours kinds, strings, numbers, comments, and <code>$param</code> references, so mid-edit source still highlights even when the parser would reject it.</p>
+<p>Features:</p>
+<ul>
+<li><strong>Syntax highlighting</strong> — kinds, attributes, strings, numbers, comments, <code>$param</code> references.</li>
+<li><strong>Autocomplete</strong> — typing a kind, attribute, or material name pops a fuzzy list. <kbd>Tab</kbd> / <kbd>Enter</kbd> accepts; <kbd>Esc</kbd> cancels; <kbd>↑</kbd>/<kbd>↓</kbd> moves the selection.</li>
+<li><strong>Indent on enter</strong> — opening a <code>{</code> block bumps the indent; closing brace de-indents in place.</li>
+<li><strong>Error squiggles</strong> — every diagnostic from the AST or graph validator gets an underline at the exact span the validator emitted. Hover for the message.</li>
+<li><strong>Find</strong> — <kbd>Ctrl+F</kbd> / <kbd>⌘F</kbd> opens a find bar.</li>
+<li><strong>External-edit detection</strong> — if the file changes on disk while a tab is open, Studio prompts to reload (or keep your in-memory copy if you have unsaved changes).</li>
+</ul>
+<hr />
+<h2 id="the-3d-viewer">The 3D viewer</h2>
+<p>A live preview built on <code>eframe</code>'s wgpu backend. Loaded directly from the in-memory <code>SceneGraph</code> after each successful build — there's no intermediate GLB on disk for the preview.</p>
+<p>Camera:</p>
+<ul>
+<li><strong>Left-drag</strong> orbits the focus point.</li>
+<li><strong>Middle-drag</strong> (or <kbd>Shift</kbd>+left-drag) pans.</li>
+<li><strong>Mouse wheel</strong> zooms.</li>
+<li><kbd>⌘0</kbd> / <kbd>Ctrl+0</kbd> frames the whole scene.</li>
+</ul>
+<p>Selection:</p>
+<ul>
+<li><strong>Left-click</strong> picks the node under the cursor (Möller–Trumbore ray cast against the rendered meshes). The selected node highlights both in the viewer and in the inspector.</li>
+<li><strong>Esc</strong> clears the selection.</li>
+</ul>
+<p>Gizmos:</p>
+<ul>
+<li>When a node is selected, a translate / rotate / scale gizmo handle floats over its origin in world space. The mode toggles in the View menu (or the gizmo widget itself).</li>
+<li>Dragging a handle modifies <code>pos</code> / <code>rot</code> / <code>scale</code> on the selected node and <strong>writes the change back into the source <code>.mog</code></strong> as a span-preserving edit. Other formatting in the file is left alone.</li>
+</ul>
+<hr />
+<h2 id="the-inspector">The inspector</h2>
+<p>The inspector binds the currently selected node to its attributes:</p>
+<ul>
+<li><strong>Per-attribute fields</strong> — drag-numeric inputs, vec3 spinners, colour pickers for material colours, dropdowns for enum-like attrs (<code>anchor</code>, <code>axis</code>, <code>alpha_mode</code>).</li>
+<li><strong>Material editor</strong> — every authored material gets a collapsing section. Edit base color, roughness, metallic, alpha mode, transmission, emissive, etc.; changes flow back to the source <code>material "…"</code> declaration via the same span-preserving edit machinery.</li>
+<li><strong>Texture roster</strong> — each material's texture slots show ✓ / ✗ markers based on whether the referenced PNG actually exists at the resolved path. Missing textures are visible <em>before</em> you try to build.</li>
+<li><strong>LOD scale slider</strong> — edits the top-level <code>lod_scale (value=N)</code> directive in place. Drag down to iterate quickly on big scenes; drag back to <code>1.0</code> and Studio removes the directive entirely so saved files stay clean.</li>
+<li><strong>Per-file export options</strong> — <code>include_animations</code>, <code>include_textures</code>, <code>merge_sibling_meshes</code> (sticky per file).</li>
+</ul>
+<p>Edits made in the inspector and via gizmos are persisted into the source file the next time you save. They are reflected in the editor text immediately, and they preserve every comment, blank line, and whitespace style elsewhere in the source.</p>
+<hr />
+<h2 id="diagnostics">Diagnostics</h2>
+<p>Every build runs the same dual validator the CLI uses (AST-level + graph-level). The diagnostics show up in three places:</p>
+<ol type="1">
+<li><strong>Error squiggles</strong> in the editor at the exact source span.</li>
+<li><strong>Diagnostics footer</strong> under the editor — collapsible; auto-hides when there are no errors or warnings.</li>
+<li><strong>Tab badges</strong> — a tab with errors gets a red dot; a tab with only info-level diagnostics looks clean.</li>
+</ol>
+<p><code>mogen check --json</code> and the studio share the same diagnostic format — the studio is a viewer for that JSON, dressed up as a UI.</p>
+<hr />
+<h2 id="building">Building</h2>
+<p>The <strong>Build</strong> button (or <kbd>⌘B</kbd> / <kbd>Ctrl+B</kbd>) compiles the current tab to GLB and refreshes the 3D viewer. The output GLB lands at <code>&lt;file&gt;.glb</code> next to the source by default.</p>
+<p>The build pipeline is the same one <code>mogen build</code> runs:</p>
+<ol type="1">
+<li>Parse → AST → AST validation</li>
+<li>Lower → SceneGraph</li>
+<li>Graph validation</li>
+<li>Optional sibling-mesh merge (per-file <code>merge_sibling_meshes</code> setting)</li>
+<li>GLB export</li>
+</ol>
+<p>Validation errors abort the build and surface in the diagnostics footer without writing a GLB.</p>
+<p><kbd>F5</kbd> re-runs the validator only, without re-emitting a GLB. Useful when you've edited a <code>.mog</code> from outside Studio and want a quick diagnostic refresh.</p>
+<hr />
+<h2 id="llm-tools">LLM tools</h2>
+<p>The Generate menu mirrors the LLM-driven CLI subcommands. Each opens a small modal that collects a prompt and the relevant flags.</p>
+<table>
+<thead>
+<tr class="header">
+<th>menu item</th>
+<th>CLI equivalent</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><strong>New from prompt…</strong> (<kbd>⌘⇧N</kbd>)</td>
+<td><a href="./cli.md#generate"><code>mogen generate</code></a></td>
+</tr>
+<tr class="even">
+<td><strong>Modify…</strong></td>
+<td><a href="./cli.md#modify"><code>mogen modify</code></a></td>
+</tr>
+<tr class="odd">
+<td><strong>Animate…</strong></td>
+<td><a href="./cli.md#animate"><code>mogen animate</code></a></td>
+</tr>
+<tr class="even">
+<td><strong>Repair</strong></td>
+<td><a href="./cli.md#repair"><code>mogen repair</code></a></td>
+</tr>
+<tr class="odd">
+<td><strong>Generate textures…</strong></td>
+<td><a href="./cli.md#textures"><code>mogen textures</code></a></td>
+</tr>
+</tbody>
+</table>
+<p>Behaviour matches the CLI:</p>
+<ul>
+<li>The repair loop runs in the background; progress is shown in the status line.</li>
+<li>The generated <code>.mog</code> opens in a new tab (Generate) or replaces the current tab's contents (Modify / Animate / Repair).</li>
+<li>Seeds are embedded in the DSL header so the same prompt + same seed re-emits the same scene. The seed field in each modal is pre-filled with the input file's existing seed when present.</li>
+<li>Thinking level, model, temperature, and <code>max_repair_iters</code> come from Options → Models. Per-modal overrides live next to the prompt field for one-off tuning.</li>
+</ul>
+<p>If <code>gemini_api_key</code> is empty in the settings, every LLM action prompts for a key first (the same onboarding dialog as on first launch).</p>
+<hr />
+<h2 id="themes-and-preview-shaders">Themes and preview shaders</h2>
+<p><strong>UI themes</strong> (Options → Theme):</p>
+<table>
+<thead>
+<tr class="header">
+<th>key</th>
+<th>label</th>
+<th>use</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>dark</code></td>
+<td>Dark</td>
+<td>classic dark editor</td>
+</tr>
+<tr class="even">
+<td><code>light</code></td>
+<td>Light</td>
+<td>bright office mode</td>
+</tr>
+<tr class="odd">
+<td><code>sunset</code></td>
+<td>Sunset (warm)</td>
+<td>warm-toned</td>
+</tr>
+<tr class="even">
+<td><code>nord</code></td>
+<td>Nord (cool)</td>
+<td>cool-toned blue/grey — <em>default</em></td>
+</tr>
+<tr class="odd">
+<td><code>high-contrast</code></td>
+<td>High Contrast</td>
+<td>accessibility / projector</td>
+</tr>
+</tbody>
+</table>
+<p>The theme name is stored in <code>settings.json</code> as a lowercase label so new variants can land without breaking older settings files. Empty / unknown labels fall back to Nord.</p>
+<p><strong>Preview shaders</strong> (View → Preview shader) control the 3D viewer only — they don't affect the exported GLB.</p>
+<table>
+<thead>
+<tr class="header">
+<th>key</th>
+<th>label</th>
+<th>what it shows</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>standard</code></td>
+<td>Standard (PBR)</td>
+<td>full PBR with embedded textures — <em>default</em></td>
+</tr>
+<tr class="even">
+<td><code>toon</code></td>
+<td>Toon (cel-shaded)</td>
+<td>hard-shaded NPR look</td>
+</tr>
+<tr class="odd">
+<td><code>crt</code></td>
+<td>CRT (scanlines)</td>
+<td>post-process scanlines + bloom</td>
+</tr>
+<tr class="even">
+<td><code>matcap</code></td>
+<td>Matcap (clay)</td>
+<td>unlit material capture for sculpt-style review</td>
+</tr>
+<tr class="odd">
+<td><code>wireframe</code></td>
+<td>Wireframe</td>
+<td>edges only, ignores materials</td>
+</tr>
+</tbody>
+</table>
+<p>Wireframe is useful for inspecting topology after CSG or sibling-mesh merge. CRT is for vibes.</p>
+<hr />
+<h2 id="settings">Settings</h2>
+<p>The settings file is a JSON document stored at the OS-appropriate config path. It's safe to edit by hand — Studio reloads on next launch.</p>
+<table>
+<thead>
+<tr class="header">
+<th>key</th>
+<th>meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>gemini_api_key</code></td>
+<td>API key used by every LLM action.</td>
+</tr>
+<tr class="even">
+<td><code>gemini_model</code></td>
+<td>Heavy model id. Empty → <code>gemini-pro-latest</code>.</td>
+</tr>
+<tr class="odd">
+<td><code>gemini_fast_model</code></td>
+<td>Fast model id used for low-stakes rewrites (Prompt Enhancer). Empty → <code>gemini-flash-latest</code>.</td>
+</tr>
+<tr class="even">
+<td><code>gemini_temperature</code></td>
+<td>Sampling temperature. <code>null</code> → library default (<code>0.3</code>).</td>
+</tr>
+<tr class="odd">
+<td><code>thinking_level</code></td>
+<td><code>low</code> / <code>medium</code> / <code>high</code> / <code>xhigh</code>. Empty → library default (<code>high</code>).</td>
+</tr>
+<tr class="even">
+<td><code>max_repair_iters</code></td>
+<td>LLM repair budget. <code>null</code> → library default (<code>2</code>).</td>
+</tr>
+<tr class="odd">
+<td><code>seed_override</code></td>
+<td>Optional deterministic seed. <code>null</code> → derive from DSL header or random per call.</td>
+</tr>
+<tr class="even">
+<td><code>theme</code></td>
+<td>UI theme key (see above).</td>
+</tr>
+<tr class="odd">
+<td><code>preview_shader</code></td>
+<td>Viewer shader key (see above).</td>
+</tr>
+<tr class="even">
+<td><code>last_opened</code></td>
+<td>Absolute path of the last <code>.mog</code> opened.</td>
+</tr>
+<tr class="odd">
+<td><code>open_tabs</code></td>
+<td>Absolute paths of every titled tab open at last persist time.</td>
+</tr>
+<tr class="even">
+<td><code>recent_files</code></td>
+<td>Most-recently-opened paths, newest first. Capped at 12.</td>
+</tr>
+<tr class="odd">
+<td><code>onboarded</code></td>
+<td>Set once the first-launch onboarding has been dismissed.</td>
+</tr>
+</tbody>
+</table>
+<p>Untitled buffers are deliberately not persisted — there's nothing to key off — so a fresh Studio launch with only-untitled tabs comes up empty. Save first if you want them back.</p>
+<hr />
+<h2 id="keyboard-shortcuts">Keyboard shortcuts</h2>
+<p><code>COMMAND</code> is <code>⌘</code> on macOS and <code>Ctrl</code> elsewhere. All shortcuts work globally; egui consumes them before the menu or editor see the key.</p>
+<table>
+<thead>
+<tr class="header">
+<th>shortcut</th>
+<th>action</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><kbd>⌘N</kbd></td>
+<td>New untitled tab</td>
+</tr>
+<tr class="even">
+<td><kbd>⌘⇧N</kbd></td>
+<td>New from prompt (Gemini generate)</td>
+</tr>
+<tr class="odd">
+<td><kbd>⌘O</kbd></td>
+<td>Open file…</td>
+</tr>
+<tr class="even">
+<td><kbd>⌘S</kbd></td>
+<td>Save active tab</td>
+</tr>
+<tr class="odd">
+<td><kbd>⌘⇧S</kbd></td>
+<td>Save As…</td>
+</tr>
+<tr class="even">
+<td><kbd>⌘B</kbd></td>
+<td>Build active tab to GLB</td>
+</tr>
+<tr class="odd">
+<td><kbd>F5</kbd></td>
+<td>Re-run the validator without re-emitting the GLB</td>
+</tr>
+<tr class="even">
+<td><kbd>⌘W</kbd></td>
+<td>Close active tab</td>
+</tr>
+<tr class="odd">
+<td><kbd>⌘0</kbd></td>
+<td>Frame the scene in the 3D viewer</td>
+</tr>
+<tr class="even">
+<td><kbd>⌘,</kbd></td>
+<td>Open Options</td>
+</tr>
+<tr class="odd">
+<td><kbd>⌘Q</kbd></td>
+<td>Quit (with prompt-to-save for dirty tabs)</td>
+</tr>
+<tr class="even">
+<td><kbd>Tab</kbd> / <kbd>Enter</kbd></td>
+<td>Accept autocomplete suggestion</td>
+</tr>
+<tr class="odd">
+<td><kbd>Esc</kbd></td>
+<td>Dismiss autocomplete; clear viewer selection</td>
+</tr>
+</tbody>
+</table>
+<p>Standard editing shortcuts (<kbd>⌘C</kbd>, <kbd>⌘X</kbd>, <kbd>⌘V</kbd>, <kbd>⌘A</kbd>, <kbd>⌘Z</kbd>, <kbd>⌘⇧Z</kbd>) work in the editor pane.</p>
+<hr />
+<h2 id="file-layout-on-disk">File layout on disk</h2>
+<p>For a given project directory, Studio expects (and creates) the following layout:</p>
+<pre><code>my-project/
+├── chair.mog              # source
+├── chair.glb              # build output (next to the .mog by default)
+└── textures/
+    └── chair/             # mogen textures --textures-dir default
+        ├── wood_base_color.png
+        ├── wood_normal.png
+        ├── wood_metallic_roughness.png
+        └── wood_occlusion.png</code></pre>
+<p>Texture paths in <code>material "…"</code> declarations are resolved relative to the <code>.mog</code> file. The <code>textures/&lt;mog-stem&gt;/</code> subdirectory is the default output of <code>mogen textures</code> so sibling <code>.mog</code>s with shared material names don't clobber each other.</p>
+<hr />
+<h2 id="see-also">See also</h2>
+<ul>
+<li><a href="./dsl.md">DSL reference</a> — the language Studio edits.</li>
+<li><a href="./cli.md">CLI reference</a> — the commands Studio wraps.</li>
+<li><a href="./modules.md">Module catalog</a> — reusable parametric modules shipped in the repo.</li>
+</ul>
+</article>
+
+</div>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div>© <span data-year></span> MoGen · MIT licensed</div>
+    <div>
+      <a href="playground/index.html">Playground</a> · <a href="dsl.html">DSL</a> · <a href="cli.html">CLI</a> · <a href="studio.html">Studio</a> ·
+      <a href="https://github.com/krazyjakee/MoGen" target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </div>
+</footer>
+
+<script src="assets/site.js"></script>
+</body>
+</html>

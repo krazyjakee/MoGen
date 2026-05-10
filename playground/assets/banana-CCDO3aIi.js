@@ -1,0 +1,29 @@
+const e=`
+meta (
+  seed = "1776959391893458831",
+  thinking = "low",
+  prompt = "banana", mogen_version = "0.1.1")
+
+material "yellow" (color=[0.95, 0.85, 0.15], roughness=0.7, base_color_texture="textures/banana/yellow_albedo.png", normal_texture="textures/banana/yellow_normal.png", metallic_roughness_texture="textures/banana/yellow_metallicRoughness.png", metallic=0, transmission=0, double_sided=0)
+material "stem_mat" (color=[0.45, 0.55, 0.2], roughness=0.8, base_color_texture="textures/banana/stem_mat_albedo.png", normal_texture="textures/banana/stem_mat_normal.png", metallic_roughness_texture="textures/banana/stem_mat_metallicRoughness.png")
+
+
+scene {
+  spline_tube "body" (
+    points=[
+      [-0.10,  0.04, 0],
+      [-0.05,  0.01, 0],
+      [ 0.02,  0.00, 0],
+      [ 0.08,  0.01, 0],
+      [ 0.12,  0.04, 0]
+    ],
+    radii=[0.008, 0.022, 0.026, 0.020, 0.004],
+    segments=5,
+    samples=16,
+    mat="yellow"
+  )
+  
+  cylinder "stem" (radius=0.007, height=0.025, segments=5, mat="stem_mat")
+
+  attach (parent="body", child="stem", socket="start", plug="bottom")
+}`;export{e as default};

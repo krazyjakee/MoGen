@@ -1,0 +1,40 @@
+const e=`// Coil primitive showcase — three helical bodies built from one node each.
+//
+// \`coil\` sweeps a circular cross-section along a helix, parametrised by
+// helix radius, total height, number of revolutions, and tube thickness.
+// Use it for springs, screw threads, snail-shell ribs, twisted vines.
+
+meta (
+  name = "coil_spring",
+  description = "Three coils — a tight spring, a wider helix, and a left-handed thread — showing the coil primitive.",
+  tags = ["coil", "helix", "spring", "primitive"], mogen_version = "0.1.2")
+
+material "steel" (color=[0.65, 0.66, 0.70], roughness=0.35, metallic=0.85)
+material "brass" (color=[0.78, 0.62, 0.32], roughness=0.30, metallic=0.95)
+
+scene {
+  group "field" (tags="floating") {
+    // Tight compression spring — many tight turns, narrow tube.
+    coil "spring" (
+      radius=0.18, height=0.9, turns=10,
+      profile_radius=0.02, samples=24,
+      mat="steel", pos=[-0.6, 0, 0]
+    )
+
+    // Wider, looser helix — fewer turns, fatter tube. Reads as a coiled hose.
+    coil "hose" (
+      radius=0.30, height=1.1, turns=4,
+      profile_radius=0.05, samples=20,
+      mat="steel", pos=[0, 0, 0]
+    )
+
+    // Left-handed thread on a narrow rod.
+    coil "thread" (
+      radius=0.10, height=0.8, turns=12,
+      profile_radius=0.012, samples=24,
+      handedness="left",
+      mat="brass", pos=[0.6, 0, 0]
+    )
+  }
+}
+`;export{e as default};

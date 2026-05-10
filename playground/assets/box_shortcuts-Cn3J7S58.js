@@ -1,0 +1,78 @@
+const e=`// Showcase of every LLM-friendly shortcut on the box family. The same house
+// as \`simple_house.mog\` would build with roughly half the arithmetic, plus a
+// few demos that don't fit that template.
+//
+// Shortcuts used:
+//   * scalar size (\`size=2\`)                    — cube shorthand
+//   * per-axis shortcuts (\`w=\`, \`h=\`, \`x=\`, …)   — single-axis overrides
+//   * \`from=[…], to=[…]\`                         — axis-aligned box by corners
+//   * \`anchor=…\`                                 — place by face/corner, not centre
+//   * \`slab\` / \`post\` / \`panel\`                  — box aliases with useful default anchors
+//   * \`wall (… holes=[[x,y,w,h], …])\`           — wall with rectangular cutouts (CSG inside)
+//   * \`stack\`                                    — auto-layout along an axis
+//   * \`grid\`                                     — 3D tile replication
+//   * \`above\` / \`below\` / \`left_of\` / \`right_of\` — snap a node flush with a prior sibling
+
+material "wood"     (color=[0.55, 0.35, 0.18], roughness=0.80)
+material "concrete" (color=[0.78, 0.78, 0.78], roughness=0.85)
+material "brass"    (color=[0.85, 0.65, 0.25], metallic=1.0, roughness=0.35)
+material "glass"    (color=[0.70, 0.85, 0.95], roughness=0.10, transmission=0.9)
+
+scene {
+  // This file is a gallery of showpieces, not one connected model — opt out
+  // of the connectivity check. (See \`tags="floating"\` in \`dsl.md\`.)
+  group "gallery" (tags="floating") {
+
+  // --- Cube shorthand: every size axis is 1.0. ---
+  box "unit_cube" (x=-6, y=0.5, size=1, mat="brass")
+
+  // --- Per-axis shortcuts. No \`pos=[…]\`; just spell the axes that matter.
+  //     This floor sits at y=0.05 with width 4 / depth 3 — no vec3 needed. ---
+  slab "floor" (x=-3, w=4, h=0.1, d=3, mat="wood")
+
+  // --- \`anchor=bottom\` puts the post's base at its own origin, so \`y=0\`
+  //     actually plants it on the ground.                                   ---
+  post "lamp_pole" (x=-1, y=0, w=0.08, h=1.8, d=0.08, mat="brass")
+
+  // --- \`from\` / \`to\`: an axis-aligned beam from one corner to another.
+  //     No subtraction, no midpoint calc.                                   ---
+  box "beam" (from=[0, 2, -0.5], to=[3, 2.2, 0.5], mat="wood")
+
+  // --- Wall with two holes cut through Z. Each hole = [cx, cy, w, h]
+  //     in the wall's local frame.                                         ---
+  wall "barracks" (
+    x=4, y=1.5, z=0,
+    size=[3, 3, 0.1],
+    holes=[
+      [-0.75, -0.4, 0.9, 2.0],   // door
+      [ 0.9,  0.3,  0.8, 0.8],   // window
+    ],
+    mat="concrete"
+  )
+  // Inset glass into the window hole using relative placement:
+  // \`behind\` snaps to the barracks' +Z face, then we nudge in by z=-0.05.
+  box "pane" (behind="barracks", y=1.8, x=4.9, w=0.8, h=0.8, d=0.02, mat="glass")
+
+  // --- Stack along Y. Each child's own AABB becomes its slot — no manual
+  //     y-offsets, no "half this, half that" math.                         ---
+  stack "cake" (x=-5, y=0, z=-4, axis=y, gap=0.02) {
+    slab "tier_a" (size=[1.4, 0.25, 1.4], mat="wood")
+    slab "tier_b" (size=[1.0, 0.20, 1.0], mat="wood")
+    slab "tier_c" (size=[0.6, 0.15, 0.6], mat="wood")
+  }
+
+  // --- 3D grid of evenly spaced tiles. \`center=1\` centres around origin. ---
+  grid "floor_tiles" (x=0, y=0, z=-4, count=[5, 1, 3], step=[0.6, 0, 0.6], center=1) {
+    slab "tile" (size=[0.55, 0.05, 0.55], mat="concrete")
+  }
+
+  // --- Relative placement: stack two chests by name reference.
+  //     \`above="chest_lo"\` places chest_hi flush against its top face.     ---
+  group "chests" (x=3, z=-3) {
+    box "chest_lo" (size=[0.8, 0.6, 0.5], mat="wood")
+    box "chest_hi" (above="chest_lo", gap=0.02, size=[0.8, 0.6, 0.5], mat="wood")
+  }
+
+  } // gallery
+}
+`;export{e as default};

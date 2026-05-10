@@ -1,0 +1,1895 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DSL reference — MoGen</title>
+  <meta name="description" content="Every node kind, attribute, and feature in the .mog DSL.">
+  <meta property="og:title" content="DSL reference — MoGen">
+  <meta property="og:description" content="Every node kind, attribute, and feature in the .mog DSL.">
+  <meta property="og:image" content="splash.png">
+  <link rel="icon" href="icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="index.html"><img src="icon.png" alt=""><span>Mo<span class="mark">Gen</span></span></a>
+    <div class="nav-links">
+      <a href="index.html">Home</a>
+      <a href="index.html#gallery">Gallery</a>
+      <a href="playground/index.html">Playground</a>
+      <a href="dsl.html">DSL</a>
+      <a href="cli.html">CLI</a>
+      <a href="studio.html">Studio</a>
+      <a class="gh" href="https://github.com/krazyjakee/MoGen" target="_blank" rel="noopener">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5C5.6.5.5 5.6.5 12c0 5.1 3.3 9.4 7.9 11 .6.1.8-.3.8-.6v-2c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.2-1.7-1.2-1.7-1-.7.1-.7.1-.7 1.1.1 1.7 1.2 1.7 1.2 1 1.7 2.7 1.2 3.4.9.1-.7.4-1.2.7-1.5-2.5-.3-5.2-1.3-5.2-5.7 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.3 1.2a11 11 0 0 1 6 0c2.3-1.5 3.3-1.2 3.3-1.2.6 1.6.2 2.8.1 3.1.7.8 1.2 1.8 1.2 3.1 0 4.4-2.7 5.4-5.2 5.7.4.3.8 1 .8 2.1v3.1c0 .3.2.7.8.6 4.6-1.6 7.9-5.9 7.9-11C23.5 5.6 18.4.5 12 .5z"/></svg>
+        GitHub
+      </a>
+    </div>
+  </div>
+</nav>
+
+<main>
+<div class="wrap doc">
+
+<aside class="toc">
+  <h4>DSL reference</h4>
+  <ul>
+  <li><a href="#mogen-dsl-reference" id="toc-mogen-dsl-reference">MoGen DSL reference</a>
+  <ul>
+  <li><a href="#grammar-at-a-glance" id="toc-grammar-at-a-glance">Grammar at a glance</a></li>
+  <li><a href="#file-metadata-meta" id="toc-file-metadata-meta">File metadata: <code>meta</code></a></li>
+  <li><a href="#global-settings" id="toc-global-settings">Global settings</a>
+  <ul>
+  <li><a href="#per-node-lod-overrides" id="toc-per-node-lod-overrides">Per-node <code>lod=</code> overrides</a></li>
+  </ul></li>
+  <li><a href="#values-and-expressions" id="toc-values-and-expressions">Values and expressions</a></li>
+  <li><a href="#common-attributes" id="toc-common-attributes">Common attributes</a></li>
+  <li><a href="#placement-shortcuts" id="toc-placement-shortcuts">Placement shortcuts</a>
+  <ul>
+  <li><a href="#per-component-shortcuts" id="toc-per-component-shortcuts">Per-component shortcuts</a></li>
+  <li><a href="#scalar-size-cube-shorthand" id="toc-scalar-size-cube-shorthand">Scalar <code>size</code> (cube shorthand)</a></li>
+  <li><a href="#from--to--axis-aligned-box-by-corners" id="toc-from--to--axis-aligned-box-by-corners"><code>from</code> / <code>to</code> — axis-aligned box by corners</a></li>
+  <li><a href="#anchor--place-by-face-not-centre" id="toc-anchor--place-by-face-not-centre"><code>anchor</code> — place by face, not centre</a></li>
+  <li><a href="#relative-placement-above-below-left_of-right_of-in_front_of-behind" id="toc-relative-placement-above-below-left_of-right_of-in_front_of-behind">Relative placement: <code>above</code>, <code>below</code>, <code>left_of</code>, <code>right_of</code>, <code>in_front_of</code>, <code>behind</code></a></li>
+  </ul></li>
+  <li><a href="#deformation-modifiers" id="toc-deformation-modifiers">Deformation modifiers</a></li>
+  <li><a href="#scene-structure-scene-group" id="toc-scene-structure-scene-group">Scene structure: <code>scene</code>, <code>group</code></a></li>
+  <li><a href="#primitives" id="toc-primitives">Primitives</a>
+  <ul>
+  <li><a href="#branch" id="toc-branch">Branch</a></li>
+  </ul></li>
+  <li><a href="#materials" id="toc-materials">Materials</a></li>
+  <li><a href="#decals" id="toc-decals">Decals</a>
+  <ul>
+  <li><a href="#curved-surfaces-on--at" id="toc-curved-surfaces-on--at">Curved surfaces: <code>on=</code> / <code>at=</code></a></li>
+  </ul></li>
+  <li><a href="#connectors" id="toc-connectors">Connectors</a></li>
+  <li><a href="#attach-rigid-alignment-of-two-connector-frames" id="toc-attach-rigid-alignment-of-two-connector-frames">Attach: rigid alignment of two connector frames</a></li>
+  <li><a href="#conform-moulding-a-primitive-onto-a-target-surface" id="toc-conform-moulding-a-primitive-onto-a-target-surface">Conform: moulding a primitive onto a target surface</a>
+  <ul>
+  <li><a href="#shared-attributes" id="toc-shared-attributes">Shared attributes</a></li>
+  <li><a href="#path-mode--from--to" id="toc-path-mode--from--to">Path mode — <code>from=</code> / <code>to=</code></a></li>
+  <li><a href="#patch-mode--at" id="toc-patch-mode--at">Patch mode — <code>at=</code></a></li>
+  <li><a href="#rejected-primitives" id="toc-rejected-primitives">Rejected primitives</a></li>
+  <li><a href="#tessellation" id="toc-tessellation">Tessellation</a></li>
+  <li><a href="#examples" id="toc-examples">Examples</a></li>
+  <li><a href="#pass-ordering-and-reparenting" id="toc-pass-ordering-and-reparenting">Pass ordering and reparenting</a></li>
+  <li><a href="#path-generation" id="toc-path-generation">Path generation</a></li>
+  <li><a href="#reserved-not-yet-implemented" id="toc-reserved-not-yet-implemented">Reserved (not yet implemented)</a></li>
+  </ul></li>
+  <li><a href="#replicators-mirror-array-stack-grid" id="toc-replicators-mirror-array-stack-grid">Replicators: <code>mirror</code>, <code>array</code>, <code>stack</code>, <code>grid</code></a>
+  <ul>
+  <li><a href="#mirror" id="toc-mirror"><code>mirror</code></a></li>
+  <li><a href="#array" id="toc-array"><code>array</code></a></li>
+  <li><a href="#stack" id="toc-stack"><code>stack</code></a></li>
+  <li><a href="#grid" id="toc-grid"><code>grid</code></a></li>
+  </ul></li>
+  <li><a href="#csg-union--difference--intersect" id="toc-csg-union--difference--intersect">CSG: <code>union</code> / <code>difference</code> / <code>intersect</code></a></li>
+  <li><a href="#solid-groups-solid" id="toc-solid-groups-solid">Solid groups: <code>solid</code></a>
+  <ul>
+  <li><a href="#cleanupcoplanar" id="toc-cleanupcoplanar"><code>cleanup="coplanar"</code></a></li>
+  </ul></li>
+  <li><a href="#modules-module-and-use" id="toc-modules-module-and-use">Modules: <code>module</code> and <code>use</code></a></li>
+  <li><a href="#control-flow-if-else-for-string-interpolation" id="toc-control-flow-if-else-for-string-interpolation">Control flow: <code>if</code>, <code>else</code>, <code>for</code>, string interpolation</a>
+  <ul>
+  <li><a href="#if-cond-and-else" id="toc-if-cond-and-else"><code>if (cond=…)</code> and <code>else</code></a></li>
+  <li><a href="#for-var-from-to-step" id="toc-for-var-from-to-step"><code>for (var=…, from=…, to=…[, step=…])</code></a></li>
+  <li><a href="#string-interpolation" id="toc-string-interpolation">String interpolation</a></li>
+  </ul></li>
+  <li><a href="#imports-import" id="toc-imports-import">Imports: <code>import</code></a></li>
+  <li><a href="#animation-joint-clip-templates" id="toc-animation-joint-clip-templates">Animation: <code>joint</code>, <code>clip</code>, templates</a>
+  <ul>
+  <li><a href="#joints" id="toc-joints">Joints</a></li>
+  <li><a href="#authored-clips" id="toc-authored-clips">Authored clips</a></li>
+  <li><a href="#easing" id="toc-easing">Easing</a></li>
+  <li><a href="#procedural-templates" id="toc-procedural-templates">Procedural templates</a></li>
+  </ul></li>
+  <li><a href="#skeletons-and-skinning-skeleton-bone-skin-bind" id="toc-skeletons-and-skinning-skeleton-bone-skin-bind">Skeletons and skinning: <code>skeleton</code>, <code>bone</code>, <code>skin=</code>, <code>bind=</code></a>
+  <ul>
+  <li><a href="#skeleton-and-bone" id="toc-skeleton-and-bone"><code>skeleton</code> and <code>bone</code></a></li>
+  <li><a href="#binding-meshes-skinrig" id="toc-binding-meshes-skinrig">Binding meshes: <code>skin="rig"</code></a></li>
+  <li><a href="#rigid-pinning-bindbone_name" id="toc-rigid-pinning-bindbone_name">Rigid pinning: <code>bind="bone_name"</code></a></li>
+  <li><a href="#animating-bones" id="toc-animating-bones">Animating bones</a></li>
+  </ul></li>
+  <li><a href="#lights-light" id="toc-lights-light">Lights: <code>light</code></a></li>
+  <li><a href="#colliders" id="toc-colliders">Colliders</a></li>
+  <li><a href="#shadow-casting" id="toc-shadow-casting">Shadow casting</a></li>
+  <li><a href="#full-example" id="toc-full-example">Full example</a></li>
+  <li><a href="#diagnostics-and-tooling" id="toc-diagnostics-and-tooling">Diagnostics and tooling</a></li>
+  </ul></li>
+  </ul>
+</aside>
+
+<article class="content">
+<h1 id="mogen-dsl-reference">MoGen DSL reference</h1>
+<p><code>mogen</code> reads <code>.mog</code> source files, lowers them to an intermediate scene graph, and exports glTF 2.0 GLB. This document is the authoritative reference for the surface language: every node kind, every attribute, and the little bits of grammar that sit between them. For a conceptual overview of the whole pipeline, see <a href="./ROADMAP.md"><code>ROADMAP.md</code></a>; for a worked catalog of reusable modules, see <a href="./modules.md"><code>modules.md</code></a>.</p>
+<ul>
+<li><a href="#grammar-at-a-glance">Grammar at a glance</a></li>
+<li><a href="#values-and-expressions">Values and expressions</a></li>
+<li><a href="#common-attributes">Common attributes</a></li>
+<li><a href="#placement-shortcuts">Placement shortcuts</a></li>
+<li><a href="#scene-structure-scene-group">Scene structure</a></li>
+<li><a href="#primitives">Primitives</a></li>
+<li><a href="#materials">Materials</a></li>
+<li><a href="#decals">Decals</a></li>
+<li><a href="#connectors">Connectors</a></li>
+<li><a href="#attach-rigid-alignment-of-two-connector-frames">Attach: rigid alignment of two connector frames</a></li>
+<li><a href="#conform-moulding-a-primitive-onto-a-target-surface">Conform: moulding a primitive onto a target surface</a></li>
+<li><a href="#replicators-mirror-array-stack-grid">Replicators: <code>mirror</code>, <code>array</code>, <code>stack</code>, <code>grid</code></a></li>
+<li><a href="#csg-union--difference--intersect">CSG: <code>union</code> / <code>difference</code> / <code>intersect</code></a></li>
+<li><a href="#solid-groups-solid">Solid groups: <code>solid</code></a></li>
+<li><a href="#modules-module-and-use">Modules: <code>module</code> and <code>use</code></a></li>
+<li><a href="#imports-import">Imports: <code>import</code></a></li>
+<li><a href="#animation-joint-clip-templates">Animation: <code>joint</code>, <code>clip</code>, templates</a></li>
+<li><a href="#skeletons-and-skinning-skeleton-bone-skin-bind">Skeletons and skinning: <code>skeleton</code>, <code>bone</code>, <code>skin=</code>, <code>bind=</code></a></li>
+<li><a href="#lights-light">Lights: <code>light</code></a></li>
+<li><a href="#full-example">Full example</a></li>
+</ul>
+<hr />
+<h2 id="grammar-at-a-glance">Grammar at a glance</h2>
+<p>A <code>.mog</code> file is a sequence of nodes. Every node shares the same shape:</p>
+<pre><code>kind [&quot;optional name&quot;] [(attr=value, ...)] [{ child_nodes... }]</code></pre>
+<ul>
+<li><code>kind</code> is an identifier like <code>box</code>, <code>cylinder</code>, <code>group</code>, <code>scene</code>, <code>material</code>, <code>joint</code>, …</li>
+<li><code>name</code> is a quoted string. Some kinds require it (<code>material</code>, <code>module</code>, <code>joint</code>, <code>clip</code>, <code>connector</code>); most geometry kinds treat it as optional — when omitted the node's name defaults to its kind.</li>
+<li><code>attr_list</code> is a comma-separated <code>key=value</code> sequence in parentheses.</li>
+<li><code>block</code> is a brace-delimited list of child nodes.</li>
+</ul>
+<p>Comments run from <code>//</code> to the end of the line. Whitespace between tokens is insignificant. The top of the file may contain <code>import</code>, <code>material</code>, <code>module</code>, <code>joint</code>, and <code>clip</code> declarations; <code>scene { ... }</code> holds the geometry itself.</p>
+<hr />
+<h2 id="file-metadata-meta">File metadata: <code>meta</code></h2>
+<p>An optional top-of-file block recording author-facing metadata about the asset. Place at most once, before <code>material</code> / <code>scene</code> / <code>module</code>.</p>
+<pre><code>meta (
+  name = &quot;wooden_chair&quot;,
+  version = &quot;1.2.0&quot;,
+  description = &quot;A simple four-legged dining chair.&quot;,
+  tags = [&quot;furniture&quot;, &quot;chair&quot;, &quot;wood&quot;],
+)</code></pre>
+<table>
+<thead>
+<tr class="header">
+<th>attr</th>
+<th>type</th>
+<th>source</th>
+<th>notes</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>name</code></td>
+<td>string</td>
+<td>author</td>
+<td>human-readable asset name</td>
+</tr>
+<tr class="even">
+<td><code>version</code></td>
+<td>string</td>
+<td>author</td>
+<td>author-controlled (semver-style is conventional but not enforced)</td>
+</tr>
+<tr class="odd">
+<td><code>mogen_version</code></td>
+<td>string</td>
+<td><strong>toolchain</strong></td>
+<td>auto-stamped from the running mogen version on every save (<code>mogen generate</code>/<code>modify</code>/<code>animate</code>/<code>repair</code>/<code>textures</code> and Studio Save). Don't write it yourself.</td>
+</tr>
+<tr class="even">
+<td><code>description</code></td>
+<td>string</td>
+<td>author</td>
+<td>one-line summary</td>
+</tr>
+<tr class="odd">
+<td><code>tags</code></td>
+<td>list of string</td>
+<td>author</td>
+<td>free-form labels</td>
+</tr>
+<tr class="even">
+<td><code>style</code></td>
+<td>string</td>
+<td>toolchain</td>
+<td>visual-style hint stamped by <code>mogen generate --style …</code> (or Studio's "New from Prompt" dropdown). One of <code>ps1</code>, <code>n64</code>, <code>low_poly</code>, <code>high_detail</code>, <code>arcade</code>, <code>voxel</code>, <code>cel_shaded</code>, <code>stylized_fantasy</code>, <code>cyberpunk</code>, <code>pixel_art</code>. The validator accepts any string so hand-edited experimental keys still load; <code>mogen</code> and Studio inherit the value on <code>modify</code> / <code>animate</code> / <code>repair</code> so styled files stay styled.</td>
+</tr>
+</tbody>
+</table>
+<p>The block is purely informational — it's not consumed by the geometry pipeline. It survives lowering on <code>SceneGraph::meta</code> so tooling (Studio, exporters) can read it without re-parsing. Old files without a <code>meta</code> block keep building; on the next save the toolchain inserts a fresh <code>meta (mogen_version = "...")</code> line.</p>
+<p>Diagnostic codes for <code>meta</code>:</p>
+<ul>
+<li><code>E0310</code> — <code>meta</code> cannot have a <code>{ … }</code> body block.</li>
+<li><code>E0311</code> — <code>meta</code> cannot take a quoted name (<code>meta "x" (...)</code>); use <code>name=</code> instead.</li>
+<li><code>E0312</code> — duplicate <code>meta</code> block.</li>
+<li><code>E0313</code> — <code>meta</code> only allowed at the top level.</li>
+<li><code>W0107</code> — file's <code>mogen_version</code> doesn't match the running toolchain (will be re-stamped on next save).</li>
+</ul>
+<hr />
+<h2 id="global-settings">Global settings</h2>
+<p>Top-level directives that tune the build itself rather than describing geometry. They sit at the file level (alongside <code>material</code> / <code>module</code>) and are consumed during lowering.</p>
+<table>
+<thead>
+<tr class="header">
+<th>directive</th>
+<th>value</th>
+<th>effect</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>lod_scale (value=N)</code></td>
+<td>number, default <code>1.0</code></td>
+<td>multiplies every primitive <code>segments</code> / <code>rings</code> / <code>samples</code> count — both the implicit defaults <em>and</em> author-supplied explicit values like <code>segments_u=64</code>. <code>0.5</code> halves them, <code>2.0</code> doubles them. <code>icosphere</code> <code>subdivisions</code> step by <code>round(log2(N))</code> instead, since each step quadruples its triangle count. Counts are clamped to a per-primitive minimum so circles still close.</td>
+</tr>
+</tbody>
+</table>
+<pre><code>lod_scale (value=0.5)
+
+scene {
+  sphere &quot;head&quot; (radius=0.5)         // 8 rings, 12 segments (default 16/24 halved)
+  sphere &quot;lod0&quot; (radius=0.5, segments=48, rings=32)  // 16 rings, 24 segments (48/32 halved)
+}</code></pre>
+<p>The studio's "LOD scale" slider (under the build summary) edits this directive in place — drag it down to iterate quickly on big scenes, then drag back to <code>1.0</code> for export. The slider clears the directive when it returns to <code>1.0</code> so saved files stay clean by default.</p>
+<h3 id="per-node-lod-overrides">Per-node <code>lod=</code> overrides</h3>
+<p>Any geometry/group node accepts a <code>lod=N</code> attribute that <strong>multiplies</strong> the active LOD scale for the duration of that node and its subtree. Use it to mark hero parts (<code>lod=2</code>) and background filler (<code>lod=0.5</code>) without touching the file-global <code>lod_scale</code>. The override is RAII-scoped — it does not leak into siblings — and compounds with the global setting: <code>lod=2</code> on top of <code>lod_scale (value=0.5)</code> yields an effective multiplier of <code>1.0</code> for that subtree.</p>
+<pre><code>scene {
+  group &quot;hero&quot; (lod=2) {                  // boosted detail
+    sphere &quot;face&quot; (radius=0.12)
+  }
+  sphere &quot;background_rock&quot; (radius=0.4, lod=0.5)  // halved detail
+  sphere &quot;default_rock&quot; (radius=0.4)              // baseline
+}</code></pre>
+<p><code>lod=</code> scales every tessellation count in the marked subtree, including explicit per-primitive <code>segments=</code> / <code>rings=</code> / <code>subdivisions=</code>. Use it to dial detail on dense surfaces (heightfields, curved planes) without having to drop their explicit segment counts. The minimum per-primitive floor still applies, so a <code>lod=0.1</code> won't collapse a cylinder to fewer than three sides.</p>
+<hr />
+<h2 id="values-and-expressions">Values and expressions</h2>
+<p>Every <code>value</code> on the right side of an attribute is one of:</p>
+<table>
+<thead>
+<tr class="header">
+<th>form</th>
+<th>example</th>
+<th>notes</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>number</td>
+<td><code>0.5</code>, <code>-90</code>, <code>1</code></td>
+<td>parsed as <code>f32</code></td>
+</tr>
+<tr class="even">
+<td>vec3</td>
+<td><code>[1.0, 0.5, 0.0]</code></td>
+<td>three expressions, comma-separated</td>
+</tr>
+<tr class="odd">
+<td>list</td>
+<td><code>[0, 90]</code>, <code>[1, 2, 3, 4]</code></td>
+<td>arbitrary arity</td>
+</tr>
+<tr class="even">
+<td>string</td>
+<td><code>"wood"</code></td>
+<td>used for names and references</td>
+</tr>
+<tr class="odd">
+<td>ident</td>
+<td><code>wood</code>, <code>y</code></td>
+<td>no quotes; used for axes and enum-like values</td>
+</tr>
+<tr class="even">
+<td>expression</td>
+<td><code>$height * 0.5</code>, <code>$r + 0.1</code>, <code>($a - $b) / 2</code></td>
+<td>arithmetic over <code>$param</code> refs</td>
+</tr>
+</tbody>
+</table>
+<p>Inside <code>module</code> bodies, any expression may reference a declared parameter as <code>$name</code>. Expressions support <code>+ - * /</code> with conventional precedence and parentheses. An expression is evaluated at module-expansion time — by the time the scene graph is built, every <code>$name</code> has been replaced with a concrete number.</p>
+<hr />
+<h2 id="common-attributes">Common attributes</h2>
+<p>These apply to every geometry node (<code>box</code>, <code>cylinder</code>, …) and to <code>group</code>:</p>
+<table>
+<thead>
+<tr class="header">
+<th>attribute</th>
+<th>value</th>
+<th>effect</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>pos</code></td>
+<td><code>vec3</code></td>
+<td>translation in the parent's frame; default <code>[0, 0, 0]</code></td>
+</tr>
+<tr class="even">
+<td><code>rot</code></td>
+<td><code>vec3</code> (Euler XYZ in <strong>degrees</strong>) or a list</td>
+<td>rotation applied after translation; default identity</td>
+</tr>
+<tr class="odd">
+<td><code>scale</code></td>
+<td>scalar or <code>vec3</code></td>
+<td>uniform/per-axis scale; default <code>1</code></td>
+</tr>
+<tr class="even">
+<td><code>mat</code></td>
+<td>string or ident</td>
+<td>references a declared <code>material</code> by name</td>
+</tr>
+<tr class="odd">
+<td><code>role</code></td>
+<td>string or ident</td>
+<td>semantic label; written into the GLB <code>extras</code> block</td>
+</tr>
+<tr class="even">
+<td><code>tags</code></td>
+<td>comma-separated string</td>
+<td>free-form labels; also in <code>extras</code></td>
+</tr>
+</tbody>
+</table>
+<p>Transforms compose from child → parent along the scene hierarchy, exactly as in glTF.</p>
+<hr />
+<h2 id="placement-shortcuts">Placement shortcuts</h2>
+<p>Every node accepts a family of ergonomic shortcuts on top of the classic <code>pos</code>/<code>rot</code>/<code>size</code> vec3s. They exist for one reason: an LLM should never need to do arithmetic that the DSL can do for it. Mix and match freely.</p>
+<h3 id="per-component-shortcuts">Per-component shortcuts</h3>
+<table>
+<thead>
+<tr class="header">
+<th>shortcut</th>
+<th>replaces / overrides</th>
+<th>notes</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>x=</code>, <code>y=</code>, <code>z=</code></td>
+<td>individual components of <code>pos</code></td>
+<td>missing axes default to <code>pos</code>'s value, or <code>0</code></td>
+</tr>
+<tr class="even">
+<td><code>rx=</code>, <code>ry=</code>, <code>rz=</code></td>
+<td>individual components of <code>rot</code> (degrees)</td>
+<td>same fallback; great for single-axis spins</td>
+</tr>
+<tr class="odd">
+<td><code>w=</code>, <code>h=</code>, <code>d=</code></td>
+<td>individual components of <code>size</code> (X, Y, Z)</td>
+<td>for 2D primitives, <code>w</code>/<code>d</code> are used on <code>plane</code>/<code>curved_plane</code> (XZ) and <code>w</code>/<code>h</code> on <code>quad</code> (XY)</td>
+</tr>
+</tbody>
+</table>
+<pre><code>box (y=1.5, size=1)            // equivalent to pos=[0, 1.5, 0], size=[1,1,1]
+box (size=[2, 2, 0.1], h=3)    // h overrides the middle component — width=2, height=3, depth=0.1
+cylinder (rx=90, radius=0.2, height=1)   // lay a cylinder on its side</code></pre>
+<h3 id="scalar-size-cube-shorthand">Scalar <code>size</code> (cube shorthand)</h3>
+<p>Any primitive that takes <code>size=[…]</code> also accepts <code>size=&lt;number&gt;</code>, which expands to a uniform vec3. <code>box (size=0.5)</code> is a half-metre cube.</p>
+<h3 id="from--to--axis-aligned-box-by-corners"><code>from</code> / <code>to</code> — axis-aligned box by corners</h3>
+<p>On any primitive that uses <code>size</code>, <code>from=[x1,y1,z1]</code> + <code>to=[x2,y2,z2]</code> sets <code>size</code> to <code>|to − from|</code> and <code>pos</code> to their midpoint. No "shift by half" math:</p>
+<pre><code>box (from=[-2, 0, -1.5], to=[2, 2.8, -1.4], mat=&quot;wall&quot;)
+// equivalent to: box (pos=[0, 1.4, -1.45], size=[4.0, 2.8, 0.1])</code></pre>
+<h3 id="anchor--place-by-face-not-centre"><code>anchor</code> — place by face, not centre</h3>
+<p>Every primitive's <code>pos</code> controls where its <strong>anchor point</strong> lands, not where its centre lands. The default anchor is <code>center</code>; <code>anchor=bottom</code> puts the primitive's bottom face at <code>pos</code>, which is usually what "sit on the ground" means. Values are underscore-joined tokens drawn from <code>center</code>, <code>top</code>, <code>bottom</code>, <code>left</code>, <code>right</code>, <code>front</code>, <code>back</code>:</p>
+<pre><code>box (y=0,  size=[1, 2, 1], anchor=bottom)           // bottom face on y=0
+box (xyz, size=2,           anchor=bottom_left_front) // corner at the origin</code></pre>
+<p>Internally the anchor shifts the mesh vertices so the chosen point is at the local origin. The six default face connectors (<code>top</code>, <code>bottom</code>, <code>left</code>, …) move with the shift, so attach/connector math stays correct.</p>
+<h3 id="relative-placement-above-below-left_of-right_of-in_front_of-behind">Relative placement: <code>above</code>, <code>below</code>, <code>left_of</code>, <code>right_of</code>, <code>in_front_of</code>, <code>behind</code></h3>
+<p>Set one of these to the name of a <strong>prior sibling</strong> in the same parent; the node is translated so its matching face is flush against the sibling's opposite face, optionally plus <code>gap</code>. At most one may be set per node.</p>
+<pre><code>group &quot;chests&quot; {
+  box &quot;chest_lo&quot; (size=[0.8, 0.6, 0.5])
+  box &quot;chest_hi&quot; (above=&quot;chest_lo&quot;, gap=0.02, size=[0.8, 0.6, 0.5])
+}</code></pre>
+<p>Resolution happens after the target's subtree is fully lowered, so nested geometry is included in the AABB. Lookup is scoped to siblings in the same parent, so replicated subtrees (<code>array</code>, <code>grid</code>) don't collide with identically named nodes elsewhere.</p>
+<hr />
+<h2 id="deformation-modifiers">Deformation modifiers</h2>
+<p>Every primitive accepts a small set of common modifier attrs that perturb the generated mesh between primitive construction and anchor placement. The point is variety without authoring extra geometry — bent beams, weathered rocks, melted candles, jelly blobs — using one or two extra attrs.</p>
+<table>
+<thead>
+<tr class="header">
+<th>attribute</th>
+<th>value</th>
+<th>effect</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>bend_x</code>, <code>bend_y</code>, <code>bend_z</code></td>
+<td>degrees</td>
+<td>arc-length-preserving bend around the named axis. Length axis is the perpendicular one (Y for <code>bend_x</code>/<code>bend_z</code>, X for <code>bend_y</code>).</td>
+</tr>
+<tr class="even">
+<td><code>twist_y</code></td>
+<td>degrees</td>
+<td>helical twist around Y, from 0 at <code>y_min</code> to the full angle at <code>y_max</code>.</td>
+</tr>
+<tr class="odd">
+<td><code>taper</code></td>
+<td>ratio (1.0 = unchanged, 0.5 = half-width at top)</td>
+<td>linear shrink along Y.</td>
+</tr>
+<tr class="even">
+<td><code>droop</code></td>
+<td>amount (0..1 of length)</td>
+<td>quadratic gravity-style sag along -Y; the base stays put, the top sinks by <code>amount * height</code>.</td>
+</tr>
+<tr class="odd">
+<td><code>noise</code></td>
+<td>0..1</td>
+<td>coherent value-noise displacement along the vertex normal. Yields blobby "rock" texture.</td>
+</tr>
+<tr class="even">
+<td><code>jitter</code></td>
+<td>0..1</td>
+<td>per-vertex random displacement along the normal. Higher-frequency than <code>noise</code>, looks "jagged".</td>
+</tr>
+<tr class="odd">
+<td><code>faceted</code></td>
+<td>0/1</td>
+<td>rebuild the mesh with three unique vertices per triangle and face-flat normals; reads as low-poly.</td>
+</tr>
+<tr class="even">
+<td><code>seed</code></td>
+<td>integer</td>
+<td>RNG seed for the stochastic modifiers (<code>noise</code>, <code>jitter</code>); same seed always reproduces the same shape.</td>
+</tr>
+<tr class="odd">
+<td><code>wave</code></td>
+<td>peak displacement (m)</td>
+<td>sinusoidal displacement along the vertex normal — periodic ripples for water, jelly, ribbed metal, fabric. Pair with <code>wave_frequency</code>, <code>wave_axis</code>, <code>wave_phase</code>, <code>wave_range</code>.</td>
+</tr>
+<tr class="even">
+<td><code>wave_frequency</code></td>
+<td>cycles/unit, default <code>1.0</code></td>
+<td>spatial frequency along <code>wave_axis</code>. <code>0.5</code> puts a crest every 2 m.</td>
+</tr>
+<tr class="odd">
+<td><code>wave_axis</code></td>
+<td><code>"x"</code>/<code>"y"</code>/<code>"z"</code>, default <code>"x"</code></td>
+<td>axis the wave propagates along.</td>
+</tr>
+<tr class="even">
+<td><code>wave_phase</code></td>
+<td>radians, default <code>0.0</code></td>
+<td>phase offset; lets sibling waves desync without animation.</td>
+</tr>
+<tr class="odd">
+<td><code>wave_range</code></td>
+<td><code>[a, b]</code></td>
+<td>gates the wave to a normalised slice along <code>wave_axis</code> via smoothstep, matching <code>*_range</code> convention.</td>
+</tr>
+</tbody>
+</table>
+<p>Common combinations:</p>
+<pre><code>// Asteroid / rock — coherent bumps + per-vertex jitter + flat shading.
+icosphere &quot;rock&quot;   (radius=0.4, noise=0.30, jitter=0.15, faceted=1, seed=7)
+// Bent timber / pipe — single-axis bend with light surface noise.
+cylinder  &quot;post&quot;   (radius=0.05, height=2.0, bend_z=12, noise=0.04)
+// Melted wax / jelly — gravity-sagged top with soft surface texture.
+cylinder  &quot;candle&quot; (radius=0.18, height=0.7, droop=0.4, noise=0.05)
+// Twisted, tapered beam — combine deterministic deformations freely.
+box       &quot;beam&quot;   (size=[0.2, 0.2, 3], twist_y=20, taper=0.7)</code></pre>
+<p>Stochastic modifiers are deterministic for a given <code>seed</code> so rebuilds are reproducible. Two unnamed primitives with <code>noise=0.3</code> and no <code>seed</code> share the same <code>seed</code> default (1) and therefore the same surface — set distinct seeds when you want sibling rocks to differ.</p>
+<p>Each modifier accepts an optional <code>*_range=[a, b]</code> (<code>bend_x_range</code>, <code>bend_y_range</code>, <code>bend_z_range</code>, <code>twist_y_range</code>, <code>taper_range</code>, <code>droop_range</code>, <code>noise_range</code>, <code>jitter_range</code>) that gates the deformation to a normalised slice along its length axis. Vertices below <code>a</code> are unchanged, vertices inside <code>[a, b]</code> ramp in via smoothstep, and vertices above <code>b</code> get the full effect. Use it to bend the tip but not the base of a sword, twist only the upper half of a tower, or jitter just the top third of a column. Endpoints can be in either order; <code>[1.0, 0.5]</code> is normalised to <code>[0.5, 1.0]</code> automatically.</p>
+<pre><code>// Sword that bows toward its tip but keeps a straight grip.
+box &quot;blade&quot; (size=[0.06, 1.4, 0.01], bend_z=18, bend_z_range=[0.55, 1.0])
+// Tower that twists only above the cornice.
+cylinder &quot;spire&quot; (radius=0.4, height=4.0, twist_y=70, twist_y_range=[0.6, 1.0])
+// Cliff face that&#39;s smooth at the foot, jagged at the crown.
+box &quot;cliff&quot; (size=[3, 4, 1], jitter=0.4, jitter_range=[0.5, 1.0], seed=11)</code></pre>
+<p>Default tessellation auto-bumps (×2 segments / +1 icosphere subdivision) when a smooth deformer (<code>bend_*</code>, <code>twist_y</code>, <code>noise</code>, <code>droop</code>) is present so a bent cylinder doesn't read as faceted. Author's explicit <code>segments=</code>, <code>rings=</code>, <code>subdivisions=</code> always override.</p>
+<p>Modifiers are not applied to <code>mesh</code> (loaded glb) primitives — their joints, UVs, and skinning contract are wider than what the deform pass preserves.</p>
+<p>See <code>examples/asteroid_field.mog</code> for a runnable showcase.</p>
+<hr />
+<h2 id="scene-structure-scene-group">Scene structure: <code>scene</code>, <code>group</code></h2>
+<pre><code>scene {
+  group &quot;chair&quot; (pos=[0, 0, 0]) {
+    box &quot;seat&quot; (pos=[0, 0.5, 0], size=[1.0, 0.1, 1.0])
+  }
+}</code></pre>
+<ul>
+<li><code>scene</code> is the root container. Exactly one per file is expected in practice; top-level nodes outside any <code>scene</code> are also lowered and become extra roots.</li>
+<li><code>group</code> is a transform-only container — no geometry of its own, used to compose children and receive <code>pos</code>/<code>rot</code>/<code>scale</code>.</li>
+<li><code>solid</code> behaves like <code>group</code> in the scene tree, but its same-material leaf children are CSG-unioned into a single mesh at export time. See <a href="#solid-groups-solid">Solid groups</a> below.</li>
+</ul>
+<hr />
+<h2 id="primitives">Primitives</h2>
+<p>All primitives accept the common attributes above (<code>pos</code>, <code>rot</code>, <code>scale</code>, <code>mat</code>, <code>role</code>, <code>tags</code>) plus the kind-specific attributes below.</p>
+<table>
+<thead>
+<tr class="header">
+<th>kind</th>
+<th>required attrs</th>
+<th>other attrs</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>box</code></td>
+<td><code>size=[x,y,z]</code></td>
+<td>—</td>
+</tr>
+<tr class="even">
+<td><code>plane</code></td>
+<td><code>size=[x,_,z]</code> (Y ignored)</td>
+<td>—</td>
+</tr>
+<tr class="odd">
+<td><code>quad</code></td>
+<td><code>size=[w,h]</code> or <code>vec3</code> (w,h,_)</td>
+<td>—</td>
+</tr>
+<tr class="even">
+<td><code>cylinder</code></td>
+<td><code>radius</code>, <code>height</code></td>
+<td><code>segments</code> (default 24)</td>
+</tr>
+<tr class="odd">
+<td><code>cone</code></td>
+<td><code>radius</code>, <code>height</code></td>
+<td><code>segments</code> (default 24)</td>
+</tr>
+<tr class="even">
+<td><code>sphere</code></td>
+<td><code>radius</code></td>
+<td><code>rings</code> (16), <code>segments</code> (24)</td>
+</tr>
+<tr class="odd">
+<td><code>capsule</code></td>
+<td><code>radius</code>, <code>height</code></td>
+<td><code>rings</code> (8), <code>segments</code> (24)</td>
+</tr>
+<tr class="even">
+<td><code>torus</code></td>
+<td><code>major</code>, <code>minor</code></td>
+<td><code>major_segments</code> (24), <code>minor_segments</code> (12)</td>
+</tr>
+<tr class="odd">
+<td><code>prism</code></td>
+<td><code>size=[x,y,z]</code></td>
+<td>triangular prism along +Z</td>
+</tr>
+<tr class="even">
+<td><code>pyramid</code></td>
+<td><code>radius</code>, <code>height</code>, <code>sides</code></td>
+<td>N-sided pyramid base</td>
+</tr>
+<tr class="odd">
+<td><code>disc</code></td>
+<td><code>radius</code></td>
+<td><code>segments</code> (24)</td>
+</tr>
+<tr class="even">
+<td><code>icosphere</code></td>
+<td><code>radius</code></td>
+<td><code>subdivisions</code> (2)</td>
+</tr>
+<tr class="odd">
+<td><code>rounded_box</code></td>
+<td><code>size=[x,y,z]</code>, <code>radius</code></td>
+<td><code>segments</code> per corner (4)</td>
+</tr>
+<tr class="even">
+<td><code>chamfered_box</code></td>
+<td><code>size=[x,y,z]</code></td>
+<td><code>radius</code> (bevel offset, 0.1) — sharp 45° bevels on all 12 edges + 8 corner triangles. Use for hard-edged industrial parts where a fully-rounded <code>rounded_box</code> reads as too organic</td>
+</tr>
+<tr class="odd">
+<td><code>inset_box</code></td>
+<td><code>size=[x,y,z]</code></td>
+<td><code>face</code> (<code>"+y"|"-y"|"+x"|"-x"|"+z"|"-z"</code> or <code>"top"/"bottom"/"left"/"right"/"front"/"back"</code>, default <code>"+y"</code>), <code>amount</code> (inset distance, 0.1), <code>depth</code> (sink depth, 0.05) — five plain box faces + one sunken panel; window frames, recessed door panels, button caps, sunken pickup wells</td>
+</tr>
+<tr class="even">
+<td><code>wedge</code></td>
+<td><code>size=[x,y,z]</code></td>
+<td>right-triangle prism — flat bottom on -Y, hypotenuse climbing toward +Y/+Z. Useful for ramps, roof pitches, doorstops</td>
+</tr>
+<tr class="odd">
+<td><code>frustum</code></td>
+<td><code>bottom=[w,d]</code>, <code>top=[w,d]</code>, <code>height</code></td>
+<td>truncated rectangular pyramid (defaults <code>bottom=[1,1]</code>, <code>top=[0.5,0.5]</code>, <code>height=1</code>)</td>
+</tr>
+<tr class="even">
+<td><code>tube</code></td>
+<td><code>outer</code>, <code>inner</code>, <code>height</code></td>
+<td>hollow cylinder (pipe / ring); <code>segments</code> (24)</td>
+</tr>
+<tr class="odd">
+<td><code>hemisphere</code></td>
+<td><code>radius</code></td>
+<td>half-sphere, flat side on -Y; <code>rings</code> (8), <code>segments</code> (24)</td>
+</tr>
+<tr class="even">
+<td><code>half_cylinder</code></td>
+<td><code>radius</code>, <code>height</code></td>
+<td>D-profile half-cylinder, flat side facing -Z; <code>segments</code> (24)</td>
+</tr>
+<tr class="odd">
+<td><code>torus_arc</code></td>
+<td><code>major</code>, <code>minor</code></td>
+<td>partial torus; <code>arc</code> (degrees, default 90) sweeps around +Y; <code>major_segments</code> (24), <code>minor_segments</code> (12). Useful for arches and handles</td>
+</tr>
+<tr class="even">
+<td><code>ellipsoid</code></td>
+<td><code>size=[x,y,z]</code></td>
+<td><code>rings</code> (16), <code>segments</code> (24); independent radii per axis</td>
+</tr>
+<tr class="odd">
+<td><code>superellipsoid</code></td>
+<td><code>size=[x,y,z]</code></td>
+<td><code>ew</code>, <code>ns</code> (1 = sphere, &gt; 1 boxy, &lt; 1 pinched), <code>rings</code> (16), <code>segments</code> (24)</td>
+</tr>
+<tr class="even">
+<td><code>curved_plane</code></td>
+<td><code>size=[x,z]</code> or <code>vec3</code></td>
+<td><code>bend_u</code>, <code>bend_v</code> (degrees; arc angle along X/Z), <code>segments_u</code>/<code>segments_v</code> (12)</td>
+</tr>
+<tr class="odd">
+<td><code>lathe</code></td>
+<td><code>profile=[[r,y], …]</code></td>
+<td><code>segments</code> (24), <code>cap_ends</code> (1 = capped); profile authored bottom-to-top in <code>(radius, y)</code> pairs</td>
+</tr>
+<tr class="even">
+<td><code>spline_tube</code></td>
+<td><code>points=[[x,y,z], …]</code></td>
+<td><code>radius</code> (scalar) or <code>radii=[…]</code> (per-point), <code>segments</code> (12), <code>samples</code> (8), <code>cap_ends</code> (1)</td>
+</tr>
+<tr class="odd">
+<td><code>spline_ribbon</code></td>
+<td><code>points=[[x,y,z], …]</code></td>
+<td><code>width</code> (scalar) or <code>widths=[…]</code> (per-point), <code>samples</code> (8), <code>twist</code> (degrees, default <code>0</code>); flat strip along a Catmull–Rom curve</td>
+</tr>
+<tr class="even">
+<td><code>coil</code></td>
+<td>—</td>
+<td><code>radius</code> (helix, 0.5), <code>height</code> (Y rise, 1.0), <code>turns</code> (revolutions, 3), <code>profile_radius</code> (cross-section, 0.05), <code>segments</code> (cross-section sides, 12), <code>samples</code> (per turn, 16), <code>cap_ends</code> (1), <code>handedness</code> (<code>"right"</code>/<code>"left"</code>, default <code>"right"</code>). Helical sweep — springs, screw threads, snail-shell ribs, twisted vines. Builds on <code>spline_tube</code> under the hood; the helix path is generated for you instead of authored point-by-point.</td>
+</tr>
+<tr class="odd">
+<td><code>heightfield</code></td>
+<td>—</td>
+<td><code>size=[w,d]</code> (XZ extent, default <code>[1, 1]</code>), <code>segments_u</code>/<code>segments_v</code> (32 each), <code>amplitude</code> (peak Y, 0.5), <code>octaves</code> (1..=8, default 3), <code>frequency</code> (cycles/unit, 1.0), <code>persistence</code> (per-octave amplitude falloff, 0.5), <code>seed</code> (1). Tessellated XZ grid displaced by deterministic fBm value-noise — terrain patches, dunes, rooftops, bumpy stone slabs. Layer the <code>wave</code> deformer on top for water surfaces.</td>
+</tr>
+<tr class="even">
+<td><code>bezier_patch</code></td>
+<td><code>points=[[x,y,z], …]</code> (exactly 16 control points, row-major u rows × v columns)</td>
+<td><code>segments_u</code>/<code>segments_v</code> (12 each). Bicubic Bézier surface — <code>points[0]</code>/<code>[3]</code>/<code>[12]</code>/<code>[15]</code> pin the patch corners, the inner four <code>points[5]/[6]/[9]/[10]</code> shape the bulge, and the eight edge points control curvature along each side. Use for organic skin panels: faces, hoods, fenders, pillows, sails, soft plates, leaves with controlled silhouette.</td>
+</tr>
+<tr class="odd">
+<td><code>metaball</code></td>
+<td><code>points=[[x,y,z], …]</code> (≥1) plus one of <code>radius=</code> (scalar) or <code>radii=[…]</code> (per-point)</td>
+<td><code>blend</code> (smooth-union radius in m, default <code>0</code>), <code>rings</code> (per-sphere, 12), <code>segments</code> (per-sphere, 16). N implicit-field spheres unioned with smooth blending — creature bodies (torso + thigh masses), slime, clouds, cell clusters, pumpkin lobes, soft ammo pouches, asymmetric organic props. Sugar over <code>union (smooth=k) { sphere … }</code>; reuses the same vertex-fillet kernel as <code>union</code>'s <code>smooth=</code>.</td>
+</tr>
+<tr class="even">
+<td><code>extrude</code></td>
+<td><code>points=[[x,z], …]</code></td>
+<td>closed CCW outline; <code>hole=[[x,z], …]</code> (one CW inner contour), <code>height</code> (Y span, 1.0), <code>taper</code> (top scale ratio, 1.0), <code>twist</code> (degrees, 0), <code>caps</code> (1). Push a 2D polygon up — I-beams, gear teeth, custom pillars. Multi-hole authoring not yet supported (chain <code>extrude</code> + <code>difference</code>).</td>
+</tr>
+<tr class="odd">
+<td><code>sweep</code></td>
+<td><code>profile=[[x,y], …]</code>, <code>path=[[x,y,z], …]</code></td>
+<td>closed CCW profile in the path's local XY plane; <code>samples</code> (8) per path segment, <code>twist</code> (degrees uniform), <code>roll=[deg, …]</code> and <code>scale_along=[s, …]</code> modulators (per-control-point), <code>caps</code> (1). Generalises <code>spline_tube</code> (always circular) and <code>spline_ribbon</code> (always flat).</td>
+</tr>
+<tr class="even">
+<td><code>loft</code></td>
+<td><code>points=[[x,z], …]</code>, <code>heights=[y, …]</code></td>
+<td>sections flat-packed in <code>points</code> (each section's vertices in order; counts must match across sections); <code>samples</code> (rings between adjacent sections, 4), <code>caps</code> (1). Boat hulls, fuselages, shaped bottles.</td>
+</tr>
+<tr class="odd">
+<td><code>leaf_card</code></td>
+<td><code>size=[w,h]</code></td>
+<td><code>cards</code> (default <code>2</code>); alpha-cutout foliage card cluster — one quad plus <code>cards-1</code> rotated copies sharing the same XY plane. Pair with a <code>mat="…"</code> whose <code>alpha_mode="mask"</code> and <code>double_sided=1</code></td>
+</tr>
+<tr class="even">
+<td><code>mesh</code></td>
+<td><code>src="path.glb"</code></td>
+<td>load and embed an external glTF binary as a single mesh. Path is relative to the calling <code>.mog</code>. Materials, skinning, and animations on the source GLB are dropped — set them in the DSL instead</td>
+</tr>
+<tr class="odd">
+<td><code>branch</code></td>
+<td>—</td>
+<td>procedural tree / vine / antler. See <a href="#branch">Branch</a> below</td>
+</tr>
+<tr class="even">
+<td><code>slab</code></td>
+<td><code>size=[x,y,z]</code></td>
+<td>box alias; default anchor <code>bottom</code> (sits on ground)</td>
+</tr>
+<tr class="odd">
+<td><code>post</code></td>
+<td><code>size=[x,y,z]</code></td>
+<td>box alias; default anchor <code>bottom</code> (pillar/leg)</td>
+</tr>
+<tr class="even">
+<td><code>panel</code></td>
+<td><code>size=[x,y,z]</code></td>
+<td>box alias; default anchor <code>back</code> (flat panel flush to a surface)</td>
+</tr>
+<tr class="odd">
+<td><code>wall</code></td>
+<td><code>size=[x,y,z]</code></td>
+<td><code>holes=[[x,y,w,h], …]</code> — rectangular cutouts through the Z axis</td>
+</tr>
+</tbody>
+</table>
+<p><code>plane</code> and <code>quad</code> are both flat single-quad meshes; <code>plane</code> is XZ-aligned, <code>quad</code> is XY-aligned (useful for UI-style panels).</p>
+<p><code>superellipsoid</code> is the workhorse for smooth organic bodies (eggs, pears, bullet shapes) and stylised soft boxes — pick <code>ew</code>/<code>ns</code> together for a symmetric shape, or split them for asymmetric profiles like an apple (<code>ew=1.2</code>, <code>ns=0.8</code>).</p>
+<p><code>curved_plane</code>, <code>lathe</code>, <code>spline_tube</code>, and <code>spline_ribbon</code> accept nested list literals: <code>points=[[0, 0, 0], [1, 0.5, 0]]</code>, <code>profile=[[0.2, 0], [0.5, 0.4]]</code>. Inner lists must be constant (no <code>$param</code>) — parameterise the whole node via a module wrapper instead. <code>spline_tube</code> and <code>spline_ribbon</code> both run a Catmull–Rom curve through their control points and use a parallel-transport frame so the cross section doesn't flip at inflection points; <code>spline_ribbon</code> adds a <code>twist</code> that ramps a roll around the path tangent.</p>
+<p><code>tube</code>, <code>hemisphere</code>, <code>half_cylinder</code>, and <code>torus_arc</code> are the open / hollow / partial counterparts of the canonical round primitives. They give you ring tops, bowls, columns with a flat back, arches, and handles without an extra CSG step.</p>
+<p><code>leaf_card</code> is the workhorse for foliage and feathers: it builds a small cluster of crossed quads that sit on top of an alpha-cutout texture, so an entire bush or pine sprig reads as one mesh.</p>
+<p><code>slab</code>, <code>post</code>, and <code>panel</code> are box aliases that exist only to change the <strong>default anchor</strong> — their geometry is identical to <code>box</code>. Use them to make "this sits on the ground" or "this is a wall-hung panel" the one-line thing it should be, without <code>anchor=…</code> on every row. You can still override <code>anchor=</code> explicitly if you need something different.</p>
+<p><code>wall</code> is a box with rectangular cutouts along Z. Each hole is a 4-element sublist <code>[cx, cy, w, h]</code> in the wall's local frame (X/Y are the face plane; the Z thickness axis is cut all the way through). Cutouts are applied via CSG <code>difference</code> at lowering time and the result is welded/cleaned, so a single <code>wall</code> node becomes one watertight mesh — no nested <code>difference</code> idiom needed:</p>
+<pre><code>wall &quot;barracks&quot; (size=[3, 3, 0.1], holes=[
+  [-0.75, -0.4, 0.9, 2.0],   // door
+  [ 0.9,  0.3, 0.8, 0.8],    // window
+])</code></pre>
+<h3 id="branch">Branch</h3>
+<p><code>branch</code> is a self-contained procedural tree builder. One node expands into a recursive cluster of <code>spline_tube</code> segments tapering from a thick trunk down to twigs, with optional <code>leaf_card</code> clusters at the tips. The result reads as one editable wrapper in the scene graph; the inner segments are stamped non-editable because their geometry is a deterministic function of <code>seed=</code>.</p>
+<table>
+<thead>
+<tr class="header">
+<th>attribute</th>
+<th>default</th>
+<th>effect</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>form</code></td>
+<td><code>"decurrent"</code></td>
+<td>growth habit preset — see below. Sets sensible defaults for all attrs in this table; user attrs still win</td>
+</tr>
+<tr class="even">
+<td><code>length</code></td>
+<td><code>1.0</code></td>
+<td>trunk length (m)</td>
+</tr>
+<tr class="odd">
+<td><code>radius</code></td>
+<td><code>0.05</code></td>
+<td>trunk base radius (m)</td>
+</tr>
+<tr class="even">
+<td><code>depth</code></td>
+<td><code>4</code></td>
+<td>recursion depth (number of branching levels)</td>
+</tr>
+<tr class="odd">
+<td><code>splits</code></td>
+<td><code>2</code></td>
+<td>child branches per parent at each split</td>
+</tr>
+<tr class="even">
+<td><code>length_falloff</code></td>
+<td><code>0.7</code></td>
+<td>per-level length multiplier</td>
+</tr>
+<tr class="odd">
+<td><code>radius_falloff</code></td>
+<td><code>0.6</code></td>
+<td>per-level radius multiplier</td>
+</tr>
+<tr class="even">
+<td><code>branch_angle</code></td>
+<td><code>35</code></td>
+<td>angle (degrees) child branches lean off the parent tangent</td>
+</tr>
+<tr class="odd">
+<td><code>roll</code></td>
+<td><code>137.5</code></td>
+<td>roll (degrees) between successive children — the golden angle by default, breaks bilateral symmetry</td>
+</tr>
+<tr class="even">
+<td><code>tropism</code></td>
+<td><code>0.0</code></td>
+<td>bias toward +Y per segment (positive = upright trees, negative = drooping)</td>
+</tr>
+<tr class="odd">
+<td><code>bend</code></td>
+<td><code>10</code></td>
+<td>random bend (degrees) added to each segment frame</td>
+</tr>
+<tr class="even">
+<td><code>leader_bias</code></td>
+<td><code>0.0</code></td>
+<td><code>0.0</code>–<code>1.0</code> strength of central-leader behaviour. At <code>1.0</code> child 0 of every fork continues straight up at full length/radius (pine-like silhouette); at <code>0.0</code> all forks are equal (default broadleaf habit)</td>
+</tr>
+<tr class="odd">
+<td><code>multi_stem</code></td>
+<td><code>1</code></td>
+<td>number of trunks emerging from the base. Only honoured by <code>form="shrub"</code>; ignored otherwise</td>
+</tr>
+<tr class="even">
+<td><code>segments</code></td>
+<td><code>8</code></td>
+<td>radial segments per spline_tube</td>
+</tr>
+<tr class="odd">
+<td><code>samples</code></td>
+<td><code>4</code></td>
+<td>samples per spline segment</td>
+</tr>
+<tr class="even">
+<td><code>seed</code></td>
+<td><code>1</code></td>
+<td>RNG seed; same seed = identical tree</td>
+</tr>
+<tr class="odd">
+<td><code>jitter</code></td>
+<td><code>0.2</code></td>
+<td><code>0.0</code>–<code>1.0</code> random perturbation amount on lengths/angles</td>
+</tr>
+<tr class="even">
+<td><code>leaves</code></td>
+<td><code>1</code></td>
+<td>emit <code>leaf_card</code> clusters at terminal tips (<code>0</code> to disable)</td>
+</tr>
+<tr class="odd">
+<td><code>leaf_size</code></td>
+<td><code>0.35</code></td>
+<td>leaf-card height (m)</td>
+</tr>
+<tr class="even">
+<td><code>leaf_aspect</code></td>
+<td><code>1.0</code></td>
+<td>leaf width / height ratio. <code>&lt;1</code> for needle/willow leaves, <code>&gt;1</code> for wide flat leaves</td>
+</tr>
+<tr class="odd">
+<td><code>leaf_cards</code></td>
+<td><code>2</code></td>
+<td>crossed cards per leaf cluster (or fronds in the palm rosette)</td>
+</tr>
+<tr class="even">
+<td><code>leaf_mat</code></td>
+<td>—</td>
+<td>material name for leaves; defaults to inherited <code>mat=</code></td>
+</tr>
+</tbody>
+</table>
+<p><code>form</code> values:</p>
+<table>
+<thead>
+<tr class="header">
+<th>value</th>
+<th>habit</th>
+<th>distinctive defaults</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>"decurrent"</code></td>
+<td>broadleaf tree (default — oak, maple)</td>
+<td>equal forks, square leaves</td>
+</tr>
+<tr class="even">
+<td><code>"excurrent"</code></td>
+<td>conifer (pine, spruce)</td>
+<td>strong central leader, near-horizontal side branches, narrow needle leaves</td>
+</tr>
+<tr class="odd">
+<td><code>"weeping"</code></td>
+<td>willow</td>
+<td>long branches with strong negative tropism (drooping), long narrow leaves</td>
+</tr>
+<tr class="even">
+<td><code>"shrub"</code></td>
+<td>bush</td>
+<td>several short trunks at the base (<code>multi_stem=4</code> by default), no leader</td>
+</tr>
+<tr class="odd">
+<td><code>"palm"</code></td>
+<td>palm</td>
+<td>single straight trunk with a fan of frond-shaped cards at the tip; no recursive branching</td>
+</tr>
+</tbody>
+</table>
+<p>Wrap a <code>branch</code> in a <code>group</code> and apply <code>scale=</code> / <code>rot=</code> to compose forests, antlers, vines, or root systems out of the same generator. Pair it with the stdlib <code>branch</code> and <code>leaf</code> modules for hand-tuned shapes.</p>
+<p>Default values mean that <code>cylinder "leg"</code> with no attrs is a 1 m unit-radius cylinder centered on the origin. Every primitive is authored in its local frame and then positioned via <code>pos</code>/<code>rot</code>/<code>scale</code>.</p>
+<hr />
+<h2 id="materials">Materials</h2>
+<pre><code>material &quot;wood&quot;  (color=[0.55, 0.35, 0.18], metallic=0.0, roughness=0.8)
+material &quot;glass&quot; (color=[0.9, 0.95, 1.0], alpha=0.3, roughness=0.05, transmission=0.9)
+material &quot;neon&quot;  (color=[1, 0.2, 1], emissive=[1, 0.2, 1], emissive_strength=8.0)
+material &quot;leaf&quot;  (color=[0.25, 0.6, 0.2], alpha_mode=&quot;mask&quot;, alpha_cutoff=0.5)</code></pre>
+<p>Declared at the top of the file or inside <code>scene { ... }</code>. Attributes:</p>
+<ul>
+<li><code>color</code> — vec3 <code>[r, g, b]</code> in linear space; alpha defaults to <code>1.0</code>.</li>
+<li><code>alpha</code> — optional alpha override for transparency. Setting <code>alpha &lt; 1</code> without an explicit <code>alpha_mode</code> auto-selects <code>"blend"</code>.</li>
+<li><code>metallic</code> — <code>0.0</code>–<code>1.0</code>, default <code>0.0</code>.</li>
+<li><code>roughness</code> — <code>0.0</code>–<code>1.0</code>, default <code>0.9</code>.</li>
+<li><code>normal_strength</code> — slope multiplier baked into the <em>derived</em> normal map by <code>mogen textures</code>. Larger = more pronounced bumps. Range <code>~0..8</code>, default <code>1.5</code>. Has no effect if <code>normal_texture</code> is authored directly.</li>
+<li><code>occlusion_strength</code> — <code>0.0</code>–<code>1.0</code> ceiling on how dark the <em>derived</em> AO map can get. <code>0</code> emits flat white (no darkening), <code>1</code> lets cavities reach black. Default <code>0.7</code>. Has no effect if <code>occlusion_texture</code> is authored directly.</li>
+<li><code>alpha_mode</code> — <code>"opaque"</code> (default), <code>"blend"</code> (translucent), or <code>"mask"</code> (1-bit cutout, e.g. foliage).</li>
+<li><code>alpha_cutoff</code> — threshold for <code>alpha_mode="mask"</code>, default <code>0.5</code>.</li>
+<li><code>emissive</code> — vec3 glow colour added on top of PBR shading. Use this for screens, embers, lava. Default <code>[0, 0, 0]</code>.</li>
+<li><code>emissive_strength</code> — HDR multiplier on <code>emissive</code> (<code>KHR_materials_emissive_strength</code>). Values <code>&gt; 1.0</code> drive bloom and produce the saturated, "fluorescent paint" look. Default <code>1.0</code>.</li>
+<li><code>transmission</code> — <code>0.0</code>–<code>1.0</code> fraction of light that passes through the surface (<code>KHR_materials_transmission</code>). <code>0</code> is opaque PBR, <code>1</code> is perfectly clear glass. Orthogonal to <code>alpha_mode</code> — use this for glass and water, <code>alpha</code>/<code>alpha_mode</code> for gels, tints, and smoke.</li>
+<li><code>double_sided</code> — <code>0</code> (default) or <code>1</code>. When <code>1</code>, the renderer draws both faces of the triangle (glTF <code>doubleSided</code>). Use for leaves, fins, flags, cloth, and any thin <code>curved_plane</code>/<code>plane</code>/<code>disc</code>/<code>quad</code> whose underside can be seen. This is the correct fix for tilted or bent single-sided geometry — mirroring a bent <code>curved_plane</code> along its bend axis does <strong>not</strong> produce a double-sided surface; it produces two sheets curling away from each other.</li>
+<li><code>uv_mode</code> — <code>"tile"</code> (default) or <code>"fit"</code>. Controls how textures map onto the geometry. <code>"tile"</code> emits world-space UVs so 1 world unit = 1 texture tile (scaled by <code>uv_scale</code>). Texel density is identical across every primitive that uses the material — the right choice for repeating surfaces like stone walls, wood planks, fabric, ground, and roof shingles. <code>"fit"</code> falls back to per-face <code>[0, 1]²</code> UVs so every face of the primitive shows the full image once — the right choice when the texture <em>is</em> the picture: signs, paintings, decals, stained-glass panes, anything whose image must land at a specific place on a specific face. Pick <code>"fit"</code> for image-as-texture; leave the default for material-as-texture.</li>
+<li><code>uv_scale</code> — <code>1.0</code> (default), a scalar (<code>uv_scale=2</code>), or a vec2 (<code>uv_scale=[2, 1]</code>). In <code>tile</code> mode this is "tiles per world unit": <code>2</code> doubles the tiling density (smaller bricks), <code>0.5</code> halves it (bigger bricks). In <code>fit</code> mode it multiplies the <code>[0, 1]</code> coords — <code>&gt; 1</code> repeats the image inside a face, <code>&lt; 1</code> zooms into a sub-region. Per-axis vec2 form lets you stretch a texture asymmetrically (planks on a floor, bands on a column).</li>
+<li><code>base_color_texture</code> — string path to an <code>.png</code>/<code>.jpg</code> file on disk, resolved relative to the <code>.mog</code> file. Multiplied against <code>color</code>. sRGB.</li>
+<li><code>metallic_roughness_texture</code> — packed metal/rough map (glTF convention: green = roughness, blue = metallic). Linear.</li>
+<li><code>normal_texture</code> — tangent-space normal map. Linear.</li>
+<li><code>occlusion_texture</code> — ambient occlusion (red channel). Linear.</li>
+<li><code>emissive_texture</code> — emissive colour map, multiplied against <code>emissive</code>. sRGB.</li>
+<li><code>prompt</code> — optional free-form description of the surface, used by <code>mogen textures</code> as the subject hint when generating an albedo image. Lets you steer the model away from the auto-derived "material name + colour" framing — useful when the material name is generic (<code>fabric_main</code>) or when the default phrasing trips Gemini's recitation filter. Example: <code>prompt="navy nylon ripstop weave"</code>. The texture pipeline rephrases this on retry if the image generator rejects the request for recitation, so a literal brand-adjacent phrasing won't permanently jam a build.</li>
+<li><code>shader</code> — <code>"standard"</code> (default) or <code>"water"</code>. Selects a per-material shader override in <strong>MoGen Studio's preview only</strong> — the exported <code>.glb</code> always uses standard PBR, since glTF 2.0 cannot carry custom shader code. <code>"water"</code> swaps the live preview for animated ripples + fresnel-driven body/sky mix + sun glints. The water branch reads the standard material knobs:
+<ul>
+<li><code>color</code> is the absorbed body tint when looking straight down (<code>[0.12, 0.55, 0.62]</code> reads as a lagoon, <code>[0.02, 0.05, 0.15]</code> as deep ocean).</li>
+<li><code>uv_scale</code> controls ripple density: <code>1.0</code> ≈ pool-scale chop, raise it for choppier small ponds, lower it for lazy ocean swells.</li>
+<li><code>roughness</code> ties together chop, sky-reflection blur, sun-glint sharpness, and foam. <code>0.05</code> is glassy mirror, <code>0.4</code> is a calm pool, <code>0.9</code> (the default) is ocean-style ripples, <code>1.0</code> adds whitecaps.</li>
+<li><code>metallic</code> lerps the Fresnel base from clean dielectric water (<code>0</code>) toward liquid metal at <code>1</code> — mercury / molten silver, where the body tint becomes the reflection colour at all angles.</li>
+<li><code>transmission</code> makes the body absorption recede so the sky reflection and what's behind the surface dominate. Combine with <code>alpha_mode="blend"</code> to actually see the pool floor through the water.</li>
+<li><code>emissive</code> / <code>emissive_strength</code> light the water from within (lava, magic potion, bioluminescent surf).</li>
+<li><code>normal_strength</code> multiplies the wave-slope (default <code>1.5</code>); raising it deepens the ripples without retuning chop.</li>
+<li><code>normal_texture</code> and <code>base_color_texture</code> are blended into the procedural waves and body tint respectively so authors can paint in high-frequency detail or shallow/deep variation.</li>
+</ul></li>
+</ul>
+<p>Example:</p>
+<pre><code>material &quot;oak&quot; (
+  color=[1, 1, 1],
+  roughness=0.8,
+  base_color_texture=&quot;textures/oak_albedo.png&quot;,
+  normal_texture=&quot;textures/oak_normal.png&quot;
+)
+
+material &quot;lake&quot; (color=[0.05, 0.32, 0.45], shader=&quot;water&quot;)</code></pre>
+<p>Texture files are embedded in the output GLB, so the resulting <code>.glb</code> is self-contained and can be moved without the source images. Missing files are a hard error at export.</p>
+<p>Reference a material on any geometry or group via <code>mat="wood"</code>. The lookup is by exact string match; unknown names are a hard error at lowering.</p>
+<hr />
+<h2 id="decals">Decals</h2>
+<p>A <code>decal</code> is a transparent image (logo, label, sticker, scribble, seal, handwritten note) projected onto a surface. It lowers to a thin double-sided quad floating slightly off the parent surface, with an auto-synthesized <code>alpha_mode="blend"</code> material whose albedo is an RGBA PNG.</p>
+<pre><code>decal &quot;logo&quot; (
+  pos = [0, 0.1, 0.101],
+  size = [0.25, 0.12],
+  prompt = &quot;embroidered MoGen logo, white thread on dark fabric&quot;
+)</code></pre>
+<p>Attributes:</p>
+<ul>
+<li><code>size</code> — <code>[w, h]</code> in local units. Default <code>[0.5, 0.5]</code>. The decal is a flat XY quad whose normal points along its local +Z; rotate the decal with <code>rot=</code> / <code>rx</code>/<code>ry</code>/<code>rz</code> to point its face wherever you need.</li>
+<li><code>prompt</code> — image description handed to Gemini when running <code>mogen textures</code>. Asks for an RGBA PNG with a fully transparent background; the resolved file path is spliced back into the source as <code>image="…"</code> for reproducibility.</li>
+<li><code>image</code> — explicit path to an existing RGBA PNG (relative to the <code>.mog</code> file). Wins over <code>prompt=</code>; skips the LLM call entirely.</li>
+<li><code>tint</code> — vec3 <code>[r, g, b]</code> multiplied against the decal's albedo. Default <code>[1, 1, 1]</code> (no tint).</li>
+<li><code>roughness</code> — <code>0.0</code>–<code>1.0</code>. Default <code>0.6</code>.</li>
+<li><code>offset</code> — <code>+Z</code> gap from the surface, in local units, to avoid z-fighting against the underlying mesh. Default <code>0.001</code> reads flush at typical scales; raise on coarse geometry.</li>
+</ul>
+<h3 id="curved-surfaces-on--at">Curved surfaces: <code>on=</code> / <code>at=</code></h3>
+<p>For flat surfaces, place the decal as a child of the surface and let <code>pos=</code> handle alignment. For <em>curved</em> surfaces, write the decal once with <code>on=</code> and <code>at=</code> and the lowering pass synthesizes a <code>conform</code> patch behind the scenes — the decal's vertices are bent onto the target's surface so it actually hugs the curvature.</p>
+<pre><code>ellipsoid &quot;bag&quot; (size=[1.0, 0.5, 0.5], mat=&quot;leather&quot;) {
+  connector &quot;front_spot&quot; (at=[0.0, 0.0, 0.25], dir=[0, 0, 1])
+}
+decal &quot;bag_logo&quot; (
+  size = [0.18, 0.10],
+  on   = &quot;bag&quot;,
+  at   = &quot;front_spot&quot;,
+  prompt = &quot;embroidered MoGen wordmark, cream thread on dark leather&quot;
+)</code></pre>
+<ul>
+<li><code>on</code> — name of the target node to conform onto. Triggers the shortcut.</li>
+<li><code>at</code> — required when <code>on=</code> is set; names the connector on the target that acts as the patch anchor.</li>
+<li><code>up</code> — optional <code>x|y|z</code>; which local axis points along the surface normal. Defaults to <code>z</code> (the decal quad's face direction).</li>
+<li><code>lift</code> — optional outward offset along the surface normal, applied during conform. Layered on top of the per-mesh <code>offset=</code> value, so use <code>lift=</code> on coarse target geometry where you need extra separation. Defaults to 0.</li>
+</ul>
+<p>When <code>on=</code> is used the decal is reparented under the target. Its <code>pos=</code> is dropped (positioning comes from <code>at=</code>, not user transforms), but <code>rot=</code> and <code>scale=</code> are baked into the artwork before projection — so <code>rot=[0, 0, 90]</code> spins the logo 90° in the tangent plane (the useful "rotate the artwork around the surface normal" case), and <code>scale=[2, 1, 1]</code> makes it twice as wide. Off-plane rotations like <code>rot=[90, 0, 0]</code> tilt the artwork off the surface; the conform kernel reproduces them faithfully but the result is rarely what authors want — reach for <code>rz=</code> / <code>rot=[0, 0, deg]</code> for the common "spin the logo" case.</p>
+<p>If neither <code>prompt=</code> nor <code>image=</code> is set, the decal's name is used as the prompt. That makes the compact form <code>decal "embroidered logo, white thread" (size=[0.2, 0.1], pos=[0, 0.1, 0.101])</code> valid — handy when you want to keep the description and the node identity in one place.</p>
+<p>A few rules that aren't optional:</p>
+<ul>
+<li><code>mat=</code> is rejected on decals — they own their material outright. Use <code>tint=</code>/<code>roughness=</code> to influence shading.</li>
+<li>Each decal gets its own auto-named material (<code>__decal_&lt;name&gt;</code>) and is never merged into adjacent same-material siblings by the export-time merge pass.</li>
+<li>The <code>mogen textures</code> pipeline asks Gemini for transparent-background RGBA directly. There is no chroma-key step: the <code>alpha_mode="mask"</code> foliage path is for foliage, not decals.</li>
+<li><code>at=</code>, <code>up=</code>, and <code>lift=</code> are inert without <code>on=</code> — the validator rejects them so a typo doesn't silently disappear.</li>
+</ul>
+<p>Example: a logo on the front of a shirt, plus an authored handwriting overlay on a paper card.</p>
+<pre><code>material &quot;shirt&quot; (color=[0.1, 0.2, 0.6])
+material &quot;paper&quot; (color=[0.96, 0.94, 0.88], roughness=0.95)
+
+scene {
+  box &quot;shirt&quot; (size=[0.6, 0.8, 0.2], mat=&quot;shirt&quot;)
+  decal &quot;shirt_logo&quot; (
+    pos = [0, 0.1, 0.101],
+    size = [0.25, 0.12],
+    prompt = &quot;embroidered MoGen logo, white thread on dark fabric&quot;
+  )
+
+  panel &quot;card&quot; (size=[0.4, 0.3, 0.01], mat=&quot;paper&quot;, right_of=&quot;shirt&quot;, gap=0.2)
+  decal &quot;note&quot; (
+    pos = [0.6, 0.0, 0.0061],
+    size = [0.30, 0.20],
+    rot = [0, 0, 0],
+    image = &quot;textures/notes/handwritten_thanks.png&quot;
+  )
+}</code></pre>
+<hr />
+<h2 id="connectors">Connectors</h2>
+<p>Connectors are oriented frames that a node exposes so other nodes can attach to it. They do not produce geometry.</p>
+<pre><code>box &quot;seat&quot; (pos=[0, 0.5, 0], size=[1.0, 0.1, 1.0]) {
+  connector &quot;top&quot;    (at=[0,  0.05, 0], dir=[0,  1, 0], tag=seat_top)
+  connector &quot;bottom&quot; (at=[0, -0.05, 0], dir=[0, -1, 0], tag=seat_bottom)
+}</code></pre>
+<p>Attributes:</p>
+<table>
+<thead>
+<tr class="header">
+<th>attribute</th>
+<th>value</th>
+<th>default</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>at</code></td>
+<td><code>vec3</code></td>
+<td><code>[0, 0, 0]</code></td>
+</tr>
+<tr class="even">
+<td><code>dir</code></td>
+<td><code>vec3</code> (any nonzero)</td>
+<td><code>[0, 1, 0]</code></td>
+</tr>
+<tr class="odd">
+<td><code>tag</code></td>
+<td>string or ident</td>
+<td>empty</td>
+</tr>
+<tr class="even">
+<td><code>radius</code></td>
+<td>number</td>
+<td>— (unset)</td>
+</tr>
+</tbody>
+</table>
+<p>Internally a connector is stored as a position plus a quaternion that rotates canonical <code>+Y</code> onto <code>dir</code>. <code>tag</code> groups compatible attach points (e.g. every leg top shares <code>tag=leg_top</code>) so downstream fitting logic can pair them.</p>
+<p>When a node is the <code>child</code> of an <code>attach</code>, its <code>pos</code> / <code>rot</code> are still honoured as a local offset on top of the alignment — <code>pos</code> shifts the anchor in the parent's frame and <code>rot</code> rotates the aligned node around its anchor — so a Studio gizmo drag persists across rebuilds.</p>
+<hr />
+<h2 id="attach-rigid-alignment-of-two-connector-frames">Attach: rigid alignment of two connector frames</h2>
+<p><code>attach</code> is the rigid counterpart to <code>conform</code>: it sets a child node's transform so its <code>plug</code> connector lines up exactly with a <code>socket</code> connector on a parent, then reparents the child under the parent. No deformation, no per-vertex work — just a clean alignment with optional roll.</p>
+<pre><code>scene {
+  cylinder &quot;trunk&quot;  (radius=0.2, height=1.0) {
+    connector &quot;top&quot; (at=[0, 0.5, 0], dir=[0, 1, 0], tag=trunk_top)
+  }
+  sphere   &quot;canopy&quot; (radius=0.5) {
+    connector &quot;stem&quot; (at=[0, -0.5, 0], dir=[0, -1, 0], tag=canopy_stem)
+  }
+  attach (parent=&quot;trunk&quot;, child=&quot;canopy&quot;, socket=&quot;top&quot;, plug=&quot;stem&quot;)
+}</code></pre>
+<table>
+<thead>
+<tr class="header">
+<th>attribute</th>
+<th>required</th>
+<th>default</th>
+<th>effect</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>parent</code></td>
+<td>yes</td>
+<td>—</td>
+<td>name of the node carrying the <code>socket</code> connector</td>
+</tr>
+<tr class="even">
+<td><code>child</code></td>
+<td>yes</td>
+<td>—</td>
+<td>name of the node carrying the <code>plug</code> connector</td>
+</tr>
+<tr class="odd">
+<td><code>socket</code></td>
+<td>no</td>
+<td><code>"top"</code></td>
+<td>connector name on <code>parent</code></td>
+</tr>
+<tr class="even">
+<td><code>plug</code></td>
+<td>no</td>
+<td><code>"bottom"</code></td>
+<td>connector name on <code>child</code></td>
+</tr>
+<tr class="odd">
+<td><code>offset</code></td>
+<td>no</td>
+<td><code>0.0</code></td>
+<td>gap (m) along the socket's outward direction; positive lifts the child away from the parent</td>
+</tr>
+<tr class="even">
+<td><code>twist</code></td>
+<td>no</td>
+<td><code>0.0</code></td>
+<td>roll (degrees) around the socket's axis after alignment</td>
+</tr>
+</tbody>
+</table>
+<p>After lowering, the child is reparented under the parent and its local TRS is recomputed so the two connector frames are coincident (<code>+offset</code> along the socket normal, plus <code>twist</code> around it). Any <code>pos=</code> / <code>rot=</code> declared on the child stays as an additive local offset on top of the alignment — that's what lets a Studio gizmo drag survive a rebuild.</p>
+<p><code>attach</code> also runs per-instance inside <code>array</code> and <code>mirror</code> replicators: when you write the attach inside the body of an <code>array (count=4)</code>, each of the four expanded copies resolves its own pair of connectors, so a single declaration glues every copy.</p>
+<hr />
+<h2 id="conform-moulding-a-primitive-onto-a-target-surface">Conform: moulding a primitive onto a target surface</h2>
+<p><code>conform</code> deforms a child primitive's <em>vertex positions</em> so it lies on a target mesh's surface. It has two modes:</p>
+<ul>
+<li><strong>Path mode (<code>from=</code> / <code>to=</code>)</strong> — stretches a strip or tube between two connectors on the target. The canonical case is a zip on a curved sports bag; covers labels wrapped around bottles, gold trim along a shield's edge, hoses lying on a chassis, ribbons spiralling around a vase, stitched seams.</li>
+<li><strong>Patch mode (<code>at=</code>)</strong> — lays a flat / disc-shaped child down at a single anchor connector and bends it to follow surface curvature locally. The canonical case is a round pocket on the side of the bag; covers brand decals, plates, lids, eye spots, leather patches.</li>
+</ul>
+<p>Conform is the <em>deforming</em> counterpart to <code>attach</code>: where attach sets a rigid transform aligning two connector frames, conform mutates the child's mesh. Pick the mode by which attrs you provide — mixing <code>at=</code> with <code>from=</code>/<code>to=</code> is an error, and so is omitting both.</p>
+<pre><code>// Path mode — strip stretched along a curve.
+conform (target=&quot;bag&quot;, child=&quot;zip&quot;, from=&quot;zip_a&quot;, to=&quot;zip_b&quot;,
+         along=x, lift=0.005)
+
+// Patch mode — disc anchored at a single point.
+conform (target=&quot;bag&quot;, child=&quot;pocket&quot;, at=&quot;pocket_spot&quot;, lift=0.002)</code></pre>
+<h3 id="shared-attributes">Shared attributes</h3>
+<table>
+<thead>
+<tr class="header">
+<th>attribute</th>
+<th>required</th>
+<th>default</th>
+<th>effect</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>target</code></td>
+<td>yes</td>
+<td>—</td>
+<td>name of the surface mesh node to mould onto</td>
+</tr>
+<tr class="even">
+<td><code>child</code></td>
+<td>yes</td>
+<td>—</td>
+<td>name of the primitive whose vertices get deformed</td>
+</tr>
+<tr class="odd">
+<td><code>lift</code></td>
+<td>no</td>
+<td><code>0.0</code></td>
+<td>outward offset along the surface normal (m) — typically a fraction of a millimetre to avoid z-fighting</td>
+</tr>
+<tr class="even">
+<td><code>reparent</code></td>
+<td>no</td>
+<td><code>1</code></td>
+<td>reparent child under target after conform; pass <code>0</code> to keep its original parent</td>
+</tr>
+</tbody>
+</table>
+<h3 id="path-mode--from--to">Path mode — <code>from=</code> / <code>to=</code></h3>
+<p>Each child vertex's coordinate on the <code>along</code> axis becomes a position along the surface path; the perpendicular axes lie tangent / normal to the surface at each sample.</p>
+<table>
+<thead>
+<tr class="header">
+<th>attribute</th>
+<th>required</th>
+<th>default</th>
+<th>effect</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>from</code></td>
+<td>yes</td>
+<td>—</td>
+<td>connector name on <code>target</code> — start of the path</td>
+</tr>
+<tr class="even">
+<td><code>to</code></td>
+<td>yes</td>
+<td>—</td>
+<td>connector name on <code>target</code> — end of the path</td>
+</tr>
+<tr class="odd">
+<td><code>along</code></td>
+<td>no</td>
+<td><code>x</code> (flat strips) / <code>y</code> (tubes)</td>
+<td>which child-local axis is the path axis</td>
+</tr>
+<tr class="even">
+<td><code>width</code></td>
+<td>no</td>
+<td>inferred from <code>along</code></td>
+<td>child-local axis perpendicular to path, tangent to surface</td>
+</tr>
+<tr class="odd">
+<td><code>height</code></td>
+<td>no</td>
+<td>inferred from <code>along</code></td>
+<td>child-local "thickness" axis (along surface normal)</td>
+</tr>
+<tr class="even">
+<td><code>samples</code></td>
+<td>no</td>
+<td><code>64</code></td>
+<td>path subdivisions (clamped to ≥ 2). Increase for high-curvature surfaces</td>
+</tr>
+<tr class="odd">
+<td><code>twist</code></td>
+<td>no</td>
+<td><code>0</code></td>
+<td>total roll (degrees) around the path tangent across the strip</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Compatible primitives</strong> (path mode):</p>
+<ul>
+<li><strong>Flat strips</strong>: <code>box</code>, <code>plane</code>, <code>quad</code>, <code>curved_plane</code>, <code>slab</code>, <code>post</code>, <code>panel</code>, <code>wall</code>, <code>spline_ribbon</code></li>
+<li><strong>Tubes</strong>: <code>cylinder</code>, <code>capsule</code>, <code>tube</code>, <code>spline_tube</code> (cross-section ring rotates with the surface frame)</li>
+<li><strong>Imported meshes</strong> via <code>mesh "..." (src="...")</code>: accepted, but <code>along=</code> is required</li>
+</ul>
+<h3 id="patch-mode--at">Patch mode — <code>at=</code></h3>
+<p>Each child vertex is independently snapped to its closest point on the target surface; the child's <code>up</code> axis becomes the surface-outward direction at every vertex. This makes flat decals (a disc, a quad) bend to follow curvature locally without forcing the author to pick a path or supply two endpoints.</p>
+<table>
+<thead>
+<tr class="header">
+<th>attribute</th>
+<th>required</th>
+<th>default</th>
+<th>effect</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>at</code></td>
+<td>yes</td>
+<td>—</td>
+<td>connector name on <code>target</code> — patch centre</td>
+</tr>
+<tr class="even">
+<td><code>up</code></td>
+<td>no</td>
+<td><code>y</code> (most flat primitives) / <code>z</code> (<code>quad</code>, <code>leaf_card</code>)</td>
+<td>which child-local axis aligns with the surface outward normal</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Compatible primitives</strong> (patch mode):</p>
+<ul>
+<li><strong>Flat decals</strong>: <code>disc</code>, <code>plane</code>, <code>quad</code>, <code>curved_plane</code>, <code>leaf_card</code></li>
+<li><strong>Box-likes used as thin patches</strong>: <code>box</code>, <code>slab</code>, <code>panel</code>, <code>wall</code> — give them a small extent on the <code>up</code> axis</li>
+<li><strong>Round primitives with a flat side</strong>: <code>cylinder</code>, <code>hemisphere</code>, <code>half_cylinder</code> (a thin cylinder makes a perfect round disc)</li>
+<li><strong>Imported meshes</strong>: accepted, but <code>up=</code> is required</li>
+</ul>
+<h3 id="rejected-primitives">Rejected primitives</h3>
+<p>Closed shapes with no canonical surface axis (<code>sphere</code>, <code>ellipsoid</code>, <code>icosphere</code>, <code>torus</code>, <code>torus_arc</code>, <code>superellipsoid</code>, <code>pyramid</code>, <code>cone</code>, <code>frustum</code>, <code>lathe</code>, <code>prism</code>, <code>rounded_box</code>, <code>wedge</code>) and CSG result nodes (<code>union</code>/<code>difference</code>/<code>intersect</code>) are rejected in both modes. The error message names the kind and points to the other mode if it would have worked there (e.g. <code>disc</code> rejected in path mode → suggests patch mode).</p>
+<h3 id="tessellation">Tessellation</h3>
+<p>The deformation reads each child vertex's coordinate on the <code>along</code> axis as its position along the path. A bare <code>box</code> only has two distinct values per axis (the eight corners), so an un-subdivided box can't bend — every interior path frame is skipped and the strip stays straight no matter how curved the target surface is.</p>
+<p><code>conform</code> therefore inserts planar cuts perpendicular to <code>along</code> whenever the child's tessellation is coarser than <code>samples / 4</code> segments (clamped to 8–64). Author-controlled subdivision still wins: pass a primitive that's already dense (<code>curved_plane (segments_u=48)</code>, <code>cylinder (segments=64)</code>, <code>spline_ribbon (samples=64)</code>) and the auto-subdivision is a no-op.</p>
+<h3 id="examples">Examples</h3>
+<pre><code>// Zip on a sports bag.
+material &quot;leather&quot; (color=[0.18, 0.16, 0.14], roughness=0.85)
+material &quot;rubber&quot;  (color=[0.08, 0.08, 0.08], roughness=0.7)
+
+scene {
+  ellipsoid &quot;bag&quot; (size=[1.0, 0.5, 0.5], mat=&quot;leather&quot;) {
+    connector &quot;zip_a&quot; (at=[-0.4, 0.20, 0.22], dir=[0, 0, 1])
+    connector &quot;zip_b&quot; (at=[ 0.4, 0.20, 0.22], dir=[0, 0, 1])
+  }
+  box &quot;zip&quot; (size=[0.8, 0.012, 0.04], mat=&quot;rubber&quot;)
+  conform (target=&quot;bag&quot;, child=&quot;zip&quot;, from=&quot;zip_a&quot;, to=&quot;zip_b&quot;,
+           along=x, lift=0.005)
+}</code></pre>
+<pre><code>// Wine-bottle label wrapped around a cylindrical bottle.
+scene {
+  cylinder &quot;bottle&quot; (radius=0.04, height=0.3, mat=&quot;glass&quot;) {
+    connector &quot;label_l&quot; (at=[-0.04, 0.12, 0],  dir=[-1, 0, 0])
+    connector &quot;label_r&quot; (at=[ 0.04, 0.12, 0],  dir=[ 1, 0, 0])
+  }
+  curved_plane &quot;label&quot; (size=[0.25, 0.06], segments_u=48, mat=&quot;paper&quot;)
+  conform (target=&quot;bottle&quot;, child=&quot;label&quot;, from=&quot;label_l&quot;, to=&quot;label_r&quot;,
+           along=x, lift=0.0005)
+}</code></pre>
+<pre><code>// Hose draped along a chassis: tube child, along=y matches cylinder&#39;s long axis.
+scene {
+  superellipsoid &quot;chassis&quot; (size=[1.6, 0.4, 0.7], ew=2.0, ns=2.0, mat=&quot;metal&quot;) {
+    connector &quot;port_a&quot; (at=[-0.7, 0.20, 0.30], dir=[0, 1, 0])
+    connector &quot;port_b&quot; (at=[ 0.7, 0.20, 0.30], dir=[0, 1, 0])
+  }
+  cylinder &quot;hose&quot; (radius=0.03, height=1.4, mat=&quot;rubber&quot;)
+  conform (target=&quot;chassis&quot;, child=&quot;hose&quot;, from=&quot;port_a&quot;, to=&quot;port_b&quot;,
+           along=y, samples=96, lift=0.005)
+}</code></pre>
+<pre><code>// Patch mode — round pocket decals on the sides of a sports bag.
+scene {
+  superellipsoid &quot;body&quot; (size=[0.6, 0.3, 0.3], ew=1.5, ns=1.2, mat=&quot;fabric&quot;) {
+    connector &quot;left_spot&quot;  (at=[-0.3, 0, 0], dir=[-1, 0, 0])
+    connector &quot;right_spot&quot; (at=[ 0.3, 0, 0], dir=[ 1, 0, 0])
+  }
+  disc &quot;pocket_l&quot; (radius=0.08, segments=32, mat=&quot;accent&quot;)
+  disc &quot;pocket_r&quot; (radius=0.08, segments=32, mat=&quot;accent&quot;)
+  conform (target=&quot;body&quot;, child=&quot;pocket_l&quot;, at=&quot;left_spot&quot;,  lift=0.002)
+  conform (target=&quot;body&quot;, child=&quot;pocket_r&quot;, at=&quot;right_spot&quot;, lift=0.002)
+}</code></pre>
+<h3 id="pass-ordering-and-reparenting">Pass ordering and reparenting</h3>
+<p>Conform runs after <code>attach</code> and before skin binding, so an attached child can also be conformed and bind-pose world matrices reflect the deformed geometry.</p>
+<p>By default (<code>reparent=1</code>) the child is moved under the target with an identity local transform — its deformed vertices already live in the target's local frame, so this keeps the scene tree clean. Any user <code>pos=</code> / <code>rot=</code> declared on the child is intentionally discarded once the conform fires. Pass <code>reparent=0</code> to keep the child's original parent; the deformed mesh is transformed back into the child's local frame and the child's location in the hierarchy is untouched.</p>
+<h3 id="path-generation">Path generation</h3>
+<p>The path is built by chord-and-snap: each sample's chord-interpolated point is projected onto the target surface via closest-point query. This is <em>not</em> a true geodesic, but for the typical conform use cases (smoothly curving surfaces between two connectors), it is visually indistinguishable. Crank <code>samples=</code> up for high-curvature paths.</p>
+<p><code>twist</code> ramps a roll around the path tangent linearly from 0 at the first sample to <code>twist</code> degrees at the last — useful for spiralling ribbons or bandages where the strip rotates around the path as it walks.</p>
+<h3 id="reserved-not-yet-implemented">Reserved (not yet implemented)</h3>
+<p>The validator accepts but lowering rejects, with a clear message: <code>direction</code> (projection mode — decal splat from a direction), <code>curve</code> (only <code>"geodesic_lerp"</code> is supported in v1), and <code>via</code> (multi-segment paths).</p>
+<hr />
+<h2 id="replicators-mirror-array-stack-grid">Replicators: <code>mirror</code>, <code>array</code>, <code>stack</code>, <code>grid</code></h2>
+<p>Wrapper nodes that create one parent group and either replicate or lay out their children. All four accept the usual transform attributes so the whole cluster can be positioned as a unit.</p>
+<h3 id="mirror"><code>mirror</code></h3>
+<pre><code>mirror &quot;pair&quot; (axis=x) {
+  sphere &quot;ball&quot; (pos=[0.5, 0.5, 0], radius=0.25)
+}</code></pre>
+<p><code>axis</code> is <code>x</code>, <code>y</code>, or <code>z</code> (ident or string). The body is emitted twice — once unchanged and once with the named axis negated. Use it for left/right symmetry where only one side is authored by hand.</p>
+<p>Both copies share the body's node names, and both are bound when their mesh carries <code>skin="…"</code>. (Replicator-produced nodes inherit the AST node's binding; the skinning pass walks every duplicate, not just the first.)</p>
+<h4 id="flip_bind1-rebind-the-mirrored-copy-to-the-symmetric-bone"><code>flip_bind=1</code>: rebind the mirrored copy to the symmetric bone</h4>
+<p>Module parameters are numeric only, so two skin-bound limbs that differ <strong>only</strong> in their bone suffix (<code>shoulder_l</code> ↔︎ <code>shoulder_r</code>, <code>ankle_l</code> ↔︎ <code>ankle_r</code>, …) can't be DRY'd by passing the bone name into a shared module. <code>flip_bind=1</code> solves this directly on <code>mirror</code>:</p>
+<pre><code>mirror &quot;sleeves&quot; (axis=x, flip_bind=1) {
+  chamfered_box &quot;sleeve&quot; (
+    pos=[0.135, 0.695, 0],
+    size=[0.052, 0.158, 0.052],
+    skin=&quot;rig&quot;, bind=&quot;shoulder_l&quot;, faceted=1
+  )
+}</code></pre>
+<p>emits the authored copy bound to <code>shoulder_l</code> AND a mirrored copy bound to <code>shoulder_r</code>. The flip applies on every mesh-bearing descendant of the mirrored instance: the AST-resolved <code>bind="…"</code> (whether authored locally or inherited from a wrapping <code>group (bind=…)</code>) is matched against a trailing <code>_l</code> or <code>_r</code> and the suffix swapped. Binds that don't end in <code>_l</code>/<code>_r</code> (e.g. <code>bind="spine_chest"</code>) pass through unchanged, so plain <code>mirror (axis=x)</code> is fine for shared-bone pairs and <code>flip_bind=1</code> only needs to be added when the symmetry crosses a per-side bone.</p>
+<p><code>flip_bind</code> defaults to <code>0</code>. It only has an effect on the <code>mirror</code> kind; other replicators (<code>array</code>, <code>stack</code>, <code>grid</code>) ignore it.</p>
+<h3 id="array"><code>array</code></h3>
+<pre><code>array &quot;legs&quot; (count=4, around=y) {
+  group &quot;offset&quot; (pos=[0.45, 0, 0.45]) {
+    cylinder &quot;leg&quot; (radius=0.05, height=0.5)
+  }
+}</code></pre>
+<p>Attributes:</p>
+<ul>
+<li><code>count</code> — number of copies (integer); default <code>1</code>.</li>
+<li><code>around</code> — <code>x</code> / <code>y</code> / <code>z</code> ident; the rotation axis. Default <code>y</code>.</li>
+<li><code>start_angle</code> — degrees offset of the first copy; default <code>0</code>.</li>
+</ul>
+<p>The children are cloned <code>count</code> times; the i-th copy is rotated by <code>start_angle + 360° * i / count</code> around <code>around</code>. Combine with an offset <code>group</code> (as above) to place the first copy off the rotation axis; the array then fans it into a ring.</p>
+<h3 id="stack"><code>stack</code></h3>
+<p>Lay children out along one axis, using each child's computed AABB as its "slot". No half-size math, no accumulated offsets to maintain by hand.</p>
+<pre><code>stack &quot;cake&quot; (axis=y, gap=0.02) {
+  slab &quot;tier_a&quot; (size=[1.4, 0.25, 1.4])
+  slab &quot;tier_b&quot; (size=[1.0, 0.20, 1.0])
+  slab &quot;tier_c&quot; (size=[0.6, 0.15, 0.6])
+}</code></pre>
+<p>Attributes:</p>
+<table>
+<thead>
+<tr class="header">
+<th>attribute</th>
+<th>value</th>
+<th>default</th>
+<th>effect</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>axis</code></td>
+<td><code>x</code>, <code>y</code>, <code>z</code></td>
+<td><code>y</code></td>
+<td>stacking direction</td>
+</tr>
+<tr class="even">
+<td><code>gap</code></td>
+<td>number</td>
+<td><code>0</code></td>
+<td>spacing between consecutive children</td>
+</tr>
+<tr class="odd">
+<td><code>align</code></td>
+<td><code>center</code>, <code>start</code>, <code>end</code></td>
+<td><code>center</code></td>
+<td>alignment on the two perpendicular axes</td>
+</tr>
+<tr class="even">
+<td><code>pack</code></td>
+<td><code>start</code>, <code>center</code>, <code>end</code></td>
+<td><code>start</code></td>
+<td>where the whole stack sits along <code>axis</code>: <code>start</code> keeps the first child at origin; <code>center</code> centres the stack; <code>end</code> puts the last child's far face at origin</td>
+</tr>
+</tbody>
+</table>
+<p>Each child keeps its own declared <code>pos</code>/<code>x</code>/<code>y</code>/<code>z</code> as an <strong>additive</strong> offset inside its slot — <code>stack</code> computes the slot position, your <code>pos</code> nudges within it.</p>
+<h3 id="grid"><code>grid</code></h3>
+<p>N-dimensional replicator. Creates <code>count[0] × count[1] × count[2]</code> copies of the body, each offset by <code>step[0..3] * [i, j, k]</code>:</p>
+<pre><code>grid &quot;tiles&quot; (count=[5, 1, 3], step=[0.6, 0, 0.6], center=1) {
+  slab &quot;tile&quot; (size=[0.55, 0.05, 0.55])
+}</code></pre>
+<p>Attributes:</p>
+<table>
+<thead>
+<tr class="header">
+<th>attribute</th>
+<th>value</th>
+<th>default</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>count</code></td>
+<td>vec3, list, or scalar</td>
+<td><code>[1, 1, 1]</code></td>
+</tr>
+<tr class="even">
+<td><code>step</code></td>
+<td>vec3, list, or scalar</td>
+<td><code>[0, 0, 0]</code></td>
+</tr>
+<tr class="odd">
+<td><code>center</code></td>
+<td><code>0</code> / <code>1</code></td>
+<td><code>0</code> — when <code>1</code>, the grid is centred on the wrapper origin</td>
+</tr>
+</tbody>
+</table>
+<p>A scalar <code>count</code>/<code>step</code> applies to X only (useful for 1D rows); a 2-element list applies to X/Z (floor patterns). For 3D, pass a vec3.</p>
+<hr />
+<h2 id="csg-union--difference--intersect">CSG: <code>union</code> / <code>difference</code> / <code>intersect</code></h2>
+<p>CSG ops fold their children into a single mesh that hangs off the op node itself — the operand children do not become separate scene nodes.</p>
+<pre><code>difference &quot;wall_with_door&quot; (mat=&quot;concrete&quot;) {
+  box &quot;wall&quot;    (size=[4.0, 3.0, 0.2])
+  box &quot;doorway&quot; (pos=[0, -0.5, 0], size=[0.9, 2.0, 0.5])
+}</code></pre>
+<ul>
+<li><code>union</code> — N ≥ 1 operands; the union of all. Accepts an optional <code>smooth=&lt;radius&gt;</code> attribute that swaps the boolean union for a smooth minimum (<code>smin</code>) blend with that radius. Used by the humanoid stdlib modules to fillet limb-to-torso seams; values of a few centimetres are typical at human scale. <code>smooth=0</code> (the default) is identical to the hard boolean.</li>
+<li><code>difference</code> — the first operand minus every subsequent operand.</li>
+<li><code>intersect</code> — N ≥ 2 operands; the shared volume.</li>
+</ul>
+<p>Operand transforms are baked into the vertices at evaluation time, so each operand lives in the parent's frame regardless of its local <code>pos</code>/<code>rot</code>. Connectors and <code>material</code> children declared directly on the CSG node still apply; any on operand children are ignored.</p>
+<p>The output is cleaned (vertex welding, degenerate-tri cull, normal recompute) to give the exporter a watertight mesh.</p>
+<hr />
+<h2 id="solid-groups-solid">Solid groups: <code>solid</code></h2>
+<p><code>solid { … }</code> is a group-like container that defers CSG union to export time. Its same-material, non-skinned leaf children are merged into a single mesh, so overlapping or touching primitives of the same material read as one hollow shape — interior faces where pieces meet get eliminated.</p>
+<pre><code>solid &quot;shell&quot; (mat=&quot;stone&quot;, cleanup=&quot;coplanar&quot;) {
+  box &quot;floor&quot;   (pos=[0, 0.1, 0],   size=[6.2, 0.2, 4.2])
+  box &quot;north&quot;   (pos=[0, 1.7, 2.0], size=[6.0, 3.0, 0.2])
+  box &quot;south&quot;   (pos=[0, 1.7,-2.0], size=[6.0, 3.0, 0.2])
+  box &quot;east&quot;    (pos=[ 3.0, 1.7, 0], size=[0.2, 3.0, 4.0])
+  box &quot;west&quot;    (pos=[-3.0, 1.7, 0], size=[0.2, 3.0, 4.0])
+}</code></pre>
+<ul>
+<li>Children lower as normal scene nodes — you can still <code>attach</code> to them, put modules inside, author connectors, and so on. The merge is <em>export-time</em>, scoped to that subtree. The in-memory scene graph the editor sees keeps every child as a distinct, editable node.</li>
+<li>Only same-material leaf siblings merge together. Different-material children (<code>mat="glass"</code> next to <code>mat="stone"</code>) stay as separate nodes so textures and PBR factors are preserved.</li>
+<li>Skinned meshes, joint-referenced nodes, and groups are never merged; they pass through unchanged.</li>
+</ul>
+<h3 id="cleanupcoplanar"><code>cleanup="coplanar"</code></h3>
+<p>When set, the merged output gets one extra pass that drops triangle pairs which share a plane and have opposite-facing normals. This catches the case CSG union can't resolve on its own: two boxes that <em>touch</em> along a face without overlapping — e.g. perpendicular walls meeting at a corner. Without the cleanup, both sides of the seam survive; with it, they cancel.</p>
+<p>Values: <code>"coplanar"</code> (enable) or <code>"none"</code> (default).</p>
+<hr />
+<h2 id="modules-module-and-use">Modules: <code>module</code> and <code>use</code></h2>
+<p>Modules are parametric sub-graphs. A declaration lives at the top level of the file:</p>
+<pre><code>module &quot;leg&quot; (height=0.5, radius=0.05) {
+  cylinder &quot;leg&quot; (pos=[0, $height * 0.5, 0],
+                  radius=$radius, height=$height, mat=&quot;wood&quot;) {
+    connector &quot;top&quot; (at=[0, $height * 0.5, 0], dir=[0, 1, 0], tag=leg_top)
+  }
+}</code></pre>
+<p>Parameters:</p>
+<ul>
+<li>Each parameter has a <strong>scalar default</strong> (number or expression). <code>vec3</code>, <code>list</code>, string, or ident defaults are rejected — <code>$param</code> substitution is numeric.</li>
+<li>Parameters are referenced inside the body as <code>$name</code>. They participate in <code>pos</code>, <code>rot</code>, <code>scale</code>, <code>radius</code>, <code>height</code>, etc., and inside nested <code>vec3</code> expressions like <code>[0, $h * 0.5, 0]</code>.</li>
+</ul>
+<p>Invoke a module with <code>use</code>:</p>
+<pre><code>scene {
+  group &quot;chair&quot; {
+    use &quot;leg&quot; (height=0.6, radius=0.04)
+    array &quot;legs&quot; (count=4, around=y) {
+      group &quot;offset&quot; (pos=[0.45, 0, 0.45]) {
+        use &quot;leg&quot; (height=0.5, radius=0.05)
+      }
+    }
+  }
+}</code></pre>
+<p>Rules:</p>
+<ul>
+<li><code>use</code> takes the module's <strong>declared</strong> name. Unknown names fail with a clear error.</li>
+<li>Omitted arguments fall back to declared defaults. Unknown argument names are a hard error (catches typos).</li>
+<li>Modules may call other modules. Recursion is detected and rejected.</li>
+<li>Expansion is lexically scoped — <code>$param</code> references outside a module body are rejected.</li>
+</ul>
+<h2 id="control-flow-if-else-for-string-interpolation">Control flow: <code>if</code>, <code>else</code>, <code>for</code>, string interpolation</h2>
+<p>Inside any <code>{ … }</code> body — including <code>scene</code>, <code>group</code>, <code>solid</code>, and <code>module</code> bodies — three control-flow constructs let you branch and repeat at module-expansion time. They run before lowering, so the resulting scene graph never sees <code>if</code> or <code>for</code>; only the geometry they emit.</p>
+<h3 id="if-cond-and-else"><code>if (cond=…)</code> and <code>else</code></h3>
+<pre><code>module &quot;switch&quot; (has_label=0) {
+  cylinder &quot;shaft&quot; (radius=0.02, height=0.05)
+  if (cond=$has_label) {
+    box &quot;label&quot; (size=[0.04, 0.005, 0.02])
+  }
+}
+scene {
+  use &quot;switch&quot; (has_label=0)            // no label
+  use &quot;switch&quot; (has_label=1, x=0.10)    // with label
+}</code></pre>
+<p><code>cond=</code> accepts any expression. Comparisons (<code>&lt;</code>, <code>&lt;=</code>, <code>&gt;</code>, <code>&gt;=</code>, <code>==</code>, <code>!=</code>) evaluate to <code>1.0</code> (true) or <code>0.0</code> (false), so <code>cond=$count &gt; 1</code> works directly. An immediately-following sibling <code>else { … }</code> covers the false branch:</p>
+<pre><code>if (cond=$is_glass) {
+  box &quot;pane&quot; (size=[0.6, 1.0, 0.01], mat=&quot;glass&quot;)
+}
+else {
+  box &quot;panel&quot; (size=[0.6, 1.0, 0.04], mat=&quot;oak&quot;)
+}</code></pre>
+<p>A standalone <code>else</code> with no preceding <code>if</code> is rejected at expansion time.</p>
+<h3 id="for-var-from-to-step"><code>for (var=…, from=…, to=…[, step=…])</code></h3>
+<pre><code>for (var=&quot;i&quot;, from=0, to=4) {
+  box &quot;fence_post_$i&quot; (size=[0.04, 0.6, 0.04],
+                       pos=[$i * 0.30, 0, 0],
+                       mat=&quot;oak&quot;)
+}</code></pre>
+<ul>
+<li><code>var</code> is the loop binding name (string or bare identifier).</li>
+<li><code>from</code>/<code>to</code> are the bounds; iteration covers <code>[from, to)</code> like Python's <code>range</code>. <code>from == to</code> produces zero iterations.</li>
+<li><code>step</code> defaults to <code>1.0</code>. Must be non-zero. Negative <code>step</code> walks downward as long as <code>from &gt; to</code>.</li>
+<li>Inside the body, <code>$&lt;var&gt;</code> resolves to the current loop value.</li>
+<li><code>for</code> blocks inside module bodies see both module parameters and the loop variable in scope; nested <code>for</code> loops compose normally.</li>
+</ul>
+<h3 id="string-interpolation">String interpolation</h3>
+<p>Inside any string literal (including node names), <code>$name</code> and <code>${name}</code> are replaced with the named binding's value at expansion time:</p>
+<pre><code>for (var=&quot;i&quot;, from=0, to=3) {
+  cylinder &quot;leg_$i&quot; (radius=0.05, height=0.6, pos=[$i * 0.4, 0, 0])
+}
+// Names: leg_0, leg_1, leg_2</code></pre>
+<ul>
+<li>Integer-valued bindings render without a decimal: <code>leg_$i</code> becomes <code>leg_3</code>, not <code>leg_3.0</code>.</li>
+<li>The <code>${name}</code> form delimits the binding explicitly so <code>${prefix}_panel</code> is unambiguous when followed by underscore characters.</li>
+<li>A <code>$</code> not followed by an identifier (or referencing an unbound name) is left literal — handy for prompts that include the dollar sign.</li>
+</ul>
+<p>Limitations (deliberate, demand-driven):</p>
+<ul>
+<li>Comparisons can't be chained: <code>a &lt; b &lt; c</code> does not parse. Combine with multiplication for AND (<code>($a &gt; 0) * ($b &gt; 0)</code>) or addition for OR (<code>($a &gt; 0) + ($b &gt; 0)</code>).</li>
+<li>No boolean <code>&amp;&amp;</code> / <code>||</code> / <code>!</code> operators yet.</li>
+<li>Expressions remain numeric; there are no string concatenation operators beyond interpolation.</li>
+</ul>
+<hr />
+<h2 id="imports-import">Imports: <code>import</code></h2>
+<p>Pull <code>module</code> declarations, <code>material</code> declarations, and the entire <code>scene { … }</code> of another <code>.mog</code> file into the current file. Two use cases:</p>
+<p><strong>Module libraries</strong> — share parameterised modules across files:</p>
+<pre><code>import &quot;shared/legs.mog&quot;
+
+scene {
+  use &quot;leg&quot; (h=0.6)
+}</code></pre>
+<p><strong>Scene composition</strong> — assemble a scene out of object <code>.mog</code> files. Each imported file's top-level <code>scene { … }</code> becomes an implicit module named after the file stem, so <code>import "chair.mog"</code> lets you <code>use "chair" ()</code>:</p>
+<pre><code>import &quot;objects/chair.mog&quot;
+import &quot;objects/table.mog&quot;
+
+scene {
+  use &quot;chair&quot; (pos=[ 1, 0, 0])
+  use &quot;table&quot; (pos=[ 0, 0, 0])
+  use &quot;chair&quot; (pos=[-1, 0, 0], rot=[0, 180, 0])
+}</code></pre>
+<p><code>use</code> accepts the same translation/rotation/scale shortcuts as every other node kind — <code>pos</code>, <code>rot</code>, <code>scale</code>, <code>x</code> / <code>y</code> / <code>z</code>, <code>rx</code> / <code>ry</code> / <code>rz</code>, and <code>from</code> / <code>to</code> — and applies them as an implicit wrapping <code>group</code> around the expanded body. Equivalent to <code>group (pos=…) { use "x" () }</code> but without the ceremony. If the module declares a parameter with one of those names (e.g. a scalar <code>pos</code> param), the caller's value binds to the parameter instead.</p>
+<p><code>import</code> is a top-level directive — declare it alongside <code>material</code> and <code>module</code>, before or after them. It takes a quoted file path and an optional <code>(as=&lt;ident&gt;)</code> to override the synthesised module name (handy when two files share a stem, since stem collisions are a hard error).</p>
+<p>Path resolution:</p>
+<ul>
+<li><strong>Relative paths</strong> are joined onto the importing file's directory. So <code>import "shared/legs.mog"</code> from <code>/proj/scenes/chair.mog</code> reads <code>/proj/scenes/shared/legs.mog</code>.</li>
+<li><strong>Absolute paths</strong> are used verbatim.</li>
+<li>Paths are canonicalised before deduplication, so <code>import "lib.mog"</code> and <code>import "./lib.mog"</code> resolve to the same file and load only once.</li>
+</ul>
+<p>What gets lifted from an imported file:</p>
+<ul>
+<li><strong><code>module</code> declarations</strong> — added to the importer's module registry.</li>
+<li><strong><code>material</code> declarations</strong> (top-level or inside the imported <code>scene { … }</code>) — added to the importer's material registry. <strong>Texture paths are rooted at the defining file's directory</strong>: <code>material "wood" (base_color_texture = "textures/wood.png")</code> inside <code>objects/chair.mog</code> resolves to <code>objects/textures/wood.png</code> regardless of where the composing scene lives.</li>
+<li><strong>Top-level <code>scene { … }</code></strong> — synthesised as <code>module "&lt;stem&gt;" () { … }</code>. Use <code>(as=&lt;ident&gt;)</code> on the import to give it a different name.</li>
+</ul>
+<p>Rules:</p>
+<ul>
+<li>Imports are transitive: an imported file can <code>import</code> another file, and every transitively-imported module / material / synthesised scene is visible to the original importer.</li>
+<li>Cycles (<code>A imports B imports A</code>) are detected and rejected with the full chain in the error message.</li>
+<li>Importing the same file twice — directly or via a chain — is a no-op.</li>
+<li><strong>Module name shadowing</strong> follows precedence: <strong>stdlib &lt; imports &lt; user declarations</strong>. A user <code>module "leg" { … }</code> in the importing file overrides any <code>leg</code> pulled in by <code>import</code>; an imported <code>leg</code> overrides the stdlib's <code>leg</code>.</li>
+<li><strong>Synthesised scene-as-module collisions are a hard error.</strong> If two imports both default to <code>chair</code> (one in <code>a/chair.mog</code>, one in <code>b/chair.mog</code>), rename one with <code>(as=chair_a)</code>.</li>
+<li><strong>Material name collisions across imports are a hard error.</strong> Re-declare the material in the importing file to shadow it.</li>
+<li>An imported file may contain only <code>import</code>, <code>module</code>, <code>material</code>, and a single top-level <code>scene { … }</code>. Other top-level forms (joints, clips, skeletons) aren't composable yet and are rejected.</li>
+</ul>
+<p>Failures surface as errors at <code>mogen check</code> / <code>mogen build</code> time, pointing at the offending <code>import</code>.</p>
+<hr />
+<h2 id="animation-joint-clip-templates">Animation: <code>joint</code>, <code>clip</code>, templates</h2>
+<p>Animation lowers to glTF node-transform tracks. Every clip animates one or more scene nodes (or joints, which are scene-node aliases with a typed DOF) — there is no separate animation graph or state machine. Clips are top-level declarations alongside <code>material</code>/<code>module</code>/<code>joint</code>. Skinning is additive: see <a href="#skeletons-and-skinning-skeleton-bone-skin-bind">Skeletons and skinning</a> below for the <code>skeleton</code>/<code>bone</code>/<code>skin=</code> half of the story.</p>
+<h3 id="joints">Joints</h3>
+<p>A <code>joint</code> names an articulation, picks a DOF type, and points at the scene node that rotates/translates when the joint moves.</p>
+<pre><code>joint &quot;door_hinge&quot; (type=hinge, axis=[0, 1, 0], limits=[0, 100], pivot=&quot;door&quot;)</code></pre>
+<table>
+<thead>
+<tr class="header">
+<th>attribute</th>
+<th>value</th>
+<th>notes</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>type</code></td>
+<td><code>hinge</code>, <code>slider</code>, <code>ball</code>, <code>rotor</code></td>
+<td>DOF kind</td>
+</tr>
+<tr class="even">
+<td><code>pivot</code></td>
+<td>string — a node name</td>
+<td>required</td>
+</tr>
+<tr class="odd">
+<td><code>axis</code></td>
+<td>vec3</td>
+<td>default <code>[0, 1, 0]</code></td>
+</tr>
+<tr class="even">
+<td><code>limits</code></td>
+<td><code>[lo, hi]</code> list</td>
+<td>optional; degrees (rotary) or meters (slider)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="authored-clips">Authored clips</h3>
+<pre><code>clip &quot;open&quot; (seconds=1.0) {
+  track &quot;door_hinge&quot; (from=0, to=90)
+}</code></pre>
+<ul>
+<li><code>clip</code> holds a single duration and an ordered list of <code>track</code> children.</li>
+<li><code>track</code> targets a joint (by name) or a scene node directly. When targeting a node, add <code>prop="translation"|"rotation"|"scale"</code> to pick the channel (<code>pos</code> / <code>rot</code> are accepted aliases).</li>
+<li><code>from</code> / <code>to</code> are scalars. For rotation they're degrees around the joint's <code>axis</code> (or the track's <code>axis=</code> when targeting a plain node); for translation they're distance along the axis; for scale they're the uniform factor. Two keyframes are emitted at <code>0</code> and <code>seconds</code> and linearly interpolated.</li>
+<li>For multi-keyframe authored curves, pass <code>keys=[[t, v], …]</code> instead of <code>from</code>/<code>to</code>. Times must be strictly ascending and span any subset of <code>[0, seconds]</code> — the exporter emits one glTF keyframe per pair and interpolates linearly between them. This is what the stdlib walk / run / jump clips use to drive bones with hand-tuned curves.</li>
+</ul>
+<h3 id="easing">Easing</h3>
+<p>Every <code>track</code> and procedural template accepts an optional <code>easing=</code> attribute that selects a non-linear interpolation curve. glTF samplers themselves only support LINEAR / STEP / CUBICSPLINE, so MoGen bakes the easing curve into a dense LINEAR sampling at lower time — the resulting <code>.glb</code> plays back the same in any compliant viewer (Godot, Blender, Three.js, glTF-Validator).</p>
+<p>For an authored <code>track</code>, easing is applied between consecutive user keyframes (so <code>keys=[[0, 0], [1, 90]]</code> with <code>easing=ease_in_out</code> produces a smooth S-curve from 0° to 90°). For a template, easing warps the procedural phase parameter — e.g. <code>open_close (..., easing=ease_in_out_back)</code> opens slowly, overshoots, and settles back.</p>
+<table>
+<thead>
+<tr class="header">
+<th>name</th>
+<th>shape</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>linear</code> (default)</td>
+<td>t</td>
+</tr>
+<tr class="even">
+<td><code>ease_in</code> / <code>ease_out</code> / <code>ease_in_out</code></td>
+<td>quadratic</td>
+</tr>
+<tr class="odd">
+<td><code>ease_in_cubic</code> / <code>ease_out_cubic</code> / <code>ease_in_out_cubic</code></td>
+<td>cubic</td>
+</tr>
+<tr class="even">
+<td><code>ease_in_sine</code> / <code>ease_out_sine</code> / <code>ease_in_out_sine</code></td>
+<td>half-cosine</td>
+</tr>
+<tr class="odd">
+<td><code>ease_in_back</code> / <code>ease_out_back</code> / <code>ease_in_out_back</code></td>
+<td>overshoots the endpoint</td>
+</tr>
+<tr class="even">
+<td><code>ease_in_bounce</code> / <code>ease_out_bounce</code> / <code>ease_in_out_bounce</code></td>
+<td>multi-stage bounce</td>
+</tr>
+</tbody>
+</table>
+<pre><code>clip &quot;hop&quot; (seconds=0.6) {
+  track &quot;body&quot; (prop=translation, axis=[0, 1, 0],
+                easing=ease_out_bounce, from=0, to=0.4)
+}
+spin &quot;fan&quot; (target=&quot;rotor&quot;, rpm=120, easing=ease_in_out_sine)</code></pre>
+<h3 id="procedural-templates">Procedural templates</h3>
+<p>One-line declarations that expand into a full clip. They all take a <code>target="name"</code> pointing at a joint or a scene node.</p>
+<table>
+<thead>
+<tr class="header">
+<th>template</th>
+<th>extra attrs</th>
+<th>effect</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>spin</code></td>
+<td><code>axis</code>, <code>rpm</code> (60), <code>easing</code></td>
+<td>continuous rotation</td>
+</tr>
+<tr class="even">
+<td><code>open_close</code></td>
+<td><code>axis</code>, <code>angle</code> (90), <code>seconds</code> (1.0), <code>easing</code></td>
+<td>0° → angle → 0° swing</td>
+</tr>
+<tr class="odd">
+<td><code>wave</code></td>
+<td><code>axis</code>, <code>amplitude</code> (15°), <code>hz</code> (1.0), <code>easing</code></td>
+<td>sinusoidal wobble</td>
+</tr>
+<tr class="even">
+<td><code>flap</code></td>
+<td><code>axis</code>, <code>amplitude</code> (30°), <code>hz</code> (2.0), <code>easing</code></td>
+<td>faster wobble, bigger amplitude</td>
+</tr>
+<tr class="odd">
+<td><code>idle</code></td>
+<td><code>amplitude</code> (0.02 m), <code>hz</code> (0.5), <code>easing</code></td>
+<td>tiny translation breathe</td>
+</tr>
+</tbody>
+</table>
+<p>When the target is a joint, its <code>axis</code> is used by default; when it's a node, pass <code>axis</code> explicitly.</p>
+<pre><code>spin &quot;rotor_spin&quot; (target=&quot;rotor&quot;, axis=[0, 0, 1], rpm=30)
+open_close &quot;door_swing&quot; (target=&quot;door_hinge&quot;, angle=90, seconds=1.2)</code></pre>
+<hr />
+<h2 id="skeletons-and-skinning-skeleton-bone-skin-bind">Skeletons and skinning: <code>skeleton</code>, <code>bone</code>, <code>skin=</code>, <code>bind=</code></h2>
+<p>A <code>skeleton</code> is a hierarchy of named <code>bone</code> nodes that drives skinning weights on procedural meshes. Bones are ordinary scene nodes (<code>kind="bone"</code>); the skeleton block produces a <code>Skin</code> whose <code>joints</code> list captures every descendant bone in depth-first order. Bind-pose inverse matrices are computed automatically from the bones' world transforms at lower time, so the author never writes a <code>Mat4</code>.</p>
+<pre><code>scene {
+  skeleton &quot;rig&quot; {
+    bone &quot;hip&quot;      (pos=[0, 0.95, 0], envelope=0.25) {
+      bone &quot;spine&quot;  (pos=[0, 0.30, 0], envelope=0.25) {
+        bone &quot;neck&quot; (pos=[0, 0.30, 0], envelope=0.10)
+      }
+      bone &quot;thigh_l&quot; (pos=[ 0.10, -0.05, 0], envelope=0.25)
+      bone &quot;thigh_r&quot; (pos=[-0.10, -0.05, 0], envelope=0.25)
+    }
+  }
+
+  capsule &quot;torso&quot; (pos=[0, 1.25, 0], radius=0.18, height=0.6,
+                   mat=&quot;cloth&quot;, skin=&quot;rig&quot;)
+  sphere  &quot;head&quot;  (pos=[0, 1.7,  0], radius=0.12, mat=&quot;skin&quot;,
+                   skin=&quot;rig&quot;, bind=&quot;neck&quot;)
+}</code></pre>
+<h3 id="skeleton-and-bone"><code>skeleton</code> and <code>bone</code></h3>
+<ul>
+<li><code>skeleton "name" { … }</code> declares the rig. Inside, every child must be a <code>bone</code>. Bones may nest arbitrarily — each <code>bone</code> becomes a scene node parented under the previous one, so its <code>pos</code>/<code>rot</code>/<code>scale</code> are parent-relative.</li>
+<li><code>bone "name" (pos=…, rot=…, scale=…, envelope=…)</code> declares a joint. <code>envelope=</code> (default <code>0.75</code>) controls how far the bone's influence reaches when the auto-skinner assigns weights to nearby vertices — smaller envelopes are tighter, larger envelopes blend more across joints. Adjacent bones should overlap in envelope so vertices near a shared joint receive weight from both sides.</li>
+</ul>
+<p>Skeletons are top-level or scene-level declarations. They place themselves in the scene tree (so they animate alongside other nodes), but they don't carry geometry of their own.</p>
+<h3 id="binding-meshes-skinrig">Binding meshes: <code>skin="rig"</code></h3>
+<p>Any mesh-bearing node (primitive or import) with <code>skin="&lt;skel name&gt;"</code> becomes a skinned mesh: the lowering pass walks the skeleton, computes per-vertex weights against the four nearest bones (capped by each bone's <code>envelope</code>), and writes them into the GLB as <code>JOINTS_0</code> / <code>WEIGHTS_0</code> accessors. Group-like containers (<code>group</code>, <code>solid</code>, <code>stack</code>, <code>grid</code>, <code>array</code>, <code>mirror</code>, <code>module</code>, <code>use</code>) propagate <code>skin=</code> to every mesh descendant, so wrapping a sub-tree in <code>group (skin="rig") { … }</code> skins the whole thing in one line.</p>
+<h3 id="rigid-pinning-bindbone_name">Rigid pinning: <code>bind="bone_name"</code></h3>
+<p>Add <code>bind="bone"</code> alongside <code>skin=</code> to pin every vertex of that mesh rigidly to a single bone — weight 1.0, no envelope blend. Used for accessories that should track a joint without deforming: heads (bound to the neck), helmets, backpacks, hand-held props. <code>bind</code> propagates from a group to its descendants the same way <code>skin=</code> does, so a face cluster parented under a <code>group (bind="neck")</code> follows the head as one rigid piece.</p>
+<p>For <code>_l</code>/<code>_r</code>-suffixed pairs (e.g. left and right sleeves bound to <code>shoulder_l</code> / <code>shoulder_r</code>) — where the only difference between the two sides is the bone suffix — author one side and wrap it in <code>mirror (axis=x, flip_bind=1)</code>. The mirrored copy keeps every other attribute identical and rebinds to the swapped bone. See <a href="#mirror"><code>mirror</code></a> above.</p>
+<h3 id="animating-bones">Animating bones</h3>
+<p>Bones are scene nodes, so the regular <code>clip { track … }</code> machinery drives them: <code>track "thigh_l" (prop=rotation, axis=[1, 0, 0], keys=[…])</code>. The stdlib <code>humanoid_walk</code> / <code>humanoid_run</code> / <code>humanoid_idle</code> / <code>humanoid_jump</code> modules expand into clips of exactly this shape, targeting the bones declared by <code>humanoid_full</code>. There is no separate "animation rig" — if you can drive a node, you can drive a bone.</p>
+<p>CSG operands (<code>union</code>/<code>difference</code>/<code>intersect</code> children) are fused into the parent's mesh during lowering, so a stray <code>skin=</code> on an operand never survives. Put <code>skin=</code> on the CSG node itself (or on a wrapping group) instead.</p>
+<hr />
+<h2 id="lights-light">Lights: <code>light</code></h2>
+<p><code>mogen</code> exports lights via the standard glTF <code>KHR_lights_punctual</code> extension. A <code>light</code> is a transform-only scene node — it carries <code>pos</code> / <code>rot</code> like any other node, has no mesh, and never accepts children. Direction is implicit: the light points along its local <code>-Z</code> axis.</p>
+<pre><code>light &quot;sun&quot;  (kind=directional, dir=[-0.4, -1, -0.3], color=[1, 0.95, 0.85], intensity=3)
+light &quot;lamp&quot; (kind=point, pos=[0, 2, 0], color=[1, 0.9, 0.7], intensity=10, range=8)
+light &quot;spot&quot; (kind=spot,  pos=[0, 3, 0], dir=[0, -1, 0], intensity=20,
+              range=10, inner_cone=20, outer_cone=35)</code></pre>
+<table>
+<thead>
+<tr class="header">
+<th>attribute</th>
+<th>value</th>
+<th>notes</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>kind</code></td>
+<td><code>directional</code>, <code>point</code>, <code>spot</code></td>
+<td>required</td>
+</tr>
+<tr class="even">
+<td><code>color</code></td>
+<td>vec3</td>
+<td>linear-space RGB; default <code>[1, 1, 1]</code></td>
+</tr>
+<tr class="odd">
+<td><code>intensity</code></td>
+<td>number</td>
+<td><strong>candela</strong> for point/spot, <strong>lux</strong> for directional; default <code>1.0</code></td>
+</tr>
+<tr class="even">
+<td><code>range</code></td>
+<td>number</td>
+<td>distance cutoff for point/spot; rejected on directional</td>
+</tr>
+<tr class="odd">
+<td><code>dir</code></td>
+<td>vec3</td>
+<td>optional shortcut: rotates the node so <code>-Z</code> points along <code>dir</code> (overrides <code>rot=</code>)</td>
+</tr>
+<tr class="even">
+<td><code>inner_cone</code></td>
+<td>number</td>
+<td>spot only; degrees, default <code>0</code></td>
+</tr>
+<tr class="odd">
+<td><code>outer_cone</code></td>
+<td>number</td>
+<td>spot only; degrees, default <code>45</code></td>
+</tr>
+</tbody>
+</table>
+<p>Lights ignore <code>mat</code>, <code>anchor</code>, <code>from</code>/<code>to</code>, and the relative-placement shortcuts (<code>above</code>/<code>below</code>/…) — only transforms (<code>pos</code>, <code>rot</code>, <code>scale</code>, <code>x</code>/<code>y</code>/<code>z</code>, <code>rx</code>/<code>ry</code>/<code>rz</code>), <code>role</code>, and <code>tags</code> apply.</p>
+<p><code>mogen</code> does not emit an ambient term: the glTF core spec has no ambient light, and Godot derives ambient from a <code>WorldEnvironment</code> node downstream. For low-intensity fill, use a dim directional light (e.g. <code>intensity=0.5, dir=[0, -1, 0]</code>) or set up an environment in your engine.</p>
+<hr />
+<h2 id="colliders">Colliders</h2>
+<p>Annotate any geometry, <code>group</code>, <code>solid</code>, or <code>use</code> with <code>collider="aabb"</code> to mark it as a collision volume:</p>
+<pre><code>slab &quot;floor&quot;     (size=[18.4, 0.1, 10.4], mat=&quot;wood&quot;, collider=&quot;aabb&quot;)
+slab &quot;wall_back&quot; (size=[18.4, 3, 0.2], z=-5.1, mat=&quot;plaster&quot;, collider=&quot;aabb&quot;)
+use  &quot;desk&quot;      (pos=[0, 0, 0.4], collider=&quot;aabb&quot;)</code></pre>
+<p>The bounding box is derived at compile time from the node's <strong>subtree mesh extents</strong> in node-local space, after attach / conform / skin binding have finished — so a collider on <code>use "desk"</code> encloses the whole desk, and a collider on a <code>conform</code>-deformed plank reflects the bent vertices, not the straight ones.</p>
+<p><code>"aabb"</code> is the only accepted value in v1; anything else raises a build error. A collider on a node whose subtree carries no mesh is silently dropped (the attribute lives on, but the box is omitted from the output).</p>
+<p>The export writes one entry per collider'd node into glTF <code>node.extras.collider</code>:</p>
+<pre class="json"><code>&quot;extras&quot;: {
+  &quot;collider&quot;: {
+    &quot;type&quot;: &quot;aabb&quot;,
+    &quot;min&quot;: [-9.2, -0.05, -5.2],
+    &quot;max&quot;: [ 9.2,  0.05,  5.2]
+  }
+}</code></pre>
+<p><code>mogen</code> does not run a physics simulation — this is metadata for the downstream importer to convert into a <code>CollisionShape3D</code> (or equivalent). MoGen Studio renders an off-by-default wireframe gizmo at each collider'd node; toggle it from <strong>View → Show Colliders</strong> or the viewport context menu.</p>
+<hr />
+<h2 id="shadow-casting">Shadow casting</h2>
+<p>Every node casts shadows by default. Add <code>cast_shadow=0</code> to opt a node — and its entire subtree — out of the realtime shadow pre-pass and the exported shadow hint:</p>
+<pre><code>plane &quot;ground&quot; (size=20, mat=&quot;grass&quot;, cast_shadow=0)
+group &quot;filler&quot; (cast_shadow=0) {
+  box (size=[1, 1, 1])     # inherits cast_shadow=0
+  use  &quot;rocks&quot;             # inherits too
+}</code></pre>
+<p>The flag propagates monotonically: an ancestor's <code>cast_shadow=0</code> overrides a descendant default. Setting it on a child while a parent already disabled it is a no-op (the descendant stays opted out).</p>
+<p>The export writes <code>extras.cast_shadow=false</code> only on opted-out nodes; the typical "casts shadow" case omits the key entirely so the JSON chunk stays lean. Downstream importers that don't recognise the key fall back to the glTF default (casts shadow), matching the spec.</p>
+<p>The right-sidebar inspector exposes the toggle as a checkbox under <strong>Shadow</strong>.</p>
+<hr />
+<h2 id="full-example">Full example</h2>
+<p>A door in a wall, with a swinging-open animation, built end-to-end:</p>
+<pre><code>material &quot;wood&quot;     (color=[0.55, 0.35, 0.18], roughness=0.8)
+material &quot;concrete&quot; (color=[0.78, 0.78, 0.78], roughness=0.85)
+
+scene {
+  difference &quot;wall_with_door&quot; (mat=&quot;concrete&quot;, role=&quot;wall&quot;) {
+    box &quot;wall&quot;       (size=[4.0, 3.0, 0.2])
+    box &quot;door_gap&quot;   (pos=[0, -0.5, 0], size=[0.9, 2.0, 0.5])
+  }
+
+  // Hinge at the left edge: offset the panel by half-width inside the group.
+  group &quot;door&quot; (pos=[-0.45, 1.0, 0]) {
+    box &quot;panel&quot; (pos=[0.45, 0, 0], size=[0.9, 2.0, 0.04], mat=&quot;wood&quot;)
+  }
+}
+
+joint &quot;door_hinge&quot; (type=hinge, axis=[0, 1, 0], limits=[0, 100], pivot=&quot;door&quot;)
+clip &quot;open&quot; (seconds=1.2) {
+  track &quot;door_hinge&quot; (from=0, to=90)
+}</code></pre>
+<p>Compile with <code>mogen build examples/&lt;file&gt;.mog -o out.glb</code> and open in any glTF-2.0 viewer or game engine.</p>
+<hr />
+<h2 id="diagnostics-and-tooling">Diagnostics and tooling</h2>
+<ul>
+<li><code>mogen check &lt;file&gt;.mog</code> validates without building. Pass <code>--json</code> for machine-readable diagnostics (the format the LLM repair loop consumes).</li>
+<li><code>mogen dump-scene &lt;file&gt;.mog --json</code> prints the lowered graph for debugging.</li>
+<li><code>mogen inspect &lt;file&gt;.glb</code> reads back a GLB and prints its top-level structure.</li>
+</ul>
+<p>See <a href="./ROADMAP.md"><code>ROADMAP.md</code></a> §8 for the full diagnostic catalog.</p>
+</article>
+
+</div>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div>© <span data-year></span> MoGen · MIT licensed</div>
+    <div>
+      <a href="playground/index.html">Playground</a> · <a href="dsl.html">DSL</a> · <a href="cli.html">CLI</a> · <a href="studio.html">Studio</a> ·
+      <a href="https://github.com/krazyjakee/MoGen" target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </div>
+</footer>
+
+<script src="assets/site.js"></script>
+</body>
+</html>
