@@ -26,6 +26,12 @@ const STDLIB_FILES: &[(&str, &str)] = &[
     ("humanoid_hair_short.mog",   include_str!("../stdlib/humanoid_hair_short.mog")),
     ("humanoid_hair_long.mog",    include_str!("../stdlib/humanoid_hair_long.mog")),
     ("humanoid_full.mog",         include_str!("../stdlib/humanoid_full.mog")),
+    ("humanoid_top_blazer_open.mog", include_str!("../stdlib/humanoid_top_blazer_open.mog")),
+    ("humanoid_top_tshirt_panel.mog", include_str!("../stdlib/humanoid_top_tshirt_panel.mog")),
+    ("humanoid_cuffs.mog",        include_str!("../stdlib/humanoid_cuffs.mog")),
+    ("humanoid_pants_tapered.mog",include_str!("../stdlib/humanoid_pants_tapered.mog")),
+    ("humanoid_shoes_low.mog",    include_str!("../stdlib/humanoid_shoes_low.mog")),
+    ("humanoid_beard_short.mog",  include_str!("../stdlib/humanoid_beard_short.mog")),
     ("humanoid_idle.mog",         include_str!("../stdlib/humanoid_idle.mog")),
     ("humanoid_walk.mog",         include_str!("../stdlib/humanoid_walk.mog")),
     ("humanoid_run.mog",          include_str!("../stdlib/humanoid_run.mog")),
@@ -170,7 +176,13 @@ mod tests {
             let depends_on_humanoid = name.starts_with("humanoid_")
                 && matches!(name.as_str(),
                     "humanoid_walk" | "humanoid_run"
-                    | "humanoid_idle" | "humanoid_jump");
+                    | "humanoid_idle" | "humanoid_jump"
+                    | "humanoid_top_blazer_open"
+                    | "humanoid_top_tshirt_panel"
+                    | "humanoid_cuffs"
+                    | "humanoid_pants_tapered"
+                    | "humanoid_shoes_low"
+                    | "humanoid_beard_short");
             let scaffold = if depends_on_humanoid && name != "humanoid_full" {
                 "use \"humanoid_full\" ()\n"
             } else {

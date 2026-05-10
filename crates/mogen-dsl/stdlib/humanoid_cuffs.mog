@@ -1,0 +1,21 @@
+// summary: Two thin shirt-cuff bands at the wrist end of each forearm — the white peek of dress-shirt cuff that shows below a suit-jacket sleeve. Each cuff is a single chamfered_box wrap, skinned to the `rig` skeleton and rigid-bound to `elbow_l/r` (so it tracks the forearm bone, not the wrist — staying snug to the bottom of a `humanoid_top_blazer_open` sleeve through walk / run / idle / jump animations). Pass `height` and `weight` matching the host `humanoid_full`; `colour` defaults to off-white and drives the `cuff_band` material. Use after `humanoid_full ()` and `humanoid_top_blazer_open ()` in the same scene.
+module "humanoid_cuffs" (
+  height=1.7,
+  weight=1.0,
+  colour=[0.92, 0.92, 0.92]
+) {
+  material "cuff_band" (color=$colour, roughness=0.82)
+
+  chamfered_box "cuff_l" (
+    pos=[$height *  0.135, $height * 0.478, 0],
+    size=[$height * 0.052 * $weight, $height * 0.020, $height * 0.052 * $weight],
+    radius=$height * 0.005,
+    mat="cuff_band", skin="rig", bind="elbow_l", faceted=1
+  )
+  chamfered_box "cuff_r" (
+    pos=[$height * -0.135, $height * 0.478, 0],
+    size=[$height * 0.052 * $weight, $height * 0.020, $height * 0.052 * $weight],
+    radius=$height * 0.005,
+    mat="cuff_band", skin="rig", bind="elbow_r", faceted=1
+  )
+}

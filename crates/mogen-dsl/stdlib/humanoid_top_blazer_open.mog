@@ -1,0 +1,76 @@
+// summary: Open-front business blazer / suit jacket layered over `humanoid_full`'s torso. Five chamfered_box panels (back, two side wraps, two front lapels with a Z-axis tilt) leave a V-shaped gap at the upper chest where an undershirt panel shows through, plus four chamfered_box sleeves over the upper and lower arms. Each piece skins to the `rig` skeleton declared by `humanoid_full` and rigid-binds to the matching bone (`spine_chest` for torso pieces, `shoulder_l/r` and `elbow_l/r` for sleeves) so the jacket follows walks, runs, idles, and jumps. Pass `height` and `weight` matching the host `humanoid_full` call; `colour` drives the jacket fabric material `jacket_outer`. Use after a `humanoid_full ()` call in the same scene.
+module "humanoid_top_blazer_open" (
+  height=1.7,
+  weight=1.0,
+  colour=[0.06, 0.06, 0.06]
+) {
+  material "jacket_outer" (color=$colour, roughness=0.78)
+
+  // Back / side wrap-around — three panels that together form a "U" that
+  // covers the back, sides, and shoulders of the torso while leaving the
+  // front open for the lapels.
+  chamfered_box "blazer_back" (
+    pos=[0, $height * 0.660, $height * 0.040],
+    size=[$height * 0.226 * $weight, $height * 0.276, $height * 0.060 * $weight],
+    radius=$height * 0.014,
+    mat="jacket_outer", skin="rig", bind="spine_chest", faceted=1
+  )
+  chamfered_box "blazer_side_l" (
+    pos=[$height * 0.105 * $weight, $height * 0.660, 0],
+    size=[$height * 0.030 * $weight, $height * 0.276, $height * 0.140 * $weight],
+    radius=$height * 0.012,
+    mat="jacket_outer", skin="rig", bind="spine_chest", faceted=1
+  )
+  chamfered_box "blazer_side_r" (
+    pos=[$height * -0.105 * $weight, $height * 0.660, 0],
+    size=[$height * 0.030 * $weight, $height * 0.276, $height * 0.140 * $weight],
+    radius=$height * 0.012,
+    mat="jacket_outer", skin="rig", bind="spine_chest", faceted=1
+  )
+
+  // Front lapels — thin panels with a Z-axis tilt so their inner edges
+  // diverge at the top, opening a V-shaped gap at the upper chest where
+  // the undershirt panel shows through.
+  chamfered_box "blazer_front_l" (
+    pos=[$height * 0.075 * $weight, $height * 0.660, $height * -0.066 * $weight],
+    rot=[0, 0, 10],
+    size=[$height * 0.090 * $weight, $height * 0.276, $height * 0.014],
+    radius=$height * 0.005,
+    mat="jacket_outer", skin="rig", bind="spine_chest", faceted=1
+  )
+  chamfered_box "blazer_front_r" (
+    pos=[$height * -0.075 * $weight, $height * 0.660, $height * -0.066 * $weight],
+    rot=[0, 0, -10],
+    size=[$height * 0.090 * $weight, $height * 0.276, $height * 0.014],
+    radius=$height * 0.005,
+    mat="jacket_outer", skin="rig", bind="spine_chest", faceted=1
+  )
+
+  // Sleeves — slightly larger than the bare arms so they envelop the
+  // skin geometry. Bound to the arm bones so they swing through walks
+  // / runs.
+  chamfered_box "blazer_sleeve_l_upper" (
+    pos=[$height *  0.135, $height * 0.695, 0],
+    size=[$height * 0.052 * $weight, $height * 0.150, $height * 0.052 * $weight],
+    radius=$height * 0.009,
+    mat="jacket_outer", skin="rig", bind="shoulder_l", faceted=1
+  )
+  chamfered_box "blazer_sleeve_l_fore" (
+    pos=[$height *  0.135, $height * 0.545, 0],
+    size=[$height * 0.046 * $weight, $height * 0.150, $height * 0.046 * $weight],
+    radius=$height * 0.008,
+    mat="jacket_outer", skin="rig", bind="elbow_l", faceted=1
+  )
+  chamfered_box "blazer_sleeve_r_upper" (
+    pos=[$height * -0.135, $height * 0.695, 0],
+    size=[$height * 0.052 * $weight, $height * 0.150, $height * 0.052 * $weight],
+    radius=$height * 0.009,
+    mat="jacket_outer", skin="rig", bind="shoulder_r", faceted=1
+  )
+  chamfered_box "blazer_sleeve_r_fore" (
+    pos=[$height * -0.135, $height * 0.545, 0],
+    size=[$height * 0.046 * $weight, $height * 0.150, $height * 0.046 * $weight],
+    radius=$height * 0.008,
+    mat="jacket_outer", skin="rig", bind="elbow_r", faceted=1
+  )
+}
