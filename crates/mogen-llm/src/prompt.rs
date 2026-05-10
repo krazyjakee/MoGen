@@ -563,23 +563,22 @@ mod tests {
 
     #[test]
     fn organic_fewshots_attach_limbs_via_module_connectors() {
-        // The tiger fewshot still attaches legs to torso connectors via
-        // quadruped_torso (the quadruped path is unchanged). The knight
-        // fewshot now uses outfit/equipment modules instead of hand-rolled
-        // attaches — they socket-snap and bone-bind internally so the LLM
-        // doesn't need to author `attach` calls for armor at all.
+        // The tiger fewshot attaches legs to torso connectors via
+        // quadruped_torso. The knight fewshot now demonstrates the slot-based
+        // composition path: build accessories as primitives and `attach` them
+        // to humanoid_full's `slot_*` connectors. No hidden preset modules.
         let s = system_instruction(&StdlibIndex::default());
         assert!(
             s.contains("attach (parent=\"torso\", child=\"leg_fl\""),
             "tiger fewshot should attach legs to torso connectors"
         );
         assert!(
-            s.contains("use \"outfit_helmet\""),
-            "knight fewshot should compose with outfit_helmet (auto-socket-snap)"
+            s.contains("socket=\"slot_crown\""),
+            "knight fewshot should attach a helmet to the head's slot_crown"
         );
         assert!(
-            s.contains("use \"equip_sword\""),
-            "knight fewshot should compose with equip_sword (auto-socket-snap)"
+            s.contains("socket=\"slot_hand_r_grip\""),
+            "knight fewshot should attach a sword to slot_hand_r_grip"
         );
     }
 
@@ -604,15 +603,16 @@ mod tests {
         );
         assert!(s.contains("shirt"), "shirt colour param must appear");
         assert!(s.contains("pants"), "pants colour param must appear");
-        // Knight fewshot pairs with outfit modules so the LLM sees the
-        // composition pattern.
+        // Knight fewshot pairs with primitives attached to slot connectors —
+        // outfit/equipment presets are no longer shipped, the figure exposes
+        // named `slot_*` connectors and the LLM composes against those.
         assert!(
-            s.contains("use \"outfit_helmet\""),
-            "knight fewshot must reference outfit_helmet"
+            s.contains("socket=\"slot_crown\""),
+            "knight fewshot must attach a helmet to slot_crown"
         );
         assert!(
-            s.contains("use \"equip_sword\""),
-            "knight fewshot must reference equip_sword"
+            s.contains("socket=\"slot_hand_r_grip\""),
+            "knight fewshot must attach a weapon to slot_hand_r_grip"
         );
         // Walk clip must be paired so the figure isn't frozen.
         assert!(

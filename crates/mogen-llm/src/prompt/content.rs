@@ -146,21 +146,30 @@ from a validator failure.
    pants=[r,g,b], boot=[r,g,b], hair=[r,g,b])` is the correct default: it \
    expands into a Synty-style low-poly figure (torso/head/arms/hands/legs/ \
    feet/face) pre-skinned to a `\"rig\"` skeleton, materials are declared \
-   internally from the colour params (no need to redeclare them), the \
-   face has a painted `face` panel that the texture pipeline auto-fills \
-   with eyes/brows/mouth, and the rig drives the shipped `humanoid_walk` \
-   / `humanoid_run` / `humanoid_idle` / `humanoid_jump` clips. Always \
-   pair `humanoid_full` with one of those clips so the character isn't \
-   frozen. Use `humanoid_full` only ONCE per scene (it embeds a `\"rig\"` \
-   skeleton). For clothing and gear, reach for the outfit/equipment \
-   modules — they socket-snap and bone-bind so they follow the figure \
-   during animation: `outfit_hat_brimmed (color=…)`, `outfit_helmet \
-   (color=…, visor_color=…)`, `outfit_cape (color=…)`, `outfit_backpack \
-   (color=…)`, `outfit_belt (color=…, buckle_color=…)`, `equip_sword \
-   (blade_color=…, hilt_color=…)`, `equip_shield (color=…, \
-   boss_color=…)`, `equip_staff (wood_color=…, crystal_color=…)`. Stack \
-   as many as the prompt implies (a knight is helmet + cape + belt + \
-   sword + shield). For **whole trees / large bushes** reach for the \
+   internally from the colour params, the face is built from visible \
+   eye/brow/nose/mouth blocks (no texture needed), and the rig drives the \
+   shipped `humanoid_walk` / `humanoid_run` / `humanoid_idle` / \
+   `humanoid_jump` clips. Always pair `humanoid_full` with one of those \
+   clips so the character isn't frozen. Use `humanoid_full` only ONCE per \
+   scene (it embeds a `\"rig\"` skeleton). For clothing, weapons, and \
+   accessories, build the geometry yourself with primitives (chamfered_box \
+   for plate/cap/blade, cylinder for shafts, sphere for pommels) and \
+   `attach` it to the figure's named slot connectors — every standard \
+   mounting point exists: `slot_crown` (top of head, hats/helmets), \
+   `slot_face` / `slot_jaw` / `slot_ear_l` / `slot_ear_r` / \
+   `slot_neck_back`, `slot_chest_front` / `slot_chest_back` / \
+   `slot_back_lower` / `slot_shoulder_l` / `slot_shoulder_r`, \
+   `slot_waist_front` / `slot_waist_back` / `slot_waist_l` / \
+   `slot_waist_r` / `slot_pelvis_front`, `slot_hand_l_grip` / \
+   `slot_hand_r_grip` / `slot_hand_l_back` / `slot_hand_r_back`, and \
+   `slot_foot_l_top` / `slot_foot_r_top` / `slot_foot_l_heel` / \
+   `slot_foot_r_heel` / `slot_foot_l_toe` / `slot_foot_r_toe`. Each slot \
+   bone-binds via its parent body part, so attached geometry follows \
+   animations automatically. The slot's `at=` is in the parent part's \
+   local frame; the slot's `dir=` points outward, so a child's `plug` \
+   connector should point in the opposite direction (e.g. helmet rim \
+   `dir=[0,-1,0]` for a `slot_crown` of `dir=[0,1,0]`). For **whole trees \
+   / large bushes** reach for the \
    recursive `branch (...)` node — one declaration emits a tapered trunk \
    + recursive forks + alpha-cutout `leaf_card` foliage at every tip; \
    pair it with `material (alpha_mode=\"mask\", double_sided=1)` for the \
@@ -680,12 +689,18 @@ scene {
 
 ### Prompt: \"a knight in armor\"
 ### Output:
-meta (name = \"knight_in_armor\", description = \"a low-poly knight in steel helmet with cape, sword, and shield\", tags = [\"character\", \"knight\", \"armor\"])
+meta (name = \"knight_in_armor\", description = \"a low-poly knight in steel helmet with cape and sword, attached via humanoid slot connectors\", tags = [\"character\", \"knight\", \"armor\"])
+
+material \"knight_steel\"   (color=[0.65, 0.66, 0.70], metallic=0.7, roughness=0.45)
+material \"knight_visor\"   (color=[0.32, 0.34, 0.36], metallic=0.7, roughness=0.40)
+material \"knight_cape\"    (color=[0.62, 0.18, 0.18], roughness=0.85)
+material \"knight_leather\" (color=[0.32, 0.20, 0.10], roughness=0.80)
 
 scene {
-  // Compose with stdlib outfit/equipment modules — each socket-snaps to the
-  // corresponding humanoid_full connector and bone-binds so it follows the
-  // walk animation. No manual `attach` calls needed.
+  // Build accessories as plain primitives and snap them onto the figure's
+  // named slot connectors. Each slot bone-binds via its parent body part,
+  // so the helmet rides the head, the cape rides the chest, and the sword
+  // rides the right hand through the walk cycle.
   use \"humanoid_full\" (
     height=1.7,
     skin =[0.85, 0.65, 0.55],
@@ -693,11 +708,24 @@ scene {
     pants=[0.30, 0.30, 0.32],
     boot =[0.10, 0.10, 0.10]
   )
-  use \"outfit_helmet\" (color=[0.72, 0.74, 0.78], visor_color=[0.30, 0.32, 0.34])
-  use \"outfit_cape\"   (color=[0.62, 0.18, 0.18])
-  use \"outfit_belt\"   ()
-  use \"equip_sword\"   ()
-  use \"equip_shield\"  ()
+  group \"helmet\" {
+    chamfered_box \"helmet_cap\"  (pos=[0, 0.075, 0],     size=[0.20, 0.15, 0.20], radius=0.025, mat=\"knight_steel\", faceted=1)
+    chamfered_box \"helmet_band\" (pos=[0, 0.040, -0.092], size=[0.187, 0.042, 0.024], radius=0.007, mat=\"knight_visor\", faceted=1)
+    connector \"rim\" (at=[0, 0, 0], dir=[0, -1, 0], tag=plug)
+  }
+  attach (parent=\"head\", child=\"helmet\", socket=\"slot_crown\", plug=\"rim\")
+  chamfered_box \"cape\" (size=[0.51, 0.765, 0.026], radius=0.008, mat=\"knight_cape\", faceted=1) {
+    connector \"neck_edge\" (at=[0, 0.382, -0.012], dir=[0, 1, 0], tag=plug)
+  }
+  attach (parent=\"torso\", child=\"cape\", socket=\"slot_chest_back\", plug=\"neck_edge\")
+  group \"sword\" {
+    sphere        \"sword_pommel\" (pos=[0,  0.048, 0], radius=0.024, mat=\"knight_leather\", faceted=1)
+    cylinder      \"sword_hilt\"   (pos=[0,  0.000, 0], radius=0.019, height=0.102, segments=10, mat=\"knight_leather\", faceted=1)
+    chamfered_box \"sword_guard\"  (pos=[0, -0.064, 0], size=[0.10, 0.020, 0.030], radius=0.003, mat=\"knight_steel\", faceted=1)
+    chamfered_box \"sword_blade\"  (pos=[0, -0.374, 0], size=[0.037, 0.578, 0.010], radius=0.003, mat=\"knight_steel\", faceted=1)
+    connector \"grip\" (at=[0, 0.062, 0], dir=[0, 1, 0], tag=plug)
+  }
+  attach (parent=\"hand_r\", child=\"sword\", socket=\"slot_hand_r_grip\", plug=\"grip\")
   use \"humanoid_walk\" ()
 }
 

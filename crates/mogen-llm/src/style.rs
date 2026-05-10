@@ -115,8 +115,10 @@ impl Style {
                  head), flat single-colour painterly materials per surface, gentle \
                  chamfers on edges, and textures used only for painted face details \
                  — no fabric weave or brick patterns. For humanoid characters use \
-                 `humanoid_full` with vec3 colour params; layer outfit/equipment \
-                 from `outfit_*` and `equip_*` stdlib modules."
+                 `humanoid_full` with vec3 colour params; build clothing, weapons, \
+                 and accessories as primitives and `attach` them to the figure's \
+                 `slot_*` connectors (slot_crown, slot_chest_back, slot_waist_*, \
+                 slot_hand_l_grip, slot_hand_r_grip, …)."
             }
             Style::HighDetail => {
                 "Dense AAA geometry: high-segment curves (cylinders ≥ 32 segments, \

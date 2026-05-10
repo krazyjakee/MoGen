@@ -101,18 +101,66 @@ custom rig from a subset of parts.
 
 #### `humanoid_full`
 
-Complete rigged humanoid in one declaration — torso, head, arms, hands,
-legs, feet, face, attached and skinned to a `"rig"` skeleton.
+Complete rigged Synty/Quaternius-style humanoid in one declaration —
+torso, head, arms, mitten hands, legs, feet, and visible face features
+(eyes, brows, nose, mouth), all skinned to a `"rig"` skeleton with rigid
+binding so each body part follows exactly one bone.
 
 | parameter | default | meaning |
 |---|---|---|
-| `height` | `1.7` | overall height in meters |
+| `height` | `1.7` | overall scale (figure stands ~ this tall in metres) |
+| `skin` | `[0.85, 0.65, 0.55]` | skin colour |
+| `hair` | `[0.20, 0.15, 0.10]` | brow / hair colour |
+| `eye` | `[0.08, 0.08, 0.10]` | eye-block colour |
+| `mouth` | `[0.55, 0.20, 0.20]` | mouth-block colour |
+| `shirt` | `[0.30, 0.45, 0.65]` | torso colour |
+| `pants` | `[0.20, 0.22, 0.28]` | hips + leg colour |
+| `boot` | `[0.15, 0.10, 0.07]` | foot colour |
 
-**Caller declares materials:** `skin`, `cloth`, `eye`, `mouth`, `boot`.
+The module declares matching `material "skin"`, `"hair"`, `"eye"`,
+`"mouth"`, `"shirt"`, `"pants"`, `"boot"` internally from those params.
+A scene-level `material "skin" (...)` declaration takes precedence (the
+collector dedupes name-first, caller-wins).
+
+Use only **once** per scene since it owns the global `"rig"` skeleton;
+pair with one of the humanoid animation modules below so the figure
+isn't frozen.
+
+##### Slot connectors
+
+The figure exposes a comprehensive set of named slot connectors so that
+hats, masks, capes, packs, belts, sheaths, weapons, and gauntlets can
+be authored as plain primitives and `attach`-snapped onto the figure.
+Each slot bone-binds via its parent body part, so attached children
+follow walks, runs, jumps, and idle motion automatically.
+
+| slot | parent part | bone | usage |
+|---|---|---|---|
+| `slot_crown` | `head` | `neck` | hats, helmets, crowns |
+| `slot_face` | `head` | `neck` | masks, visors |
+| `slot_jaw` | `head` | `neck` | beards, chinstraps |
+| `slot_ear_l` / `slot_ear_r` | `head` | `neck` | ear decoration, earrings |
+| `slot_neck_back` | `head` | `neck` | collars, scarves |
+| `slot_chest_front` | `torso` | `spine_chest` | badges, medals, breastplate emblem |
+| `slot_chest_back` | `torso` | `spine_chest` | capes, banners (top edge) |
+| `slot_back_lower` | `torso` | `spine_chest` | backpacks, satchels |
+| `slot_shoulder_l` / `slot_shoulder_r` | `torso` | `spine_chest` | pauldrons, shoulder straps |
+| `slot_waist_front` / `slot_waist_back` | `hips` | `hip` | belt buckle / rear of belt |
+| `slot_waist_l` / `slot_waist_r` | `hips` | `hip` | sheaths, holsters |
+| `slot_pelvis_front` | `hips` | `hip` | loincloths, codpieces |
+| `slot_hand_l_grip` / `slot_hand_r_grip` | `hand_l` / `hand_r` | `wrist_l` / `wrist_r` | swords, staves, torches |
+| `slot_hand_l_back` / `slot_hand_r_back` | `hand_l` / `hand_r` | `wrist_l` / `wrist_r` | gauntlets, signet rings |
+| `slot_foot_l_top` / `slot_foot_r_top` | `foot_l` / `foot_r` | `ankle_l` / `ankle_r` | greaves attachment |
+| `slot_foot_l_heel` / `slot_foot_r_heel` | `foot_l` / `foot_r` | `ankle_l` / `ankle_r` | spurs |
+| `slot_foot_l_toe` / `slot_foot_r_toe` | `foot_l` / `foot_r` | `ankle_l` / `ankle_r` | toe caps, claws |
+
+Each slot's `dir=` points outward from the figure; an attached child
+should expose a `connector "..." (dir=[opposite], tag=plug)` so the
+attach pass aligns the surfaces.
+
 Hair is not bundled — `use "humanoid_hair_short"` (or
-`humanoid_hair_long`) and attach to the head's `crown` socket if the
-figure needs hair. Use only **once** per scene since it owns the global
-`"rig"` skeleton; pair with one of the humanoid animation modules below.
+`humanoid_hair_long`) and attach to `slot_crown` if the figure needs
+hair.
 
 #### `humanoid_torso`
 
