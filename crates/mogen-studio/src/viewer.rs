@@ -37,8 +37,9 @@ use crate::preview_shader::PreviewShader;
 use renderer::Renderer;
 use state::{
     aspect_for, begin_gizmo_drag, commit_gizmo_drag, find_deepest_node_at_offset,
-    gizmo_handles_supported, node_path, replace_selection, replace_selection_cycling,
-    resolve_node_path, toggle_selection, update_gizmo_drag, ViewerState,
+    find_use_at_offset, gizmo_handles_supported, node_path, replace_selection,
+    replace_selection_cycling, resolve_node_path, toggle_selection, update_gizmo_drag,
+    ViewerState,
 };
 
 pub struct Viewer {
@@ -208,12 +209,19 @@ impl Viewer {
     /// selection actually changed; callers can short-circuit when nothing
     /// moved. `None` from the offset lookup (caret in a comment, blank line,
     /// or otherwise outside any span) preserves the existing selection.
-    pub fn select_node_at_source_offset(&self, byte_offset: usize) -> bool {
+    pub fn select_node_at_source_offset(&self, byte_offset: usize, source: &str) -> bool {
         let mut st = self.state.lock().unwrap();
         let Some(scene) = st.scene.clone() else {
             return false;
         };
-        let Some(target) = find_deepest_node_at_offset(&scene, byte_offset) else {
+        // A click on a `use "X" (...)` line maps to the imported root rather
+        // than whatever container would otherwise win the deepest-span tiebreak
+        // (typically `scene`, since imported nodes' spans live in another
+        // file and are skipped). Try this first so the editor click lands a
+        // meaningful viewport selection.
+        let target = find_use_at_offset(&scene, source, byte_offset)
+            .or_else(|| find_deepest_node_at_offset(&scene, byte_offset));
+        let Some(target) = target else {
             return false;
         };
         if st.selected.last().copied() == Some(target) {
@@ -672,6 +680,15 @@ impl Viewer {
                                     "[gizmo] commit SetAttrCanonical node={} attr={} value={} delete={:?}",
                                     node.0, attr, value, delete
                                 ),
+                                PendingEdit::SetAttrAtSpan {
+                                    span,
+                                    attr,
+                                    value,
+                                    delete,
+                                } => eprintln!(
+                                    "[gizmo] commit SetAttrAtSpan span={:?} attr={} value={} delete={:?}",
+                                    span, attr, value, delete
+                                ),
                                 PendingEdit::DeleteNode { node } => eprintln!(
                                     "[gizmo] commit DeleteNode node={}",
                                     node.0
@@ -930,8 +947,13 @@ impl Viewer {
                     // socket has no source span). Drawing handles the input
                     // layer would refuse just lets the user grab a dead
                     // affordance and watch the camera orbit instead.
-                    if gizmo_handles_supported(scene, sel, st.gizmo_mode) {
-                        let worlds = scene.world_transforms();
+                    if gizmo_handles_supported(scene, &st.clip_active, sel, st.gizmo_mode) {
+                        // Live-pose worlds (clips + drag overlay) so the
+                        // handle origin tracks what the user actually sees.
+                        // For static rigs this collapses to rest-pose
+                        // worlds, so the legacy non-animated path is
+                        // unaffected.
+                        let worlds = st.live_worlds();
                         let base_world = worlds
                             .get(sel.0 as usize)
                             .copied()

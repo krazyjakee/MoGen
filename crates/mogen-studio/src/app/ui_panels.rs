@@ -17,6 +17,5 @@ mod diagnostics;
 mod editor;
 mod materials;
 mod overlay;
-mod preview;
 mod selected;
 mod summary;

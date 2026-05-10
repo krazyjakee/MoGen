@@ -550,6 +550,7 @@ fn translation_animation_emits_stack_layer_curve_node_and_three_axes() {
             easing: Easing::Linear,
             times: vec![0.0, 0.5, 1.0],
             values: vec![[0.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0]],
+            source_span: None,
         }],
         origin: None,
     };
@@ -652,6 +653,7 @@ fn step_interpolation_emits_constant_key_attr_flag() {
             easing: Easing::Linear,
             times: vec![0.0, 1.0],
             values: vec![[0.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]],
+            source_span: None,
         }],
         origin: None,
     });
@@ -695,6 +697,7 @@ fn rotation_track_emits_euler_degrees() {
             easing: Easing::Linear,
             times: vec![0.0],
             values: vec![[q.x, q.y, q.z, q.w]],
+            source_span: None,
         }],
         origin: None,
     });

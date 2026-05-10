@@ -108,22 +108,24 @@ impl MogenStudioApp {
                         let mut out: Vec<(PendingEdit, mogen_core::Span)> =
                             Vec::with_capacity(edits.len());
                         for edit in edits {
-                            let node = match &edit {
-                                PendingEdit::SetAttrCanonical { node, .. } => *node,
-                                PendingEdit::DeleteNode { node } => *node,
+                            // Track-bound edits already carry their span (from
+                            // the originating `track` header). Node-bound
+                            // edits go through node_spans so a recompile that
+                            // renumbered NodeIds still finds the right header.
+                            let span = match &edit {
+                                PendingEdit::SetAttrAtSpan { span, .. } => Some(*span),
+                                PendingEdit::SetAttrCanonical { node, .. }
+                                | PendingEdit::DeleteNode { node } => result
+                                    .node_spans
+                                    .get(node.0 as usize)
+                                    .and_then(|s| *s),
                             };
-                            match result
-                                .node_spans
-                                .get(node.0 as usize)
-                                .and_then(|s| *s)
-                            {
+                            match span {
                                 Some(span) => out.push((edit, span)),
                                 None => {
                                     if trace {
                                         eprintln!(
-                                            "[gizmo] drain SKIPPED: no span for node {} (node_spans.len={})",
-                                            node.0,
-                                            result.node_spans.len()
+                                            "[gizmo] drain SKIPPED: no span for edit {edit:?}"
                                         );
                                     }
                                 }
@@ -172,6 +174,29 @@ impl MogenStudioApp {
                                 value,
                                 delete,
                                 span,
+                                before != source
+                            );
+                        }
+                        last_attr = Some(attr);
+                        any_applied = true;
+                    }
+                    PendingEdit::SetAttrAtSpan { attr, value, delete, .. } => {
+                        // Span-targeted writeback (currently track headers).
+                        // Same delete-then-set ordering as the node-bound
+                        // variant — `set_attr` only consults the outer span,
+                        // which is stable while inner attrs shrink.
+                        for shadow in &delete {
+                            source = edit::delete_attr(&source, span, shadow);
+                        }
+                        let before = source.clone();
+                        source = edit::set_attr(&source, span, &attr, &value);
+                        if trace {
+                            eprintln!(
+                                "[gizmo] drain APPLIED span={:?} attr={} value={} delete={:?} changed={}",
+                                span,
+                                attr,
+                                value,
+                                delete,
                                 before != source
                             );
                         }

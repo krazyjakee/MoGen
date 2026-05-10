@@ -45,13 +45,19 @@ impl MogenStudioApp {
         // Tab is only intercepted for multi-line selections — otherwise the
         // default code-editor behaviour (insert / replace with `\t`) wins.
         // Shift+Tab is always handled (dedents the current line at minimum).
+        //
+        // Check Shift+Tab FIRST: egui's `consume_key` uses
+        // `Modifiers::matches_logically`, which ignores extra modifiers — so
+        // `consume_key(NONE, Tab)` happily matches a Shift+Tab event too. If
+        // we matched the broader Tab pattern first on a multi-line selection,
+        // Shift+Tab would silently re-indent instead of dedenting.
         let (tab, shift_tab) = ui.input_mut(|i| {
-            let tab = if multi_line {
+            let shift_tab = i.consume_key(egui::Modifiers::SHIFT, egui::Key::Tab);
+            let tab = if multi_line && !shift_tab {
                 i.consume_key(egui::Modifiers::NONE, egui::Key::Tab)
             } else {
                 false
             };
-            let shift_tab = i.consume_key(egui::Modifiers::SHIFT, egui::Key::Tab);
             (tab, shift_tab)
         });
         if !tab && !shift_tab {

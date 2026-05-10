@@ -6,16 +6,21 @@ use crate::ast::{Node, Value};
 
 pub(super) fn collect_materials(ast: &[Node], graph: &mut SceneGraph) -> Result<()> {
     for n in ast {
-        if n.kind == "material" {
-            register_material(n, graph)?;
-        }
-        if n.kind == "scene" {
-            for c in &n.children {
-                if c.kind == "material" {
-                    register_material(c, graph)?;
-                }
-            }
-        }
+        collect_materials_recursive(n, graph)?;
+    }
+    Ok(())
+}
+
+/// Walk the whole subtree so a `material` declared inside a wrapping `group`
+/// (e.g. `group "humanoid" { use "humanoid_full" () }`, where the module body
+/// inlines its own materials) is still discoverable. Dedupe by `(name, origin)`
+/// in `register_material` keeps repeated walks idempotent.
+fn collect_materials_recursive(node: &Node, graph: &mut SceneGraph) -> Result<()> {
+    if node.kind == "material" {
+        register_material(node, graph)?;
+    }
+    for c in &node.children {
+        collect_materials_recursive(c, graph)?;
     }
     Ok(())
 }

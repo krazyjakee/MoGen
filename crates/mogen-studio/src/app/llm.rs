@@ -13,6 +13,7 @@
 
 mod credentials;
 mod enhance;
+mod meta_generate;
 mod poll;
 pub(in crate::app) mod refine;
 mod spawn;

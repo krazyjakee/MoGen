@@ -139,6 +139,7 @@ Existing file:\n\n{existing}",
                 "animate: repair {attempt}/{total_attempts} — fixing {summary}"
             ));
         })),
+        allow_edit_mode: true,
     };
 
     let outcome = match generate_with_repair(&client, cfg, &repair) {

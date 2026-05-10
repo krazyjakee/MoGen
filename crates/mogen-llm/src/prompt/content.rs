@@ -144,7 +144,7 @@ from a validator failure.
    subject (knight, wizard, archer, civilian, child) the one-line \
    `use \"humanoid_full\" (height=1.7, skin=[r,g,b], shirt=[r,g,b], \
    pants=[r,g,b], boot=[r,g,b], hair=[r,g,b])` is the correct default: it \
-   expands into a Synty-style low-poly figure (torso/head/arms/hands/legs/ \
+   expands into a stylized low-poly figure (torso/head/arms/hands/legs/ \
    feet/face) pre-skinned to a `\"rig\"` skeleton, materials are declared \
    internally from the colour params, the face is built from visible \
    eye/brow/nose/mouth blocks (no texture needed), and the rig drives the \
@@ -642,7 +642,7 @@ meta (name = \"person_walking\", description = \"a low-poly humanoid figure in a
 
 scene {
   // `humanoid_full` declares its own materials from the colour params, so a
-  // single line gives a fully-coloured Synty-style figure: faceted body,
+  // single line gives a fully-coloured stylized figure: faceted body,
   // mitten hands, painted face panel, 17-bone rig. Pair with one of the
   // shipped clips (`humanoid_walk` here, also `_run` / `_idle` / `_jump`)
   // so the figure isn't frozen.

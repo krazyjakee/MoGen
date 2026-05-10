@@ -5,6 +5,8 @@ use mogen_core::{AlphaMode, Connector, Material, NodeId, SceneGraph, TextureRef,
 
 use crate::ast::{Node, Value};
 
+use crate::skin_lower::lower_skeleton;
+
 use super::branch::expand_branch;
 use super::connector::{add_aabb_connectors_if_missing, add_connector, default_connectors};
 use super::csg::lower_csg;
@@ -189,14 +191,20 @@ pub(super) fn lower_into(
             // module body (e.g. `sports_bag.mog`) carrying conform directives
             // is expanded inside a `group` wrapper.
             "material" | "attach" | "conform" => continue,
-            // Animation, skeleton, and clip-track decls are processed by their
-            // own passes (see lower_animations / lower_skeleton). They get
-            // here when an imported scene-as-module body — which can carry
-            // animations alongside geometry — is expanded inside a `group`
-            // or another wrapper. Skipping them keeps the geometry pass
-            // focused on geometry.
-            "joint" | "clip" | "track" | "skeleton"
+            // Animation and clip-track decls are processed by their own pass
+            // (see lower_animations). They get here when an imported scene-as-
+            // module body — which can carry animations alongside geometry — is
+            // expanded inside a `group` or another wrapper. Skipping them
+            // keeps the geometry pass focused on geometry.
+            "joint" | "clip" | "track"
             | "spin" | "open_close" | "wave" | "flap" | "idle" => continue,
+            // A skeleton nested inside a `group` (e.g. the user wrapped a
+            // `use "humanoid_full" ()` in `group "humanoid" { ... }`) lowers
+            // here with the group as parent. Scene-level skeletons are
+            // special-cased earlier in `lower` so they land at the root.
+            "skeleton" => {
+                lower_skeleton(c, Some(id), graph)?;
+            }
             "connector" => {
                 add_connector(c, id, graph)?;
             }

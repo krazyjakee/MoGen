@@ -51,8 +51,8 @@ mod watcher;
 
 use self::types::{
     viewer_bg_color, AskInFlight, AutocompleteState, BuildOutcome, DocsState, EnhanceInFlight,
-    EnhanceTarget, ExternalConflict, FileState, FindState, GenImageInput, SessionUsage,
-    SpotlightState, ThumbCache,
+    EnhanceTarget, ExternalConflict, FileState, FindState, GenImageInput, MetaGenerateInFlight,
+    SessionUsage, SpotlightState, ThumbCache,
 };
 use self::util::locate_project_root;
 
@@ -296,6 +296,15 @@ pub struct MogenStudioApp {
     /// re-read it until they close the modal or submit a fresh question.
     ask_answer: Option<Result<String, String>>,
 
+    /// Single in-flight call for the inspector's `Meta → Generate` button.
+    /// `None` when idle. App-level so a click on file A that lands while the
+    /// user has switched to file B still routes back to A via `file_index`.
+    meta_generate_in_flight: Option<MetaGenerateInFlight>,
+    /// Per-file error from the last Meta-Generate attempt, keyed by file
+    /// index. Surfaced as a small label under the button until the next
+    /// click clears it.
+    meta_generate_error: HashMap<usize, String>,
+
     /// Editor autocomplete popup state. One instance since only one editor is
     /// on-screen at a time; it's reset on tab switch / focus loss.
     autocomplete: AutocompleteState,
@@ -360,6 +369,11 @@ pub struct MogenStudioApp {
     /// String is rebuilt from `read_meta_attr` on every paint.
     pub(in crate::app) meta_name_drafts: HashMap<usize, String>,
     pub(in crate::app) meta_desc_drafts: HashMap<usize, String>,
+    /// Per-file in-progress draft for the Meta editor's `tags` field. Stored
+    /// as the raw comma-separated string the user is typing so a partial
+    /// edit doesn't get re-normalised through the list round-trip on every
+    /// paint. Cleared on focus loss / commit.
+    pub(in crate::app) meta_tags_drafts: HashMap<usize, String>,
     /// Per-material rename buffer keyed by current material name. Same
     /// pattern as the meta drafts — the bound String would be rebuilt from
     /// the parsed material name each frame and clobber typing otherwise.
@@ -543,6 +557,8 @@ impl MogenStudioApp {
             ask_focus_pending: false,
             ask_in_flight: None,
             ask_answer: None,
+            meta_generate_in_flight: None,
+            meta_generate_error: HashMap::new(),
             autocomplete: AutocompleteState::default(),
             find: FindState::default(),
             spotlight: SpotlightState::default(),
@@ -556,6 +572,7 @@ impl MogenStudioApp {
             inspector_scale_linked: true,
             meta_name_drafts: HashMap::new(),
             meta_desc_drafts: HashMap::new(),
+            meta_tags_drafts: HashMap::new(),
             material_name_drafts: HashMap::new(),
             clip_name_drafts: HashMap::new(),
             clip_duration_drafts: HashMap::new(),
@@ -829,6 +846,7 @@ impl eframe::App for MogenStudioApp {
         // the editor's debounce window before painting.
         self.poll_llm(ctx);
         self.poll_prompt_enhance();
+        self.poll_meta_generate();
         self.poll_ask();
         self.poll_build();
         self.poll_oauth_login();
@@ -886,7 +904,6 @@ impl eframe::App for MogenStudioApp {
                         if self.has_visible_clips() {
                             style::section(ui, "Animation", true, |ui| self.ui_animation(ui));
                         }
-                        style::section(ui, "Preview", false,    |ui| self.ui_preview(ui));
                         style::section(ui, "LLM",      true,    |ui| self.ui_llm(ui));
                     });
             });
@@ -1052,6 +1069,7 @@ impl eframe::App for MogenStudioApp {
         if self.any_in_flight()
             || self.any_enhance_in_flight()
             || self.any_ask_in_flight()
+            || self.any_meta_generate_in_flight()
             || self.build_rx.is_some()
             || self.update_in_flight()
         {

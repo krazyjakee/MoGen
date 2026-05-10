@@ -88,23 +88,47 @@ pub fn stamp_mogen_version(dsl: &str, current_version: &str) -> String {
 /// The function is text-level on purpose — it must work on half-edited drafts
 /// from Studio that do not yet parse cleanly. It only touches what it needs to.
 pub fn upsert_meta_attr(dsl: &str, key: &str, value: &str) -> String {
-    if let Some(updated) = update_existing_meta(dsl, key, value) {
+    let rhs = format!("\"{}\"", escape_dsl_string(value));
+    upsert_meta_attr_raw(dsl, key, &rhs)
+}
+
+/// Insert or update a list-valued attribute inside the top-level `meta(...)`
+/// block (e.g. `tags = ["furniture", "chair"]`). Items are quoted and escaped;
+/// an empty slice writes `key = []`.
+pub fn upsert_meta_list_attr(dsl: &str, key: &str, items: &[&str]) -> String {
+    let mut rhs = String::with_capacity(items.iter().map(|s| s.len() + 4).sum::<usize>() + 2);
+    rhs.push('[');
+    for (i, item) in items.iter().enumerate() {
+        if i > 0 {
+            rhs.push_str(", ");
+        }
+        rhs.push('"');
+        rhs.push_str(&escape_dsl_string(item));
+        rhs.push('"');
+    }
+    rhs.push(']');
+    upsert_meta_attr_raw(dsl, key, &rhs)
+}
+
+fn upsert_meta_attr_raw(dsl: &str, key: &str, rhs: &str) -> String {
+    if let Some(updated) = update_existing_meta(dsl, key, rhs) {
         return updated;
     }
-    insert_fresh_meta(dsl, key, value)
+    insert_fresh_meta(dsl, key, rhs)
 }
 
 /// Find an existing top-level `meta(...)` and rewrite (or append) the given
-/// attribute; returns `None` if no such block exists.
-fn update_existing_meta(dsl: &str, key: &str, value: &str) -> Option<String> {
+/// attribute; returns `None` if no such block exists. `rhs` is the
+/// pre-rendered right-hand-side (already quoted / bracketed).
+fn update_existing_meta(dsl: &str, key: &str, rhs: &str) -> Option<String> {
     let start = find_meta_open(dsl)?;
     let attrs_open = dsl[start..].find('(').map(|o| start + o)?;
     let attrs_close = matching_close(dsl, attrs_open)?;
     let inner = &dsl[attrs_open + 1..attrs_close];
     let new_inner = if has_attr_key(inner, key) {
-        replace_attr_value(inner, key, value)
+        replace_attr_value(inner, key, rhs)
     } else {
-        append_attr(inner, key, value)
+        append_attr(inner, key, rhs)
     };
     let mut out = String::with_capacity(dsl.len() + 32);
     out.push_str(&dsl[..attrs_open + 1]);
@@ -128,13 +152,13 @@ pub fn read_meta_attr(dsl: &str, key: &str) -> Option<String> {
     get_attr_value(inner, key)
 }
 
-/// Insert a fresh `meta(<key> = "<value>")` line. Goes after the leading
+/// Insert a fresh `meta(<key> = <rhs>)` line. Goes after the leading
 /// `//`-comment block (legacy seed / prompt / thinking headers) and before
-/// the first non-comment, non-blank line.
-fn insert_fresh_meta(dsl: &str, key: &str, value: &str) -> String {
+/// the first non-comment, non-blank line. `rhs` is the pre-rendered RHS
+/// (already quoted / bracketed).
+fn insert_fresh_meta(dsl: &str, key: &str, rhs: &str) -> String {
     let insertion = first_non_header_offset(dsl);
-    let escaped = escape_dsl_string(value);
-    let line = format!("meta ({key} = \"{escaped}\")\n\n");
+    let line = format!("meta ({key} = {rhs})\n\n");
     let mut out = String::with_capacity(dsl.len() + line.len());
     out.push_str(&dsl[..insertion]);
     if insertion > 0 && !dsl[..insertion].ends_with('\n') {
@@ -409,10 +433,10 @@ fn get_attr_value(inner: &str, key: &str) -> Option<String> {
 }
 
 /// Rewrite `key = …` (up to its closing comma or end-of-list) with
-/// `key = "value"`.
-fn replace_attr_value(inner: &str, key: &str, value: &str) -> String {
+/// `key = <rhs>` where `rhs` is the pre-rendered right-hand side.
+fn replace_attr_value(inner: &str, key: &str, rhs: &str) -> String {
     let bytes = inner.as_bytes();
-    let mut out = String::with_capacity(inner.len() + value.len());
+    let mut out = String::with_capacity(inner.len() + rhs.len());
     let mut i = 0;
     while i < bytes.len() {
         // Copy whitespace + comments verbatim.
@@ -460,9 +484,8 @@ fn replace_attr_value(inner: &str, key: &str, value: &str) -> String {
         }
         if ident == key {
             out.push_str(ident);
-            out.push_str(" = \"");
-            out.push_str(&escape_dsl_string(value));
-            out.push('"');
+            out.push_str(" = ");
+            out.push_str(rhs);
         } else {
             out.push_str(&inner[start..j]);
         }
@@ -475,14 +498,14 @@ fn replace_attr_value(inner: &str, key: &str, value: &str) -> String {
     out
 }
 
-/// Append `key = "value"` to an attr-list inner, inserting a comma between
-/// the existing content and the new entry as needed.
-fn append_attr(inner: &str, key: &str, value: &str) -> String {
+/// Append `key = <rhs>` to an attr-list inner, inserting a comma between
+/// the existing content and the new entry as needed. `rhs` is the
+/// pre-rendered right-hand side.
+fn append_attr(inner: &str, key: &str, rhs: &str) -> String {
     let trimmed = inner.trim_end();
     let needs_comma = !trimmed.is_empty() && !trimmed.ends_with(',');
     let trailing_ws = &inner[trimmed.len()..];
-    let escaped = escape_dsl_string(value);
-    let mut out = String::with_capacity(inner.len() + key.len() + escaped.len() + 8);
+    let mut out = String::with_capacity(inner.len() + key.len() + rhs.len() + 8);
     out.push_str(trimmed);
     if needs_comma {
         out.push(',');
@@ -491,9 +514,8 @@ fn append_attr(inner: &str, key: &str, value: &str) -> String {
         out.push(' ');
     }
     out.push_str(key);
-    out.push_str(" = \"");
-    out.push_str(&escaped);
-    out.push('"');
+    out.push_str(" = ");
+    out.push_str(rhs);
     out.push_str(trailing_ws);
     out
 }
@@ -650,6 +672,42 @@ mod tests {
     fn strip_legacy_seed_comments_only_touches_leading_block() {
         let src = "scene {} // mogen-generate seed=42\n";
         assert_eq!(strip_legacy_seed_comments(src), src);
+    }
+
+    #[test]
+    fn upsert_meta_list_attr_round_trips_tags() {
+        let src = "scene {}\n";
+        let out = upsert_meta_list_attr(src, "tags", &["furniture", "chair", "wood"]);
+        assert!(out.contains("tags = [\"furniture\", \"chair\", \"wood\"]"));
+        let ast = crate::parse(&out).unwrap();
+        let m = extract_meta(&ast).unwrap();
+        assert_eq!(
+            m.tags,
+            vec![
+                "furniture".to_string(),
+                "chair".to_string(),
+                "wood".to_string(),
+            ],
+        );
+    }
+
+    #[test]
+    fn upsert_meta_list_attr_replaces_existing_tags() {
+        let src = "meta (name = \"x\", tags = [\"old\"])\nscene {}\n";
+        let out = upsert_meta_list_attr(src, "tags", &["new", "fresh"]);
+        assert!(out.contains("name = \"x\""));
+        assert!(out.contains("tags = [\"new\", \"fresh\"]"));
+        assert!(!out.contains("\"old\""));
+    }
+
+    #[test]
+    fn upsert_meta_list_attr_writes_empty_list() {
+        let src = "scene {}\n";
+        let out = upsert_meta_list_attr(src, "tags", &[]);
+        assert!(out.contains("tags = []"));
+        let ast = crate::parse(&out).unwrap();
+        let m = extract_meta(&ast).unwrap();
+        assert!(m.tags.is_empty());
     }
 
     #[test]

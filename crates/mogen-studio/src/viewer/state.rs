@@ -5,7 +5,7 @@ use std::thread::JoinHandle;
 
 use eframe::egui;
 use glam::{Mat4, Quat, Vec3};
-use mogen_core::{NodeId, SceneGraph, Transform};
+use mogen_core::{NodeId, SceneGraph, Span, TrackProperty, Transform};
 
 use super::anim::{apply_animation, world_transforms_from_locals};
 use super::camera::OrbitCamera;
@@ -193,6 +193,13 @@ pub struct GizmoDrag {
     /// effective-zero threshold to skip pure-click taps where the cursor
     /// never moved off the handle.
     pub delta: f32,
+    /// When set, the drag is editing a constant track in the active source
+    /// instead of the joint's rest pose. `start_transform` captures the
+    /// animated pose at drag start so the preview composes off the
+    /// currently-visible pose, and `commit_gizmo_drag` writes back to the
+    /// track header at `binding.span` rather than synthesising a `pos=` /
+    /// `rot=` on the bone.
+    pub track_binding: Option<TrackBinding>,
 }
 
 /// Snap step for translate: drag deltas that land the node's world-axis
@@ -441,10 +448,35 @@ pub enum PendingEdit {
         value: String,
         delete: Vec<String>,
     },
+    /// Set an attribute on whichever AST node carries `span`, regardless of
+    /// SceneGraph identity. Used for non-`SceneNode` headers — currently only
+    /// `track` headers, where the gizmo writes back `axis=`/`from=`/`to=`
+    /// onto the originating clip's track. Drains identically to
+    /// `SetAttrCanonical` (delete shadows, then `set_attr`) but bypasses the
+    /// node-span lookup.
+    SetAttrAtSpan {
+        span: Span,
+        attr: String,
+        value: String,
+        delete: Vec<String>,
+    },
     /// Remove the node entirely from the source. Emitted by the viewport
     /// Backspace/Delete shortcut; the drain looks up the node's source span
     /// and splices it out via `edit::delete_node`.
     DeleteNode { node: NodeId },
+}
+
+/// Snapshot of a constant track that the gizmo is editing in place of the
+/// joint's rest pose. Captured at drag start so the writeback can splice
+/// back into the same `track` header even if a recompile renumbers tracks.
+#[derive(Clone, Debug)]
+pub struct TrackBinding {
+    /// Source span of the `track "name" (...)` header in the active source.
+    pub span: Span,
+    /// Property the track drives — picks which DSL shorthand the gizmo
+    /// updates (rotation: `axis=`/`from=`/`to=`, translation: same shape but
+    /// `from`/`to` are meters).
+    pub property: TrackProperty,
 }
 
 impl Default for ViewerState {
@@ -532,17 +564,16 @@ impl ViewerState {
         self.palettes_dirty = true;
     }
 
-    /// Build the per-node local transforms for the *current* moment —
-    /// rest-pose for static scenes, sampled-clip pose with a live gizmo
-    /// drag overlaid when applicable. Pulled out of `update_palettes` so
-    /// the light resolver (and any future per-frame consumer) can share
-    /// the same composed pose without duplicating the animation/drag
-    /// blending rules.
-    fn live_locals(&self) -> Vec<Transform> {
+    /// Per-node local transforms with active clips applied but **no** live
+    /// gizmo drag overlaid. Used by `begin_gizmo_drag` to capture an
+    /// animated start pose (so a track-bound drag composes off the visible
+    /// pose) and by the gizmo renderer to align handles with the animated
+    /// world position the user is actually looking at.
+    pub(super) fn animated_locals(&self) -> Vec<Transform> {
         let scene = self
             .scene
             .as_ref()
-            .expect("live_locals called without a scene");
+            .expect("animated_locals called without a scene");
         let mut locals: Vec<Transform> = scene.nodes.iter().map(|n| n.transform).collect();
         if self.any_active() {
             for (i, &active) in self.clip_active.iter().enumerate() {
@@ -554,6 +585,17 @@ impl ViewerState {
                 }
             }
         }
+        locals
+    }
+
+    /// Build the per-node local transforms for the *current* moment —
+    /// rest-pose for static scenes, sampled-clip pose with a live gizmo
+    /// drag overlaid when applicable. Pulled out of `update_palettes` so
+    /// the light resolver (and any future per-frame consumer) can share
+    /// the same composed pose without duplicating the animation/drag
+    /// blending rules.
+    fn live_locals(&self) -> Vec<Transform> {
+        let mut locals = self.animated_locals();
         // Live gizmo drag: overlay a preview transform on the selected node
         // so the mesh follows the cursor without rewriting the DSL every
         // frame. Applied AFTER animation so the user sees their drag offset
@@ -564,6 +606,19 @@ impl ViewerState {
             }
         }
         locals
+    }
+
+    /// World transforms reflecting active clips and the live gizmo drag.
+    /// Drives the gizmo handle position so it tracks the visible pose
+    /// instead of jumping to the bone's rest-pose origin during a track-
+    /// bound drag.
+    pub(super) fn live_worlds(&self) -> Vec<Mat4> {
+        let scene = self
+            .scene
+            .as_ref()
+            .expect("live_worlds called without a scene");
+        let locals = self.live_locals();
+        world_transforms_from_locals(scene, &locals)
     }
 
     /// Resolve every `light` carrier in the active scene against the live
@@ -588,6 +643,63 @@ pub(super) fn aspect_for(rect: egui::Rect) -> f32 {
     (rect.width() / rect.height()).max(0.01)
 }
 
+/// Map a [`crate::gizmo::GizmoMode`] to the [`TrackProperty`] it should drive
+/// when the selected node is bound to a constant track. Scale tracks are
+/// out of scope (see character.mog discussion) — the user opted for rotate
+/// + translate only, so Scale returns `None` and the gizmo falls back to
+/// the joint-rest writeback.
+pub(super) fn track_property_for_gizmo(mode: crate::gizmo::GizmoMode) -> Option<TrackProperty> {
+    match mode {
+        crate::gizmo::GizmoMode::Rotate => Some(TrackProperty::Rotation),
+        crate::gizmo::GizmoMode::Translate => Some(TrackProperty::Translation),
+        crate::gizmo::GizmoMode::Scale => None,
+    }
+}
+
+/// If an active clip authored in the active source contains a constant track
+/// driving `node` for `property`, return its [`TrackBinding`] (source span +
+/// property). The gizmo redirects writeback onto this span instead of the
+/// joint's rest-pose `pos=`/`rot=` so a recompile reproduces the dragged
+/// pose.
+///
+/// Excluded:
+/// - inactive clips (`clip_active[i] == false`) — wouldn't affect the visible
+///   pose, so editing them silently from the viewport would be surprising.
+/// - clips lifted from imported modules (`clip.origin.is_some()`) — their
+///   track headers live in another file; we'd need cross-file editing to
+///   round-trip safely.
+/// - tracks without a `source_span` (procedural-template-emitted tracks)
+///   and non-constant tracks (`from != to`, multi-keyframe).
+pub(super) fn find_active_constant_track(
+    scene: &SceneGraph,
+    clip_active: &[bool],
+    node: NodeId,
+    property: TrackProperty,
+) -> Option<TrackBinding> {
+    const EPS: f32 = 1e-5;
+    for (i, clip) in scene.clips.iter().enumerate() {
+        if !clip_active.get(i).copied().unwrap_or(false) {
+            continue;
+        }
+        if clip.origin.is_some() {
+            continue;
+        }
+        for track in &clip.tracks {
+            if track.node != node || track.property != property {
+                continue;
+            }
+            let Some(span) = track.source_span else {
+                continue;
+            };
+            if !track.is_constant_value(EPS) {
+                continue;
+            }
+            return Some(TrackBinding { span, property });
+        }
+    }
+    None
+}
+
 /// Whether the gizmo for `mode` should be drawn AND respond to drags on
 /// `node_id`. The render path and `begin_gizmo_drag` both consult this so
 /// the visual affordance never lies — if the input layer would refuse the
@@ -596,6 +708,7 @@ pub(super) fn aspect_for(rect: egui::Rect) -> f32 {
 /// in [`commit_gizmo_drag`].
 pub(super) fn gizmo_handles_supported(
     scene: &SceneGraph,
+    clip_active: &[bool],
     node_id: NodeId,
     mode: crate::gizmo::GizmoMode,
 ) -> bool {
@@ -626,8 +739,17 @@ pub(super) fn gizmo_handles_supported(
     //     `.mog`), so the gizmo writeback is safe. Stdlib expansions are
     //     distinguished by `origin = Some("<stdlib>/…")` and continue to
     //     bail out.
+    //   - An active constant track in the active source drives this node
+    //     for the matching property. The writeback lands on the track's
+    //     header (which lives in the active source) instead of the
+    //     joint's rest pose, so the imported origin doesn't matter.
     if node.use_id.is_some() && node.origin.is_some() && !is_import_wrapper(scene, node_id) {
-        return false;
+        let track_editable = track_property_for_gizmo(mode)
+            .and_then(|p| find_active_constant_track(scene, clip_active, node_id, p))
+            .is_some();
+        if !track_editable {
+            return false;
+        }
     }
     // Relative placement (`above`/`below`/`left_of`/...) re-shifts one axis
     // of `transform.translation` every compile from the target's AABB. A
@@ -655,11 +777,28 @@ pub(super) fn begin_gizmo_drag(
     aspect: f32,
 ) -> Option<GizmoDrag> {
     let scene = st.scene.as_ref()?;
-    if !gizmo_handles_supported(scene, selected, st.gizmo_mode) {
+    if !gizmo_handles_supported(scene, &st.clip_active, selected, st.gizmo_mode) {
         return None;
     }
     let node = scene.nodes.get(selected.0 as usize)?;
-    let worlds = scene.world_transforms();
+    // Probe the active source for a constant track driving this node in the
+    // gizmo's mode. A binding shifts both the start pose (sample animated
+    // locals/worlds so the gizmo origin matches what the user sees) and the
+    // commit path (writeback splices the track header instead of synthesising
+    // a `pos=`/`rot=` on the joint's rest pose).
+    let track_binding = track_property_for_gizmo(st.gizmo_mode)
+        .and_then(|p| find_active_constant_track(scene, &st.clip_active, selected, p));
+    let (start_transform, worlds) = if track_binding.is_some() {
+        let animated = st.animated_locals();
+        let worlds = world_transforms_from_locals(scene, &animated);
+        let local = animated
+            .get(selected.0 as usize)
+            .copied()
+            .unwrap_or(node.transform);
+        (local, worlds)
+    } else {
+        (node.transform, scene.world_transforms())
+    };
     let world = worlds.get(selected.0 as usize).copied().unwrap_or(Mat4::IDENTITY);
     let origin = world.w_axis.truncate();
     let parent_start_world = node
@@ -675,7 +814,7 @@ pub(super) fn begin_gizmo_drag(
         node: selected,
         axis,
         mode: st.gizmo_mode,
-        start_transform: node.transform,
+        start_transform,
         start_origin: origin,
         parent_start_world,
         start_ray_origin: ro,
@@ -684,6 +823,7 @@ pub(super) fn begin_gizmo_drag(
             crate::gizmo::GizmoMode::Scale => 1.0,
             _ => 0.0,
         },
+        track_binding,
     })
 }
 
@@ -783,6 +923,14 @@ pub(super) fn commit_gizmo_drag(st: &mut ViewerState) -> Vec<PendingEdit> {
     const POS_SHADOWS: &[&str] = &["x", "y", "z", "from", "to"];
     const ROT_SHADOWS: &[&str] = &["rx", "ry", "rz", "dir"];
     let final_local = apply_gizmo_drag(drag);
+
+    // Track-bound drag: bypass the joint's rest-pose writeback entirely and
+    // splice the new axis-angle into the originating `track` header. Animation
+    // channels REPLACE the node's TRS at runtime, so the new track value
+    // **is** the desired local transform — no rest-pose composition needed.
+    if let Some(binding) = drag.track_binding.as_ref() {
+        return commit_track_drag(drag, binding, final_local);
+    }
     // For attach-bound nodes the post-compile transform is `attach + user`,
     // so the `pos=` we write back must be `final_local - attach_anchor`.
     // Likewise for `rot=`: the composed rotation is `user_rot * attach_rot`,
@@ -900,6 +1048,86 @@ pub(super) fn commit_gizmo_drag(st: &mut ViewerState) -> Vec<PendingEdit> {
             }]
         }
     }
+}
+
+/// Splice a track-bound gizmo drag back onto its originating `track "..."
+/// (axis=…, from=…, to=…)` header. Decomposes `final_local` into the same
+/// axis-angle (or axis-distance) form `anim_lower::sample_2kf` will rebuild
+/// it from on the next compile, so the round-trip lands the bone exactly
+/// where the user dragged it.
+///
+/// Constant tracks only: the writeback collapses `from` and `to` to one
+/// scalar. Multi-keyframe / animated tracks fall through to the joint
+/// writeback path (see `find_active_constant_track`) and never reach here.
+///
+/// Shortcut shadows (`prop` aliases, `keys=`) are left alone: the user
+/// asked for a constant track, and stomping `keys=` would silently discard
+/// any leftover authoring intent.
+fn commit_track_drag(
+    _drag: &GizmoDrag,
+    binding: &TrackBinding,
+    final_local: Transform,
+) -> Vec<PendingEdit> {
+    let (axis, scalar) = match binding.property {
+        TrackProperty::Rotation => {
+            let q = final_local.rotation.normalize();
+            // Quat::to_axis_angle returns (axis, angle) with angle in
+            // [0, 2π]. Tiny rotations have an indeterminate axis — fall
+            // back to the start-pose axis so dragging back to identity
+            // doesn't smear the axis to a meaningless value.
+            let (axis, angle) = q.to_axis_angle();
+            let degrees = angle.to_degrees();
+            // Wrap > 180° to the shortest-arc equivalent so the writeback
+            // matches what an author would naturally type.
+            let (axis, degrees) = if degrees > 180.0 {
+                (-axis, 360.0 - degrees)
+            } else {
+                (axis, degrees)
+            };
+            (axis, degrees)
+        }
+        TrackProperty::Translation => {
+            let p = final_local.translation;
+            let len = p.length();
+            let axis = if len > 1e-5 {
+                p / len
+            } else {
+                Vec3::Y
+            };
+            (axis, len)
+        }
+        TrackProperty::Scale => {
+            // Scale tracks are out of scope for the track-binding gizmo;
+            // begin_gizmo_drag never produces a binding for scale mode.
+            return Vec::new();
+        }
+    };
+    let scalar_s = format_scalar(scalar);
+    vec![
+        PendingEdit::SetAttrAtSpan {
+            span: binding.span,
+            attr: "axis".to_string(),
+            value: format!(
+                "[{}, {}, {}]",
+                format_scalar(axis.x),
+                format_scalar(axis.y),
+                format_scalar(axis.z)
+            ),
+            delete: Vec::new(),
+        },
+        PendingEdit::SetAttrAtSpan {
+            span: binding.span,
+            attr: "from".to_string(),
+            value: scalar_s.clone(),
+            delete: Vec::new(),
+        },
+        PendingEdit::SetAttrAtSpan {
+            span: binding.span,
+            attr: "to".to_string(),
+            value: scalar_s,
+            delete: Vec::new(),
+        },
+    ]
 }
 
 /// Format a scalar for DSL writeback: four-decimal trim, strip trailing
@@ -1320,6 +1548,82 @@ fn pick_nth_named(scene: &SceneGraph, ids: &[NodeId], name: &str, n: u32) -> Opt
     None
 }
 
+/// Resolve a `use "<stem>" (...)` source line at `byte_offset` (in the active
+/// `source`) to a SceneNode in `scene`. Returns the first imported root whose
+/// origin's file stem matches the use's name — an "imported root" being a
+/// SceneNode whose origin differs from its parent's, so we land on the topmost
+/// node of the imported subtree rather than some interior leaf.
+///
+/// `find_deepest_node_at_offset` skips imported nodes outright (their spans
+/// live in another file), so a click on a `use "X"` line in the editor
+/// otherwise falls through to whatever surrounding container's span contains
+/// it (typically `scene`). This fallback turns those clicks into the
+/// import's root selection, which is what the user actually wants when they
+/// click the `use` line.
+///
+/// Returns `None` when the source no longer parses, the offset isn't inside
+/// any `use` AST node, or no SceneNode origin matches the use's stem.
+pub(super) fn find_use_at_offset(
+    scene: &SceneGraph,
+    source: &str,
+    byte_offset: usize,
+) -> Option<NodeId> {
+    let ast = mogen_dsl::parse(source).ok()?;
+    let stem = find_use_stem_at_offset(&ast, byte_offset)?;
+    for (idx, node) in scene.nodes.iter().enumerate() {
+        let Some(origin) = node.origin.as_deref() else {
+            continue;
+        };
+        let Some(node_stem) = origin.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        if node_stem != stem {
+            continue;
+        }
+        // Skip interior imported nodes: the parent must be from a different
+        // origin (or have no origin at all) for `idx` to be the topmost node
+        // of the imported subtree.
+        let parent_same_origin = node
+            .parent
+            .and_then(|pid| scene.nodes.get(pid.0 as usize))
+            .and_then(|p| p.origin.as_deref())
+            == Some(origin);
+        if parent_same_origin {
+            continue;
+        }
+        return Some(NodeId(idx as u32));
+    }
+    None
+}
+
+fn find_use_stem_at_offset(
+    ast: &[mogen_dsl::ast::Node],
+    byte_offset: usize,
+) -> Option<String> {
+    fn walk(node: &mogen_dsl::ast::Node, offset: usize) -> Option<String> {
+        // Recurse first so a `use` nested inside another node wins over its
+        // enclosing container, mirroring the deepest-span tiebreak elsewhere.
+        for c in &node.children {
+            if let Some(s) = walk(c, offset) {
+                return Some(s);
+            }
+        }
+        if node.kind == "use"
+            && offset >= node.span.start
+            && offset < node.span.end
+        {
+            return node.name.clone();
+        }
+        None
+    }
+    for n in ast {
+        if let Some(s) = walk(n, byte_offset) {
+            return Some(s);
+        }
+    }
+    None
+}
+
 /// Find the deepest user-authored scene node whose `source_span` contains
 /// `byte_offset`. "Deepest" = smallest containing span, so a click inside a
 /// child wins over its enclosing group. Nodes lowered from imported `.mog`
@@ -1355,5 +1659,26 @@ pub(super) fn find_deepest_node_at_offset(
             _ => {}
         }
     }
-    best.map(|(id, _)| id)
+    if let Some((id, _)) = best {
+        return Some(id);
+    }
+    // Fallback: caret may be inside a `track "..." (...)` header. Tracks
+    // aren't scene nodes — the bone they drive is — but selecting the bone
+    // is what makes the gizmo land on the moving target. Walk every active
+    // (or any-status) clip authored in the active source and match track
+    // spans by enclosing offset.
+    for clip in &scene.clips {
+        if clip.origin.is_some() {
+            continue;
+        }
+        for track in &clip.tracks {
+            let Some(span) = track.source_span else {
+                continue;
+            };
+            if byte_offset >= span.start && byte_offset < span.end {
+                return Some(track.node);
+            }
+        }
+    }
+    None
 }

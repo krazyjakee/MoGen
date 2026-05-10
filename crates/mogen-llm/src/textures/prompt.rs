@@ -195,7 +195,7 @@ fn build_face_panel_prompt(hit: &MaterialHit<'_>, style: &str) -> String {
     s.push_str(
         "Output a single 512×512 PNG of a stylized low-poly character face, \
          painted onto a flat panel. This will be applied as a base-color \
-         texture to the front face of a Synty/Quaternius-style humanoid head.\n\n\
+         texture to the front face of a stylized low-poly humanoid head.\n\n\
          Required composition:\n\
          - facial features painted in flat colour blocks: two simple \
          almond eyes (dark sclera or solid dot) at vertical center, \

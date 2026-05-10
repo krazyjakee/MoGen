@@ -144,7 +144,7 @@ fn repair_loop_respects_max_iters_and_returns_last_attempt() {
     let outcome = generate_with_repair(
         &client,
         GenerateConfig::new("anything"),
-        &RepairConfig { max_iters: 1, on_iteration: None },
+        &RepairConfig { max_iters: 1, on_iteration: None, allow_edit_mode: false },
     )
     .expect("request ok");
 
@@ -186,7 +186,7 @@ fn user_images_become_inline_data_parts_on_the_user_turn() {
         // Three bytes the test can spot once base64-encoded ("AQID").
         data: vec![0x01, 0x02, 0x03],
     });
-    let _ = generate_with_repair(&client, cfg, &RepairConfig { max_iters: 0, on_iteration: None })
+    let _ = generate_with_repair(&client, cfg, &RepairConfig { max_iters: 0, on_iteration: None, allow_edit_mode: false })
         .expect("request ok");
 
     let reqs = server.requests.lock().unwrap();
@@ -260,7 +260,7 @@ fn planner_then_coder_threads_plan_into_user_turn() {
     let outcome = generate_with_repair(
         &client,
         coder_cfg,
-        &RepairConfig { max_iters: 0, on_iteration: None },
+        &RepairConfig { max_iters: 0, on_iteration: None, allow_edit_mode: false },
     )
     .expect("coder call ok");
     assert!(outcome.is_ok(), "diagnostics: {:?}", outcome.diagnostics);
@@ -306,7 +306,7 @@ fn visual_refine_attaches_image_and_dsl() {
     let outcome = mogen_llm::visual_refine(
         &client,
         &base,
-        &RepairConfig { max_iters: 0, on_iteration: None },
+        &RepairConfig { max_iters: 0, on_iteration: None, allow_edit_mode: false },
         registry,
         "a wooden stool",
         previous_dsl,
@@ -370,7 +370,7 @@ fn zai_vision_uses_image_url_content() {
         // Three bytes that base64-encode to "AQID".
         data: vec![0x01, 0x02, 0x03],
     });
-    let _ = generate_with_repair(&client, cfg, &RepairConfig { max_iters: 0, on_iteration: None })
+    let _ = generate_with_repair(&client, cfg, &RepairConfig { max_iters: 0, on_iteration: None, allow_edit_mode: false })
         .expect("request ok");
 
     let reqs = server.requests.lock().unwrap();
@@ -411,7 +411,7 @@ fn fireworks_vision_uses_image_url_content() {
         // Three bytes that base64-encode to "AQID".
         data: vec![0x01, 0x02, 0x03],
     });
-    let _ = generate_with_repair(&client, cfg, &RepairConfig { max_iters: 0, on_iteration: None })
+    let _ = generate_with_repair(&client, cfg, &RepairConfig { max_iters: 0, on_iteration: None, allow_edit_mode: false })
         .expect("request ok");
 
     let reqs = server.requests.lock().unwrap();

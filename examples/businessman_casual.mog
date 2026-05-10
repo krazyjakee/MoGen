@@ -20,7 +20,7 @@
 // to recolour the outfit — has one place to look. To restyle the suit,
 // edit the colour values here.
 
-meta (seed = "1778417589937268280", thinking = "high", prompt = "fix outfit_stubble_beard alignment so it's against the face", mogen_version = "0.1.4", style = "low_poly")
+meta (seed = "1778417589937268280", thinking = "high", prompt = "fix outfit_stubble_beard alignment so it's against the face", mogen_version = "0.1.5", style = "low_poly")
 
 material "jacket_outer" (color=[0.06, 0.06, 0.06], roughness=0.78)
 material "dress_shirt"  (color=[0.92, 0.92, 0.92], roughness=0.82)
@@ -165,15 +165,17 @@ module "outfit_short_hair" (height=1.7, size=0.115) {
 scene {
   // Body + skeleton + slot connectors. Body-shape params shape the
   // silhouette; the colour params drive the figure's built-in materials.
-  use "humanoid_full" (
-    height=1.75,
-    weight=0.95,
-    skin =[0.78, 0.58, 0.45],
-    hair =[0.85, 0.83, 0.80],
-    shirt=[0.06, 0.06, 0.06],
-    pants=[0.10, 0.10, 0.10],
-    boot =[0.04, 0.04, 0.04]
-  )
+  group "humanoid" {  
+	use "humanoid_full" (
+	  height=1.75,
+	  weight=0.95,
+	  skin =[0.78, 0.58, 0.45],
+	  hair =[0.85, 0.83, 0.80],
+	  shirt=[0.06, 0.06, 0.06],
+	  pants=[0.10, 0.10, 0.10],
+	  boot =[0.04, 0.04, 0.04]
+    )
+  }
 
   // Outfit. Each local module uses the same `height` / `weight` as the
   // figure so the layered geometry tracks the body silhouette, and binds

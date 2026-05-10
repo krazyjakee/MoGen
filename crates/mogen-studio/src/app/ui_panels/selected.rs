@@ -129,12 +129,67 @@ impl MogenStudioApp {
             // exempt: its source span is the `use` line in the active
             // source, so the inspector's transform grid writes back
             // through `set_attr` cleanly.
+            // Resolve the `use "..."` call's source span and a sensible group
+            // name BEFORE the warning + button are drawn. Imported (origin=
+            // Some) nodes match by the origin file's stem; local-module
+            // (origin=None) nodes walk up to the closest user-authored
+            // ancestor and pick the first `use` AST child within its span.
+            // The lookup is run here so the borrows on `node`/`scene` end
+            // before the click handler takes a `&mut self.files[i]`.
+            let active_source = self.files[self.active].source.clone();
+            let wrap_target = resolve_use_wrap_target(scene, sel, node, &active_source);
             ui.add_space(6.0);
             ui.colored_label(
                 egui::Color32::from_rgb(230, 200, 100),
                 "Imported via `use` — wrap the `use` in a group to edit its \
                  transform here.",
             );
+            let (button, hover) = match &wrap_target {
+                Some(_) => (
+                    egui::Button::new("Wrap `use` in a group"),
+                    "Splice a `group \"<name>\" { … }` around the matching `use` \
+                     line in the source so its transform becomes editable here.",
+                ),
+                None => (
+                    egui::Button::new("Wrap `use` in a group"),
+                    "Couldn't locate the originating `use` line in the active \
+                     source — wrap it manually by editing the text.",
+                ),
+            };
+            let wrap_clicked = ui
+                .add_enabled(wrap_target.is_some(), button)
+                .on_hover_text(hover)
+                .clicked();
+            if wrap_clicked {
+                if let Some((use_span, group_name)) = wrap_target {
+                    let i = self.active;
+                    let before = self.files[i].source.clone();
+                    let new_src = crate::edit::wrap_node_in_group(
+                        &before,
+                        use_span,
+                        &group_name,
+                    );
+                    if new_src != before {
+                        {
+                            let f = &mut self.files[i];
+                            f.source = new_src;
+                            f.dirty = f.source != f.last_saved_source;
+                            f.needs_compile = true;
+                            f.last_edit_at = Some(Instant::now());
+                        }
+                        self.break_undo_chain(i);
+                        self.push_undo(
+                            i,
+                            before,
+                            UndoKey {
+                                surface: "inspector-action",
+                                attr: None,
+                                node_path: Vec::new(),
+                            },
+                        );
+                    }
+                }
+            }
             return;
         }
         if node.relative_placed {
@@ -1360,6 +1415,80 @@ impl MogenStudioApp {
             }
         });
     }
+}
+
+/// Resolve the active-source span of the `use "..." (...)` call that brought
+/// `node` into the scene, plus a sensible group name to wrap it under. Used
+/// by the "Wrap `use` in a group" affordance shown next to the
+/// imported-via-use warning.
+///
+/// Two cases:
+///   - **Imported file (`origin = Some`)**: the file's stem (e.g.
+///     `humanoid_full.mog` → `humanoid_full`) matches the use's name. The
+///     first `use "<stem>"` AST node in the active source wins.
+///   - **Local module (`origin = None`)**: the use call lives in the body of
+///     the closest user-authored ancestor (the first ancestor in the chain
+///     with `use_id != node.use_id` that has a span). We pick the first
+///     `use` AST child within that ancestor's span. With multiple use calls
+///     the first match isn't always *the* call that minted this node, but
+///     undo recovers and the warning only fires when there's no wrapper, so
+///     ambiguity is uncommon.
+///
+/// Returns `None` when the source no longer parses or no candidate `use`
+/// declaration is found.
+fn resolve_use_wrap_target(
+    scene: &mogen_core::SceneGraph,
+    sel: mogen_core::NodeId,
+    node: &mogen_core::SceneNode,
+    source: &str,
+) -> Option<(mogen_core::Span, String)> {
+    if let Some(stem) = node
+        .origin
+        .as_deref()
+        .and_then(|p| p.file_stem())
+        .and_then(|s| s.to_str())
+    {
+        let span = crate::app::util::find_use_source_span(source, stem)?;
+        return Some((span, stem.to_string()));
+    }
+
+    // Local-module case: walk up to the closest ancestor whose `use_id`
+    // differs from the selected node's. That ancestor's source span (in the
+    // active file) bounds where the originating `use` call lives.
+    let mut cur = node.parent;
+    let mut ancestor_span: Option<mogen_core::Span> = None;
+    while let Some(pid) = cur {
+        let parent = scene.nodes.get(pid.0 as usize)?;
+        if parent.use_id != node.use_id {
+            ancestor_span = parent.source_span;
+            break;
+        }
+        cur = parent.parent;
+    }
+    let ancestor_span = ancestor_span?;
+    let ast = mogen_dsl::parse(source).ok()?;
+    let _ = sel;
+
+    fn find_first_use_within(
+        nodes: &[mogen_dsl::ast::Node],
+        bounds: mogen_core::Span,
+    ) -> Option<&mogen_dsl::ast::Node> {
+        for n in nodes {
+            if n.span.start < bounds.start || n.span.end > bounds.end {
+                continue;
+            }
+            if n.kind == "use" {
+                return Some(n);
+            }
+            if let Some(child) = find_first_use_within(&n.children, bounds) {
+                return Some(child);
+            }
+        }
+        None
+    }
+    let use_node = find_first_use_within(&ast, ancestor_span)?;
+    let name = use_node.name.clone()?;
+    Some((use_node.span, name))
 }
 
 /// Render a Deform-row for a 0..=1 unit modifier (`noise`, `jitter`, `droop`).

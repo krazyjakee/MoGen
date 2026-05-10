@@ -607,6 +607,14 @@ pub(super) struct AskInFlight {
     pub(super) rx: Receiver<Result<String, String>>,
 }
 
+/// Single in-flight call for the inspector's `Meta → Generate` button. Held at
+/// the app level (not per-file) because the result lands on a specific
+/// `file_index` regardless of which tab is active when it returns.
+pub(super) struct MetaGenerateInFlight {
+    pub(super) file_index: usize,
+    pub(super) rx: Receiver<Result<super::util::MetaSuggestion, String>>,
+}
+
 /// User-tweakable knobs on the texture pipeline. Mirrors the CLI's
 /// `mogen textures` flags so the GUI is not silently more restrictive.
 #[derive(Clone)]

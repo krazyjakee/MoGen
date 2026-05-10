@@ -119,7 +119,13 @@ pub(crate) fn repair(args: RepairArgs) -> Result<()> {
     // repair loop sends on subsequent iterations. Using it as the initial
     // user prompt lets `generate_with_repair` treat "repair an existing
     // broken file" as just the first iteration of its normal loop.
-    let user_prompt = repair_message(&header_prompt, &existing, &diags, &[]);
+    let user_prompt = repair_message(
+        &header_prompt,
+        &existing,
+        &diags,
+        &[],
+        mogen_llm::repair::RepairMode::Rewrite,
+    );
 
     let user_prompt = apply_style_to_prompt(&user_prompt, effective_style);
     let mut cfg = GenerateConfig::new(user_prompt);
@@ -151,6 +157,7 @@ pub(crate) fn repair(args: RepairArgs) -> Result<()> {
                 "repair: repair {attempt}/{total_attempts} — fixing {summary}"
             ));
         })),
+        allow_edit_mode: true,
     };
 
     let outcome = match generate_with_repair(&client, cfg, &repair_cfg) {

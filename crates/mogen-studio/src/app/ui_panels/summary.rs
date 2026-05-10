@@ -286,6 +286,74 @@ impl MogenStudioApp {
             }
         }
 
+        // Tags editor — comma-separated input that round-trips through the
+        // meta block's list shape (`tags = ["a", "b"]`). Initial draft is
+        // sourced via `extract_meta` so the canonical list shape parses
+        // cleanly; the user's keystrokes own the buffer thereafter until
+        // focus loss commits the parsed list back.
+        let cur_tags: Vec<String> = mogen_dsl::parse(&self.files[i].source)
+            .ok()
+            .as_deref()
+            .and_then(mogen_dsl::extract_meta)
+            .map(|m| m.tags)
+            .unwrap_or_default();
+        let cur_tags_input = cur_tags.join(", ");
+        if !self.meta_tags_drafts.contains_key(&id) {
+            self.meta_tags_drafts.insert(id, cur_tags_input.clone());
+        }
+        let mut tags_str = self
+            .meta_tags_drafts
+            .get(&id)
+            .cloned()
+            .unwrap_or_default();
+        let tags_resp = ui.horizontal(|ui| {
+            ui.label("Tags");
+            ui.add(
+                egui::TextEdit::singleline(&mut tags_str)
+                    .desired_width(f32::INFINITY)
+                    .hint_text("comma-separated, e.g. furniture, chair, wood")
+                    .id_salt(("meta_tags", i)),
+            )
+        });
+        if tags_resp.inner.changed() {
+            self.meta_tags_drafts.insert(id, tags_str.clone());
+        }
+        if tags_resp.inner.lost_focus() && tags_str != cur_tags_input {
+            let parsed: Vec<String> = tags_str
+                .split(',')
+                .map(|s| s.trim().to_lowercase())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if parsed != cur_tags {
+                let before = self.files[i].source.clone();
+                let refs: Vec<&str> = parsed.iter().map(|s| s.as_str()).collect();
+                let new_src = mogen_dsl::upsert_meta_list_attr(&before, "tags", &refs);
+                if new_src != before {
+                    {
+                        let f = &mut self.files[i];
+                        f.source = new_src;
+                        f.dirty = f.source != f.last_saved_source;
+                        f.needs_compile = true;
+                        f.last_edit_at = Some(Instant::now());
+                    }
+                    self.break_undo_chain(i);
+                    self.push_undo(
+                        i,
+                        before,
+                        UndoKey {
+                            surface: "meta",
+                            attr: Some("tags".into()),
+                            node_path: Vec::new(),
+                        },
+                    );
+                }
+            }
+            // Sync the draft to the normalised form so re-focus shows the
+            // canonical lower-cased trimmed list.
+            self.meta_tags_drafts
+                .insert(id, parsed.join(", "));
+        }
+
         // Seed shown read-only because LLM workflows stamp it; expose a
         // "Clear" button for users who want a fresh roll on the next run.
         ui.horizontal(|ui| {
@@ -325,30 +393,29 @@ impl MogenStudioApp {
             }
         });
 
-        // Export options — same toggles as the File → Build GLB modal,
-        // hoisted here so the user can see/save the per-file state without
-        // opening the dialog. Persisted on `FileState.export_opts`; the
-        // build pipeline reads them on every export.
-        ui.add_space(8.0);
-        ui.separator();
-        ui.label(egui::RichText::new("Export").strong());
-        let opts = &mut self.files[i].export_opts;
-        ui.checkbox(&mut opts.include_animations, "Include animations")
-            .on_hover_text(
-                "Emit the scene's `animations[]` array. Off = bake a static GLB.",
-            );
-        ui.checkbox(&mut opts.include_textures, "Include textures")
-            .on_hover_text(
-                "Pack texture images into the GLB binary chunk and wire them to \
-                 materials. Off = materials export with only PBR numeric factors.",
-            );
-        ui.checkbox(
-            &mut opts.merge_sibling_meshes,
-            "Merge overlapping meshes",
-        )
-        .on_hover_text(
-            "Collapse same-material, non-skinned sibling meshes under each parent \
-             into a single CSG-unioned mesh. Slow on complex scenes.",
-        );
+        // Generate name / description / tags via the configured fast model.
+        // The button is grey-disabled while a call is in flight; the
+        // result is spliced into the meta block via `poll_meta_generate`.
+        let busy = self.meta_generate_in_flight_for(i);
+        ui.horizontal(|ui| {
+            let resp = ui
+                .add_enabled(!busy, egui::Button::new("Generate name, description & tags"))
+                .on_hover_text(
+                    "Ask the fast model to fill the Name, Desc, and Tags \
+                     fields by summarising the current DSL. Overwrites any \
+                     existing values.",
+                );
+            if resp.clicked() {
+                let ctx = ui.ctx().clone();
+                self.start_meta_generate(ctx);
+            }
+            if busy {
+                ui.spinner();
+                ui.label(egui::RichText::new("summarising…").weak());
+            }
+        });
+        if let Some(err) = self.meta_generate_error_for(i) {
+            ui.label(egui::RichText::new(err).color(egui::Color32::LIGHT_RED));
+        }
     }
 }

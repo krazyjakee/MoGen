@@ -150,6 +150,7 @@ fn lower_track(
         easing,
         times,
         values,
+        source_span: Some(node.span),
     };
     track.bake_easing();
     Ok(track)
@@ -175,6 +176,7 @@ fn lower_joint_track(
         easing,
         times,
         values,
+        source_span: Some(node.span),
     };
     track.bake_easing();
     Ok(track)

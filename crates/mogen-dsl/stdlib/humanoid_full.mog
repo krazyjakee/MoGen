@@ -1,4 +1,4 @@
-// summary: Synty/Quaternius-style low-poly humanoid in one declaration. Faceted chamfered-box body parts each rigid-bound to one bone for crisp joint motion. Visible eyes/brows/nose/mouth blocks (no textured face panel) so an untextured build still reads as a face. Colours pass-through as vec3 params (`skin`, `hair`, `eye`, `mouth`, `shirt`, `pants`, `boot`); the module declares matching materials internally so a bare `use "humanoid_full" ()` produces a fully-coloured character. Skeleton is 17 bones (`hip`, `spine_lower`, `spine_mid`, `spine_chest`, `neck`, `shoulder_l/r`, `elbow_l/r`, `wrist_l/r`, `hip_l/r`, `knee_l/r`, `ankle_l/r`, `toe_l/r`) named to drive the shipped `humanoid_walk` / `humanoid_run` / `humanoid_idle` / `humanoid_jump` clips. Slot connectors live ON THE BONES so attached items inherit each joint's animated transform: `slot_crown / slot_face / slot_jaw / slot_ear_l / slot_ear_r / slot_neck_back` on bone `neck`; `slot_chest_front / slot_chest_back / slot_back_lower / slot_shoulder_l / slot_shoulder_r` on bone `spine_chest`; `slot_waist_front / slot_waist_back / slot_waist_l / slot_waist_r / slot_pelvis_front` on bone `hip`; `slot_hand_l_grip / slot_hand_l_back` on bone `wrist_l`; `slot_hand_r_grip / slot_hand_r_back` on bone `wrist_r`; `slot_foot_l_top / slot_foot_l_heel / slot_foot_l_toe` on bone `ankle_l`; `slot_foot_r_top / slot_foot_r_heel / slot_foot_r_toe` on bone `ankle_r`. Always use the bone name as the `attach (parent=...)` target — `attach (parent="neck", child="helmet", socket="slot_crown", plug="rim")` — so the item rides the joint through the walk / run / idle / jump clips. Use only ONCE per scene (single "rig" skeleton).
+// summary: Stylized low-poly humanoid in one declaration. Faceted chamfered-box body parts each rigid-bound to one bone for crisp joint motion. Visible eyes/brows/nose/mouth blocks (no textured face panel) so an untextured build still reads as a face. Colours pass-through as vec3 params (`skin`, `hair`, `eye`, `mouth`, `shirt`, `pants`, `boot`); the module declares matching materials internally so a bare `use "humanoid_full" ()` produces a fully-coloured character. Skeleton is 17 bones (`hip`, `spine_lower`, `spine_mid`, `spine_chest`, `neck`, `shoulder_l/r`, `elbow_l/r`, `wrist_l/r`, `hip_l/r`, `knee_l/r`, `ankle_l/r`, `toe_l/r`) named to drive the shipped `humanoid_walk` / `humanoid_run` / `humanoid_idle` / `humanoid_jump` clips. Slot connectors live ON THE BONES so attached items inherit each joint's animated transform: `slot_crown / slot_face / slot_jaw / slot_ear_l / slot_ear_r / slot_neck_back` on bone `neck`; `slot_chest_front / slot_chest_back / slot_back_lower / slot_shoulder_l / slot_shoulder_r` on bone `spine_chest`; `slot_waist_front / slot_waist_back / slot_waist_l / slot_waist_r / slot_pelvis_front` on bone `hip`; `slot_hand_l_grip / slot_hand_l_back` on bone `wrist_l`; `slot_hand_r_grip / slot_hand_r_back` on bone `wrist_r`; `slot_foot_l_top / slot_foot_l_heel / slot_foot_l_toe` on bone `ankle_l`; `slot_foot_r_top / slot_foot_r_heel / slot_foot_r_toe` on bone `ankle_r`. Always use the bone name as the `attach (parent=...)` target — `attach (parent="neck", child="helmet", socket="slot_crown", plug="rim")` — so the item rides the joint through the walk / run / idle / jump clips. Use only ONCE per scene (single "rig" skeleton).
 module "humanoid_full" (
   height=1.7,
   weight=1.0,
@@ -115,7 +115,7 @@ module "humanoid_full" (
   // thigh 0.265–0.485, hip 0.4425–0.5275, torso 0.525–0.795, neck 0.7925–
   // 0.8375, head 0.83–0.95. Adjacent parts overlap by a few millimetres at
   // joints so the silhouette has no visible seams. Legs are 51 % of the
-  // figure (realistic adult-Synty proportions) and the waist meets the
+  // figure (realistic adult low-poly proportions) and the waist meets the
   // torso flush. Arms hang from shoulder bone X = ±0.135 so the bone axis
   // sits inside the arm geometry — animations rotate the arm around its
   // own centreline rather than swinging it sideways.
@@ -274,7 +274,7 @@ module "humanoid_full" (
   )
 
   // ---------- Hands ----------
-  // Synty mitten: palm chamfered_box + small thumb stub. Wrapping group
+  // Low-poly mitten: palm chamfered_box + small thumb stub. Wrapping group
   // rigid-binds to the wrist, so the whole hand follows wrist_l/r. Slots:
   // grip (held items — sword, staff, torch) and back-of-hand (gauntlets,
   // signet rings) — declared on bones `wrist_l`/`wrist_r`.

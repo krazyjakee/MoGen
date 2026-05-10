@@ -101,7 +101,7 @@ custom rig from a subset of parts.
 
 #### `humanoid_full`
 
-Complete rigged Synty/Quaternius-style humanoid in one declaration —
+Complete rigged stylized low-poly humanoid in one declaration —
 torso, head, arms, mitten hands, legs, feet, and visible face features
 (eyes, brows, nose, mouth), all skinned to a `"rig"` skeleton with rigid
 binding so each body part follows exactly one bone.
