@@ -34,6 +34,7 @@ mod onboarding;
 mod pricing;
 mod publish_textures;
 mod spotlight;
+mod style;
 mod text_menu;
 mod thumbnail;
 mod types;
@@ -376,6 +377,12 @@ pub struct MogenStudioApp {
     /// [`Self::queue_protocol_url`] when launched with a URL on argv,
     /// or by future in-app deep-link surfaces. `None` at steady state.
     moghub_protocol: Option<moghub_open::Flow>,
+
+    /// Two-step confirm latch for the Animation panel's per-clip delete
+    /// button. Holds the clip name on the first click; a second click on
+    /// the same clip commits the delete. Cleared on tab switch, on any
+    /// non-trash interaction in the panel, or after the commit fires.
+    clip_delete_pending: Option<String>,
 }
 
 impl MogenStudioApp {
@@ -529,6 +536,7 @@ impl MogenStudioApp {
             thumbnail_mgr: thumbnail::ThumbnailManager::new(cc.egui_ctx.clone()),
             picker_prev_camera: None,
             moghub_protocol: None,
+            clip_delete_pending: None,
         }
     }
 
@@ -839,27 +847,17 @@ impl eframe::App for MogenStudioApp {
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        // CollapsingHeader so users can fold what they don't
-                        // need; keeps the most-actioned section (LLM) reachable
-                        // without scrolling past the other groups. Diagnostics
-                        // now lives in the footer, not here.
-                        egui::CollapsingHeader::new("Selected")
-                            .default_open(true)
-                            .show(ui, |ui| self.ui_selected(ui));
-                        egui::CollapsingHeader::new("Scene")
-                            .default_open(true)
-                            .show(ui, |ui| self.ui_summary(ui));
-                        egui::CollapsingHeader::new("Materials")
-                            .default_open(false)
-                            .show(ui, |ui| self.ui_materials(ui));
+                        // Bold-title sections so the inspector reads as a
+                        // structured panel rather than a flat list of fields.
+                        // LLM stays default-open because it's the most-actioned
+                        // section; diagnostics live in the footer, not here.
+                        style::section(ui, "Selected", true,    |ui| self.ui_selected(ui));
+                        style::section(ui, "Scene",    true,    |ui| self.ui_summary(ui));
+                        style::section(ui, "Materials", false,  |ui| self.ui_materials(ui));
                         if self.has_visible_clips() {
-                            egui::CollapsingHeader::new("Animation")
-                                .default_open(true)
-                                .show(ui, |ui| self.ui_animation(ui));
+                            style::section(ui, "Animation", true, |ui| self.ui_animation(ui));
                         }
-                        egui::CollapsingHeader::new("LLM")
-                            .default_open(true)
-                            .show(ui, |ui| self.ui_llm(ui));
+                        style::section(ui, "LLM",      true,    |ui| self.ui_llm(ui));
                     });
             });
 

@@ -30,11 +30,12 @@ impl MogenStudioApp {
         };
 
         ui.horizontal(|ui| {
-            if ui
-                .add_enabled(can_run, egui::Button::new("✨ Enhance"))
-                .on_hover_text(hover)
-                .clicked()
-            {
+            // Icon-only secondary affordance — Enhance shouldn't compete
+            // visually with the canonical primary action (Modify / Animate /
+            // Generate Textures) it sits next to. Tooltip carries the
+            // intent.
+            let btn = egui::Button::new(egui::RichText::new("✨"));
+            if ui.add_enabled(can_run, btn).on_hover_text(hover).clicked() {
                 let ctx = ui.ctx().clone();
                 self.start_prompt_enhance(ctx, target);
             }
@@ -49,7 +50,7 @@ impl MogenStudioApp {
             } else if !has_key {
                 ui.label(
                     egui::RichText::new("no API key")
-                        .color(egui::Color32::from_rgb(230, 200, 100)),
+                        .color(ui.visuals().warn_fg_color),
                 );
             }
         });

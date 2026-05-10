@@ -2,6 +2,7 @@ use std::time::Instant;
 
 use eframe::egui;
 
+use crate::app::style;
 use crate::app::types::UndoKey;
 use crate::app::util::{find_clip_source_span, origin_in_visible_set, visible_origins};
 use crate::app::MogenStudioApp;
@@ -88,16 +89,21 @@ impl MogenStudioApp {
             {
                 self.viewer.reset_anim_times();
             }
+            // Visual divider between transport controls (Pause / Reset) and
+            // the bulk-selection controls (All / None) so the two button
+            // clusters don't read as one undifferentiated row.
+            ui.separator();
+            ui.label(egui::RichText::new("Enable:").weak());
             if ui
                 .button("All")
-                .on_hover_text("Activate every clip")
+                .on_hover_text("Enable every clip")
                 .clicked()
             {
                 self.viewer.set_all_clips_active(true);
             }
             if ui
                 .button("None")
-                .on_hover_text("Deactivate every clip")
+                .on_hover_text("Disable every clip")
                 .clicked()
             {
                 self.viewer.set_all_clips_active(false);
@@ -113,17 +119,21 @@ impl MogenStudioApp {
             let resp = ui.add(
                 egui::Slider::new(&mut speed, -2.0..=4.0)
                     .suffix("×")
-                    .fixed_decimals(2)
+                    .max_decimals(2)
                     .clamping(egui::SliderClamping::Always),
             );
             if resp.changed() {
                 self.viewer.set_playback_speed(speed);
             }
-            if ui
-                .button("1×")
-                .on_hover_text("Reset playback speed to real time")
-                .clicked()
-                && (speed - 1.0).abs() > f32::EPSILON
+            // Reset button only appears when the slider is off-default; at
+            // 1× the readout already says so and a "1×" button next to a
+            // "1.00×" readout is just visual redundancy.
+            let at_default = (speed - 1.0).abs() < f32::EPSILON;
+            if !at_default
+                && ui
+                    .button("Reset to 1×")
+                    .on_hover_text("Reset playback speed to real time")
+                    .clicked()
             {
                 self.viewer.set_playback_speed(1.0);
             }
@@ -133,7 +143,7 @@ impl MogenStudioApp {
                 "paused"
             } else if speed < 0.0 {
                 "reverse"
-            } else if (speed - 1.0).abs() < 0.005 {
+            } else if at_default {
                 "real time"
             } else if speed > 1.0 {
                 "fast"
@@ -143,12 +153,16 @@ impl MogenStudioApp {
             ui.label(egui::RichText::new(format!("({tag})")).weak());
         });
 
-        ui.add_space(4.0);
+        // Bigger gap separates the toolbar above from the clip list below;
+        // inside the loop, a smaller add_space splits cards from each other.
+        ui.add_space(8.0);
         let file_i = self.active;
         let mut pending_delete: Option<String> = None;
+        let warn_color = style::accent_warn(&ui.style().visuals);
         for i in visible_clip_indices {
             let c = &clips[i];
             ui.group(|ui| {
+                // Row 1: enable + name + (right-aligned) delete affordance.
                 ui.horizontal(|ui| {
                     let mut on = active[i];
                     if ui
@@ -158,10 +172,64 @@ impl MogenStudioApp {
                     {
                         self.viewer.set_clip_active(i, on);
                     }
-                    ui.label(&c.name);
+                    ui.label(egui::RichText::new(&c.name).strong());
+                    let span = find_clip_source_span(&self.files[file_i].source, &c.name);
+                    let pending_for_this =
+                        self.clip_delete_pending.as_deref() == Some(c.name.as_str());
+                    ui.with_layout(
+                        egui::Layout::right_to_left(egui::Align::Center),
+                        |ui| {
+                            // Two-step confirm: first click latches a pending
+                            // state and turns the trash icon into a tinted
+                            // "Delete?" chip; second click commits. Any other
+                            // click in the panel clears the latch (handled
+                            // below by resetting on the catch-all).
+                            let (label, fill, tip) = if pending_for_this {
+                                (
+                                    egui::RichText::new("Delete?").strong(),
+                                    Some(warn_color),
+                                    "Click again to delete this clip",
+                                )
+                            } else if span.is_some() {
+                                (
+                                    egui::RichText::new("🗑"),
+                                    None,
+                                    "Delete this clip from the DSL source",
+                                )
+                            } else {
+                                (
+                                    egui::RichText::new("🗑"),
+                                    None,
+                                    "This clip has no authored source to delete\n\
+                                     (procedural template with multiple targets)",
+                                )
+                            };
+                            let mut btn = egui::Button::new(label).small();
+                            if let Some(c) = fill {
+                                btn = btn.fill(c);
+                            }
+                            let resp = ui
+                                .add_enabled(span.is_some(), btn)
+                                .on_hover_text(tip);
+                            if resp.clicked() {
+                                if pending_for_this {
+                                    pending_delete = Some(c.name.clone());
+                                    self.clip_delete_pending = None;
+                                } else {
+                                    self.clip_delete_pending = Some(c.name.clone());
+                                }
+                            }
+                        },
+                    );
+                });
+
+                // Row 2: meta line — duration and (optional) import origin
+                // tag. Indented past the checkbox column so the eye reads
+                // them as belonging to the clip name above.
+                ui.horizontal(|ui| {
+                    ui.add_space(20.0);
                     ui.label(
-                        egui::RichText::new(format!("{:.2}s", c.duration))
-                            .weak(),
+                        egui::RichText::new(style::format_seconds(c.duration)).weak(),
                     );
                     if let Some(p) = &c.origin {
                         let stem = p
@@ -169,44 +237,32 @@ impl MogenStudioApp {
                             .and_then(|s| s.to_str())
                             .unwrap_or("import");
                         ui.label(
-                            egui::RichText::new(format!("⤴ {stem}"))
-                                .weak(),
+                            egui::RichText::new(format!("⤴ {stem}")).weak(),
                         )
                         .on_hover_text(p.to_string_lossy());
                     }
-                    // Delete: splice the authored clip (or procedural-template
-                    // node that produced it) out of the source. Disabled when
-                    // no matching AST node is found — multi-target templates
-                    // produce `name_0`/`name_1`/… clips whose names don't map
-                    // back to a single authored node.
-                    let span = find_clip_source_span(&self.files[file_i].source, &c.name);
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let btn = egui::Button::new("🗑").small();
-                        let resp = ui.add_enabled(span.is_some(), btn).on_hover_text(
-                            if span.is_some() {
-                                "Delete this clip from the DSL source"
-                            } else {
-                                "This clip has no authored source to delete\n\
-                                 (procedural template with multiple targets)"
-                            },
-                        );
-                        if resp.clicked() {
-                            pending_delete = Some(c.name.clone());
-                        }
-                    });
                 });
+
+                // Row 3: scrub slider. Outside-label pattern matches LOD
+                // scale and Speed for visual consistency; suffix " s" so the
+                // numeric readout is self-describing.
+                ui.add_space(2.0);
                 let dur = c.duration.max(0.001);
                 let mut t = times[i].clamp(0.0, dur);
-                let resp = ui.add(
-                    egui::Slider::new(&mut t, 0.0..=dur)
-                        .text("t")
-                        .clamping(egui::SliderClamping::Always)
-                        .fixed_decimals(2),
-                );
-                if resp.changed() {
-                    self.viewer.seek_clip(i, t);
-                }
+                ui.horizontal(|ui| {
+                    ui.label("Time");
+                    let resp = ui.add(
+                        egui::Slider::new(&mut t, 0.0..=dur)
+                            .suffix(" s")
+                            .clamping(egui::SliderClamping::Always)
+                            .max_decimals(2),
+                    );
+                    if resp.changed() {
+                        self.viewer.seek_clip(i, t);
+                    }
+                });
             });
+            ui.add_space(4.0);
         }
         if let Some(name) = pending_delete {
             use crate::edit;

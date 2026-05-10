@@ -150,17 +150,21 @@ impl MogenStudioApp {
         let current = edit::get_lod_scale(&self.files[i].source).unwrap_or(1.0);
         let mut draft = current;
         ui.add_space(6.0);
+        let lod_hint =
+            "Multiplies primitive default segment/ring counts.\n\
+             Per-primitive `segments=`/`rings=` overrides still win.";
         let resp = ui
-            .add(
-                egui::Slider::new(&mut draft, 0.25..=4.0)
-                    .text("LOD scale")
-                    .logarithmic(true)
-                    .fixed_decimals(2),
-            )
-            .on_hover_text(
-                "Multiplies primitive default segment/ring counts.\n\
-                 Per-primitive `segments=`/`rings=` overrides still win.",
-            );
+            .horizontal(|ui| {
+                ui.label("LOD scale").on_hover_text(lod_hint);
+                ui.add(
+                    egui::Slider::new(&mut draft, 0.25..=4.0)
+                        .suffix("×")
+                        .logarithmic(true)
+                        .max_decimals(2),
+                )
+                .on_hover_text(lod_hint)
+            })
+            .inner;
         if resp.drag_stopped() || (resp.changed() && !resp.dragged()) {
             let snapped = (draft * 100.0).round() / 100.0;
             if (snapped - current).abs() > 1e-3 {
