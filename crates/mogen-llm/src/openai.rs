@@ -76,6 +76,109 @@ impl OpenAIClient {
         Ok(Self::new(key))
     }
 
+    /// Streaming variant of [`Self::generate`]. Sets `stream: true` plus
+    /// `stream_options.include_usage: true` on the request body and invokes
+    /// `on_chunk(delta, cumulative)` once per SSE frame. Returns the same
+    /// [`GenerateResponse`] shape as `generate` at end-of-stream so callers
+    /// can swap the two transparently.
+    ///
+    /// OpenAI emits the `usage` tally on the final non-`[DONE]` frame when
+    /// `include_usage` is set — that's the value reflected in the returned
+    /// [`Usage`], so token accounting stays accurate vs the non-streaming
+    /// path.
+    pub fn stream_generate(
+        &self,
+        cfg: &GenerateConfig,
+        on_chunk: &mut dyn FnMut(&str, &str),
+    ) -> Result<GenerateResponse, OpenAIError> {
+        let url = format!("{}/chat/completions", self.base_url);
+        let mut body = build_request(cfg);
+        body["stream"] = serde_json::json!(true);
+        body["stream_options"] = serde_json::json!({ "include_usage": true });
+
+        let resp = self
+            .http
+            .post(&url)
+            .bearer_auth(&self.api_key)
+            .json(&body)
+            .send()?;
+        let status = resp.status();
+        if !status.is_success() {
+            let bytes = resp.bytes()?;
+            return Err(OpenAIError::Api {
+                status: status.as_u16(),
+                message: parse_error_message(&bytes),
+            });
+        }
+
+        let mut cumulative = String::new();
+        let mut last_usage: Option<RawUsage> = None;
+        let mut sse_err: Option<OpenAIError> = None;
+
+        crate::stream_sse::for_each_sse_data(resp, |payload| {
+            let parsed: RawChatChunk = match serde_json::from_str(payload) {
+                Ok(v) => v,
+                Err(e) => {
+                    sse_err = Some(OpenAIError::InvalidResponse(e.to_string()));
+                    return false;
+                }
+            };
+            // A streamed chunk usually has exactly one delta on the first
+            // choice. Some frames carry only `usage` (the include_usage
+            // tail frame) with no choices — handled by the empty-iterator
+            // path below.
+            if let Some(delta_text) = parsed
+                .choices
+                .iter()
+                .filter_map(|c| c.delta.content.as_deref())
+                .next()
+            {
+                if !delta_text.is_empty() {
+                    cumulative.push_str(delta_text);
+                    on_chunk(delta_text, cumulative.as_str());
+                }
+            }
+            if let Some(u) = parsed.usage {
+                last_usage = Some(u);
+            }
+            true
+        })
+        .map_err(|e| OpenAIError::InvalidResponse(format!("SSE read error: {e}")))?;
+
+        if let Some(e) = sse_err {
+            return Err(e);
+        }
+        if cumulative.trim().is_empty() {
+            return Err(OpenAIError::EmptyResponse);
+        }
+
+        let usage = last_usage
+            .map(|u| Usage {
+                prompt_tokens: u.prompt_tokens,
+                response_tokens: u.completion_tokens,
+                total_tokens: u.total_tokens,
+                cached_tokens: u
+                    .prompt_tokens_details
+                    .and_then(|d| d.cached_tokens)
+                    .unwrap_or(0),
+            })
+            .unwrap_or_default();
+
+        if let Some(budget) = cfg.budget_tokens {
+            if usage.total_tokens > budget {
+                return Err(OpenAIError::BudgetExceeded {
+                    used: usage.total_tokens,
+                    budget,
+                });
+            }
+        }
+
+        Ok(GenerateResponse {
+            text: cumulative,
+            usage,
+        })
+    }
+
     pub fn generate(&self, cfg: &GenerateConfig) -> Result<GenerateResponse, OpenAIError> {
         let url = format!("{}/chat/completions", self.base_url);
         let body = build_request(cfg);
@@ -247,6 +350,31 @@ struct RawUsage {
 struct RawPromptDetails {
     #[serde(default)]
     cached_tokens: Option<u32>,
+}
+
+/// Streaming frame from `chat/completions` with `stream:true`. Differs
+/// from [`RawChatResponse`] only in the `choices[].delta` shape vs
+/// `choices[].message`. `usage` is `None` on every frame until the
+/// final `include_usage` tail frame, which carries an empty `choices`
+/// array and the cumulative usage tally.
+#[derive(Debug, Deserialize)]
+struct RawChatChunk {
+    #[serde(default)]
+    choices: Vec<RawChunkChoice>,
+    #[serde(default)]
+    usage: Option<RawUsage>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawChunkChoice {
+    #[serde(default)]
+    delta: RawDelta,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawDelta {
+    #[serde(default)]
+    content: Option<String>,
 }
 
 #[cfg(test)]

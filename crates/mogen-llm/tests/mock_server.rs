@@ -145,7 +145,7 @@ fn repair_loop_respects_max_iters_and_returns_last_attempt() {
     let outcome = generate_with_repair(
         &client,
         GenerateConfig::new("anything"),
-        &RepairConfig { max_iters: 1, on_iteration: None, allow_edit_mode: false },
+        &RepairConfig { max_iters: 1, on_iteration: None, on_chunk: None, allow_edit_mode: false },
     )
     .expect("request ok");
 
@@ -187,7 +187,7 @@ fn user_images_become_inline_data_parts_on_the_user_turn() {
         // Three bytes the test can spot once base64-encoded ("AQID").
         data: vec![0x01, 0x02, 0x03],
     });
-    let _ = generate_with_repair(&client, cfg, &RepairConfig { max_iters: 0, on_iteration: None, allow_edit_mode: false })
+    let _ = generate_with_repair(&client, cfg, &RepairConfig { max_iters: 0, on_iteration: None, on_chunk: None, allow_edit_mode: false })
         .expect("request ok");
 
     let reqs = server.requests.lock().unwrap();
@@ -261,7 +261,7 @@ fn planner_then_coder_threads_plan_into_user_turn() {
     let outcome = generate_with_repair(
         &client,
         coder_cfg,
-        &RepairConfig { max_iters: 0, on_iteration: None, allow_edit_mode: false },
+        &RepairConfig { max_iters: 0, on_iteration: None, on_chunk: None, allow_edit_mode: false },
     )
     .expect("coder call ok");
     assert!(outcome.is_ok(), "diagnostics: {:?}", outcome.diagnostics);
@@ -307,7 +307,7 @@ fn visual_refine_attaches_image_and_dsl() {
     let outcome = mogen_llm::visual_refine(
         &client,
         &base,
-        &RepairConfig { max_iters: 0, on_iteration: None, allow_edit_mode: false },
+        &RepairConfig { max_iters: 0, on_iteration: None, on_chunk: None, allow_edit_mode: false },
         registry,
         "a wooden stool",
         previous_dsl,
@@ -335,6 +335,202 @@ fn visual_refine_attaches_image_and_dsl() {
         text.contains("box \"old\""),
         "reviewer turn must inline the previous DSL so the model can edit it: {text}"
     );
+}
+
+/// Spin up a tiny_http server that responds to every request with an
+/// SSE-framed body and the `text/event-stream` content type. `frames`
+/// is the list of JSON payloads that go into `data: {…}\n\n` events,
+/// in order. Used by the streaming-client tests to verify that
+/// `stream_generate` correctly accumulates deltas, surfaces usage from
+/// the tail frame, and invokes the per-chunk callback once per frame.
+fn start_sse_server(frames: Vec<String>) -> (u16, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+    let server = tiny_http::Server::http("127.0.0.1:0").expect("bind sse server");
+    let port = server.server_addr().to_ip().expect("ipv4").port();
+    let requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let requests_clone = requests.clone();
+    thread::spawn(move || {
+        for mut req in server.incoming_requests() {
+            let mut body = String::new();
+            req.as_reader().read_to_string(&mut body).ok();
+            requests_clone.lock().unwrap().push(body);
+            let mut payload = String::new();
+            for frame in &frames {
+                payload.push_str("data: ");
+                payload.push_str(frame);
+                payload.push_str("\n\n");
+            }
+            payload.push_str("data: [DONE]\n\n");
+            let resp = tiny_http::Response::from_string(payload).with_header(
+                "Content-Type: text/event-stream"
+                    .parse::<tiny_http::Header>()
+                    .unwrap(),
+            );
+            let _ = req.respond(resp);
+        }
+    });
+    (port, requests)
+}
+
+#[test]
+fn gemini_stream_accumulates_deltas_and_invokes_on_chunk_each_frame() {
+    // Three SSE frames: two text deltas, then a tail frame carrying the
+    // usage tally only (Gemini emits usageMetadata on the final frame).
+    // The client must concatenate the text parts and surface the tail
+    // frame's usage in the returned `GenerateResponse`.
+    let f1 = serde_json::json!({
+        "candidates": [{"content":{"parts":[{"text":"scene { box \"a\" "}]}}],
+    })
+    .to_string();
+    let f2 = serde_json::json!({
+        "candidates": [{"content":{"parts":[{"text":"(size=[1,1,1]) }"}]}}],
+    })
+    .to_string();
+    let tail = serde_json::json!({
+        "candidates": [{"content":{"parts":[{"text":""}]}}],
+        "usageMetadata": {
+            "promptTokenCount": 11,
+            "candidatesTokenCount": 22,
+            "totalTokenCount": 33,
+        }
+    })
+    .to_string();
+    let (port, _reqs) = start_sse_server(vec![f1, f2, tail]);
+
+    let client = GeminiClient::with_base_url(
+        "test-key",
+        format!("http://127.0.0.1:{}/v1beta", port),
+    );
+
+    let cumulative_snapshots: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+    let mut on_chunk = |_delta: &str, cumulative: &str| {
+        cumulative_snapshots
+            .lock()
+            .unwrap()
+            .push(cumulative.to_string());
+    };
+
+    let resp = client
+        .stream_generate(&GenerateConfig::new("a box"), &mut on_chunk)
+        .expect("stream ok");
+
+    assert_eq!(resp.text, "scene { box \"a\" (size=[1,1,1]) }");
+    assert_eq!(resp.usage.total_tokens, 33);
+    assert_eq!(resp.usage.prompt_tokens, 11);
+    assert_eq!(resp.usage.response_tokens, 22);
+
+    // Two text frames → two callbacks (the tail's empty-string delta is
+    // skipped so the panel doesn't get a no-op transition).
+    let snaps = cumulative_snapshots.lock().unwrap();
+    assert_eq!(snaps.len(), 2, "got: {snaps:?}");
+    assert_eq!(snaps[0], "scene { box \"a\" ");
+    assert_eq!(snaps[1], "scene { box \"a\" (size=[1,1,1]) }");
+}
+
+#[test]
+fn gemini_stream_targets_the_stream_endpoint_with_sse_alt() {
+    // The streaming path must hit `:streamGenerateContent?alt=sse`, not
+    // `:generateContent`. If a future refactor accidentally aliases the
+    // method to the non-streaming URL the deltas would never arrive
+    // — pin the URL shape against the mock's recorded request.
+    let frame = serde_json::json!({
+        "candidates": [{"content":{"parts":[{"text":"x"}]}}],
+        "usageMetadata": {"promptTokenCount":1, "candidatesTokenCount":1, "totalTokenCount":2}
+    })
+    .to_string();
+    let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+    let port = server.server_addr().to_ip().unwrap().port();
+    let urls = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let urls_clone = urls.clone();
+    thread::spawn(move || {
+        for req in server.incoming_requests() {
+            urls_clone.lock().unwrap().push(req.url().to_string());
+            let body = format!("data: {frame}\n\ndata: [DONE]\n\n");
+            let resp = tiny_http::Response::from_string(body).with_header(
+                "Content-Type: text/event-stream"
+                    .parse::<tiny_http::Header>()
+                    .unwrap(),
+            );
+            let _ = req.respond(resp);
+        }
+    });
+
+    let client = GeminiClient::with_base_url(
+        "test-key",
+        format!("http://127.0.0.1:{}/v1beta", port),
+    );
+    let mut cb = |_d: &str, _c: &str| {};
+    let _ = client
+        .stream_generate(&GenerateConfig::new("x"), &mut cb)
+        .expect("stream ok");
+
+    let urls = urls.lock().unwrap();
+    assert_eq!(urls.len(), 1);
+    assert!(
+        urls[0].contains(":streamGenerateContent"),
+        "expected streaming endpoint, got {}",
+        urls[0]
+    );
+    assert!(urls[0].contains("alt=sse"), "expected SSE alt, got {}", urls[0]);
+}
+
+#[test]
+fn openai_stream_accumulates_deltas_and_surfaces_tail_usage() {
+    // OpenAI streams `choices[0].delta.content` deltas, then a
+    // choice-less tail frame with `usage` when `include_usage` is set.
+    // Mirror the same accumulation+tail-usage contract Gemini's test
+    // exercises so a regression in either provider is caught by its
+    // own test.
+    let f1 = serde_json::json!({
+        "choices": [{"index":0, "delta":{"content":"scene { box \"a\" "}}],
+    })
+    .to_string();
+    let f2 = serde_json::json!({
+        "choices": [{"index":0, "delta":{"content":"(size=[1,1,1]) }"}}],
+    })
+    .to_string();
+    let tail = serde_json::json!({
+        "choices": [],
+        "usage": {
+            "prompt_tokens": 5,
+            "completion_tokens": 12,
+            "total_tokens": 17,
+        }
+    })
+    .to_string();
+    let (port, reqs) = start_sse_server(vec![f1, f2, tail]);
+
+    let client = LlmClient::with_base_url(
+        Provider::OpenAI,
+        "test-key",
+        format!("http://127.0.0.1:{}/v1", port),
+    );
+
+    let cumulative_snapshots: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+    let mut on_chunk = |_delta: &str, cumulative: &str| {
+        cumulative_snapshots
+            .lock()
+            .unwrap()
+            .push(cumulative.to_string());
+    };
+    let resp = client
+        .stream_generate(&GenerateConfig::new("a box"), &mut on_chunk)
+        .expect("stream ok");
+
+    assert_eq!(resp.text, "scene { box \"a\" (size=[1,1,1]) }");
+    assert_eq!(resp.usage.total_tokens, 17);
+    assert_eq!(resp.usage.prompt_tokens, 5);
+    assert_eq!(resp.usage.response_tokens, 12);
+
+    // Two non-empty deltas → two callbacks.
+    let snaps = cumulative_snapshots.lock().unwrap();
+    assert_eq!(snaps.len(), 2, "got: {snaps:?}");
+
+    // Request body must carry `stream:true` and request usage on the tail.
+    let reqs = reqs.lock().unwrap();
+    assert_eq!(reqs.len(), 1);
+    let body: serde_json::Value = serde_json::from_str(&reqs[0]).expect("valid JSON");
+    assert_eq!(body["stream"], true);
+    assert_eq!(body["stream_options"]["include_usage"], true);
 }
 
 /// Helper that produces a Z.ai-shaped chat-completions response carrying
@@ -371,7 +567,7 @@ fn zai_vision_uses_image_url_content() {
         // Three bytes that base64-encode to "AQID".
         data: vec![0x01, 0x02, 0x03],
     });
-    let _ = generate_with_repair(&client, cfg, &RepairConfig { max_iters: 0, on_iteration: None, allow_edit_mode: false })
+    let _ = generate_with_repair(&client, cfg, &RepairConfig { max_iters: 0, on_iteration: None, on_chunk: None, allow_edit_mode: false })
         .expect("request ok");
 
     let reqs = server.requests.lock().unwrap();
@@ -412,7 +608,7 @@ fn fireworks_vision_uses_image_url_content() {
         // Three bytes that base64-encode to "AQID".
         data: vec![0x01, 0x02, 0x03],
     });
-    let _ = generate_with_repair(&client, cfg, &RepairConfig { max_iters: 0, on_iteration: None, allow_edit_mode: false })
+    let _ = generate_with_repair(&client, cfg, &RepairConfig { max_iters: 0, on_iteration: None, on_chunk: None, allow_edit_mode: false })
         .expect("request ok");
 
     let reqs = server.requests.lock().unwrap();

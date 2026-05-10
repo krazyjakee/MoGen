@@ -568,6 +568,32 @@ impl LlmClient {
             LlmClient::Zai(c) => c.generate(cfg).map_err(Into::into),
         }
     }
+
+    /// Streaming variant of [`Self::generate`]. `on_chunk(delta,
+    /// cumulative)` fires once per provider frame — `delta` is the new
+    /// text just received, `cumulative` is the full response so far.
+    /// Returns the same [`GenerateResponse`] shape as `generate` at
+    /// end-of-stream.
+    ///
+    /// Providers without an SSE/NDJSON implementation transparently
+    /// fall through to [`Self::generate`]; the callback simply never
+    /// fires in that case. Today: Gemini (API-key surface) and OpenAI
+    /// stream; everything else falls through.
+    pub fn stream_generate(
+        &self,
+        cfg: &GenerateConfig,
+        on_chunk: &mut dyn FnMut(&str, &str),
+    ) -> Result<GenerateResponse, ProviderError> {
+        match self {
+            LlmClient::Gemini(c) => c.stream_generate(cfg, on_chunk).map_err(Into::into),
+            LlmClient::OpenAI(c) => c.stream_generate(cfg, on_chunk).map_err(Into::into),
+            LlmClient::Anthropic(c) => c.generate(cfg).map_err(Into::into),
+            LlmClient::Ollama(c) => c.generate(cfg).map_err(Into::into),
+            LlmClient::ClaudeCode(c) => c.generate(cfg).map_err(Into::into),
+            LlmClient::Fireworks(c) => c.generate(cfg).map_err(Into::into),
+            LlmClient::Zai(c) => c.generate(cfg).map_err(Into::into),
+        }
+    }
 }
 
 #[cfg(test)]

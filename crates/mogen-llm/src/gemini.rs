@@ -444,6 +444,113 @@ impl GeminiClient {
         Ok(bytes.to_vec())
     }
 
+    /// Streaming variant of [`Self::generate`]. Hits
+    /// `:streamGenerateContent?alt=sse` and invokes `on_chunk(delta,
+    /// cumulative)` once per SSE frame, where `delta` is the new text
+    /// just received and `cumulative` is the full response text so far.
+    /// Returns the same [`GenerateResponse`] shape as `generate` at the
+    /// end of the stream so callers can treat the two interchangeably.
+    ///
+    /// OAuth (cloudcode) clients transparently fall back to the
+    /// non-streaming [`Self::generate`] path — `v1internal` exposes a
+    /// `:streamGenerateContent` endpoint but the response envelope
+    /// differs and we don't have a tested mock for it yet. The
+    /// callback simply never fires in that case; the headline status
+    /// remains the coarse "calling Gemini…" the worker already emits.
+    pub fn stream_generate(
+        &self,
+        cfg: &GenerateConfig,
+        on_chunk: &mut dyn FnMut(&str, &str),
+    ) -> Result<GenerateResponse, GeminiError> {
+        let key = match &self.auth {
+            GeminiAuth::ApiKey(k) => k.clone(),
+            GeminiAuth::OAuth(_) | GeminiAuth::AntigravityOAuth(_) => {
+                return self.generate(cfg);
+            }
+        };
+
+        let model = if cfg.model.is_empty() {
+            DEFAULT_MODEL
+        } else {
+            cfg.model.as_str()
+        };
+        let inner = build_request(cfg);
+
+        let url = format!(
+            "{}/models/{}:streamGenerateContent?alt=sse&key={}",
+            self.base_url, model, key,
+        );
+        let resp = self.http.post(&url).json(&inner).send()?;
+        let status = resp.status();
+        if !status.is_success() {
+            let bytes = resp.bytes()?;
+            return Err(GeminiError::Api {
+                status: status.as_u16(),
+                message: parse_error_message(&bytes),
+            });
+        }
+
+        let mut cumulative = String::new();
+        let mut last_usage: Option<RawUsageMetadata> = None;
+        let mut sse_err: Option<GeminiError> = None;
+
+        crate::stream_sse::for_each_sse_data(resp, |payload: &str| {
+            let parsed: RawGenerateResponse = match serde_json::from_str(payload) {
+                Ok(v) => v,
+                Err(e) => {
+                    sse_err = Some(GeminiError::InvalidResponse(e.to_string()));
+                    return false;
+                }
+            };
+            if let Some(delta_text) = parsed
+                .candidates
+                .first()
+                .and_then(|c| c.content.parts.first())
+                .map(|p| p.text.as_str())
+            {
+                if !delta_text.is_empty() {
+                    cumulative.push_str(delta_text);
+                    on_chunk(delta_text, cumulative.as_str());
+                }
+            }
+            if let Some(u) = parsed.usage_metadata {
+                last_usage = Some(u);
+            }
+            true
+        })
+        .map_err(|e| GeminiError::InvalidResponse(format!("SSE read error: {e}")))?;
+
+        if let Some(e) = sse_err {
+            return Err(e);
+        }
+        if cumulative.is_empty() {
+            return Err(GeminiError::EmptyResponse);
+        }
+
+        let usage = last_usage
+            .map(|u| Usage {
+                prompt_tokens: u.prompt_token_count,
+                response_tokens: u.candidates_token_count,
+                total_tokens: u.total_token_count,
+                cached_tokens: u.cached_content_token_count,
+            })
+            .unwrap_or_default();
+
+        if let Some(budget) = cfg.budget_tokens {
+            if usage.total_tokens > budget {
+                return Err(GeminiError::BudgetExceeded {
+                    used: usage.total_tokens,
+                    budget,
+                });
+            }
+        }
+
+        Ok(GenerateResponse {
+            text: cumulative,
+            usage,
+        })
+    }
+
     pub fn generate(&self, cfg: &GenerateConfig) -> Result<GenerateResponse, GeminiError> {
         let model = if cfg.model.is_empty() {
             DEFAULT_MODEL

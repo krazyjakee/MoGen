@@ -157,6 +157,7 @@ pub(crate) fn repair(args: RepairArgs) -> Result<()> {
                 "repair: repair {attempt}/{total_attempts} — fixing {summary}"
             ));
         })),
+        on_chunk: None,
         allow_edit_mode: true,
     };
 

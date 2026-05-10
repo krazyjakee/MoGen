@@ -239,6 +239,7 @@ Existing file:\n\n{existing}",
                 "modify: repair {attempt}/{total_attempts} — fixing {summary}"
             ));
         })),
+        on_chunk: None,
         allow_edit_mode: true,
     };
 
@@ -312,6 +313,7 @@ Existing file:\n\n{existing}",
                         "modify: {label_for_cb} repair {attempt}/{total_attempts} — fixing {summary}"
                     ));
                 })),
+                on_chunk: None,
                 allow_edit_mode: true,
             };
 

@@ -155,6 +155,7 @@ pub(crate) fn generate(args: GenerateArgs) -> Result<()> {
                 "generate: repair {attempt}/{total_attempts} — fixing {summary}"
             ));
         })),
+        on_chunk: None,
         allow_edit_mode: true,
     };
 
@@ -217,6 +218,7 @@ pub(crate) fn generate(args: GenerateArgs) -> Result<()> {
                         "generate: {label_for_cb} repair {attempt}/{total_attempts} — fixing {summary}"
                     ));
                 })),
+                on_chunk: None,
                 allow_edit_mode: true,
             };
 

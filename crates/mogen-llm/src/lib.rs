@@ -37,6 +37,8 @@ pub mod provider;
 pub mod refine;
 pub mod repair;
 pub mod settings_store;
+pub mod stream_sse;
+pub mod stream_status;
 pub mod textures;
 pub mod style;
 pub mod types;
@@ -68,6 +70,7 @@ pub use repair::{
     generate_edits_with_repair, generate_with_repair, repair_message, validate_text,
     GenerateOutcome, RepairConfig, EDIT_BLOCK_INSTRUCTIONS,
 };
+pub use stream_status::StreamStatus;
 pub use settings_store::{
     load_api_keys, read_api_key, settings_path as settings_store_path, zai_base_url, ApiKeys,
 };

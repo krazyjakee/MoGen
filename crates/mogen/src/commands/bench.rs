@@ -105,6 +105,7 @@ pub(crate) fn bench(
         let repair = RepairConfig {
             max_iters: max_repair_iters,
             on_iteration: None,
+            on_chunk: None,
             allow_edit_mode: true,
         };
 

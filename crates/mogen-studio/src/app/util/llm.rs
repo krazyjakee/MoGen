@@ -481,6 +481,23 @@ pub(in crate::app) fn run_llm(
 
     let max_iters = run_cfg.max_repair_iters;
     let tx_for_repair = tx.clone();
+    // Stream the model response so the progress card can surface
+    // fine-grained DSL milestones ("writing geometry", "binding skin",
+    // …) as the file is emitted. `StreamStatus` lives behind a
+    // `Mutex` because `RepairConfig::on_chunk` takes `&self`, but the
+    // adapter inside `mogen_llm::StreamStatus::observe` needs to
+    // mutate the last-emitted-stage memo. Providers without an SSE
+    // implementation transparently fall through to non-streaming
+    // inside `LlmClient::stream_generate`, so this is safe across
+    // every active backend.
+    //
+    // Throttling: a 250 ms floor between emits keeps egui from
+    // re-laying-out the panel on every byte during a fast Flash
+    // response. Status transitions still feel instant — DSL stages
+    // change much more slowly than the per-token frame rate.
+    let tx_for_chunk = tx.clone();
+    let stream_state =
+        std::sync::Mutex::new((mogen_llm::StreamStatus::default(), std::time::Instant::now()));
     let repair = RepairConfig {
         max_iters,
         on_iteration: Some(Box::new(move |iter, diags| {
@@ -493,6 +510,19 @@ pub(in crate::app) fn run_llm(
                 max: max_iters,
                 errors,
             }));
+        })),
+        on_chunk: Some(Box::new(move |_delta, cumulative| {
+            let mut guard = match stream_state.lock() {
+                Ok(g) => g,
+                Err(_) => return,
+            };
+            if guard.1.elapsed() < std::time::Duration::from_millis(250) {
+                return;
+            }
+            if let Some(line) = guard.0.observe(cumulative) {
+                guard.1 = std::time::Instant::now();
+                let _ = tx_for_chunk.send(LlmMessage::Progress(LlmProgress::Status(line)));
+            }
         })),
         allow_edit_mode: true,
     };

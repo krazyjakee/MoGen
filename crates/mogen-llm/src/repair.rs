@@ -29,6 +29,23 @@ pub struct RepairConfig {
     /// Called with each repair feedback message (for CLI progress output).
     /// Keeps this crate free of println! noise.
     pub on_iteration: Option<Box<dyn Fn(u32, &[Diagnostic])>>,
+    /// When `Some`, the loop switches each iteration to
+    /// [`LlmClient::stream_generate`] and invokes this callback with
+    /// `(delta, cumulative)` once per provider frame. Used by the Studio
+    /// progress card to render fine-grained status messages mid-call
+    /// ("writing geometry", "authoring animation", …) without waiting
+    /// for the response to land. Cleared automatically between
+    /// iterations so the same callback drives each repair retry.
+    ///
+    /// Providers without a streaming implementation see no per-chunk
+    /// calls — they transparently fall back to non-streaming and the
+    /// callback simply never fires.
+    ///
+    /// Symmetric with [`Self::on_iteration`]: takes `&self`, so any
+    /// mutable progress state (a `StreamStatus`, a last-emit
+    /// [`Instant`](std::time::Instant), …) must live behind interior
+    /// mutability in the caller's closure.
+    pub on_chunk: Option<Box<dyn Fn(&str, &str)>>,
     /// When all errors on a turn are "local" (typo / wrong attr type / unknown
     /// material), ask the model for SEARCH/REPLACE blocks instead of a full
     /// rewrite. Cuts output tokens dramatically on small fix-ups; falls back
@@ -39,7 +56,12 @@ pub struct RepairConfig {
 
 impl Default for RepairConfig {
     fn default() -> Self {
-        Self { max_iters: 2, on_iteration: None, allow_edit_mode: true }
+        Self {
+            max_iters: 2,
+            on_iteration: None,
+            on_chunk: None,
+            allow_edit_mode: true,
+        }
     }
 }
 
@@ -48,6 +70,7 @@ impl std::fmt::Debug for RepairConfig {
         f.debug_struct("RepairConfig")
             .field("max_iters", &self.max_iters)
             .field("on_iteration", &self.on_iteration.is_some())
+            .field("on_chunk", &self.on_chunk.is_some())
             .field("allow_edit_mode", &self.allow_edit_mode)
             .finish()
     }
@@ -152,7 +175,17 @@ fn run_repair_loop(
     let mut prev_dsl: Option<String> = prev_dsl_init;
 
     for iter in 0..=repair.max_iters {
-        let resp = client.generate(&cfg)?;
+        // When the caller supplied a chunk callback, stream the model
+        // response so progress can be reported mid-call. Providers
+        // without a streaming implementation transparently fall back
+        // to non-streaming inside `stream_generate`.
+        let resp = match &repair.on_chunk {
+            Some(cb) => {
+                let mut adapter = |delta: &str, cumulative: &str| cb(delta, cumulative);
+                client.stream_generate(&cfg, &mut adapter)?
+            }
+            None => client.generate(&cfg)?,
+        };
         calls += 1;
         total_usage.add(&resp.usage);
 

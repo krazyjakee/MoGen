@@ -139,6 +139,7 @@ Existing file:\n\n{existing}",
                 "animate: repair {attempt}/{total_attempts} — fixing {summary}"
             ));
         })),
+        on_chunk: None,
         allow_edit_mode: true,
     };
 
