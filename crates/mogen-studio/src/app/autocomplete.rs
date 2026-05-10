@@ -39,6 +39,14 @@ impl MogenStudioApp {
                 action = AutocompleteKey::MoveUp;
                 return;
             }
+            // Shift+Tab is the conventional reverse-navigation key in
+            // completion popups (Tab moves to the next match, Shift+Tab to
+            // the previous). Consumed before indent.rs sees it so the popup
+            // stays in front of the dedent shortcut while it's open.
+            if i.consume_key(egui::Modifiers::SHIFT, egui::Key::Tab) {
+                action = AutocompleteKey::MoveUp;
+                return;
+            }
             if i.consume_key(egui::Modifiers::NONE, egui::Key::Tab)
                 || i.consume_key(egui::Modifiers::NONE, egui::Key::Enter)
             {

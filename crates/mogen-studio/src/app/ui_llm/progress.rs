@@ -33,11 +33,12 @@ impl MogenStudioApp {
             .inner_margin(egui::Margin::symmetric(10.0, 8.0))
             .show(ui, |ui| {
                 // ── header row: pill · stage caption · elapsed time ─────
+                // Reserve the right-side elapsed slot first via a
+                // right-to-left layout so a long headline truncates instead of
+                // sliding under the timer.
                 ui.horizontal(|ui| {
                     draw_kind_pill(ui, kind, accent);
                     ui.add_space(6.0);
-                    ui.spinner();
-                    ui.label(egui::RichText::new(stage_headline(&progress, kind, provider)));
                     ui.with_layout(
                         egui::Layout::right_to_left(egui::Align::Center),
                         |ui| {
@@ -47,7 +48,20 @@ impl MogenStudioApp {
                                         .monospace()
                                         .weak(),
                                 );
+                                ui.add_space(8.0);
                             }
+                            ui.with_layout(
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                |ui| {
+                                    ui.spinner();
+                                    ui.add(
+                                        egui::Label::new(egui::RichText::new(
+                                            stage_headline(&progress, kind, provider),
+                                        ))
+                                        .truncate(),
+                                    );
+                                },
+                            );
                         },
                     );
                 });
