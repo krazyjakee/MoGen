@@ -193,6 +193,10 @@ impl MogenStudioApp {
         let mut sz = t_scale.z;
         let node_span = node.source_span;
         let node_id = sel;
+        // Snapshot of connectors taken early so the connector-list section
+        // further down can render without keeping the `&node` borrow alive
+        // through the wants_* mutation handlers.
+        let connectors_snap: Vec<mogen_core::Connector> = node.connectors.clone();
 
         let mut edits: Vec<PendingEdit> = Vec::new();
 
@@ -336,6 +340,277 @@ impl MogenStudioApp {
                 }
                 ui.end_row();
             });
+
+        // Material picker — pick from the scene's authored materials and
+        // write `material="<name>"` back into the node header. Skip nodes that
+        // can't carry a material (lights, groups without geometry handled by
+        // attribute being valid in DSL anyway).
+        let mut wants_clear_material = false;
+        if node.light.is_none() {
+            let mat_names: Vec<String> =
+                scene.materials.iter().map(|m| m.name.clone()).collect();
+            let current_mat: Option<String> = node
+                .material
+                .and_then(|id| scene.materials.get(id.0 as usize))
+                .map(|m| m.name.clone());
+            if !mat_names.is_empty() {
+                ui.add_space(8.0);
+                ui.separator();
+                ui.label(egui::RichText::new("Material").strong());
+                ui.horizontal(|ui| {
+                    let label = current_mat
+                        .clone()
+                        .unwrap_or_else(|| "(inherit)".to_string());
+                    egui::ComboBox::from_id_salt(("inspector_material", node_id.0))
+                        .selected_text(label)
+                        .show_ui(ui, |ui| {
+                            // "(inherit)" clears `material=` and lets the parent's
+                            // material flow down — the lowering pass already
+                            // propagates parent material when child omits it.
+                            let none_selected = current_mat.is_none();
+                            if ui
+                                .selectable_label(none_selected, "(inherit)")
+                                .clicked()
+                                && !none_selected
+                            {
+                                wants_clear_material = true;
+                            }
+                            for name in &mat_names {
+                                let selected = current_mat.as_deref() == Some(name.as_str());
+                                if ui
+                                    .selectable_label(selected, name)
+                                    .clicked()
+                                    && !selected
+                                {
+                                    edits.push(PendingEdit::SetAttrCanonical {
+                                        node: node_id,
+                                        attr: "material".into(),
+                                        value: format!("\"{name}\""),
+                                        delete: Vec::new(),
+                                    });
+                                }
+                            }
+                        });
+                });
+            }
+        }
+
+        // Primitive geometry parameters (kind-switched). Show scalar attrs the
+        // primitive lowering pass actually consumes — see
+        // `mogen_dsl::lower::primitive`. List-shaped attrs (points/profile/path)
+        // are skipped here; they need a richer editor than a sidebar grid.
+        if let Some(span) = node_span {
+            let src_view = self.files[i].source.clone();
+            let mut params_to_emit: Vec<(&'static str, String)> = Vec::new();
+            let mut shown_any = false;
+            ui.add_space(8.0);
+            ui.separator();
+            ui.label(egui::RichText::new("Geometry").strong());
+            egui::Grid::new(("inspector_geom", node_id.0))
+                .num_columns(2)
+                .spacing([6.0, 4.0])
+                .show(ui, |ui| {
+                    shown_any = geom_params_for_kind(
+                        ui,
+                        node.kind.as_str(),
+                        &src_view,
+                        span,
+                        &mut params_to_emit,
+                    );
+                });
+            if !shown_any {
+                ui.label(
+                    egui::RichText::new("(no editable params for this kind)")
+                        .italics()
+                        .weak(),
+                );
+            }
+            for (attr, value) in params_to_emit {
+                edits.push(PendingEdit::SetAttrCanonical {
+                    node: node_id,
+                    attr: attr.into(),
+                    value,
+                    delete: Vec::new(),
+                });
+            }
+        }
+
+        // CSG op switch — flip union/difference/intersect on the same node
+        // without retyping. Lowering keys off `node.kind`, so we use a
+        // dedicated PendingEdit::ChangeKind via a span rewrite below.
+        let mut change_kind_to: Option<&'static str> = None;
+        if matches!(node.kind.as_str(), "union" | "difference" | "intersect") {
+            ui.add_space(8.0);
+            ui.separator();
+            ui.label(egui::RichText::new("CSG op").strong());
+            let cur = node.kind.as_str();
+            ui.horizontal(|ui| {
+                for k in ["union", "difference", "intersect"] {
+                    let selected = cur == k;
+                    if ui.selectable_label(selected, k).clicked() && !selected {
+                        change_kind_to = Some(match k {
+                            "union" => "union",
+                            "difference" => "difference",
+                            "intersect" => "intersect",
+                            _ => unreachable!(),
+                        });
+                    }
+                }
+            });
+        }
+
+        // Array / mirror modifier rows. Scalar count/axis/start_angle for
+        // arrays; axis-only for mirror. Replicators are not editable in the
+        // inspector when their wrapper isn't `editable`, but the wrapper
+        // *itself* stays editable per `lower::layout` so this still applies.
+        match node.kind.as_str() {
+            "array" => {
+                ui.add_space(8.0);
+                ui.separator();
+                ui.label(egui::RichText::new("Array").strong());
+                if let Some(span) = node_span {
+                    let src_view = self.files[i].source.clone();
+                    let cur_count = crate::edit::get_attr(&src_view, span, "count")
+                        .and_then(|s| s.parse::<f32>().ok())
+                        .unwrap_or(1.0);
+                    let cur_around = crate::edit::get_attr(&src_view, span, "around")
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| "Y".into());
+                    let cur_start = crate::edit::get_attr(&src_view, span, "start_angle")
+                        .and_then(|s| s.parse::<f32>().ok())
+                        .unwrap_or(0.0);
+                    egui::Grid::new(("inspector_array", node_id.0))
+                        .num_columns(2)
+                        .spacing([6.0, 4.0])
+                        .show(ui, |ui| {
+                            ui.label("Count");
+                            let mut count = cur_count.max(1.0);
+                            if ui
+                                .add(egui::DragValue::new(&mut count).speed(0.1).range(1.0..=512.0))
+                                .changed()
+                            {
+                                edits.push(PendingEdit::SetAttrCanonical {
+                                    node: node_id,
+                                    attr: "count".into(),
+                                    value: (count.round() as i32).to_string(),
+                                    delete: Vec::new(),
+                                });
+                            }
+                            ui.end_row();
+
+                            ui.label("Around");
+                            let mut around = cur_around.clone();
+                            egui::ComboBox::from_id_salt(("inspector_array_axis", node_id.0))
+                                .selected_text(around.as_str())
+                                .show_ui(ui, |ui| {
+                                    for axis in ["X", "Y", "Z"] {
+                                        if ui
+                                            .selectable_value(&mut around, axis.into(), axis)
+                                            .clicked()
+                                            && around.as_str() != cur_around.as_str()
+                                        {
+                                            edits.push(PendingEdit::SetAttrCanonical {
+                                                node: node_id,
+                                                attr: "around".into(),
+                                                value: axis.into(),
+                                                delete: Vec::new(),
+                                            });
+                                        }
+                                    }
+                                });
+                            ui.end_row();
+
+                            ui.label("Start °");
+                            let mut start = cur_start;
+                            if ui
+                                .add(egui::DragValue::new(&mut start).speed(0.5).suffix("°"))
+                                .changed()
+                            {
+                                edits.push(PendingEdit::SetAttrCanonical {
+                                    node: node_id,
+                                    attr: "start_angle".into(),
+                                    value: format_inspector_scalar(start),
+                                    delete: Vec::new(),
+                                });
+                            }
+                            ui.end_row();
+                        });
+                }
+            }
+            "mirror" => {
+                ui.add_space(8.0);
+                ui.separator();
+                ui.label(egui::RichText::new("Mirror").strong());
+                if let Some(span) = node_span {
+                    let src_view = self.files[i].source.clone();
+                    let cur_axis = crate::edit::get_attr(&src_view, span, "axis")
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| "X".into());
+                    ui.horizontal(|ui| {
+                        ui.label("Axis");
+                        let mut axis = cur_axis.clone();
+                        egui::ComboBox::from_id_salt(("inspector_mirror_axis", node_id.0))
+                            .selected_text(axis.as_str())
+                            .show_ui(ui, |ui| {
+                                for a in ["X", "Y", "Z"] {
+                                    if ui
+                                        .selectable_value(&mut axis, a.into(), a)
+                                        .clicked()
+                                        && axis.as_str() != cur_axis.as_str()
+                                    {
+                                        edits.push(PendingEdit::SetAttrCanonical {
+                                            node: node_id,
+                                            attr: "axis".into(),
+                                            value: a.into(),
+                                            delete: Vec::new(),
+                                        });
+                                    }
+                                }
+                            });
+                    });
+                }
+            }
+            _ => {}
+        }
+
+        // Mesh path picker — a `kind="mesh"` node loads a `.glb` from disk via
+        // its `src=` attribute. Show the current path with a Browse button so
+        // the user can repoint it without leaving the inspector.
+        let mut wants_pick_mesh = false;
+        if node.kind == "mesh" {
+            ui.add_space(8.0);
+            ui.separator();
+            ui.label(egui::RichText::new("Mesh source").strong());
+            if let Some(span) = node_span {
+                let cur_src = crate::edit::get_attr(&self.files[i].source, span, "src")
+                    .map(|s| s.trim_matches('"').to_string())
+                    .unwrap_or_default();
+                ui.horizontal(|ui| {
+                    if cur_src.is_empty() {
+                        ui.colored_label(
+                            egui::Color32::from_rgb(230, 200, 100),
+                            "(no path set)",
+                        );
+                    } else {
+                        ui.label(
+                            egui::RichText::new(&cur_src)
+                                .monospace()
+                                .weak(),
+                        )
+                        .on_hover_text(&cur_src);
+                    }
+                    if ui
+                        .small_button("Browse…")
+                        .on_hover_text(
+                            "Pick a .glb file. Path is stored relative to the .mog when possible.",
+                        )
+                        .clicked()
+                    {
+                        wants_pick_mesh = true;
+                    }
+                });
+            }
+        }
 
         // Shadow casting toggle — present on every editable node that isn't a
         // light. `cast_shadow` defaults to true at lower time, so the absence
@@ -750,6 +1025,51 @@ impl MogenStudioApp {
             }
         }
 
+        // Connector list — read-only summary of what frames the node exposes
+        // for `attach`. Synthesised AABB connectors (the six face anchors
+        // every mesh gets for free) are tagged so the user can see at a
+        // glance which entries the lowering pass added vs. what they
+        // authored. Snapshot is taken below `node`'s last UI use so the
+        // wants-* mutation handlers further down can take `&mut self`
+        // without a borrow conflict.
+        if !connectors_snap.is_empty() {
+            ui.add_space(8.0);
+            ui.separator();
+            egui::CollapsingHeader::new(format!("Connectors ({})", connectors_snap.len()))
+                .id_salt(("inspector_connectors", node_id.0))
+                .default_open(false)
+                .show(ui, |ui| {
+                    egui::Grid::new(("inspector_conn_grid", node_id.0))
+                        .num_columns(3)
+                        .spacing([8.0, 2.0])
+                        .show(ui, |ui| {
+                            ui.label(egui::RichText::new("name").strong().weak());
+                            ui.label(egui::RichText::new("tag").strong().weak());
+                            ui.label(egui::RichText::new("pos").strong().weak());
+                            ui.end_row();
+                            for c in &connectors_snap {
+                                let synthesised = c.source_span.is_none();
+                                let name_label = if synthesised {
+                                    egui::RichText::new(format!("{} ⓢ", c.name)).weak()
+                                } else {
+                                    egui::RichText::new(&c.name).monospace()
+                                };
+                                ui.label(name_label).on_hover_text(if synthesised {
+                                    "Synthesised from the AABB face anchors — no DSL declaration to edit."
+                                } else {
+                                    "Authored connector — edit the `connector` line in the source."
+                                });
+                                ui.label(egui::RichText::new(&c.tag).monospace());
+                                ui.label(format!(
+                                    "[{:.2}, {:.2}, {:.2}]",
+                                    c.pos.x, c.pos.y, c.pos.z
+                                ));
+                                ui.end_row();
+                            }
+                        });
+                });
+        }
+
         if wants_set_cast_shadow_off {
             edits.push(PendingEdit::SetAttrCanonical {
                 node: node_id,
@@ -835,6 +1155,90 @@ impl MogenStudioApp {
                         node_path: Vec::new(),
                     },
                 );
+            }
+        }
+
+        // Apply CSG kind rewrite. We can't reuse PendingEdit (it only mutates
+        // attrs); rewrite the kind keyword in the node header directly.
+        if let Some(new_kind) = change_kind_to {
+            if let Some(span) = node_span {
+                let before = self.files[i].source.clone();
+                let new_src = rewrite_node_kind(&before, span, new_kind);
+                {
+                    let f = &mut self.files[i];
+                    f.source = new_src;
+                    f.dirty = f.source != f.last_saved_source;
+                    f.needs_compile = true;
+                    f.last_edit_at = Some(Instant::now());
+                }
+                self.break_undo_chain(i);
+                self.push_undo(
+                    i,
+                    before,
+                    UndoKey {
+                        surface: "inspector-action",
+                        attr: Some("kind".into()),
+                        node_path: Vec::new(),
+                    },
+                );
+            }
+        }
+
+        if wants_clear_material {
+            if let Some(span) = node_span {
+                let before = self.files[i].source.clone();
+                let new_src = crate::edit::delete_attr(&before, span, "material");
+                {
+                    let f = &mut self.files[i];
+                    f.source = new_src;
+                    f.dirty = f.source != f.last_saved_source;
+                    f.needs_compile = true;
+                    f.last_edit_at = Some(Instant::now());
+                }
+                self.break_undo_chain(i);
+                self.push_undo(
+                    i,
+                    before,
+                    UndoKey {
+                        surface: "inspector-action",
+                        attr: Some("material".into()),
+                        node_path: Vec::new(),
+                    },
+                );
+            }
+        }
+
+        if wants_pick_mesh && node_span.is_some() {
+            {
+                if let Some(picked) = rfd::FileDialog::new()
+                    .add_filter("glTF binary", &["glb"])
+                    .set_directory(
+                        self.files[i]
+                            .path
+                            .as_deref()
+                            .and_then(|p| p.parent())
+                            .map(|p| p.to_path_buf())
+                            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default()),
+                    )
+                    .pick_file()
+                {
+                    // Store the path relative to the .mog when possible — the
+                    // mesh loader resolves `src=` against the source file's
+                    // directory, so a relative path is portable.
+                    let rel = self.files[i]
+                        .path
+                        .as_deref()
+                        .and_then(|p| p.parent())
+                        .and_then(|base| picked.strip_prefix(base).ok().map(|p| p.to_path_buf()))
+                        .unwrap_or_else(|| picked.clone());
+                    let value = format!("\"{}\"", rel.to_string_lossy());
+                    edits.push(PendingEdit::SetAttrCanonical {
+                        node: node_id,
+                        attr: "src".into(),
+                        value,
+                        delete: Vec::new(),
+                    });
+                }
             }
         }
 
@@ -1151,4 +1555,310 @@ fn deform_seed_row(
         }
     });
     ui.end_row();
+}
+
+/// Render scalar geometry-parameter rows for `kind`. Returns `true` when at
+/// least one editable row was added, so the caller can paint a "(no editable
+/// params)" hint when the kind has nothing to show. Each numeric attr falls
+/// back to its primitive lowering default — see `mogen_dsl::lower::primitive`.
+/// List-shaped attrs (`points`, `profile`, `path`, `holes`) are intentionally
+/// skipped — they need a richer editor than a sidebar grid.
+///
+/// Out entries are pre-formatted `(attr_name, value_literal)` pairs so the
+/// helper can emit list-shaped writes (`size=[1, 2, 3]`) without the caller
+/// having to know which attrs are scalar vs. vector.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::app) fn geom_params_for_kind(
+    ui: &mut egui::Ui,
+    kind: &str,
+    src: &str,
+    span: mogen_core::Span,
+    out: &mut Vec<(&'static str, String)>,
+) -> bool {
+    use crate::edit::get_attr;
+    fn read(src: &str, span: mogen_core::Span, attr: &str) -> Option<f32> {
+        get_attr(src, span, attr).and_then(|s| s.parse::<f32>().ok())
+    }
+    fn read_vec3(src: &str, span: mogen_core::Span, attr: &str) -> Option<[f32; 3]> {
+        let raw = get_attr(src, span, attr)?;
+        let trimmed = raw.trim().trim_start_matches('[').trim_end_matches(']');
+        let parts: Vec<f32> = trimmed
+            .split(',')
+            .filter_map(|s| s.trim().parse::<f32>().ok())
+            .collect();
+        match parts.len() {
+            1 => Some([parts[0], parts[0], parts[0]]),
+            3 => Some([parts[0], parts[1], parts[2]]),
+            _ => None,
+        }
+    }
+    fn read_vec2(src: &str, span: mogen_core::Span, attr: &str) -> Option<[f32; 2]> {
+        let raw = get_attr(src, span, attr)?;
+        let trimmed = raw.trim().trim_start_matches('[').trim_end_matches(']');
+        let parts: Vec<f32> = trimmed
+            .split(',')
+            .filter_map(|s| s.trim().parse::<f32>().ok())
+            .collect();
+        match parts.len() {
+            1 => Some([parts[0], parts[0]]),
+            2 => Some([parts[0], parts[1]]),
+            _ => None,
+        }
+    }
+    fn scalar_row(
+        ui: &mut egui::Ui,
+        label: &str,
+        attr: &'static str,
+        current: f32,
+        speed: f32,
+        out: &mut Vec<(&'static str, String)>,
+    ) {
+        use crate::app::util::format_inspector_scalar;
+        ui.label(label);
+        let mut v = current;
+        if ui.add(egui::DragValue::new(&mut v).speed(speed)).changed() {
+            out.push((attr, format_inspector_scalar(v)));
+        }
+        ui.end_row();
+    }
+    fn int_row(
+        ui: &mut egui::Ui,
+        label: &str,
+        attr: &'static str,
+        current: i32,
+        min: i32,
+        max: i32,
+        out: &mut Vec<(&'static str, String)>,
+    ) {
+        ui.label(label);
+        let mut v = current;
+        if ui
+            .add(egui::DragValue::new(&mut v).speed(0.1).range(min..=max))
+            .changed()
+        {
+            out.push((attr, v.to_string()));
+        }
+        ui.end_row();
+    }
+    use crate::app::util::format_inspector_scalar;
+    let mut shown = false;
+    match kind {
+        "box" | "slab" | "post" | "panel" | "wedge" | "ellipsoid" | "rounded_box"
+        | "chamfered_box" | "inset_box" | "wall" | "prism" | "superellipsoid" => {
+            let s = read_vec3(src, span, "size").unwrap_or([1.0, 1.0, 1.0]);
+            ui.label("Size");
+            ui.horizontal(|ui| {
+                let mut sx = s[0];
+                let mut sy = s[1];
+                let mut sz = s[2];
+                let mut emit = false;
+                if ui.add(egui::DragValue::new(&mut sx).speed(0.02)).changed() { emit = true; }
+                if ui.add(egui::DragValue::new(&mut sy).speed(0.02)).changed() { emit = true; }
+                if ui.add(egui::DragValue::new(&mut sz).speed(0.02)).changed() { emit = true; }
+                if emit {
+                    out.push((
+                        "size",
+                        format!(
+                            "[{}, {}, {}]",
+                            format_inspector_scalar(sx),
+                            format_inspector_scalar(sy),
+                            format_inspector_scalar(sz),
+                        ),
+                    ));
+                }
+            });
+            ui.end_row();
+            shown = true;
+            // Kind-specific extras
+            match kind {
+                "rounded_box" | "chamfered_box" => {
+                    scalar_row(ui, "Radius", "radius",
+                        read(src, span, "radius").unwrap_or(0.1), 0.005, out);
+                    if kind == "rounded_box" {
+                        let segs = read(src, span, "segments").unwrap_or(4.0) as i32;
+                        int_row(ui, "Segments", "segments", segs, 1, 32, out);
+                    }
+                }
+                "inset_box" => {
+                    scalar_row(ui, "Amount", "amount",
+                        read(src, span, "amount").unwrap_or(0.1), 0.005, out);
+                    scalar_row(ui, "Depth", "depth",
+                        read(src, span, "depth").unwrap_or(0.05), 0.005, out);
+                }
+                "superellipsoid" => {
+                    scalar_row(ui, "Equator", "ew",
+                        read(src, span, "ew").unwrap_or(1.0), 0.05, out);
+                    scalar_row(ui, "Meridian", "ns",
+                        read(src, span, "ns").unwrap_or(1.0), 0.05, out);
+                    let r = read(src, span, "rings").unwrap_or(16.0) as i32;
+                    let s = read(src, span, "segments").unwrap_or(24.0) as i32;
+                    int_row(ui, "Rings", "rings", r, 2, 256, out);
+                    int_row(ui, "Segments", "segments", s, 3, 256, out);
+                }
+                "ellipsoid" => {
+                    let r = read(src, span, "rings").unwrap_or(16.0) as i32;
+                    let s = read(src, span, "segments").unwrap_or(24.0) as i32;
+                    int_row(ui, "Rings", "rings", r, 2, 256, out);
+                    int_row(ui, "Segments", "segments", s, 3, 256, out);
+                }
+                _ => {}
+            }
+        }
+        "plane" | "quad" | "decal" | "leaf_card" | "curved_plane" => {
+            // plane uses [x,z], quad/decal/leaf_card uses [x,y], curved_plane uses [x,z].
+            let s = read_vec2(src, span, "size").unwrap_or([1.0, 1.0]);
+            ui.label("Size");
+            ui.horizontal(|ui| {
+                let mut su = s[0];
+                let mut sv = s[1];
+                let mut emit = false;
+                if ui.add(egui::DragValue::new(&mut su).speed(0.05)).changed() { emit = true; }
+                if ui.add(egui::DragValue::new(&mut sv).speed(0.05)).changed() { emit = true; }
+                if emit {
+                    out.push((
+                        "size",
+                        format!(
+                            "[{}, {}]",
+                            format_inspector_scalar(su),
+                            format_inspector_scalar(sv),
+                        ),
+                    ));
+                }
+            });
+            ui.end_row();
+            shown = true;
+            if kind == "decal" {
+                scalar_row(ui, "Offset", "offset",
+                    read(src, span, "offset").unwrap_or(0.001), 0.0005, out);
+            }
+        }
+        "cylinder" | "cone" | "half_cylinder" => {
+            scalar_row(ui, "Radius", "radius",
+                read(src, span, "radius").unwrap_or(0.5), 0.02, out);
+            scalar_row(ui, "Height", "height",
+                read(src, span, "height").unwrap_or(1.0), 0.02, out);
+            let s = read(src, span, "segments").unwrap_or(24.0) as i32;
+            int_row(ui, "Segments", "segments", s, 3, 256, out);
+            shown = true;
+        }
+        "sphere" | "hemisphere" => {
+            scalar_row(ui, "Radius", "radius",
+                read(src, span, "radius").unwrap_or(0.5), 0.02, out);
+            let r = read(src, span, "rings").unwrap_or(if kind == "hemisphere" { 8.0 } else { 16.0 }) as i32;
+            let s = read(src, span, "segments").unwrap_or(24.0) as i32;
+            int_row(ui, "Rings", "rings", r, 2, 256, out);
+            int_row(ui, "Segments", "segments", s, 3, 256, out);
+            shown = true;
+        }
+        "icosphere" => {
+            scalar_row(ui, "Radius", "radius",
+                read(src, span, "radius").unwrap_or(0.5), 0.02, out);
+            let s = read(src, span, "subdivisions").unwrap_or(2.0) as i32;
+            int_row(ui, "Subdivisions", "subdivisions", s, 0, 6, out);
+            shown = true;
+        }
+        "capsule" => {
+            scalar_row(ui, "Radius", "radius",
+                read(src, span, "radius").unwrap_or(0.5), 0.02, out);
+            scalar_row(ui, "Height", "height",
+                read(src, span, "height").unwrap_or(1.0), 0.02, out);
+            let r = read(src, span, "rings").unwrap_or(8.0) as i32;
+            let s = read(src, span, "segments").unwrap_or(24.0) as i32;
+            int_row(ui, "Rings", "rings", r, 2, 64, out);
+            int_row(ui, "Segments", "segments", s, 3, 256, out);
+            shown = true;
+        }
+        "torus" => {
+            scalar_row(ui, "Major", "major",
+                read(src, span, "major").unwrap_or(0.5), 0.02, out);
+            scalar_row(ui, "Minor", "minor",
+                read(src, span, "minor").unwrap_or(0.15), 0.02, out);
+            let mj = read(src, span, "major_segments").unwrap_or(24.0) as i32;
+            let mn = read(src, span, "minor_segments").unwrap_or(12.0) as i32;
+            int_row(ui, "Major segs", "major_segments", mj, 3, 256, out);
+            int_row(ui, "Minor segs", "minor_segments", mn, 3, 256, out);
+            shown = true;
+        }
+        "torus_arc" => {
+            scalar_row(ui, "Major", "major",
+                read(src, span, "major").unwrap_or(0.5), 0.02, out);
+            scalar_row(ui, "Minor", "minor",
+                read(src, span, "minor").unwrap_or(0.15), 0.02, out);
+            scalar_row(ui, "Arc°", "arc",
+                read(src, span, "arc").unwrap_or(90.0), 1.0, out);
+            shown = true;
+        }
+        "pyramid" => {
+            scalar_row(ui, "Radius", "radius",
+                read(src, span, "radius").unwrap_or(0.5), 0.02, out);
+            scalar_row(ui, "Height", "height",
+                read(src, span, "height").unwrap_or(1.0), 0.02, out);
+            let s = read(src, span, "sides").unwrap_or(4.0) as i32;
+            int_row(ui, "Sides", "sides", s, 3, 64, out);
+            shown = true;
+        }
+        "disc" => {
+            scalar_row(ui, "Radius", "radius",
+                read(src, span, "radius").unwrap_or(0.5), 0.02, out);
+            let s = read(src, span, "segments").unwrap_or(24.0) as i32;
+            int_row(ui, "Segments", "segments", s, 3, 256, out);
+            shown = true;
+        }
+        "tube" => {
+            scalar_row(ui, "Outer", "outer",
+                read(src, span, "outer").unwrap_or(0.5), 0.02, out);
+            scalar_row(ui, "Inner", "inner",
+                read(src, span, "inner").unwrap_or(0.3), 0.02, out);
+            scalar_row(ui, "Height", "height",
+                read(src, span, "height").unwrap_or(1.0), 0.02, out);
+            let s = read(src, span, "segments").unwrap_or(24.0) as i32;
+            int_row(ui, "Segments", "segments", s, 3, 256, out);
+            shown = true;
+        }
+        "coil" => {
+            scalar_row(ui, "Radius", "radius",
+                read(src, span, "radius").unwrap_or(0.5), 0.02, out);
+            scalar_row(ui, "Height", "height",
+                read(src, span, "height").unwrap_or(1.0), 0.02, out);
+            scalar_row(ui, "Turns", "turns",
+                read(src, span, "turns").unwrap_or(3.0), 0.1, out);
+            scalar_row(ui, "Profile r", "profile_radius",
+                read(src, span, "profile_radius").unwrap_or(0.05), 0.005, out);
+            shown = true;
+        }
+        "frustum" => {
+            scalar_row(ui, "Height", "height",
+                read(src, span, "height").unwrap_or(1.0), 0.02, out);
+            shown = true;
+        }
+        _ => {}
+    }
+    shown
+}
+
+/// Rewrite the keyword (kind identifier) at the very start of the node
+/// covered by `span`. Used by the CSG op switch in the inspector — the
+/// keyword sits before the optional `"name" (...)` header, and existing
+/// edit helpers don't expose a kind rewrite. Bytes-only; no AST round-trip.
+fn rewrite_node_kind(src: &str, span: mogen_core::Span, new_kind: &str) -> String {
+    let bytes = src.as_bytes();
+    let start = span.start.min(src.len());
+    // Skip leading whitespace inside the span — pest spans typically begin
+    // exactly at the kind keyword, but be defensive.
+    let mut i = start;
+    while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    let kind_start = i;
+    while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+        i += 1;
+    }
+    if i == kind_start {
+        return src.to_string();
+    }
+    let mut out = String::with_capacity(src.len() + new_kind.len());
+    out.push_str(&src[..kind_start]);
+    out.push_str(new_kind);
+    out.push_str(&src[i..]);
+    out
 }

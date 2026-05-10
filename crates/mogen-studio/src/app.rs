@@ -354,6 +354,28 @@ pub struct MogenStudioApp {
     /// board.
     inspector_scale_linked: bool,
 
+    /// Per-file in-progress draft buffers for the Meta editor's name /
+    /// description fields. Keyed by file index. Without these the TextEdit
+    /// would clobber the user's keystroke each frame because the bound
+    /// String is rebuilt from `read_meta_attr` on every paint.
+    pub(in crate::app) meta_name_drafts: HashMap<usize, String>,
+    pub(in crate::app) meta_desc_drafts: HashMap<usize, String>,
+    /// Per-material rename buffer keyed by current material name. Same
+    /// pattern as the meta drafts — the bound String would be rebuilt from
+    /// the parsed material name each frame and clobber typing otherwise.
+    pub(in crate::app) material_name_drafts: HashMap<String, String>,
+    /// Per-clip rename / duration draft buffers keyed by clip name. Cleared
+    /// when the rename / duration commits.
+    pub(in crate::app) clip_name_drafts: HashMap<String, String>,
+    pub(in crate::app) clip_duration_drafts: HashMap<String, String>,
+
+    /// Currently-selected procedural-clip kind in the Animation panel's
+    /// "Add clip" row. Persisted globally because the user typically iterates
+    /// on the same kind across clicks.
+    pub(in crate::app) add_clip_kind: String,
+    /// Target node-name draft for the same row.
+    pub(in crate::app) add_clip_target: String,
+
     /// Custom file picker modal state. `Some(_)` while the picker is open;
     /// cleared by confirm or cancel. Replaces the native `rfd` dialog for
     /// Open / Import / Save As so the body can render thumbnail previews.
@@ -532,6 +554,13 @@ impl MogenStudioApp {
             show_video_options: false,
             video_opts_draft: self::generate::VideoOptions::default(),
             inspector_scale_linked: true,
+            meta_name_drafts: HashMap::new(),
+            meta_desc_drafts: HashMap::new(),
+            material_name_drafts: HashMap::new(),
+            clip_name_drafts: HashMap::new(),
+            clip_duration_drafts: HashMap::new(),
+            add_clip_kind: "spin".into(),
+            add_clip_target: String::new(),
             picker: None,
             thumbnail_mgr: thumbnail::ThumbnailManager::new(cc.egui_ctx.clone()),
             picker_prev_camera: None,
@@ -857,6 +886,7 @@ impl eframe::App for MogenStudioApp {
                         if self.has_visible_clips() {
                             style::section(ui, "Animation", true, |ui| self.ui_animation(ui));
                         }
+                        style::section(ui, "Preview", false,    |ui| self.ui_preview(ui));
                         style::section(ui, "LLM",      true,    |ui| self.ui_llm(ui));
                     });
             });
