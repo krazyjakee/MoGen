@@ -191,5 +191,164 @@ impl MogenStudioApp {
                 );
             }
         }
+
+        // Meta editor — `name`, `description`. Maps to top-of-file
+        // `meta(...)` block via `mogen_dsl::upsert_meta_attr`, which is
+        // text-level and tolerates partial drafts.
+        ui.add_space(8.0);
+        ui.separator();
+        ui.label(egui::RichText::new("Meta").strong());
+        let cur_name = mogen_dsl::read_meta_attr(&self.files[i].source, "name")
+            .unwrap_or_default();
+        let cur_desc = mogen_dsl::read_meta_attr(&self.files[i].source, "description")
+            .unwrap_or_default();
+        let cur_seed = mogen_dsl::read_meta_attr(&self.files[i].source, "seed")
+            .unwrap_or_default();
+        let id = self.active;
+        // Initialise the draft from source on first paint; thereafter the
+        // user's keystrokes own the buffer until they commit (focus loss).
+        if !self.meta_name_drafts.contains_key(&id) {
+            self.meta_name_drafts.insert(id, cur_name.clone());
+        }
+        let mut name_str = self.meta_name_drafts.get(&id).cloned().unwrap_or_default();
+        let name_resp = ui.horizontal(|ui| {
+            ui.label("Name");
+            ui.add(
+                egui::TextEdit::singleline(&mut name_str)
+                    .desired_width(f32::INFINITY)
+                    .id_salt(("meta_name", i)),
+            )
+        });
+        if name_resp.inner.changed() {
+            self.meta_name_drafts.insert(id, name_str.clone());
+        }
+        if name_resp.inner.lost_focus() && name_str != cur_name {
+            let before = self.files[i].source.clone();
+            let new_src = mogen_dsl::upsert_meta_attr(&before, "name", &name_str);
+            if new_src != before {
+                {
+                    let f = &mut self.files[i];
+                    f.source = new_src;
+                    f.dirty = f.source != f.last_saved_source;
+                    f.needs_compile = true;
+                    f.last_edit_at = Some(Instant::now());
+                }
+                self.break_undo_chain(i);
+                self.push_undo(
+                    i,
+                    before,
+                    UndoKey {
+                        surface: "meta",
+                        attr: Some("name".into()),
+                        node_path: Vec::new(),
+                    },
+                );
+            }
+        }
+
+        if !self.meta_desc_drafts.contains_key(&id) {
+            self.meta_desc_drafts.insert(id, cur_desc.clone());
+        }
+        let mut desc_str = self.meta_desc_drafts.get(&id).cloned().unwrap_or_default();
+        let desc_resp = ui.horizontal(|ui| {
+            ui.label("Desc");
+            ui.add(
+                egui::TextEdit::singleline(&mut desc_str)
+                    .desired_width(f32::INFINITY)
+                    .hint_text("optional one-line summary")
+                    .id_salt(("meta_desc", i)),
+            )
+        });
+        if desc_resp.inner.changed() {
+            self.meta_desc_drafts.insert(id, desc_str.clone());
+        }
+        if desc_resp.inner.lost_focus() && desc_str != cur_desc {
+            let before = self.files[i].source.clone();
+            let new_src = mogen_dsl::upsert_meta_attr(&before, "description", &desc_str);
+            if new_src != before {
+                {
+                    let f = &mut self.files[i];
+                    f.source = new_src;
+                    f.dirty = f.source != f.last_saved_source;
+                    f.needs_compile = true;
+                    f.last_edit_at = Some(Instant::now());
+                }
+                self.break_undo_chain(i);
+                self.push_undo(
+                    i,
+                    before,
+                    UndoKey {
+                        surface: "meta",
+                        attr: Some("description".into()),
+                        node_path: Vec::new(),
+                    },
+                );
+            }
+        }
+
+        // Seed shown read-only because LLM workflows stamp it; expose a
+        // "Clear" button for users who want a fresh roll on the next run.
+        ui.horizontal(|ui| {
+            ui.label("Seed");
+            if cur_seed.is_empty() {
+                ui.label(egui::RichText::new("(none)").italics().weak());
+            } else {
+                ui.label(egui::RichText::new(&cur_seed).monospace())
+                    .on_hover_text(
+                        "Stamped by `generate` / `modify` so rebuilds are \
+                         reproducible. Clear to roll a fresh seed on the \
+                         next LLM run.",
+                    );
+                if ui.small_button("Clear").clicked() {
+                    let before = self.files[i].source.clone();
+                    let new_src = mogen_dsl::upsert_meta_attr(&before, "seed", "");
+                    if new_src != before {
+                        {
+                            let f = &mut self.files[i];
+                            f.source = new_src;
+                            f.dirty = f.source != f.last_saved_source;
+                            f.needs_compile = true;
+                            f.last_edit_at = Some(Instant::now());
+                        }
+                        self.break_undo_chain(i);
+                        self.push_undo(
+                            i,
+                            before,
+                            UndoKey {
+                                surface: "meta",
+                                attr: Some("seed".into()),
+                                node_path: Vec::new(),
+                            },
+                        );
+                    }
+                }
+            }
+        });
+
+        // Export options — same toggles as the File → Build GLB modal,
+        // hoisted here so the user can see/save the per-file state without
+        // opening the dialog. Persisted on `FileState.export_opts`; the
+        // build pipeline reads them on every export.
+        ui.add_space(8.0);
+        ui.separator();
+        ui.label(egui::RichText::new("Export").strong());
+        let opts = &mut self.files[i].export_opts;
+        ui.checkbox(&mut opts.include_animations, "Include animations")
+            .on_hover_text(
+                "Emit the scene's `animations[]` array. Off = bake a static GLB.",
+            );
+        ui.checkbox(&mut opts.include_textures, "Include textures")
+            .on_hover_text(
+                "Pack texture images into the GLB binary chunk and wire them to \
+                 materials. Off = materials export with only PBR numeric factors.",
+            );
+        ui.checkbox(
+            &mut opts.merge_sibling_meshes,
+            "Merge overlapping meshes",
+        )
+        .on_hover_text(
+            "Collapse same-material, non-skinned sibling meshes under each parent \
+             into a single CSG-unioned mesh. Slow on complex scenes.",
+        );
     }
 }

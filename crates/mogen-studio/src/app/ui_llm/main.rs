@@ -23,6 +23,68 @@ fn disabled_reason(reasons: &[(&str, bool)]) -> Option<String> {
 
 impl MogenStudioApp {
     pub(in crate::app) fn ui_llm(&mut self, ui: &mut egui::Ui) {
+        // Inline provider switcher + global LLM toggles. Mirrors the
+        // Preferences pane so the user can flip provider / planning mode /
+        // seed without leaving the inspector. Persisted via Settings::save().
+        ui.horizontal(|ui| {
+            ui.label("Provider");
+            let current_slot = self.settings.provider_slot();
+            let mut chosen: Option<crate::settings::ProviderSlot> = None;
+            egui::ComboBox::from_id_salt("llm_panel_provider")
+                .selected_text(current_slot.label())
+                .show_ui(ui, |ui| {
+                    for slot in crate::settings::PROVIDER_SLOTS {
+                        let selected = slot == current_slot;
+                        if ui
+                            .selectable_label(selected, slot.label())
+                            .clicked()
+                            && !selected
+                        {
+                            chosen = Some(slot);
+                        }
+                    }
+                });
+            if let Some(slot) = chosen {
+                self.settings.set_provider_slot(slot);
+                let _ = self.settings.save();
+            }
+        });
+        ui.horizontal(|ui| {
+            let mut plan_first = self.settings.plan_first();
+            if ui
+                .checkbox(&mut plan_first, "Plan first")
+                .on_hover_text(
+                    "Run the Architect (planner) pass before the Coder pass. \
+                     Mirrors `mogen generate --plan` from the CLI.",
+                )
+                .changed()
+            {
+                self.settings.set_plan_first(plan_first);
+                let _ = self.settings.save();
+            }
+            // Seed override readout — clicking Reset clears the per-file
+            // override so the next LLM run mints a fresh seed. Editing the
+            // seed itself stays in Preferences.
+            let cur_seed = self.settings.seed_override();
+            ui.separator();
+            ui.label("Seed");
+            match cur_seed {
+                Some(s) => {
+                    ui.label(egui::RichText::new(s.to_string()).monospace())
+                        .on_hover_text(
+                            "Global RNG override applied to every LLM run on every \
+                             file. Edit in Preferences → LLM.",
+                        );
+                }
+                None => {
+                    ui.label(egui::RichText::new("(auto)").italics().weak())
+                        .on_hover_text("Each LLM call gets a fresh random seed.");
+                }
+            }
+        });
+
+        ui.add_space(6.0);
+
         let has_key = self.resolve_api_key().is_some();
         let mut request_open_prefs = false;
         if !has_key {

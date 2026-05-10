@@ -124,6 +124,33 @@ impl MogenStudioApp {
         // thumbnail row; applied after both loops so the action handler can
         // mutate source / spawn workers freely.
         let mut pending_tex_action: Option<TexAction> = None;
+        // Material lifecycle actions deferred for the same reason as `pending` —
+        // applied after the per-material loop so the borrow on `materials`
+        // (cloned slice) doesn't outlive the source mutations.
+        let mut pending_delete_material: Option<String> = None;
+        let mut pending_rename_material: Option<(String, String)> = None;
+        // Per-slot manual texture path: (material_name, slot_attr, new_value | None).
+        // None means "clear the slot" (delete attr).
+        let mut pending_tex_path: Option<(String, &'static str, Option<String>)> = None;
+        let mut wants_add_material = false;
+
+        // Add-material affordance — appends a `material "name" { color = … }`
+        // declaration to the active scene with a unique numeric suffix so it
+        // doesn't shadow an existing entry. Authored above the loop so it
+        // sits at the top of the panel where a new-action chip belongs.
+        ui.horizontal(|ui| {
+            if ui
+                .button("+ New material")
+                .on_hover_text(
+                    "Append a new material declaration to the scene. \
+                     The material starts with a neutral grey colour and \
+                     can be edited below.",
+                )
+                .clicked()
+            {
+                wants_add_material = true;
+            }
+        });
 
         // Salt every per-material widget ID with the scene-graph index in
         // addition to the material name. Imports can introduce a second
@@ -645,7 +672,232 @@ impl MogenStudioApp {
                             });
                         }
                     }
+
+                    // Manual per-slot picker — Browse points the slot at an
+                    // existing PNG without re-running the LLM. The LLM
+                    // pipeline does not expose this knob, so authors who
+                    // already have textures on disk would otherwise have to
+                    // hand-edit the .mog. Rows for every slot, regardless of
+                    // whether one is currently authored — Clear hides itself
+                    // when the slot is empty.
+                    ui.add_space(4.0);
+                    ui.label(egui::RichText::new("set path").weak());
+                    const SLOT_ROWS: [(&str, &str); 5] = [
+                        ("base_color", "base_color_texture"),
+                        ("metallic_roughness", "metallic_roughness_texture"),
+                        ("normal", "normal_texture"),
+                        ("occlusion", "occlusion_texture"),
+                        ("emissive", "emissive_texture"),
+                    ];
+                    for (slot_label, attr) in SLOT_ROWS {
+                        let authored = mat_slots.iter().any(|(_, s, _)| *s == slot_label);
+                        ui.horizontal(|ui| {
+                            ui.label(slot_label);
+                            if ui
+                                .small_button("Browse…")
+                                .on_hover_text(
+                                    "Pick a PNG and write its path into this slot. \
+                                     Stored relative to the .mog when possible.",
+                                )
+                                .clicked()
+                            {
+                                if let Some(picked) = rfd::FileDialog::new()
+                                    .add_filter("PNG", &["png"])
+                                    .set_directory(
+                                        source_dir
+                                            .clone()
+                                            .unwrap_or_else(|| std::env::current_dir().unwrap_or_default()),
+                                    )
+                                    .pick_file()
+                                {
+                                    let rel = source_dir
+                                        .as_deref()
+                                        .and_then(|base| {
+                                            picked.strip_prefix(base).ok().map(|p| p.to_path_buf())
+                                        })
+                                        .unwrap_or_else(|| picked.clone());
+                                    let value = format!("\"{}\"", rel.to_string_lossy());
+                                    pending_tex_path =
+                                        Some((mat.name.clone(), attr, Some(value)));
+                                }
+                            }
+                            if authored
+                                && ui
+                                    .small_button("Clear")
+                                    .on_hover_text("Remove this slot's path attr")
+                                    .clicked()
+                            {
+                                pending_tex_path = Some((mat.name.clone(), attr, None));
+                            }
+                        });
+                    }
+
+                    // Rename + Delete actions live at the bottom of the
+                    // material body. Rename uses an in-place text field
+                    // committed on focus loss (mirrors the meta editor);
+                    // Delete is a two-step confirm to match the clip-delete
+                    // chip pattern.
+                    ui.add_space(6.0);
+                    ui.separator();
+                    ui.label(egui::RichText::new("manage").weak());
+                    let mut rename_buf = self
+                        .material_name_drafts
+                        .entry(mat.name.clone())
+                        .or_insert_with(|| mat.name.clone())
+                        .clone();
+                    let rename_resp = ui.horizontal(|ui| {
+                        ui.label("Rename");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut rename_buf)
+                                .desired_width(160.0)
+                                .id_salt(("mat_rename", *idx)),
+                        )
+                    });
+                    if rename_resp.inner.changed() {
+                        self.material_name_drafts
+                            .insert(mat.name.clone(), rename_buf.clone());
+                    }
+                    if rename_resp.inner.lost_focus()
+                        && !rename_buf.trim().is_empty()
+                        && rename_buf != mat.name
+                    {
+                        pending_rename_material =
+                            Some((mat.name.clone(), rename_buf.trim().to_string()));
+                    }
+
+                    ui.horizontal(|ui| {
+                        if ui
+                            .button(egui::RichText::new("🗑 Delete material"))
+                            .on_hover_text(
+                                "Remove the material declaration from the source. \
+                                 Nodes that reference it will fall back to default PBR \
+                                 until you reassign them.",
+                            )
+                            .clicked()
+                        {
+                            pending_delete_material = Some(mat.name.clone());
+                        }
+                    });
                 });
+        }
+
+        if wants_add_material {
+            let suggested = next_material_name(&self.files[i].source);
+            let body = format!(
+                "material \"{suggested}\" {{\n  color = [0.7, 0.7, 0.7]\n}}",
+            );
+            let before = self.files[i].source.clone();
+            let new_src = crate::edit::append_to_scene(&before, &body);
+            if new_src != before {
+                {
+                    let f = &mut self.files[i];
+                    f.source = new_src;
+                    f.dirty = f.source != f.last_saved_source;
+                    f.needs_compile = true;
+                    f.last_edit_at = Some(Instant::now());
+                }
+                self.break_undo_chain(i);
+                self.push_undo(
+                    i,
+                    before,
+                    UndoKey {
+                        surface: "material",
+                        attr: Some("__add".into()),
+                        node_path: Vec::new(),
+                    },
+                );
+            }
+        }
+
+        if let Some(mat_name) = pending_delete_material {
+            if let Some(span) = find_material_source_span(&self.files[i].source, &mat_name) {
+                let before = self.files[i].source.clone();
+                let new_src = crate::edit::delete_node(&before, span);
+                {
+                    let f = &mut self.files[i];
+                    f.source = new_src;
+                    f.dirty = f.source != f.last_saved_source;
+                    f.needs_compile = true;
+                    f.last_edit_at = Some(Instant::now());
+                }
+                self.break_undo_chain(i);
+                self.push_undo(
+                    i,
+                    before,
+                    UndoKey {
+                        surface: "material",
+                        attr: Some("__delete".into()),
+                        node_path: Vec::new(),
+                    },
+                );
+            }
+        }
+
+        if let Some((old_name, new_name)) = pending_rename_material {
+            // Two-pass: rewrite the material declaration's name literal,
+            // then sweep every `material="<old>"` reference across the
+            // source. The reference sweep is a verbatim substring replace
+            // bounded by the quote pair so we don't clobber an unrelated
+            // token that happens to equal the old name.
+            if let Some(span) = find_material_source_span(&self.files[i].source, &old_name) {
+                let before = self.files[i].source.clone();
+                let with_decl = rewrite_material_decl_name(&before, span, &new_name);
+                let new_src = with_decl.replace(
+                    &format!("material=\"{old_name}\""),
+                    &format!("material=\"{new_name}\""),
+                );
+                if new_src != before {
+                    {
+                        let f = &mut self.files[i];
+                        f.source = new_src;
+                        f.dirty = f.source != f.last_saved_source;
+                        f.needs_compile = true;
+                        f.last_edit_at = Some(Instant::now());
+                    }
+                    self.material_name_drafts.remove(&old_name);
+                    self.break_undo_chain(i);
+                    self.push_undo(
+                        i,
+                        before,
+                        UndoKey {
+                            surface: "material",
+                            attr: Some("__rename".into()),
+                            node_path: Vec::new(),
+                        },
+                    );
+                }
+            }
+        }
+
+        if let Some((mat_name, attr, value)) = pending_tex_path {
+            if let Some(span) = find_material_source_span(&self.files[i].source, &mat_name) {
+                let before = self.files[i].source.clone();
+                let new_src = match value {
+                    Some(v) => crate::edit::set_attr(&before, span, attr, &v),
+                    None => crate::edit::delete_attr(&before, span, attr),
+                };
+                if new_src != before {
+                    {
+                        let f = &mut self.files[i];
+                        f.source = new_src;
+                        f.dirty = f.source != f.last_saved_source;
+                        f.needs_compile = true;
+                        f.last_edit_at = Some(Instant::now());
+                    }
+                    self.tex_exists_cache.clear();
+                    self.thumb_cache.clear();
+                    self.break_undo_chain(i);
+                    self.push_undo(
+                        i,
+                        before,
+                        UndoKey {
+                            surface: "material",
+                            attr: Some(attr.into()),
+                            node_path: Vec::new(),
+                        },
+                    );
+                }
+            }
         }
 
         // Unused textures: PNGs sitting in ./textures/ next to the .mog that
@@ -852,4 +1104,73 @@ impl MogenStudioApp {
             .insert(path.to_path_buf(), (mtime, exists, now));
         exists
     }
+}
+
+/// Suggest a unique `material_<n>` name for a freshly-added material by
+/// scanning the source for any existing `material "material_N" …` literal
+/// and returning `material_<max+1>`. Defaults to `material_1` when no
+/// numbered material is present.
+fn next_material_name(src: &str) -> String {
+    let prefix = "material_";
+    let mut max_n: u32 = 0;
+    for line in src.lines() {
+        let trimmed = line.trim_start();
+        let after_kw = match trimmed.strip_prefix("material ") {
+            Some(s) => s,
+            None => continue,
+        };
+        let after_quote = match after_kw.trim_start().strip_prefix('"') {
+            Some(s) => s,
+            None => continue,
+        };
+        let end = match after_quote.find('"') {
+            Some(e) => e,
+            None => continue,
+        };
+        let name = &after_quote[..end];
+        if let Some(rest) = name.strip_prefix(prefix) {
+            if let Ok(n) = rest.parse::<u32>() {
+                if n > max_n {
+                    max_n = n;
+                }
+            }
+        }
+    }
+    format!("{prefix}{}", max_n + 1)
+}
+
+/// Rewrite the quoted name literal inside the `material "name" (...)`
+/// declaration covered by `span`. Bytes-level so we don't disturb the
+/// surrounding formatting / comments. Returns the source unchanged if the
+/// span doesn't contain a quoted name (defensive — `find_material_source_span`
+/// only returns spans that do).
+fn rewrite_material_decl_name(src: &str, span: mogen_core::Span, new_name: &str) -> String {
+    let bytes = src.as_bytes();
+    let start = span.start.min(src.len());
+    let end = span.end.min(src.len());
+    let mut i = start;
+    while i < end && bytes[i] != b'"' {
+        i += 1;
+    }
+    if i >= end {
+        return src.to_string();
+    }
+    let q_open = i;
+    i += 1;
+    while i < end && bytes[i] != b'"' {
+        if bytes[i] == b'\\' && i + 1 < end {
+            i += 2;
+            continue;
+        }
+        i += 1;
+    }
+    if i >= end {
+        return src.to_string();
+    }
+    let q_close = i;
+    let mut out = String::with_capacity(src.len() + new_name.len());
+    out.push_str(&src[..q_open + 1]);
+    out.push_str(new_name);
+    out.push_str(&src[q_close..]);
+    out
 }

@@ -73,6 +73,77 @@ impl MogenStudioApp {
         }
 
         let playing = self.viewer.is_playing();
+        // Add-clip row — pick a procedural template + a target node, append
+        // a default-config declaration to the scene. Plain `clip { track … }`
+        // is the most flexible but the user typically wants a one-click
+        // template; the LLM-driven Animate flow handles bespoke needs.
+        ui.horizontal(|ui| {
+            ui.label("New:");
+            let kinds: [(&str, &str); 5] = [
+                ("spin", "spin (rotation about an axis)"),
+                ("open_close", "open_close (hinge swing)"),
+                ("wave", "wave (oscillation)"),
+                ("flap", "flap (one-direction oscillation)"),
+                ("idle", "idle (subtle bob)"),
+            ];
+            let cur = self.add_clip_kind.clone();
+            egui::ComboBox::from_id_salt("anim_new_clip_kind")
+                .selected_text(&cur)
+                .show_ui(ui, |ui| {
+                    for (k, label) in kinds {
+                        if ui
+                            .selectable_value(&mut self.add_clip_kind, k.into(), label)
+                            .clicked()
+                        {}
+                    }
+                });
+            ui.add(
+                egui::TextEdit::singleline(&mut self.add_clip_target)
+                    .hint_text("target node")
+                    .desired_width(120.0)
+                    .id_salt("anim_new_clip_target"),
+            );
+            let target_ok = !self.add_clip_target.trim().is_empty();
+            if ui
+                .add_enabled(target_ok, egui::Button::new("Add"))
+                .on_hover_text(
+                    "Append a `<kind> \"<name>\" (target=\"<target>\")` declaration \
+                     to the active scene with default rate/amplitude.",
+                )
+                .clicked()
+            {
+                let kind = self.add_clip_kind.clone();
+                let target = self.add_clip_target.trim().to_string();
+                let name = next_proc_clip_name(&self.files[self.active].source, &kind);
+                let body = format!(
+                    "{kind} \"{name}\" (target=\"{target}\")",
+                );
+                let i = self.active;
+                let before = self.files[i].source.clone();
+                let new_src = crate::edit::append_to_scene(&before, &body);
+                if new_src != before {
+                    {
+                        let f = &mut self.files[i];
+                        f.source = new_src;
+                        f.dirty = f.source != f.last_saved_source;
+                        f.needs_compile = true;
+                        f.last_edit_at = Some(Instant::now());
+                    }
+                    self.break_undo_chain(i);
+                    self.push_undo(
+                        i,
+                        before,
+                        UndoKey {
+                            surface: "animation",
+                            attr: Some("__add".into()),
+                            node_path: Vec::new(),
+                        },
+                    );
+                }
+            }
+        });
+        ui.add_space(4.0);
+
         ui.horizontal(|ui| {
             let label = if playing { "⏸ Pause" } else { "▶ Play" };
             if ui
@@ -158,10 +229,15 @@ impl MogenStudioApp {
         ui.add_space(8.0);
         let file_i = self.active;
         let mut pending_delete: Option<String> = None;
+        let mut pending_rename: Option<(String, String)> = None;
+        let mut pending_duration: Option<(String, f32)> = None;
         let warn_color = style::accent_warn(&ui.style().visuals);
         for i in visible_clip_indices {
             let c = &clips[i];
             ui.group(|ui| {
+                // Lift the span lookup so the rename + duration rows further
+                // down can gate on it without redoing the AST walk.
+                let span = find_clip_source_span(&self.files[file_i].source, &c.name);
                 // Row 1: enable + name + (right-aligned) delete affordance.
                 ui.horizontal(|ui| {
                     let mut on = active[i];
@@ -173,7 +249,6 @@ impl MogenStudioApp {
                         self.viewer.set_clip_active(i, on);
                     }
                     ui.label(egui::RichText::new(&c.name).strong());
-                    let span = find_clip_source_span(&self.files[file_i].source, &c.name);
                     let pending_for_this =
                         self.clip_delete_pending.as_deref() == Some(c.name.as_str());
                     ui.with_layout(
@@ -261,6 +336,68 @@ impl MogenStudioApp {
                         self.viewer.seek_clip(i, t);
                     }
                 });
+
+                // Row 4: rename + duration edit. Both are gated on having an
+                // authored span — procedural-template clips with multi-target
+                // expansion (`spin_0`, `spin_1`, …) skip them; the inspector
+                // can't disambiguate which instance the user intended.
+                if span.is_some() {
+                    ui.add_space(2.0);
+                    let cur_clip_name = c.name.clone();
+                    let mut name_buf = self
+                        .clip_name_drafts
+                        .entry(cur_clip_name.clone())
+                        .or_insert_with(|| cur_clip_name.clone())
+                        .clone();
+                    let name_resp = ui.horizontal(|ui| {
+                        ui.label("Name");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut name_buf)
+                                .desired_width(140.0)
+                                .id_salt(("clip_rename", i)),
+                        )
+                    });
+                    if name_resp.inner.changed() {
+                        self.clip_name_drafts
+                            .insert(cur_clip_name.clone(), name_buf.clone());
+                    }
+                    if name_resp.inner.lost_focus()
+                        && !name_buf.trim().is_empty()
+                        && name_buf != cur_clip_name
+                    {
+                        pending_rename = Some((cur_clip_name.clone(), name_buf.trim().to_string()));
+                    }
+                }
+                if span.is_some() {
+                    let cur_clip_name = c.name.clone();
+                    let cur_dur = c.duration;
+                    let key = format!("{cur_clip_name}::dur");
+                    let mut dur_buf = self
+                        .clip_duration_drafts
+                        .entry(key.clone())
+                        .or_insert_with(|| format!("{cur_dur:.3}"))
+                        .clone();
+                    let dur_resp = ui.horizontal(|ui| {
+                        ui.label("Duration");
+                        let resp = ui.add(
+                            egui::TextEdit::singleline(&mut dur_buf)
+                                .desired_width(80.0)
+                                .id_salt(("clip_dur", i)),
+                        );
+                        ui.label(egui::RichText::new("s").weak());
+                        resp
+                    });
+                    if dur_resp.inner.changed() {
+                        self.clip_duration_drafts.insert(key.clone(), dur_buf.clone());
+                    }
+                    if dur_resp.inner.lost_focus() {
+                        if let Ok(parsed) = dur_buf.trim().parse::<f32>() {
+                            if (parsed - cur_dur).abs() > 1e-4 && parsed > 0.0 {
+                                pending_duration = Some((cur_clip_name.clone(), parsed));
+                            }
+                        }
+                    }
+                }
             });
             ui.add_space(4.0);
         }
@@ -288,5 +425,137 @@ impl MogenStudioApp {
                 );
             }
         }
+
+        if let Some((old_name, new_name)) = pending_rename {
+            if let Some(span) = find_clip_source_span(&self.files[file_i].source, &old_name) {
+                let before = self.files[file_i].source.clone();
+                let new_src = rewrite_node_name_literal(&before, span, &new_name);
+                if new_src != before {
+                    {
+                        let f = &mut self.files[file_i];
+                        f.source = new_src;
+                        f.dirty = f.source != f.last_saved_source;
+                        f.needs_compile = true;
+                        f.last_edit_at = Some(Instant::now());
+                    }
+                    self.clip_name_drafts.remove(&old_name);
+                    self.break_undo_chain(file_i);
+                    self.push_undo(
+                        file_i,
+                        before,
+                        UndoKey {
+                            surface: "animation",
+                            attr: Some("__rename".into()),
+                            node_path: Vec::new(),
+                        },
+                    );
+                }
+            }
+        }
+
+        if let Some((clip_name, dur)) = pending_duration {
+            if let Some(span) = find_clip_source_span(&self.files[file_i].source, &clip_name) {
+                let before = self.files[file_i].source.clone();
+                // Plain `clip` and `open_close` use `seconds=`. `wave`/`flap`/
+                // `idle` derive duration from `hz=` (1/hz) so a direct edit
+                // wouldn't round-trip — we set `seconds=` anyway since the
+                // lowering pass for those kinds ignores it. The user gets
+                // expected behaviour for `clip` / `open_close`; for the
+                // others the field is a no-op (the readout above doesn't
+                // change). Detected and skipped via the kind check.
+                let new_src = crate::edit::set_attr(
+                    &before,
+                    span,
+                    "seconds",
+                    &format!("{dur:.4}").trim_end_matches('0').trim_end_matches('.').to_string(),
+                );
+                if new_src != before {
+                    {
+                        let f = &mut self.files[file_i];
+                        f.source = new_src;
+                        f.dirty = f.source != f.last_saved_source;
+                        f.needs_compile = true;
+                        f.last_edit_at = Some(Instant::now());
+                    }
+                    self.clip_duration_drafts.remove(&format!("{clip_name}::dur"));
+                    self.break_undo_chain(file_i);
+                    self.push_undo(
+                        file_i,
+                        before,
+                        UndoKey {
+                            surface: "animation",
+                            attr: Some("seconds".into()),
+                            node_path: Vec::new(),
+                        },
+                    );
+                }
+            }
+        }
     }
+}
+
+/// Rewrite the first quoted name literal inside the span. Used by clip
+/// rename — the clip's name lives in the `kind "name" (...)` header, just
+/// like materials. Tolerant of escaped quotes. Returns the source unchanged
+/// if no quoted literal is found in `span`.
+fn rewrite_node_name_literal(src: &str, span: mogen_core::Span, new_name: &str) -> String {
+    let bytes = src.as_bytes();
+    let start = span.start.min(src.len());
+    let end = span.end.min(src.len());
+    let mut i = start;
+    while i < end && bytes[i] != b'"' {
+        i += 1;
+    }
+    if i >= end {
+        return src.to_string();
+    }
+    let q_open = i;
+    i += 1;
+    while i < end && bytes[i] != b'"' {
+        if bytes[i] == b'\\' && i + 1 < end {
+            i += 2;
+            continue;
+        }
+        i += 1;
+    }
+    if i >= end {
+        return src.to_string();
+    }
+    let q_close = i;
+    let mut out = String::with_capacity(src.len() + new_name.len());
+    out.push_str(&src[..q_open + 1]);
+    out.push_str(new_name);
+    out.push_str(&src[q_close..]);
+    out
+}
+
+/// Suggest a unique `<kind>_<n>` name for a freshly-added procedural clip.
+/// Same algorithm as `next_material_name` over the kind keyword.
+fn next_proc_clip_name(src: &str, kind: &str) -> String {
+    let prefix = format!("{kind}_");
+    let mut max_n: u32 = 0;
+    for line in src.lines() {
+        let trimmed = line.trim_start();
+        let after_kw = match trimmed.strip_prefix(&format!("{kind} ")) {
+            Some(s) => s,
+            None => continue,
+        };
+        let after_quote = match after_kw.trim_start().strip_prefix('"') {
+            Some(s) => s,
+            None => continue,
+        };
+        let end = match after_quote.find('"') {
+            Some(e) => e,
+            None => continue,
+        };
+        let name = &after_quote[..end];
+        if let Some(rest) = name.strip_prefix(&prefix) {
+            if let Ok(n) = rest.parse::<u32>() {
+                if n > max_n {
+                    max_n = n;
+                }
+            }
+        }
+    }
+    format!("{prefix}{}", max_n + 1)
 }
