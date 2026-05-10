@@ -43,12 +43,12 @@ scene {
   }
 
   prism "main_roof" (size=[5.9, 1.3, 4.7], mat="roof_shingle") {
-    connector "front_gutter_mount" (at=[0, -0.42, -2.35], dir=[0, 0, -1])
-    connector "rear_gutter_mount" (at=[0, -0.42, 2.35], dir=[0, 0, 1])
+    connector "front_gutter_mount" (at=[0, -0.65, -2.35], dir=[0, 0, -1])
+    connector "rear_gutter_mount" (at=[0, -0.65, 2.35], dir=[0, 0, 1])
     connector "aerial_mount" (at=[1.75, 0.65, 0.35], dir=[0, 1, 0])
   }
   prism "garage_roof" (size=[3.4, 0.9, 4.0], mat="roof_shingle") {
-    connector "front_gutter_mount" (at=[0, -0.30, -2.00], dir=[0, 0, -1])
+    connector "front_gutter_mount" (at=[0, -0.45, -2.00], dir=[0, 0, -1])
   }
 
   group "front_door" {
@@ -117,17 +117,17 @@ scene {
   box "chimney" (size=[0.45, 0.90, 0.45], mat="brick", pos=[0, -0.1278, 0])
   slab "chimney_cap" (size=[0.58, 0.10, 0.58], mat="concrete")
 
-  box "main_front_gutter" (size=[5.9, 0.08, 0.10], mat="trim_white") {
+  box "main_front_gutter" (size=[5.9, 0.08, 0.10], mat="trim_white", pos=[0, 0, 0.0777]) {
     connector "down_left" (at=[-2.70, -0.04, 0], dir=[0, -1, 0])
     connector "down_right" (at=[2.70, -0.04, 0], dir=[0, -1, 0])
   }
-  box "main_rear_gutter" (size=[5.9, 0.08, 0.10], mat="trim_white")
-  box "garage_front_gutter" (size=[3.4, 0.07, 0.09], mat="trim_white") {
+  box "main_rear_gutter" (size=[5.9, 0.08, 0.10], mat="trim_white", pos=[0, 0, -0.081])
+  box "garage_front_gutter" (size=[3.4, 0.07, 0.09], mat="trim_white", pos=[0, 0, 0.046]) {
     connector "down_right" (at=[1.50, -0.035, 0], dir=[0, -1, 0])
   }
-  cylinder "downspout_l" (radius=0.035, height=4.55, segments=12, mat="trim_white")
-  cylinder "downspout_r" (radius=0.035, height=4.55, segments=12, mat="trim_white")
-  cylinder "garage_downspout" (radius=0.03, height=2.70, segments=12, mat="trim_white")
+  cylinder "downspout_l" (radius=0.035, height=4.32, segments=12, mat="trim_white", pos=[0, 0, 0.2048])
+  cylinder "downspout_r" (radius=0.035, height=4.32, segments=12, mat="trim_white", pos=[-0.1827, 0.1162, 0.1629])
+  cylinder "garage_downspout" (radius=0.03, height=2.55, segments=12, mat="trim_white", pos=[0, 0, 0.146])
 
   group "ac_unit" {
     rounded_box "ac_cabinet" (size=[0.65, 0.55, 0.55], radius=0.04, mat="utility_metal") {
