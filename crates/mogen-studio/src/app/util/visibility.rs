@@ -25,15 +25,32 @@ pub(in crate::app) fn visible_origins(
 }
 
 /// True when the item's `origin` is currently visible. `None` always passes
-/// (locally-authored items are part of the active scene).
+/// (locally-authored items are part of the active scene). Synthetic
+/// `<stdlib>/…` paths also pass unconditionally — stdlib materials and
+/// animation clips (`humanoid_walk`, etc.) are part of the active scene
+/// the same way locally-authored ones are; they only carry a path so
+/// span-based set_attr writeback can distinguish them from active-source
+/// nodes.
 pub(in crate::app) fn origin_in_visible_set(
     origin: &Option<PathBuf>,
     visible: &std::collections::HashSet<PathBuf>,
 ) -> bool {
     match origin {
         None => true,
-        Some(p) => visible.contains(p),
+        Some(p) => is_stdlib_origin(p) || visible.contains(p),
     }
+}
+
+/// Synthetic stdlib paths are stamped by `crates/mogen-dsl/src/stdlib.rs`
+/// as `<stdlib>/<filename>.mog`. The `<stdlib>` segment can never appear
+/// in a real filesystem path (angle brackets are reserved on Windows and
+/// no canonicalised user path uses them), so a leading `<stdlib>` segment
+/// is a reliable tag.
+fn is_stdlib_origin(p: &std::path::Path) -> bool {
+    p.components()
+        .next()
+        .map(|c| c.as_os_str() == "<stdlib>")
+        .unwrap_or(false)
 }
 
 /// MaterialIds referenced by any scene node whose `origin` passes

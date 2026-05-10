@@ -9,7 +9,7 @@ downstream composition. The full language is documented in
 - [How modules resolve](#how-modules-resolve)
 - [Authoring a new module](#authoring-a-new-module)
 - [Stdlib catalog](#stdlib-catalog)
-  - [Humanoid](#humanoid) — body, head, limbs, hands, feet, face, hair, clothing layer (blazer / tshirt / cuffs / pants / shoes / beard)
+  - [Humanoid](#humanoid) — body, head, limbs, hands, feet, face
   - [Humanoid animations](#humanoid-animations) — idle, walk, run, jump
   - [Animals](#animals) — quadruped torso/leg, tail, ear, eye
   - [Foliage](#foliage) — leaf, branch
@@ -161,35 +161,41 @@ Each slot's `dir=` points outward from the figure; an attached child
 should expose a `connector "..." (dir=[opposite], tag=plug)` so the
 attach pass aligns the surfaces.
 
-Hair is not bundled — `use "humanoid_hair_short"` (or
-`humanoid_hair_long`) for hair (the short variant skin-binds to the rig
-automatically; see below).
+Clothing, hair, beards, and other accessories are intentionally **not
+bundled as stdlib modules** — those are style choices that belong to
+the user (or the LLM driving the prompt). The stdlib gives you the
+slot connectors and the body-shape parameters (`height`, `weight`,
+`head_size`, `leg_taper`) that locate them; the geometry that fills
+each slot is yours to author.
 
-##### Clothing layer modules
+To layer an accessory onto the figure, declare a primitive (or a
+`group`/module) at the right scene-space position with `skin="rig"`
+and `bind="<bone>"` — the slot connector tells you the position and
+the parent bone:
 
-Six stdlib modules layer skinned chamfered_box geometry over a
-`humanoid_full` figure, all binding into the same `rig` skeleton so the
-outfit tracks walk / run / idle / jump animations. Use after a
-`humanoid_full ()` call in the same scene; pass `height` and `weight`
-matching the host so the layers track its silhouette. Each module
-declares its own colour-driven material internally so callers don't
-have to pre-declare materials.
+```mog
+// e.g. a hat on slot_crown — chamfered_box at the crown's scene-space
+// position (head sits at $height * 0.890; crown is +$height * 0.150
+// above the head's neck-bone origin), bound to `neck` so it follows
+// head rotations through the walk / run / idle / jump clips.
+chamfered_box "hat" (
+  pos=[0, 1.7 * 0.890 + 1.7 * 0.150, 0],
+  size=[1.7 * 0.130, 1.7 * 0.040, 1.7 * 0.130],
+  radius=1.7 * 0.010,
+  mat="hat", skin="rig", bind="neck", faceted=1
+)
+```
 
-| module | bones used | parameters |
-|---|---|---|
-| `humanoid_top_blazer_open` | `spine_chest`, `shoulder_l/r`, `elbow_l/r` | `height=1.7`, `weight=1.0`, `colour=[0.06, 0.06, 0.06]` — open-front suit jacket: back-and-sides shell, two flat lapels with a centered V gap, four sleeve panels |
-| `humanoid_top_tshirt_panel` | `spine_chest` | `height=1.7`, `weight=1.0`, `colour=[0.95, 0.95, 0.95]` — fills the V gap with a dress-shirt panel sized to peek through |
-| `humanoid_cuffs` | `elbow_l/r` | `height=1.7`, `weight=1.0`, `colour=[0.92, 0.92, 0.92]` — thin shirt-cuff bands at each forearm wrist |
-| `humanoid_pants_tapered` | `hip`, `hip_l/r`, `knee_l/r` | `height=1.7`, `weight=1.0`, `taper=0.0`, `colour=[0.10, 0.10, 0.10]` — outer trouser shell, 2 mm proud of the bare leg geometry, with `taper` ∈ `[0,1]` pinching the ankle from ~ shin width down to 60 % of thigh |
-| `humanoid_shoes_low` | `ankle_l/r`, `toe_l/r` | `height=1.7`, `colour=[0.04, 0.04, 0.04]` — low-profile dress shoes with toe caps that flex with `toe_l/r` |
-| `humanoid_beard_short` | `neck` | `height=1.7`, `colour=[0.20, 0.15, 0.10]` — chin block + sideburns, three thin chamfered_boxes on the lower face |
+`humanoid_full` declares `material "skin"`, `"hair"`, `"eye"`,
+`"mouth"`, `"shirt"`, `"pants"`, `"boot"` internally; declare any
+other materials your accessories need at the top of the scene
+(scene-level declarations win under the first-wins dedup, so they
+also override the figure's defaults).
 
-Materials declared inside each module use distinct names
-(`jacket_outer`, `undershirt`, `cuff_band`, `pants_outer`, `dress_shoe`,
-`beard_hair`) so they don't collide with `humanoid_full`'s own
-`shirt` / `pants` / `boot` / `hair` materials under the first-wins
-deduplication rule. See `examples/businessman_casual.mog` for a
-canonical layered-outfit composition.
+See `examples/businessman_casual.mog` for a worked example that adds
+a jacket, dress-shirt panel, cuffs, dress shoes, beard, and hair cap
+onto a `humanoid_full` rig using only slot connectors and inline
+geometry.
 
 #### `humanoid_torso`
 
@@ -273,36 +279,6 @@ nodes**. Attach each to its matching connector on `humanoid_head`.
 | `size` | `0.11` | head reference size; drives feature scale |
 
 Caller declares materials `eye`, `skin`, `mouth`.
-
-#### `humanoid_hair_short`
-
-Skullcap with substantial occiput / nape bulk. Positioned at the head's
-scene-space y and skinned to `humanoid_full`'s `rig` (rigid-bound to
-`neck`), so a bare `use "humanoid_hair_short" ()` after `humanoid_full ()`
-drops the cap onto the figure and tracks head turns through the walk
-clip without an explicit `attach`.
-
-| parameter | default | meaning |
-|---|---|---|
-| `height` | `1.7` | matches host `humanoid_full`'s `height`; positions the cap at `$height * 0.920` |
-| `size` | `0.115` | hair-cap radius |
-| `colour` | `[0.20, 0.15, 0.10]` | drives the internally-declared `material "hair"` |
-
-`material "hair"` is declared internally — under the first-wins dedup,
-`humanoid_full`'s own `material "hair"` declaration wins when both
-modules are used together, so pass matching `hair` colour to both
-callers.
-
-#### `humanoid_hair_long`
-
-Skullcap + back-falling drape past the shoulders.
-
-| parameter | default | meaning |
-|---|---|---|
-| `size` | `0.115` | cap radius |
-| `length` | `0.45` | drape length |
-
-Caller declares material `hair`.
 
 ---
 

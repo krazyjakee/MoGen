@@ -20,7 +20,7 @@ meta (
   description = "low-poly businessman in an open dark suit with a white shirt, grey hair and stubble, walking",
   tags = ["character", "humanoid", "businessman", "low-poly"],
   mogen_version = "0.1.4",
-  style = "low_poly"
+  style = "low_poly", seed = "1778417589937268280", thinking = "medium", prompt = "fix outfit_stubble_beard alignment so it's against the face"
 )
 
 // ---------- Outfit materials ----------
@@ -149,22 +149,22 @@ module "outfit_dress_shoes" (height=1.7) {
 // pushed both outward and forward — so no beard face shares a coordinate
 // with a head face (z-fights would otherwise flicker on the cheeks and
 // the head sides).
-module "outfit_stubble_beard" (height=1.7) {
+module "outfit_stubble_beard" (height=1.7, thickness=0.4) {
   chamfered_box "beard_chin" (
-    pos=[0, $height * 0.846, $height * -0.072],
-    size=[$height * 0.080, $height * 0.028, $height * 0.022],
+    pos=[0, $height * 0.846, $height * -0.054],
+    size=[$height * 0.1, $height * 0.028, $thickness * 0.022],
     radius=$height * 0.004,
     mat="beard_hair", skin="rig", bind="neck", faceted=1
   )
   chamfered_box "beard_sideburn_l" (
-    pos=[$height *  0.054, $height * 0.870, $height * -0.054],
-    size=[$height * 0.018, $height * 0.054, $height * 0.022],
+    pos=[$height *  0.046, $height * 0.870, $height * -0.054],
+    size=[$height * 0.018, $height * 0.054, $thickness * 0.022],
     radius=$height * 0.003,
     mat="beard_hair", skin="rig", bind="neck", faceted=1
   )
   chamfered_box "beard_sideburn_r" (
-    pos=[$height * -0.054, $height * 0.870, $height * -0.054],
-    size=[$height * 0.018, $height * 0.054, $height * 0.022],
+    pos=[$height * -0.046, $height * 0.870, $height * -0.054],
+    size=[$height * 0.018, $height * 0.054, $thickness * 0.022],
     radius=$height * 0.003,
     mat="beard_hair", skin="rig", bind="neck", faceted=1
   )
@@ -184,7 +184,7 @@ module "outfit_short_hair" (height=1.7, size=0.115) {
   union "hair_cap" (smooth=$size * 0.04, skin="rig", bind="neck") {
     sphere "cap" (
       pos=[0, $height * 0.920, $size * 0.22],
-      radius=$size, rings=10, segments=16, mat="short_hair"
+      radius=$size, rings=10, segments=16, mat="short_hair", noise=0.19
     )
     ellipsoid "occiput" (
       pos=[0, $height * 0.920 + $size * -0.18, $size * 0.32],
@@ -215,7 +215,7 @@ scene {
   use "outfit_dress_shirt"   (height=1.75, weight=0.95)
   use "outfit_dress_shoes"   (height=1.75)
   use "outfit_stubble_beard" (height=1.75)
-  use "outfit_short_hair"    (height=1.75)
+  use "outfit_short_hair"    (height=1.75, size=0.13)
 
   use "humanoid_walk" ()
 }
