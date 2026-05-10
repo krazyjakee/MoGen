@@ -15,18 +15,13 @@
 // matching material at the top of the scene — first-wins dedup makes the
 // scene-level declaration take precedence over the module's own.
 
-meta (
-  name = "businessman_casual",
-  description = "low-poly businessman in an open dark suit with a white shirt, grey hair and stubble, walking",
-  tags = ["character", "humanoid", "businessman", "low-poly"],
-  mogen_version = "0.1.4",
-  style = "low_poly", seed = "1778417589937268280", thinking = "medium", prompt = "fix outfit_stubble_beard alignment so it's against the face"
-)
-
 // ---------- Outfit materials ----------
 // Declared at file scope so the geometry below — and any reader who wants
 // to recolour the outfit — has one place to look. To restyle the suit,
 // edit the colour values here.
+
+meta (seed = "1778417589937268280", thinking = "high", prompt = "fix outfit_stubble_beard alignment so it's against the face", mogen_version = "0.1.4", style = "low_poly")
+
 material "jacket_outer" (color=[0.06, 0.06, 0.06], roughness=0.78)
 material "dress_shirt"  (color=[0.92, 0.92, 0.92], roughness=0.82)
 material "dress_shoe"   (color=[0.04, 0.04, 0.04], roughness=0.55, metallic=0.05)
@@ -48,13 +43,13 @@ module "outfit_blazer_open" (height=1.7, weight=1.0) {
   )
   chamfered_box "blazer_front_l" (
     pos=[$height *  0.062 * $weight, $height * 0.660, $height * -0.064 * $weight],
-    size=[$height * 0.082 * $weight, $height * 0.276, $height * 0.018],
+    size=[$height * 0.082 * $weight, $height * 0.256, $height * 0.018],
     radius=$height * 0.006,
     mat="jacket_outer", skin="rig", bind="spine_chest", faceted=1
   )
   chamfered_box "blazer_front_r" (
     pos=[$height * -0.062 * $weight, $height * 0.660, $height * -0.064 * $weight],
-    size=[$height * 0.082 * $weight, $height * 0.276, $height * 0.018],
+    size=[$height * 0.082 * $weight, $height * 0.256, $height * 0.018],
     radius=$height * 0.006,
     mat="jacket_outer", skin="rig", bind="spine_chest", faceted=1
   )
@@ -93,8 +88,8 @@ module "outfit_blazer_open" (height=1.7, weight=1.0) {
 // open blazer, plus shirt cuffs at each forearm wrist.
 module "outfit_dress_shirt" (height=1.7, weight=1.0) {
   chamfered_box "shirt_panel" (
-    pos=[0, $height * 0.730, $height * -0.080 * $weight],
-    size=[$height * 0.064 * $weight, $height * 0.150, $height * 0.020],
+    pos=[0, $height * 0.720, $height * -0.065 * $weight],
+    size=[$height * 0.044 * $weight, $height * 0.150, $height * 0.020],
     radius=$height * 0.005,
     mat="dress_shirt", skin="rig", bind="spine_chest", faceted=1
   )
@@ -211,11 +206,21 @@ scene {
   // Outfit. Each local module uses the same `height` / `weight` as the
   // figure so the layered geometry tracks the body silhouette, and binds
   // into the `rig` skeleton so it animates with the walk cycle.
-  use "outfit_blazer_open"   (height=1.75, weight=0.95)
-  use "outfit_dress_shirt"   (height=1.75, weight=0.95)
-  use "outfit_dress_shoes"   (height=1.75)
-  use "outfit_stubble_beard" (height=1.75)
-  use "outfit_short_hair"    (height=1.75, size=0.13)
+  group {
+    use "outfit_blazer_open"   (height=1.75, weight=0.95)
+  }
+  group {
+    use "outfit_dress_shirt"   (height=1.75, weight=0.95)
+  }
+  group {
+    use "outfit_dress_shoes"   (height=1.75)
+  }
+  group {
+    use "outfit_stubble_beard" (height=1.75)
+  }
+  group {
+    use "outfit_short_hair"    (height=1.75, size=0.13)
+  }
 
   use "humanoid_walk" ()
 }
