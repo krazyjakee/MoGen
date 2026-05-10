@@ -123,6 +123,7 @@ fn main() -> ExitCode {
             style,
             plan,
             auto_refine,
+            rewrite,
         } => modify(ModifyArgs {
             input,
             prompt,
@@ -142,6 +143,7 @@ fn main() -> ExitCode {
             style: style.map(Into::into),
             plan,
             auto_refine,
+            rewrite,
             auth: provider.into(),
         }),
         Cmd::Animate {

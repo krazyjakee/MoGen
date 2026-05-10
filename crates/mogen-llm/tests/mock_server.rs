@@ -8,7 +8,8 @@ use std::thread;
 
 use mogen_llm::gemini::GeminiClient;
 use mogen_llm::{
-    generate_with_repair, GenerateConfig, ImageInput, LlmClient, Provider, RepairConfig,
+    generate_edits_with_repair, generate_with_repair, GenerateConfig, ImageInput, LlmClient,
+    Provider, RepairConfig,
 };
 
 struct MockServer {
@@ -427,4 +428,71 @@ fn fireworks_vision_uses_image_url_content() {
     assert_eq!(parts[0]["text"], "describe");
     assert_eq!(parts[1]["type"], "image_url");
     assert_eq!(parts[1]["image_url"]["url"], "data:image/png;base64,AQID");
+}
+
+#[test]
+fn edit_mode_first_call_applies_search_replace_against_baseline() {
+    // The model returns a single SEARCH/REPLACE block. The repair loop
+    // should apply it against the supplied baseline and treat the result as
+    // the candidate DSL — no full rewrite required, dramatically smaller
+    // response payload than re-emitting the entire file.
+    let baseline = "scene { box \"b\" (size=[1,1,1]) }\n";
+    let edit_block = "<<<<<<< SEARCH\nsize=[1,1,1]\n=======\nsize=[2,2,2]\n>>>>>>> REPLACE\n";
+    let server = MockServer::start(vec![&candidate_body(edit_block)]);
+    let client = LlmClient::with_base_url(Provider::Gemini, "test-key", server.base_url());
+
+    let outcome = generate_edits_with_repair(
+        &client,
+        GenerateConfig::new("make it bigger"),
+        &RepairConfig::default(),
+        baseline,
+    )
+    .expect("request ok");
+
+    assert!(outcome.is_ok(), "diagnostics: {:?}", outcome.diagnostics);
+    assert_eq!(outcome.call_count, 1, "edit mode should resolve in one call");
+    assert!(
+        outcome.dsl.contains("size=[2,2,2]"),
+        "edit block should mutate the baseline: {}",
+        outcome.dsl
+    );
+    assert!(
+        !outcome.dsl.contains("size=[1,1,1]"),
+        "old size should be replaced: {}",
+        outcome.dsl
+    );
+}
+
+#[test]
+fn edit_mode_falls_back_to_rewrite_when_model_returns_full_dsl() {
+    // Some models ignore the SEARCH/REPLACE format and emit a full file
+    // anyway (especially when the requested edit is structural). The loop
+    // must transparently treat a parseable DSL response as a rewrite,
+    // otherwise edit-mode would regress the legacy modify happy path.
+    let baseline = "scene { box \"b\" (size=[1,1,1]) }\n";
+    let full_rewrite = "scene { sphere \"s\" (radius=2) }";
+    let server = MockServer::start(vec![&candidate_body(full_rewrite)]);
+    let client = LlmClient::with_base_url(Provider::Gemini, "test-key", server.base_url());
+
+    let outcome = generate_edits_with_repair(
+        &client,
+        GenerateConfig::new("turn it into a sphere"),
+        &RepairConfig::default(),
+        baseline,
+    )
+    .expect("request ok");
+
+    assert!(outcome.is_ok(), "diagnostics: {:?}", outcome.diagnostics);
+    assert_eq!(outcome.call_count, 1);
+    // The model's whole-file rewrite wins, not the baseline.
+    assert!(
+        outcome.dsl.contains("sphere"),
+        "full-file rewrite should pass through: {}",
+        outcome.dsl
+    );
+    assert!(
+        !outcome.dsl.contains("box"),
+        "baseline should not leak into the response: {}",
+        outcome.dsl
+    );
 }

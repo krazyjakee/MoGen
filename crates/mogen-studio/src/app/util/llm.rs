@@ -4,11 +4,11 @@ use std::sync::Arc;
 
 use mogen_llm::{
     apply_style_to_prompt, cacheable_block, default_cache_path, embed_seed_header,
-    format_imports_preserve_block, generate_with_repair, inline_block, parse_prompt_header,
-    parse_seed_header, parse_style_header, repair_message, resolve_or_create_cache,
-    stamp_style_header, summarize_imports, validate_text, visual_refine, GenerateConfig,
-    GoogleCredential, ImageInput, LlmClient, OAuthBundle, Provider, RepairConfig, StdlibIndex,
-    Style, ThinkingLevel, Usage, DEFAULT_TTL_SECONDS,
+    format_imports_preserve_block, generate_edits_with_repair, generate_with_repair, inline_block,
+    parse_prompt_header, parse_seed_header, parse_style_header, repair_message,
+    resolve_or_create_cache, stamp_style_header, summarize_imports, validate_text, visual_refine,
+    GenerateConfig, GoogleCredential, ImageInput, LlmClient, OAuthBundle, Provider, RepairConfig,
+    StdlibIndex, Style, ThinkingLevel, Usage, DEFAULT_TTL_SECONDS, EDIT_BLOCK_INSTRUCTIONS,
 };
 
 use crate::app::error_class::classify;
@@ -278,18 +278,43 @@ pub(in crate::app) fn run_llm(
                 })
                 .map(|s| format!("{s}\n"))
                 .unwrap_or_default();
-            format!(
-                "You are editing an existing mogen DSL file. Apply this modification:\n\n\
-                {mod_prompt}\n\n\
-                {imports_block}\
-                Make the smallest edit that satisfies the request. Do not rename, reorder, \
-                reformat, or restyle parts the modification does not touch.\n\n\
-                Reply with ONLY the full modified DSL — no commentary, no markdown fences. \
-                Do not write a `meta(...)` block; the caller stamps it after generation.\n\n\
-                Existing file:\n\n{existing}",
-                mod_prompt = prompt.trim(),
-                existing = existing.as_deref().unwrap_or("").trim_end(),
-            )
+            // Edit mode (the default): the existing file becomes the
+            // baseline and the model returns SEARCH/REPLACE blocks instead
+            // of re-emitting the full DSL. The repair loop transparently
+            // falls back to a full rewrite when the model ignores the
+            // format, so this is safe even when the response isn't blocks.
+            // Skipped only when there's no existing buffer to edit (an
+            // unsaved Modify call shouldn't really happen, but the spawn
+            // path allows `existing = None`).
+            if existing.as_deref().map(|s| !s.is_empty()).unwrap_or(false) {
+                format!(
+                    "You are editing an existing mogen DSL file. Apply this modification:\n\n\
+                    {mod_prompt}\n\n\
+                    {imports_block}\
+                    Make the smallest edit that satisfies the request. Do not rename, reorder, \
+                    reformat, or restyle parts the modification does not touch.\n\n\
+                    Reply with one or more SEARCH/REPLACE blocks that apply your edit to the \
+                    existing file below. Do not write a `meta(...)` block; the caller stamps \
+                    it after generation. {edit_spec}\n\n\
+                    Existing file:\n\n{existing}",
+                    mod_prompt = prompt.trim(),
+                    existing = existing.as_deref().unwrap_or("").trim_end(),
+                    edit_spec = EDIT_BLOCK_INSTRUCTIONS,
+                )
+            } else {
+                format!(
+                    "You are editing an existing mogen DSL file. Apply this modification:\n\n\
+                    {mod_prompt}\n\n\
+                    {imports_block}\
+                    Make the smallest edit that satisfies the request. Do not rename, reorder, \
+                    reformat, or restyle parts the modification does not touch.\n\n\
+                    Reply with ONLY the full modified DSL — no commentary, no markdown fences. \
+                    Do not write a `meta(...)` block; the caller stamps it after generation.\n\n\
+                    Existing file:\n\n{existing}",
+                    mod_prompt = prompt.trim(),
+                    existing = existing.as_deref().unwrap_or("").trim_end(),
+                )
+            }
         }
         LlmKind::Animate => {
             let imports_block = existing
@@ -482,7 +507,22 @@ pub(in crate::app) fn run_llm(
         allow_edit_mode: true,
     };
 
-    match generate_with_repair(&client, cfg, &repair) {
+    // For Modify with a non-empty existing buffer, run in edit-block mode
+    // so the model can return SEARCH/REPLACE patches against the file
+    // instead of re-emitting the whole DSL. The repair loop's transparent
+    // rewrite fallback handles any model that ignores the format.
+    let modify_baseline = match kind {
+        LlmKind::Modify => existing
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .map(str::to_string),
+        _ => None,
+    };
+    let result = match modify_baseline {
+        Some(baseline) => generate_edits_with_repair(&client, cfg, &repair, &baseline),
+        None => generate_with_repair(&client, cfg, &repair),
+    };
+    match result {
         Ok(outcome) => {
             // Roll planner usage/calls into the final summary so the
             // status line reflects the full cost of the run, not just

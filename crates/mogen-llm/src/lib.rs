@@ -65,7 +65,8 @@ pub use prompt::{
 pub use provider::{GoogleCredential, LlmClient, Provider, ProviderError};
 pub use refine::{build_reviewer_message, visual_refine};
 pub use repair::{
-    generate_with_repair, repair_message, validate_text, GenerateOutcome, RepairConfig,
+    generate_edits_with_repair, generate_with_repair, repair_message, validate_text,
+    GenerateOutcome, RepairConfig, EDIT_BLOCK_INSTRUCTIONS,
 };
 pub use settings_store::{
     load_api_keys, read_api_key, settings_path as settings_store_path, zai_base_url, ApiKeys,
