@@ -1,10 +1,11 @@
     use super::flatten::{flatten, PaletteSource, FLOATS_PER_VERTEX};
     use super::state::{
         apply_gizmo_drag, commit_gizmo_drag, find_active_constant_track,
-        find_deepest_node_at_offset, gizmo_handles_supported, is_import_wrapper, node_path,
-        redirect_pick, replace_selection, replace_selection_cycling, resolve_node_path,
-        snap_rotate_delta, snap_scale_factor, snap_translate_delta, toggle_selection, GizmoDrag,
-        PendingEdit, TrackBinding, ViewerState, PICK_CYCLE_RADIUS_PX, SCALE_SNAP_STEP,
+        find_deepest_node_at_offset, find_use_at_offset, gizmo_handles_supported,
+        is_import_wrapper, node_path, redirect_pick, replace_selection, replace_selection_cycling,
+        resolve_node_path, snap_rotate_delta, snap_scale_factor, snap_translate_delta,
+        toggle_selection, GizmoDrag, PendingEdit, TrackBinding, ViewerState, PICK_CYCLE_RADIUS_PX,
+        SCALE_SNAP_STEP,
     };
     use eframe::egui;
     use glam::{Mat4, Quat, Vec3};
@@ -743,6 +744,40 @@
         // deselect.
         let (scene, _outer, _inner, _imported) = scene_with_overlapping_spans();
         assert_eq!(find_deepest_node_at_offset(&scene, 1000), None);
+    }
+
+    #[test]
+    fn find_use_at_offset_resolves_use_line_to_imported_root() {
+        // A click on a `use "leg" (...)` line in the active source has no
+        // matching SceneNode by span (the use itself doesn't lower to a node
+        // when it carries no transform attrs). The fallback parses the source,
+        // finds the `use` AST node at the offset, and returns the imported
+        // root SceneNode whose origin's file stem matches the use's name.
+        let source = "scene {\n  use \"leg\" (h=0.5)\n}\n";
+        let mut scene = SceneGraph::new();
+        let root = scene.add_root("scene", "scene", Transform::IDENTITY);
+        let imported_root = scene.add_child(root, "leg_root", "group", Transform::IDENTITY);
+        scene.nodes[imported_root.0 as usize].origin = Some(PathBuf::from("stdlib/leg.mog"));
+        let imported_leaf =
+            scene.add_child(imported_root, "leg_mesh", "box", Transform::IDENTITY);
+        scene.nodes[imported_leaf.0 as usize].origin = Some(PathBuf::from("stdlib/leg.mog"));
+
+        let use_offset = source.find("use \"leg\"").unwrap() + 5;
+        assert_eq!(
+            find_use_at_offset(&scene, source, use_offset),
+            Some(imported_root)
+        );
+    }
+
+    #[test]
+    fn find_use_at_offset_returns_none_when_offset_outside_any_use() {
+        let source = "scene {\n  use \"leg\" (h=0.5)\n}\n";
+        let mut scene = SceneGraph::new();
+        let root = scene.add_root("scene", "scene", Transform::IDENTITY);
+        let imported_root = scene.add_child(root, "leg_root", "group", Transform::IDENTITY);
+        scene.nodes[imported_root.0 as usize].origin = Some(PathBuf::from("stdlib/leg.mog"));
+        // Offset 0 sits on `scene {`, well outside any `use` AST node.
+        assert_eq!(find_use_at_offset(&scene, source, 0), None);
     }
 
     #[test]

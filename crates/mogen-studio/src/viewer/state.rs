@@ -1548,6 +1548,82 @@ fn pick_nth_named(scene: &SceneGraph, ids: &[NodeId], name: &str, n: u32) -> Opt
     None
 }
 
+/// Resolve a `use "<stem>" (...)` source line at `byte_offset` (in the active
+/// `source`) to a SceneNode in `scene`. Returns the first imported root whose
+/// origin's file stem matches the use's name — an "imported root" being a
+/// SceneNode whose origin differs from its parent's, so we land on the topmost
+/// node of the imported subtree rather than some interior leaf.
+///
+/// `find_deepest_node_at_offset` skips imported nodes outright (their spans
+/// live in another file), so a click on a `use "X"` line in the editor
+/// otherwise falls through to whatever surrounding container's span contains
+/// it (typically `scene`). This fallback turns those clicks into the
+/// import's root selection, which is what the user actually wants when they
+/// click the `use` line.
+///
+/// Returns `None` when the source no longer parses, the offset isn't inside
+/// any `use` AST node, or no SceneNode origin matches the use's stem.
+pub(super) fn find_use_at_offset(
+    scene: &SceneGraph,
+    source: &str,
+    byte_offset: usize,
+) -> Option<NodeId> {
+    let ast = mogen_dsl::parse(source).ok()?;
+    let stem = find_use_stem_at_offset(&ast, byte_offset)?;
+    for (idx, node) in scene.nodes.iter().enumerate() {
+        let Some(origin) = node.origin.as_deref() else {
+            continue;
+        };
+        let Some(node_stem) = origin.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        if node_stem != stem {
+            continue;
+        }
+        // Skip interior imported nodes: the parent must be from a different
+        // origin (or have no origin at all) for `idx` to be the topmost node
+        // of the imported subtree.
+        let parent_same_origin = node
+            .parent
+            .and_then(|pid| scene.nodes.get(pid.0 as usize))
+            .and_then(|p| p.origin.as_deref())
+            == Some(origin);
+        if parent_same_origin {
+            continue;
+        }
+        return Some(NodeId(idx as u32));
+    }
+    None
+}
+
+fn find_use_stem_at_offset(
+    ast: &[mogen_dsl::ast::Node],
+    byte_offset: usize,
+) -> Option<String> {
+    fn walk(node: &mogen_dsl::ast::Node, offset: usize) -> Option<String> {
+        // Recurse first so a `use` nested inside another node wins over its
+        // enclosing container, mirroring the deepest-span tiebreak elsewhere.
+        for c in &node.children {
+            if let Some(s) = walk(c, offset) {
+                return Some(s);
+            }
+        }
+        if node.kind == "use"
+            && offset >= node.span.start
+            && offset < node.span.end
+        {
+            return node.name.clone();
+        }
+        None
+    }
+    for n in ast {
+        if let Some(s) = walk(n, byte_offset) {
+            return Some(s);
+        }
+    }
+    None
+}
+
 /// Find the deepest user-authored scene node whose `source_span` contains
 /// `byte_offset`. "Deepest" = smallest containing span, so a click inside a
 /// child wins over its enclosing group. Nodes lowered from imported `.mog`

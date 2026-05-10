@@ -276,7 +276,8 @@ impl MogenStudioApp {
                         match self.files[i].last_synced_caret_byte {
                             Some(prev) if prev == byte_off => {}
                             Some(_) => {
-                                self.viewer.select_node_at_source_offset(byte_off);
+                                self.viewer
+                                    .select_node_at_source_offset(byte_off, &self.files[i].source);
                                 self.files[i].last_synced_caret_byte = Some(byte_off);
                             }
                             None => {

@@ -155,6 +155,7 @@ pub(crate) fn generate(args: GenerateArgs) -> Result<()> {
                 "generate: repair {attempt}/{total_attempts} — fixing {summary}"
             ));
         })),
+        allow_edit_mode: true,
     };
 
     let mut outcome = match generate_with_repair(&client, cfg.clone(), &repair) {
@@ -216,6 +217,7 @@ pub(crate) fn generate(args: GenerateArgs) -> Result<()> {
                         "generate: {label_for_cb} repair {attempt}/{total_attempts} — fixing {summary}"
                     ));
                 })),
+                allow_edit_mode: true,
             };
 
             let image = ImageInput {

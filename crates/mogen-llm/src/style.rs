@@ -109,8 +109,8 @@ impl Style {
                  detail and sharp PS1-style facets."
             }
             Style::LowPoly => {
-                "Modern indie low-poly à la Synty / Quaternius asset packs: clean \
-                 angular silhouettes, faceted shading with crisp triangle facets, \
+                "Modern indie low-poly: clean angular silhouettes, faceted \
+                 shading with crisp triangle facets, \
                  oversized hero features (big hands as mittens, big boots, blocky \
                  head), flat single-colour painterly materials per surface, gentle \
                  chamfers on edges, and textures used only for painted face details \

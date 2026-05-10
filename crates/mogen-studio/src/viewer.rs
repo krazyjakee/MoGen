@@ -37,8 +37,9 @@ use crate::preview_shader::PreviewShader;
 use renderer::Renderer;
 use state::{
     aspect_for, begin_gizmo_drag, commit_gizmo_drag, find_deepest_node_at_offset,
-    gizmo_handles_supported, node_path, replace_selection, replace_selection_cycling,
-    resolve_node_path, toggle_selection, update_gizmo_drag, ViewerState,
+    find_use_at_offset, gizmo_handles_supported, node_path, replace_selection,
+    replace_selection_cycling, resolve_node_path, toggle_selection, update_gizmo_drag,
+    ViewerState,
 };
 
 pub struct Viewer {
@@ -208,12 +209,19 @@ impl Viewer {
     /// selection actually changed; callers can short-circuit when nothing
     /// moved. `None` from the offset lookup (caret in a comment, blank line,
     /// or otherwise outside any span) preserves the existing selection.
-    pub fn select_node_at_source_offset(&self, byte_offset: usize) -> bool {
+    pub fn select_node_at_source_offset(&self, byte_offset: usize, source: &str) -> bool {
         let mut st = self.state.lock().unwrap();
         let Some(scene) = st.scene.clone() else {
             return false;
         };
-        let Some(target) = find_deepest_node_at_offset(&scene, byte_offset) else {
+        // A click on a `use "X" (...)` line maps to the imported root rather
+        // than whatever container would otherwise win the deepest-span tiebreak
+        // (typically `scene`, since imported nodes' spans live in another
+        // file and are skipped). Try this first so the editor click lands a
+        // meaningful viewport selection.
+        let target = find_use_at_offset(&scene, source, byte_offset)
+            .or_else(|| find_deepest_node_at_offset(&scene, byte_offset));
+        let Some(target) = target else {
             return false;
         };
         if st.selected.last().copied() == Some(target) {

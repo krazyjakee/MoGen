@@ -205,6 +205,7 @@ Existing file:\n\n{existing}",
                 "modify: repair {attempt}/{total_attempts} — fixing {summary}"
             ));
         })),
+        allow_edit_mode: true,
     };
 
     let mut outcome = match generate_with_repair(&client, cfg.clone(), &repair) {
@@ -267,6 +268,7 @@ Existing file:\n\n{existing}",
                         "modify: {label_for_cb} repair {attempt}/{total_attempts} — fixing {summary}"
                     ));
                 })),
+                allow_edit_mode: true,
             };
 
             let image = ImageInput {

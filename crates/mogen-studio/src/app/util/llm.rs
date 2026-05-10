@@ -376,7 +376,13 @@ pub(in crate::app) fn run_llm(
             // subsequent iterations.
             let existing_src = existing.as_deref().unwrap_or("");
             let diags = validate_text(existing_src);
-            repair_message(&header_prompt, existing_src, &diags, &[])
+            repair_message(
+                &header_prompt,
+                existing_src,
+                &diags,
+                &[],
+                mogen_llm::repair::RepairMode::Rewrite,
+            )
         }
         LlmKind::Textures => unreachable!("run_llm is text-only; textures uses run_llm_textures"),
         LlmKind::Refine => unreachable!("run_llm is not the refine entry point; refine uses run_llm_refine"),
@@ -473,6 +479,7 @@ pub(in crate::app) fn run_llm(
                 errors,
             }));
         })),
+        allow_edit_mode: true,
     };
 
     match generate_with_repair(&client, cfg, &repair) {
@@ -607,6 +614,7 @@ pub(in crate::app) fn run_llm_refine(
                 errors,
             }));
         })),
+        allow_edit_mode: true,
     };
 
     send_progress(LlmProgress::Status(format!(

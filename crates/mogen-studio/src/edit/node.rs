@@ -34,6 +34,25 @@ pub fn duplicate_node(src: &str, span: Span) -> String {
     splice(src, end..end, &insert)
 }
 
+/// Wrap the node covered by `span` in a `group "<group_name>" { … }`. The
+/// group's opening line replaces the original node's text in place; the body
+/// is re-indented one level deeper than the wrap. Used by the inspector's
+/// "Wrap `use` in a group" affordance — once wrapped, the synthesised group
+/// carries the editable transform the user wanted to write back to.
+pub fn wrap_node_in_group(src: &str, span: Span, group_name: &str) -> String {
+    let (start, end) = clamp_span(src, span);
+    if start >= end {
+        return src.to_string();
+    }
+    let indent_start = expand_to_line_start(src, start);
+    let indent = &src[indent_start..start];
+    let inner_indent = format!("{indent}  ");
+    let body = &src[start..end];
+    let wrapped =
+        format!("group \"{group_name}\" {{\n{inner_indent}{body}\n{indent}}}");
+    splice(src, start..end, &wrapped)
+}
+
 /// Drop spans whose interval is fully contained in another span (keeping
 /// the outer). Used by multi-delete: when the user selects a parent and one
 /// of its descendants, the parent's deletion already removes the descendant,
@@ -141,6 +160,17 @@ mod tests {
         let mut out = delete_node(src, span_c);
         out = delete_node(&out, span_a);
         assert_eq!(out, "scene {\n  box \"b\" (x=1)\n}\n");
+    }
+
+    #[test]
+    fn wrap_node_in_group_wraps_use_with_indent() {
+        let src = "scene {\n  use \"leg\" ()\n}\n";
+        let span = span_of(src, "use \"leg\" ()");
+        let out = wrap_node_in_group(src, span, "leg");
+        assert_eq!(
+            out,
+            "scene {\n  group \"leg\" {\n    use \"leg\" ()\n  }\n}\n"
+        );
     }
 
     #[test]

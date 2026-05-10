@@ -132,6 +132,50 @@ fn leaf_card_with_alpha_mask_material_passes_validation() {
 }
 
 #[test]
+fn skeleton_nested_inside_group_is_lowered() {
+    // Same shape as the businessman example: wrapping `use "humanoid_full" ()`
+    // in `group "humanoid" { ... }` puts the module-declared `skeleton "rig"`
+    // inside that group. The skeleton must still register so a sibling mesh
+    // with `skin="rig"` can bind to it.
+    let g = lower_src(
+        r#"
+        scene {
+          group "wrapper" {
+            skeleton "rig" {
+              bone "root" (envelope=0.5)
+            }
+            box "thing" (size=[1, 1, 1], skin="rig", bind="root")
+          }
+        }
+        "#,
+    );
+    let skin = g.find_skin("rig").expect("rig skin registered from inside group");
+    let thing = find_mesh_node(&g, "thing");
+    assert_eq!(thing.skin, Some(skin), "mesh inside the same group should bind to rig");
+}
+
+#[test]
+fn materials_nested_inside_groups_are_discovered() {
+    // A `material` decl that lands inside a wrapping `group` (the shape that
+    // module expansion produces when the user writes
+    // `group "g" { use "m" () }`) must still be findable for `mat=` lookup.
+    // Regression: collect_materials used to walk only top-level / scene-level.
+    let g = lower_src(
+        r#"
+        scene {
+          group "wrapper" {
+            material "boot" (color=[0.04, 0.04, 0.04])
+            box "shoe" (size=[1, 0.5, 1.5], mat="boot")
+          }
+        }
+        "#,
+    );
+    let mid = g.find_material("boot").expect("boot material registered");
+    let shoe = find_mesh_node(&g, "shoe");
+    assert_eq!(shoe.material, Some(mid), "shoe should resolve mat=\"boot\"");
+}
+
+#[test]
 fn branch_expands_to_seg_and_leaf_nodes() {
     // depth=2, splits=2 → 1 + 2 + 4 = 7 segments and 4 leaves.
     let g = lower_src(

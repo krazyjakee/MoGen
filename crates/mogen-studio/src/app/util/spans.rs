@@ -19,6 +19,36 @@ pub(in crate::app) fn find_material_source_span(src: &str, name: &str) -> Option
     None
 }
 
+/// Locate the DSL source span for the first `use "<stem>" (...)` declaration
+/// in the active source. Used by the inspector's "Wrap `use` in a group"
+/// affordance: a click resolves the imported node's origin file stem to the
+/// `use` line that brought it in, then the wrap helper splices a group
+/// around it. Returns `None` when the source no longer parses or no
+/// matching `use` exists. When multiple `use "<stem>"` calls exist, the
+/// first match (depth-first walk) is returned — picking the wrong instance
+/// is recoverable via undo, and the warning that triggers this affordance
+/// already implies there's no wrapper to disambiguate against.
+pub(in crate::app) fn find_use_source_span(src: &str, stem: &str) -> Option<mogen_core::Span> {
+    let ast = mogen_dsl::parse(src).ok()?;
+    fn walk(node: &mogen_dsl::ast::Node, stem: &str) -> Option<mogen_core::Span> {
+        if node.kind == "use" && node.name.as_deref() == Some(stem) {
+            return Some(node.span);
+        }
+        for c in &node.children {
+            if let Some(s) = walk(c, stem) {
+                return Some(s);
+            }
+        }
+        None
+    }
+    for n in &ast {
+        if let Some(s) = walk(n, stem) {
+            return Some(s);
+        }
+    }
+    None
+}
+
 /// Locate the DSL source span for the `clip` (or procedural-template) node
 /// whose resulting clip has `clip_name`. Scans the parsed AST recursively so
 /// scene-nested clips are found alongside top-level ones. Returns `None` if

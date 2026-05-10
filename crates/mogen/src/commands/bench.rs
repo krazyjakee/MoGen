@@ -102,7 +102,11 @@ pub(crate) fn bench(
         // Derive a deterministic seed per-prompt so reruns are comparable.
         cfg.seed = Some((i as u64).wrapping_add(1) * 0x9E37_79B1);
 
-        let repair = RepairConfig { max_iters: max_repair_iters, on_iteration: None };
+        let repair = RepairConfig {
+            max_iters: max_repair_iters,
+            on_iteration: None,
+            allow_edit_mode: true,
+        };
 
         match generate_with_repair(&client, cfg, &repair) {
             Ok(outcome) => {
