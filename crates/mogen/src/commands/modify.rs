@@ -4,9 +4,10 @@ use std::path::PathBuf;
 use anyhow::{anyhow, bail, Context, Result};
 use mogen_llm::{
     apply_style_to_prompt, compose_coder_prompt, embed_seed_header, format_imports_preserve_block,
-    generate_plan, generate_with_repair, parse_prompt_header, parse_seed_header,
-    parse_style_header, parse_thinking_header, stamp_style_header, summarize_imports,
-    visual_refine, GenerateConfig, ImageInput, Provider, RepairConfig, Style, ThinkingLevel, Usage,
+    generate_edits_with_repair, generate_plan, generate_with_repair, parse_prompt_header,
+    parse_seed_header, parse_style_header, parse_thinking_header, stamp_style_header,
+    summarize_imports, visual_refine, GenerateConfig, ImageInput, Provider, RepairConfig, Style,
+    ThinkingLevel, Usage, EDIT_BLOCK_INSTRUCTIONS,
 };
 use crate::refine_render::render_dsl_to_png;
 
@@ -44,6 +45,11 @@ pub(crate) struct ModifyArgs {
     pub plan: bool,
     /// Visual auto-refinement iteration count. `0` skips refinement.
     pub auto_refine: u32,
+    /// Force a full file rewrite instead of asking the model for
+    /// SEARCH/REPLACE edit blocks against the existing file. Useful when the
+    /// requested change is broad enough that surgical edits would be more
+    /// fragile than a clean restatement.
+    pub rewrite: bool,
     /// Gemini credential-resolution mode derived from `--provider`.
     pub auth: GeminiAuthMode,
 }
@@ -152,11 +158,15 @@ pub(crate) fn modify(args: ModifyArgs) -> Result<()> {
         args.prompt.clone()
     };
 
-    let user_prompt = format!(
-        "You are editing an existing mogen DSL file. Apply this modification:\n\n\
-    {mod_prompt}\n\n\
-{imports_block}\
-Make the smallest edit that satisfies the request. Do not rename, reorder, \
+    // Edit mode is the default for `modify`: the existing file is the
+    // baseline and the model returns SEARCH/REPLACE blocks instead of
+    // re-emitting the whole DSL. The repair loop transparently falls back
+    // to a full rewrite if the response can't be parsed/applied as edit
+    // blocks, so this is safe even when the model ignores the format.
+    // `--rewrite` opts back into the legacy full-file path.
+    let edit_mode = !args.rewrite;
+    let trimmed_existing = existing.trim_end();
+    let shared_constraints = "Make the smallest edit that satisfies the request. Do not rename, reorder, \
 reformat, or restyle parts the modification does not touch — preserve their \
 names, materials, transforms, connectors, attaches, joints, clips, and \
 tracks verbatim. Do not \"improve\" unrelated geometry.\n\n\
@@ -166,15 +176,39 @@ the scene or `tags=\"floating\"` on itself or an ancestor — otherwise the \
 geometric connectivity validator (E1101) will reject it. When the edit \
 removes or renames a node, update every reference to that name: `attach \
 parent=`/`child=`, `joint pivot=`, animation `target=`, and any `socket`/\
-`plug` that pointed at a removed connector.\n\n\
+`plug` that pointed at a removed connector.";
+    let user_prompt = if edit_mode {
+        format!(
+            "You are editing an existing mogen DSL file. Apply this modification:\n\n\
+{mod_prompt}\n\n\
+{imports_block}\
+{shared_constraints}\n\n\
+Reply with one or more SEARCH/REPLACE blocks that apply your edit to the \
+existing file below. Do not write a `meta(...)` block; the caller stamps it \
+after generation. {edit_spec}\n\n\
+Existing file:\n\n{existing}",
+            existing = trimmed_existing,
+            mod_prompt = coder_request_prompt.trim(),
+            imports_block = imports_block,
+            shared_constraints = shared_constraints,
+            edit_spec = EDIT_BLOCK_INSTRUCTIONS,
+        )
+    } else {
+        format!(
+            "You are editing an existing mogen DSL file. Apply this modification:\n\n\
+{mod_prompt}\n\n\
+{imports_block}\
+{shared_constraints}\n\n\
 Reply with ONLY the full modified DSL — no commentary, no markdown fences, \
 no diff markers. Emit the entire file, not just the changed region. Do not \
 write a `meta(...)` block; the caller stamps it after generation.\n\n\
 Existing file:\n\n{existing}",
-        existing = existing.trim_end(),
-        mod_prompt = coder_request_prompt.trim(),
-        imports_block = imports_block,
-    );
+            existing = trimmed_existing,
+            mod_prompt = coder_request_prompt.trim(),
+            imports_block = imports_block,
+            shared_constraints = shared_constraints,
+        )
+    };
 
     // Prepend the style block to the assembled scaffold prompt. `None` is
     // a passthrough so the existing prompt stays byte-for-byte identical.
@@ -208,11 +242,21 @@ Existing file:\n\n{existing}",
         allow_edit_mode: true,
     };
 
-    let mut outcome = match generate_with_repair(&client, cfg.clone(), &repair) {
-        Ok(o) => o,
-        Err(e) => {
-            pb.abandon_with_message(format!("modify: {provider_label} error — {e}"));
-            return Err(anyhow!("{}: {e}", provider_label.to_lowercase()));
+    let mut outcome = if edit_mode {
+        match generate_edits_with_repair(&client, cfg.clone(), &repair, &existing) {
+            Ok(o) => o,
+            Err(e) => {
+                pb.abandon_with_message(format!("modify: {provider_label} error — {e}"));
+                return Err(anyhow!("{}: {e}", provider_label.to_lowercase()));
+            }
+        }
+    } else {
+        match generate_with_repair(&client, cfg.clone(), &repair) {
+            Ok(o) => o,
+            Err(e) => {
+                pb.abandon_with_message(format!("modify: {provider_label} error — {e}"));
+                return Err(anyhow!("{}: {e}", provider_label.to_lowercase()));
+            }
         }
     };
     total_usage.add(&outcome.usage);

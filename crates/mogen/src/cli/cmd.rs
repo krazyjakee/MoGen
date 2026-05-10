@@ -227,6 +227,14 @@ pub(crate) enum Cmd {
         /// `generate --auto-refine`.
         #[arg(long, default_value_t = 0, value_parser = clap::value_parser!(u32).range(0..=10))]
         auto_refine: u32,
+        /// Force the model to re-emit the entire DSL instead of returning
+        /// SEARCH/REPLACE edit blocks against the existing file. The
+        /// edit-block mode is the default and falls back to a full rewrite
+        /// transparently when blocks don't apply, so this flag is only
+        /// useful when the requested change is broad enough that surgical
+        /// edits would be more fragile than a clean restatement.
+        #[arg(long)]
+        rewrite: bool,
     },
     /// Add or edit animations on an existing DSL file via the configured LLM
     /// provider, then validate and recompile the GLB. The LLM is restricted

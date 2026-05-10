@@ -95,6 +95,36 @@ pub fn generate_with_repair(
     cfg: GenerateConfig,
     repair: &RepairConfig,
 ) -> Result<GenerateOutcome, ProviderError> {
+    run_repair_loop(client, cfg, repair, false, None)
+}
+
+/// Variant of [`generate_with_repair`] that starts in edit mode: the first
+/// model response is parsed as SEARCH/REPLACE blocks against `baseline` and,
+/// only if that fails (no blocks, malformed, missing/ambiguous match), is it
+/// retried as a full rewrite. Used by `mogen modify` so a small change to a
+/// large file doesn't require the model to re-emit the entire DSL.
+///
+/// The caller is responsible for crafting a `cfg.user_prompt` that asks the
+/// model for SEARCH/REPLACE blocks (see [`EDIT_BLOCK_INSTRUCTIONS`]). After
+/// the first call, the loop's per-iteration mode logic ([`is_local_only`])
+/// takes over for any subsequent repair passes — exactly as in
+/// [`generate_with_repair`].
+pub fn generate_edits_with_repair(
+    client: &LlmClient,
+    cfg: GenerateConfig,
+    repair: &RepairConfig,
+    baseline: &str,
+) -> Result<GenerateOutcome, ProviderError> {
+    run_repair_loop(client, cfg, repair, true, Some(baseline.to_string()))
+}
+
+fn run_repair_loop(
+    client: &LlmClient,
+    cfg: GenerateConfig,
+    repair: &RepairConfig,
+    asked_for_edits_init: bool,
+    prev_dsl_init: Option<String>,
+) -> Result<GenerateOutcome, ProviderError> {
     let mut cfg = cfg;
     let mut total_usage = Usage::default();
     let mut calls = 0u32;
@@ -115,8 +145,11 @@ pub fn generate_with_repair(
     // them against. `asked_for_edits` mirrors what we requested, not what we
     // got — the model may ignore the format and return a full file anyway,
     // which we detect by parse failure and treat as a rewrite.
-    let mut asked_for_edits = false;
-    let mut prev_dsl: Option<String> = None;
+    //
+    // The init values let `generate_edits_with_repair` start the very first
+    // call in edit mode against a caller-supplied baseline.
+    let mut asked_for_edits = asked_for_edits_init;
+    let mut prev_dsl: Option<String> = prev_dsl_init;
 
     for iter in 0..=repair.max_iters {
         let resp = client.generate(&cfg)?;
@@ -314,24 +347,37 @@ pub fn repair_message(
             "Produce a corrected DSL file that addresses every error while preserving the \
              original intent. Reply with ONLY the corrected DSL — no commentary, no markdown fences.",
         ),
-        RepairMode::Edits => s.push_str(
-            "Reply with one or more SEARCH/REPLACE blocks that fix every error. Use this exact format:\n\
-             \n\
-             <<<<<<< SEARCH\n\
-             <text copied byte-for-byte from your previous attempt, including indentation>\n\
-             =======\n\
-             <replacement text>\n\
-             >>>>>>> REPLACE\n\
-             \n\
-             Rules:\n\
-             - Each SEARCH must appear EXACTLY ONCE in the previous attempt. If a fragment is ambiguous, expand it with surrounding context until it is unique.\n\
-             - SEARCH must be non-empty.\n\
-             - Emit one block per fix; multiple blocks are applied in order.\n\
-             - Do not include any commentary, explanations, or markdown fences — only the blocks.",
-        ),
+        RepairMode::Edits => {
+            s.push_str("Reply with one or more SEARCH/REPLACE blocks that fix every error. ");
+            s.push_str(EDIT_BLOCK_INSTRUCTIONS);
+        }
     }
     s
 }
+
+/// Format spec appended to a model prompt when we want it to reply with
+/// SEARCH/REPLACE edit blocks instead of a full rewrite. Shared between the
+/// repair loop's recovery turn and the `modify` command's first call so both
+/// paths produce blocks that [`parse_edit_blocks`] can decode the same way.
+///
+/// Callers prepend a one-line lead-in describing what the edits should
+/// achieve (e.g. "fix every error" / "apply your edit") and then drop this
+/// spec straight in.
+pub const EDIT_BLOCK_INSTRUCTIONS: &str =
+    "Use this exact format:\n\
+     \n\
+     <<<<<<< SEARCH\n\
+     <text copied byte-for-byte from the source above, including indentation>\n\
+     =======\n\
+     <replacement text>\n\
+     >>>>>>> REPLACE\n\
+     \n\
+     Rules:\n\
+     - Each SEARCH must appear EXACTLY ONCE in the source. If a fragment is ambiguous, expand it with surrounding context until it is unique.\n\
+     - SEARCH must be non-empty. To insert without removing anything, anchor SEARCH on a unique nearby line and include that line at the start of REPLACE followed by the new content.\n\
+     - To delete, leave REPLACE empty.\n\
+     - Emit one block per logical change; multiple blocks are applied in order.\n\
+     - Do not include any commentary, explanations, or markdown fences — only the blocks.";
 
 /// One SEARCH/REPLACE block parsed from a model response. `search` and
 /// `replace` are the raw strings between the markers, with the leading and
