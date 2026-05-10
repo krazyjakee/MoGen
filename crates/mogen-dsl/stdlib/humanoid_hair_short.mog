@@ -1,17 +1,26 @@
-// summary: Short hair cap — skullcap with a substantial occiput / nape bulk so the silhouette has a clear back-of-the-head shape rather than reading as a smooth swimcap or featureless ball. Sits on top of `humanoid_head` (`crown` socket). Caller declares material `hair`. Hair-local +Y is up, -Z is the face (front), +Z is the back of the head. NOTE: the smooth-union of operands inside the cap envelope is numerically delicate at humanoid scale (sub-cm overlap with $size ≈ 0.11–0.12 hits a Manifold non-manifold edge case for some pairs). Keep additions as a single oblate ellipsoid that *clearly* contains a chunk of the cap rather than a small bump that just grazes it.
-module "humanoid_hair_short" (size=0.115) {
-  union "hair" (smooth=$size * 0.04) {
-    sphere "cap" (radius=$size, rings=10, segments=16, mat="hair")
-    // Back / occiput / nape — large ellipsoid biased back-and-down so the
-    // hair clearly extends past the cranium toward the neck, gives the
-    // head a more-than-spherical hair silhouette. Sized large enough that
-    // the smin overlap is comfortably bigger than the welding epsilon.
+// summary: Short hair cap — skullcap with a substantial occiput / nape bulk so the silhouette has a clear back-of-the-head shape rather than reading as a smooth swimcap or featureless ball. Positioned at the head's scene-space location and skinned to the `rig` skeleton declared by `humanoid_full` (rigid-bound to the `neck` bone), so it tracks head turns through the walk / run / idle / jump clips. Pass `height` matching the host `humanoid_full`; `colour` drives the `hair` material (declared internally with first-wins dedup, so a scene-level `material "hair"` declaration earlier in the AST — including humanoid_full's own — takes precedence; pass matching colours to both modules when used together). Hair-local +Y is up, -Z is the face (front), +Z is the back of the head. NOTE: the smooth-union of operands inside the cap envelope is numerically delicate at humanoid scale (sub-cm overlap with $size ≈ 0.11–0.12 hits a Manifold non-manifold edge case for some pairs). Keep additions as a single oblate ellipsoid that *clearly* contains a chunk of the cap rather than a small bump that just grazes it.
+module "humanoid_hair_short" (
+  height=1.7,
+  size=0.115,
+  colour=[0.20, 0.15, 0.10]
+) {
+  material "hair" (color=$colour, roughness=0.85)
+
+  union "hair_cap" (smooth=$size * 0.04, skin="rig", bind="neck") {
+    sphere "cap" (
+      pos=[0, $height * 0.920, 0],
+      radius=$size, rings=10, segments=16, mat="hair"
+    )
+    // Back / occiput / nape — large ellipsoid biased back-and-down so
+    // the hair clearly extends past the cranium toward the neck, gives
+    // the head a more-than-spherical hair silhouette. Sized large enough
+    // that the smin overlap is comfortably bigger than the welding
+    // epsilon.
     ellipsoid "occiput" (
-      pos=[0, $size * -0.18, $size * 0.32],
+      pos=[0, $height * 0.920 + $size * -0.18, $size * 0.32],
       size=[$size * 1.95, $size * 1.50, $size * 1.85],
       rings=10, segments=16,
       mat="hair"
     )
-    connector "crown" (at=[0, $size * -0.92, 0], dir=[0, -1, 0], tag=crown)
   }
 }

@@ -182,7 +182,8 @@ mod tests {
                     | "humanoid_cuffs"
                     | "humanoid_pants_tapered"
                     | "humanoid_shoes_low"
-                    | "humanoid_beard_short");
+                    | "humanoid_beard_short"
+                    | "humanoid_hair_short");
             let scaffold = if depends_on_humanoid && name != "humanoid_full" {
                 "use \"humanoid_full\" ()\n"
             } else {
