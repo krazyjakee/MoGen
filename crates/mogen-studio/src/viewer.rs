@@ -672,6 +672,15 @@ impl Viewer {
                                     "[gizmo] commit SetAttrCanonical node={} attr={} value={} delete={:?}",
                                     node.0, attr, value, delete
                                 ),
+                                PendingEdit::SetAttrAtSpan {
+                                    span,
+                                    attr,
+                                    value,
+                                    delete,
+                                } => eprintln!(
+                                    "[gizmo] commit SetAttrAtSpan span={:?} attr={} value={} delete={:?}",
+                                    span, attr, value, delete
+                                ),
                                 PendingEdit::DeleteNode { node } => eprintln!(
                                     "[gizmo] commit DeleteNode node={}",
                                     node.0
@@ -930,8 +939,13 @@ impl Viewer {
                     // socket has no source span). Drawing handles the input
                     // layer would refuse just lets the user grab a dead
                     // affordance and watch the camera orbit instead.
-                    if gizmo_handles_supported(scene, sel, st.gizmo_mode) {
-                        let worlds = scene.world_transforms();
+                    if gizmo_handles_supported(scene, &st.clip_active, sel, st.gizmo_mode) {
+                        // Live-pose worlds (clips + drag overlay) so the
+                        // handle origin tracks what the user actually sees.
+                        // For static rigs this collapses to rest-pose
+                        // worlds, so the legacy non-animated path is
+                        // unaffected.
+                        let worlds = st.live_worlds();
                         let base_world = worlds
                             .get(sel.0 as usize)
                             .copied()

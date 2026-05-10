@@ -185,4 +185,5 @@ scene {
   use "outfit_short_hair"    (height=1.75, size=0.13)
 
   use "humanoid_walk" ()
+  use "humanoid_run" ()
 }

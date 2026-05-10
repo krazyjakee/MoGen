@@ -45,6 +45,7 @@ pub fn spin(name: &str, target: NodeId, axis: Vec3, rpm: f32, easing: Easing) ->
             easing: Easing::Linear,
             times,
             values,
+            source_span: None,
         }],
         origin: None,
     }
@@ -103,6 +104,7 @@ pub fn open_close(
             easing: Easing::Linear,
             times,
             values,
+            source_span: None,
         }],
         origin: None,
     }
@@ -145,6 +147,7 @@ pub fn wave(
             easing: Easing::Linear,
             times,
             values,
+            source_span: None,
         }],
         origin: None,
     }
@@ -193,6 +196,7 @@ pub fn flap(
             easing: Easing::Linear,
             times,
             values,
+            source_span: None,
         }],
         origin: None,
     }
@@ -223,6 +227,7 @@ pub fn idle(name: &str, target: NodeId, amplitude: f32, hz: f32, easing: Easing)
             easing: Easing::Linear,
             times,
             values,
+            source_span: None,
         }],
         origin: None,
     }
