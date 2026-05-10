@@ -1295,6 +1295,71 @@ fn mirror_bakes_reflection_into_subtree_so_chain_stays_positive_det() {
     }
 }
 
+#[test]
+fn mirror_flip_bind_swaps_lr_suffix_for_mirrored_copy() {
+    // `mirror (axis=x, flip_bind=1)` over a mesh bound to `shoulder_l`
+    // should produce two scene nodes, the original still bound to
+    // `shoulder_l` and the mirrored copy rebound to `shoulder_r`. The flag
+    // exists so symmetric humanoid accessories (sleeves, cuffs, shoes) can
+    // be authored once and follow both bones — string-typed module params
+    // aren't supported, so without `flip_bind` you'd hand-author each side.
+    let g = lower_src(
+        r#"
+        scene {
+          skeleton "rig" {
+            bone "shoulder_l" (pos=[ 0.2, 1.4, 0])
+            bone "shoulder_r" (pos=[-0.2, 1.4, 0])
+          }
+          mirror "arms" (axis=x, flip_bind=1) {
+            box "sleeve" (pos=[0.2, 1.4, 0], size=[0.1, 0.2, 0.1],
+                          skin="rig", bind="shoulder_l")
+          }
+        }
+        "#,
+    );
+
+    let l_idx = g.find_node("shoulder_l").unwrap().0 as u16;
+    let r_idx = g.find_node("shoulder_r").unwrap().0 as u16;
+    let skin = g.find_skin("rig").unwrap();
+    let l_joint = g.skins[skin.0 as usize]
+        .joints
+        .iter()
+        .position(|j| j.0 as u16 == l_idx)
+        .unwrap() as u16;
+    let r_joint = g.skins[skin.0 as usize]
+        .joints
+        .iter()
+        .position(|j| j.0 as u16 == r_idx)
+        .unwrap() as u16;
+
+    let sleeves: Vec<&mogen_core::SceneNode> = g
+        .nodes
+        .iter()
+        .filter(|n| n.name == "sleeve")
+        .collect();
+    assert_eq!(sleeves.len(), 2, "mirror should produce two `sleeve` copies");
+
+    // Both copies are skinned. The unmirrored copy binds to shoulder_l;
+    // the mirrored copy binds to shoulder_r via flip_bind.
+    let mut bound_to_l = 0;
+    let mut bound_to_r = 0;
+    for s in &sleeves {
+        let m = s.mesh.as_ref().expect("sleeve mesh");
+        assert_eq!(s.skin, Some(skin), "sleeve should be skinned");
+        for j in &m.joints {
+            assert_eq!(j[1..], [0, 0, 0], "rigid bind expected: only slot 0 used");
+            if j[0] == l_joint {
+                bound_to_l += 1;
+            } else if j[0] == r_joint {
+                bound_to_r += 1;
+            } else {
+                panic!("unexpected joint index {} in sleeve", j[0]);
+            }
+        }
+    }
+    assert!(bound_to_l > 0, "unmirrored copy must still bind to shoulder_l");
+    assert!(bound_to_r > 0, "mirrored copy must rebind to shoulder_r");
+}
 
 #[test]
 fn bend_z_range_only_bends_tip() {

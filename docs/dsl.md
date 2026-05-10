@@ -1015,6 +1015,39 @@ mirror "pair" (axis=x) {
 once unchanged and once with the named axis negated. Use it for left/right
 symmetry where only one side is authored by hand.
 
+Both copies share the body's node names, and both are bound when their
+mesh carries `skin="…"`. (Replicator-produced nodes inherit the AST node's
+binding; the skinning pass walks every duplicate, not just the first.)
+
+#### `flip_bind=1`: rebind the mirrored copy to the symmetric bone
+
+Module parameters are numeric only, so two skin-bound limbs that differ
+**only** in their bone suffix (`shoulder_l` ↔ `shoulder_r`,
+`ankle_l` ↔ `ankle_r`, …) can't be DRY'd by passing the bone name into
+a shared module. `flip_bind=1` solves this directly on `mirror`:
+
+```
+mirror "sleeves" (axis=x, flip_bind=1) {
+  chamfered_box "sleeve" (
+    pos=[0.135, 0.695, 0],
+    size=[0.052, 0.158, 0.052],
+    skin="rig", bind="shoulder_l", faceted=1
+  )
+}
+```
+
+emits the authored copy bound to `shoulder_l` AND a mirrored copy bound
+to `shoulder_r`. The flip applies on every mesh-bearing descendant of the
+mirrored instance: the AST-resolved `bind="…"` (whether authored locally
+or inherited from a wrapping `group (bind=…)`) is matched against a
+trailing `_l` or `_r` and the suffix swapped. Binds that don't end in
+`_l`/`_r` (e.g. `bind="spine_chest"`) pass through unchanged, so plain
+`mirror (axis=x)` is fine for shared-bone pairs and `flip_bind=1` only
+needs to be added when the symmetry crosses a per-side bone.
+
+`flip_bind` defaults to `0`. It only has an effect on the `mirror` kind;
+other replicators (`array`, `stack`, `grid`) ignore it.
+
 ### `array`
 
 ```
@@ -1543,6 +1576,13 @@ the neck), helmets, backpacks, hand-held props. `bind` propagates from a
 group to its descendants the same way `skin=` does, so a face cluster
 parented under a `group (bind="neck")` follows the head as one rigid
 piece.
+
+For `_l`/`_r`-suffixed pairs (e.g. left and right sleeves bound to
+`shoulder_l` / `shoulder_r`) — where the only difference between the two
+sides is the bone suffix — author one side and wrap it in
+`mirror (axis=x, flip_bind=1)`. The mirrored copy keeps every other
+attribute identical and rebinds to the swapped bone. See
+[`mirror`](#mirror) above.
 
 ### Animating bones
 

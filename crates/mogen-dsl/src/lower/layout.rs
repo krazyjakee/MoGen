@@ -372,6 +372,8 @@ pub(super) fn expand_replicator(
     graph.nodes[wrapper_id.0 as usize].origin = node.origin.clone();
     let pre_expand_count = graph.nodes.len();
 
+    let flip_bind = node.kind == "mirror"
+        && node.attr_number("flip_bind").map(|v| v != 0.0).unwrap_or(false);
     let instance_transforms: Vec<Transform> = match node.kind.as_str() {
         "mirror" => {
             let axis = node
@@ -430,6 +432,13 @@ pub(super) fn expand_replicator(
         if t.scale.x * t.scale.y * t.scale.z < 0.0 {
             bake_mirror_into_subtree(iid, t.scale, graph);
             graph.nodes[iid.0 as usize].transform = Transform::IDENTITY;
+            // Mark every mesh-bearing descendant of the mirrored copy so
+            // `bind_meshes` swaps the `_l`/`_r` suffix on its AST-resolved
+            // bind. This is the bone-rewrite half of `mirror (flip_bind=1)`;
+            // the geometry half is the reflection baking just above.
+            if flip_bind {
+                tag_flip_bind_subtree(iid, graph);
+            }
         }
         add_aabb_connectors_if_missing(iid, graph);
     }
@@ -454,6 +463,21 @@ pub(super) fn expand_replicator(
 /// vertex stream — flipping mesh positions/normals along the mirror axis and
 /// reversing triangle winding — which keeps the subsequent chain
 /// positive-determinant for downstream renderers.
+/// Mark every descendant of `root` so `bind_meshes` knows to swap the
+/// `_l`/`_r` suffix on its AST-resolved `bind="…"`. Used by
+/// `mirror (flip_bind=1)` after the mirrored subtree has been baked.
+/// We tag indiscriminately (groups, replicator wrappers, etc.) — the flag
+/// only takes effect on nodes that actually carry a skin binding, so the
+/// extra marks are harmless.
+fn tag_flip_bind_subtree(root: NodeId, graph: &mut SceneGraph) {
+    let mut stack: Vec<NodeId> = graph.nodes[root.0 as usize].children.clone();
+    while let Some(id) = stack.pop() {
+        graph.nodes[id.0 as usize].flip_bind_suffix = true;
+        let children = graph.nodes[id.0 as usize].children.clone();
+        stack.extend(children);
+    }
+}
+
 fn bake_mirror_into_subtree(root: NodeId, scale: Vec3, graph: &mut SceneGraph) {
     let mut stack: Vec<NodeId> = graph.nodes[root.0 as usize].children.clone();
     while let Some(id) = stack.pop() {

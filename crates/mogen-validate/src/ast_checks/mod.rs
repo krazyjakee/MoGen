@@ -63,7 +63,7 @@ pub fn validate_ast_with_source(ast: &[Node], base_dir: Option<&Path>) -> Vec<Di
     };
     check_meta_blocks(ast, &mut diags);
     for n in ast {
-        walk(n, &materials, &modules, suppress_unknown_module, &mut diags);
+        walk(n, &materials, &modules, suppress_unknown_module, false, &mut diags);
     }
     diags
 }
@@ -183,6 +183,7 @@ fn walk(
     materials: &HashSet<String>,
     modules: &HashSet<String>,
     suppress_unknown_module: bool,
+    inherited_skin: bool,
     diags: &mut Vec<Diagnostic>,
 ) {
     check_kind(n, diags);
@@ -256,7 +257,7 @@ fn walk(
                     .with_span(n.span),
                 );
             }
-            check_attrs(n, materials, diags);
+            check_attrs(n, materials, inherited_skin, diags);
         }
         "import" => {
             if n.name.is_none() {
@@ -300,14 +301,19 @@ fn walk(
             }
         }
         _ if KNOWN_KINDS.contains(&n.kind.as_str()) => {
-            check_attrs(n, materials, diags);
+            check_attrs(n, materials, inherited_skin, diags);
             check_anim_required(n, diags);
         }
         _ => {}
     }
 
+    // `skin=` propagates from a group to its descendants (see `mogen-dsl`'s
+    // `walk_bindings`). Track it through the validator walk so the W0105
+    // "`bind` without `skin`" warning suppresses for leaves whose skin is
+    // inherited from an ancestor group / mirror / use, not authored locally.
+    let child_skin = inherited_skin || n.attr("skin").is_some();
     for c in &n.children {
-        walk(c, materials, modules, suppress_unknown_module, diags);
+        walk(c, materials, modules, suppress_unknown_module, child_skin, diags);
     }
 }
 
@@ -323,7 +329,7 @@ fn check_kind(n: &Node, diags: &mut Vec<Diagnostic>) {
     }
 }
 
-fn check_attrs(n: &Node, materials: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
+fn check_attrs(n: &Node, materials: &HashSet<String>, inherited_skin: bool, diags: &mut Vec<Diagnostic>) {
     let allowed = attrs_for_kind(&n.kind);
     let common = common_attrs_for_kind(&n.kind);
     for (k, v) in &n.attrs {
@@ -367,7 +373,7 @@ fn check_attrs(n: &Node, materials: &HashSet<String>, diags: &mut Vec<Diagnostic
                 }
             }
         }
-        if k == "bind" && n.attr("skin").is_none() {
+        if k == "bind" && n.attr("skin").is_none() && !inherited_skin {
             diags.push(
                 Diagnostic::warning(
                     "W0105",

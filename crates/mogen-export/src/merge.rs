@@ -26,7 +26,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use mogen_core::{MaterialId, Mesh, NodeId, SceneGraph, SceneNode, Transform};
+use mogen_core::{MaterialId, Mesh, NodeId, SceneGraph, SceneNode};
 
 #[derive(Clone, Copy)]
 enum CleanupMode {
@@ -320,25 +320,12 @@ fn build_merged_node(
     SceneNode {
         name,
         kind: "merged".into(),
-        transform: Transform::default(),
         mesh: Some(mesh),
         material,
-        skin: None,
-        light: None,
         parent: new_parent,
-        children: Vec::new(),
-        connectors: Vec::new(),
-        collider: None,
-        cast_shadow: true,
         tags: vec!["merged".into()],
-        role: None,
-        source_span: None,
         editable: false,
-        relative_placed: false,
-        attach_binding: None,
-        conform_binding: None,
-        use_id: None,
-        origin: None,
+        ..SceneNode::default()
     }
 }
 

@@ -159,6 +159,14 @@ pub struct SceneNode {
     /// what the right sidebar shows; runtime export ignores it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin: Option<std::path::PathBuf>,
+    /// Set on each mesh-bearing scene node inside the mirrored copy of a
+    /// `mirror (flip_bind=1)`. `bind_meshes` swaps the `_l`/`_r` suffix on
+    /// the AST-resolved `bind="…"` when this flag is true, so the mirrored
+    /// mesh follows the symmetric bone (e.g. `shoulder_l` → `shoulder_r`).
+    /// Has no effect on meshes whose effective bind doesn't end in `_l`/`_r`.
+    /// Transient compile-time scratch — not serialised to glTF.
+    #[serde(skip)]
+    pub flip_bind_suffix: bool,
 }
 
 fn default_editable() -> bool {
@@ -205,6 +213,7 @@ impl Default for SceneNode {
             conform_binding: None,
             use_id: None,
             origin: None,
+            flip_bind_suffix: false,
         }
     }
 }

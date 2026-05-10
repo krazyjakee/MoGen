@@ -114,6 +114,13 @@ fn lower_bone(
 /// carries `bind="<bone>"`, every vertex is rigidly weighted 1.0 to that
 /// single joint instead — used for accessories that should follow one bone
 /// without deforming (hats, backpacks, hand-held props).
+///
+/// Replicators (`mirror`, `array`) duplicate AST nodes into multiple scene
+/// nodes that share a name, so we resolve each binding tuple against ALL
+/// scene nodes with that name (not just the first). The mirrored copy of
+/// a `mirror (flip_bind=1)` carries `flip_bind_suffix = true` on every mesh
+/// node — when set, we swap the `_l`/`_r` suffix on the AST-resolved bone
+/// so the mirrored mesh follows the symmetric joint.
 pub fn bind_meshes(ast: &[Node], graph: &mut SceneGraph) -> Result<()> {
     let bindings = collect_skin_bindings(ast);
     if bindings.is_empty() {
@@ -126,90 +133,101 @@ pub fn bind_meshes(ast: &[Node], graph: &mut SceneGraph) -> Result<()> {
         let skin_id = graph
             .find_skin(&skin_name)
             .ok_or_else(|| anyhow!("mesh \"{node_name}\" refers to unknown skin \"{skin_name}\""))?;
-        let node_id = graph
-            .find_node(&node_name)
-            .ok_or_else(|| anyhow!("skin binding: unknown scene node \"{node_name}\""))?;
-
-        let mesh_world = worlds[node_id.0 as usize];
-        let (joint_worlds, envelopes, bind_index) = {
-            let skin = &graph.skins[skin_id.0 as usize];
-            let joint_worlds: Vec<Mat4> = skin
-                .joints
-                .iter()
-                .map(|j| worlds[j.0 as usize])
-                .collect();
-            let envelopes: Vec<f32> = if skin.envelopes.len() == skin.joints.len() {
-                skin.envelopes.clone()
-            } else {
-                vec![DEFAULT_ENVELOPE; skin.joints.len()]
-            };
-            let bind_index = match &bind_to {
-                Some(bone) => {
-                    let idx = skin
-                        .joints
-                        .iter()
-                        .position(|j| graph.nodes[j.0 as usize].name == *bone)
-                        .ok_or_else(|| {
-                            anyhow!(
-                                "mesh \"{node_name}\" `bind=\"{bone}\"` does not name a bone in skin \"{skin_name}\""
-                            )
-                        })?;
-                    Some(idx as u16)
-                }
-                None => None,
-            };
-            (joint_worlds, envelopes, bind_index)
-        };
-
-        let (joints, weights, baked_positions, baked_normals) = {
-            let mesh = graph
-                .nodes
-                .get(node_id.0 as usize)
-                .and_then(|n| n.mesh.as_ref())
-                .ok_or_else(|| anyhow!("skin binding target \"{node_name}\" has no mesh"))?;
-            // glTF 2.0: a node with `skin` has its local TRS ignored at render.
-            // Bake the node's world transform into the POSITION/NORMAL buffers
-            // so the skinned mesh lives in the same frame as the joints.
-            let baked_positions: Vec<[f32; 3]> = mesh
-                .positions
-                .iter()
-                .map(|p| {
-                    let w = mesh_world.transform_point3(Vec3::from_array(*p));
-                    [w.x, w.y, w.z]
-                })
-                .collect();
-            let normal_mat = mesh_world.inverse().transpose();
-            let baked_normals: Vec<[f32; 3]> = mesh
-                .normals
-                .iter()
-                .map(|n| {
-                    let v = Vec3::from_array(*n);
-                    let rotated =
-                        normal_mat.transform_vector3(v).normalize_or_zero();
-                    [rotated.x, rotated.y, rotated.z]
-                })
-                .collect();
-            let (j, w) = match bind_index {
-                Some(idx) => rigid_skin_weights(baked_positions.len(), idx),
-                None => compute_skin_weights(
-                    &baked_positions,
-                    Mat4::IDENTITY,
-                    &joint_worlds,
-                    &envelopes,
-                ),
-            };
-            (j, w, baked_positions, baked_normals)
-        };
-
-        let node_mut = &mut graph.nodes[node_id.0 as usize];
-        if let Some(m) = node_mut.mesh.as_mut() {
-            m.positions = baked_positions;
-            m.normals = baked_normals;
-            m.joints = joints;
-            m.weights = weights;
+        let node_ids = graph.find_nodes_by_name(&node_name);
+        if node_ids.is_empty() {
+            bail!("skin binding: unknown scene node \"{node_name}\"");
         }
-        node_mut.skin = Some(skin_id);
-        node_mut.transform = Transform::IDENTITY;
+
+        for node_id in node_ids {
+            let effective_bind: Option<String> = if graph.nodes[node_id.0 as usize]
+                .flip_bind_suffix
+            {
+                bind_to.as_deref().map(flip_lr_suffix)
+            } else {
+                bind_to.clone()
+            };
+
+            let mesh_world = worlds[node_id.0 as usize];
+            let (joint_worlds, envelopes, bind_index) = {
+                let skin = &graph.skins[skin_id.0 as usize];
+                let joint_worlds: Vec<Mat4> = skin
+                    .joints
+                    .iter()
+                    .map(|j| worlds[j.0 as usize])
+                    .collect();
+                let envelopes: Vec<f32> = if skin.envelopes.len() == skin.joints.len() {
+                    skin.envelopes.clone()
+                } else {
+                    vec![DEFAULT_ENVELOPE; skin.joints.len()]
+                };
+                let bind_index = match &effective_bind {
+                    Some(bone) => {
+                        let idx = skin
+                            .joints
+                            .iter()
+                            .position(|j| graph.nodes[j.0 as usize].name == *bone)
+                            .ok_or_else(|| {
+                                anyhow!(
+                                    "mesh \"{node_name}\" `bind=\"{bone}\"` does not name a bone in skin \"{skin_name}\""
+                                )
+                            })?;
+                        Some(idx as u16)
+                    }
+                    None => None,
+                };
+                (joint_worlds, envelopes, bind_index)
+            };
+
+            let (joints, weights, baked_positions, baked_normals) = {
+                let mesh = graph
+                    .nodes
+                    .get(node_id.0 as usize)
+                    .and_then(|n| n.mesh.as_ref())
+                    .ok_or_else(|| anyhow!("skin binding target \"{node_name}\" has no mesh"))?;
+                // glTF 2.0: a node with `skin` has its local TRS ignored at render.
+                // Bake the node's world transform into the POSITION/NORMAL buffers
+                // so the skinned mesh lives in the same frame as the joints.
+                let baked_positions: Vec<[f32; 3]> = mesh
+                    .positions
+                    .iter()
+                    .map(|p| {
+                        let w = mesh_world.transform_point3(Vec3::from_array(*p));
+                        [w.x, w.y, w.z]
+                    })
+                    .collect();
+                let normal_mat = mesh_world.inverse().transpose();
+                let baked_normals: Vec<[f32; 3]> = mesh
+                    .normals
+                    .iter()
+                    .map(|n| {
+                        let v = Vec3::from_array(*n);
+                        let rotated =
+                            normal_mat.transform_vector3(v).normalize_or_zero();
+                        [rotated.x, rotated.y, rotated.z]
+                    })
+                    .collect();
+                let (j, w) = match bind_index {
+                    Some(idx) => rigid_skin_weights(baked_positions.len(), idx),
+                    None => compute_skin_weights(
+                        &baked_positions,
+                        Mat4::IDENTITY,
+                        &joint_worlds,
+                        &envelopes,
+                    ),
+                };
+                (j, w, baked_positions, baked_normals)
+            };
+
+            let node_mut = &mut graph.nodes[node_id.0 as usize];
+            if let Some(m) = node_mut.mesh.as_mut() {
+                m.positions = baked_positions;
+                m.normals = baked_normals;
+                m.joints = joints;
+                m.weights = weights;
+            }
+            node_mut.skin = Some(skin_id);
+            node_mut.transform = Transform::IDENTITY;
+        }
     }
 
     Ok(())
@@ -319,6 +337,20 @@ fn string_attr(node: &Node, key: &str) -> Option<String> {
     match node.attr(key)? {
         crate::ast::Value::String(s) | crate::ast::Value::Ident(s) => Some(s.clone()),
         _ => None,
+    }
+}
+
+/// Swap a trailing `_l` ↔ `_r` (case-sensitive). Used by `mirror (flip_bind=1)`
+/// so the mirrored copy of a `bind="shoulder_l"` mesh follows `shoulder_r`.
+/// Strings without a `_l`/`_r` suffix pass through unchanged — the caller
+/// applies this unconditionally, so e.g. `bind="spine_chest"` stays put.
+pub(crate) fn flip_lr_suffix(s: &str) -> String {
+    if let Some(stem) = s.strip_suffix("_l") {
+        format!("{stem}_r")
+    } else if let Some(stem) = s.strip_suffix("_r") {
+        format!("{stem}_l")
+    } else {
+        s.to_string()
     }
 }
 
