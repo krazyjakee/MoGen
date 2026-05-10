@@ -125,13 +125,12 @@ impl OpenAIClient {
             };
             // A streamed chunk usually has exactly one delta on the first
             // choice. Some frames carry only `usage` (the include_usage
-            // tail frame) with no choices — handled by the empty-iterator
-            // path below.
+            // tail frame) with no choices — `first()` returns `None` there
+            // and we just fall through to the usage update below.
             if let Some(delta_text) = parsed
                 .choices
-                .iter()
-                .filter_map(|c| c.delta.content.as_deref())
-                .next()
+                .first()
+                .and_then(|c| c.delta.content.as_deref())
             {
                 if !delta_text.is_empty() {
                     cumulative.push_str(delta_text);

@@ -17,6 +17,16 @@
 //! [`observe`] returns `Some(headline)` only when the label or the
 //! rough geometry-node count has changed since the previous call,
 //! keeping the studio's status channel quiet between transitions.
+//!
+//! ## Known limitations
+//!
+//! Substring matching is content-blind: an anchor like `clip(` will
+//! also fire if the model emits the literal text `clip(` inside a
+//! string attribute (most plausibly `meta(prompt="…clip(spin)…")`).
+//! Because anchors are walked in order and **last-anchor-wins**, a
+//! false positive on an early stage gets overridden as soon as a real
+//! later anchor lands, so the worst observable outcome is a brief
+//! flicker in the status line — not a stuck or wrong final state.
 
 /// Per-call state for one streaming run. Tracks the last status the
 /// caller emitted so [`observe`] can suppress unchanged updates.

@@ -523,7 +523,11 @@ impl GeminiClient {
         if let Some(e) = sse_err {
             return Err(e);
         }
-        if cumulative.is_empty() {
+        // Mirror the OpenAI streaming path: a whitespace-only response
+        // is just as useless as an empty one (no parser anchors land,
+        // the repair loop has nothing to feed back), so treat them the
+        // same.
+        if cumulative.trim().is_empty() {
             return Err(GeminiError::EmptyResponse);
         }
 

@@ -533,6 +533,199 @@ fn openai_stream_accumulates_deltas_and_surfaces_tail_usage() {
     assert_eq!(body["stream_options"]["include_usage"], true);
 }
 
+/// Variant of [`start_sse_server`] that hands out a different frame
+/// sequence per incoming request (the repair-loop test needs distinct
+/// streaming responses across iterations). `responses[i]` is the SSE
+/// frames returned to request `i`; once exhausted, additional requests
+/// are answered with an empty stream.
+fn start_sse_server_per_request(
+    responses: Vec<Vec<String>>,
+) -> (u16, std::sync::Arc<std::sync::Mutex<Vec<String>>>) {
+    let server = tiny_http::Server::http("127.0.0.1:0").expect("bind sse server");
+    let port = server.server_addr().to_ip().expect("ipv4").port();
+    let requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let requests_clone = requests.clone();
+    let queue = std::sync::Arc::new(std::sync::Mutex::new(responses));
+    let queue_clone = queue.clone();
+    thread::spawn(move || {
+        for mut req in server.incoming_requests() {
+            let mut body = String::new();
+            req.as_reader().read_to_string(&mut body).ok();
+            requests_clone.lock().unwrap().push(body);
+            let frames = {
+                let mut q = queue_clone.lock().unwrap();
+                if q.is_empty() {
+                    Vec::new()
+                } else {
+                    q.remove(0)
+                }
+            };
+            let mut payload = String::new();
+            for frame in &frames {
+                payload.push_str("data: ");
+                payload.push_str(frame);
+                payload.push_str("\n\n");
+            }
+            payload.push_str("data: [DONE]\n\n");
+            let resp = tiny_http::Response::from_string(payload).with_header(
+                "Content-Type: text/event-stream"
+                    .parse::<tiny_http::Header>()
+                    .unwrap(),
+            );
+            let _ = req.respond(resp);
+        }
+    });
+    (port, requests)
+}
+
+fn gemini_stream_frame(text: &str) -> String {
+    serde_json::json!({
+        "candidates": [{"content":{"parts":[{"text": text}]}}],
+    })
+    .to_string()
+}
+
+fn gemini_stream_tail(prompt: u32, candidates: u32, total: u32) -> String {
+    serde_json::json!({
+        "candidates": [{"content":{"parts":[{"text":""}]}}],
+        "usageMetadata": {
+            "promptTokenCount": prompt,
+            "candidatesTokenCount": candidates,
+            "totalTokenCount": total,
+        }
+    })
+    .to_string()
+}
+
+#[test]
+fn repair_loop_streams_each_iteration_and_invokes_on_chunk() {
+    // The repair loop must route through `stream_generate` whenever
+    // `on_chunk` is set, on every iteration — not just the first.
+    // A refactor that accidentally calls `client.generate` after the
+    // initial attempt would silently lose progress updates mid-repair.
+    // This test pins the contract by serving two streaming responses
+    // (a bad one, then a fixed one) and asserting `on_chunk` fires
+    // across both.
+    let bad = "scene { wombat \"oops\" (size=[1,1,1]) }";
+    let good = "scene { box \"b\" (size=[1,1,1]) }";
+    let attempt1 = vec![
+        gemini_stream_frame(bad),
+        gemini_stream_tail(10, 20, 30),
+    ];
+    let attempt2 = vec![
+        gemini_stream_frame(good),
+        gemini_stream_tail(10, 20, 30),
+    ];
+    let (port, _reqs) = start_sse_server_per_request(vec![attempt1, attempt2]);
+    let client = LlmClient::with_base_url(
+        Provider::Gemini,
+        "test-key",
+        format!("http://127.0.0.1:{}/v1beta", port),
+    );
+
+    // `on_chunk` is boxed into a `'static` callback, so the shared
+    // buffer it writes through must outlive the closure — `Arc` here,
+    // not a stack-local `Mutex`.
+    let snapshots: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let snapshots_cb = snapshots.clone();
+    let outcome = generate_with_repair(
+        &client,
+        GenerateConfig::new("a box"),
+        &RepairConfig {
+            max_iters: 1,
+            on_iteration: None,
+            on_chunk: Some(Box::new(move |_delta, cumulative| {
+                snapshots_cb.lock().unwrap().push(cumulative.to_string());
+            })),
+            allow_edit_mode: false,
+        },
+    )
+    .expect("request ok");
+
+    assert!(outcome.is_ok(), "diagnostics: {:?}", outcome.diagnostics);
+    assert_eq!(outcome.call_count, 2);
+
+    // One non-empty text frame per attempt → at least one snapshot per
+    // call, with the second iteration's payload distinct from the first.
+    let snaps = snapshots.lock().unwrap();
+    assert!(
+        snaps.iter().any(|s| s.contains("wombat")),
+        "expected first-attempt text in snapshots: {snaps:?}"
+    );
+    assert!(
+        snaps.iter().any(|s| s.contains("box \"b\"")),
+        "expected repaired text in snapshots: {snaps:?}"
+    );
+}
+
+#[test]
+fn gemini_stream_enforces_budget_tokens_against_tail_usage() {
+    // Streaming must apply the same client-side budget cap as the
+    // non-streaming path. Tail-frame usage of 33 against a 20-token
+    // budget should produce `BudgetExceeded`, not a successful response.
+    let frames = vec![
+        gemini_stream_frame("scene { box \"a\" (size=[1,1,1]) }"),
+        gemini_stream_tail(11, 22, 33),
+    ];
+    let (port, _reqs) = start_sse_server(frames);
+    let client = GeminiClient::with_base_url(
+        "test-key",
+        format!("http://127.0.0.1:{}/v1beta", port),
+    );
+
+    let mut cfg = GenerateConfig::new("a box");
+    cfg.budget_tokens = Some(20);
+    let mut cb = |_d: &str, _c: &str| {};
+    let err = client
+        .stream_generate(&cfg, &mut cb)
+        .expect_err("budget should trip");
+    assert!(
+        matches!(
+            err,
+            mogen_llm::gemini::GeminiError::BudgetExceeded { used: 33, budget: 20 }
+        ),
+        "expected BudgetExceeded, got {err:?}",
+    );
+}
+
+#[test]
+fn openai_stream_enforces_budget_tokens_against_tail_usage() {
+    // Same contract as the Gemini test above, exercised through the
+    // OpenAI streaming path so a regression in either client surfaces
+    // as a dedicated failure rather than an unexplained drift in the
+    // generic `LlmClient` wrapper.
+    let f1 = serde_json::json!({
+        "choices": [{"index":0, "delta":{"content":"scene { box \"a\" (size=[1,1,1]) }"}}],
+    })
+    .to_string();
+    let tail = serde_json::json!({
+        "choices": [],
+        "usage": {
+            "prompt_tokens": 5,
+            "completion_tokens": 12,
+            "total_tokens": 17,
+        }
+    })
+    .to_string();
+    let (port, _reqs) = start_sse_server(vec![f1, tail]);
+    let client = LlmClient::with_base_url(
+        Provider::OpenAI,
+        "test-key",
+        format!("http://127.0.0.1:{}/v1", port),
+    );
+    let mut cfg = GenerateConfig::new("a box");
+    cfg.budget_tokens = Some(10);
+    let mut cb = |_d: &str, _c: &str| {};
+    let err = client
+        .stream_generate(&cfg, &mut cb)
+        .expect_err("budget should trip");
+    let msg = format!("{err:?}");
+    assert!(
+        msg.contains("BudgetExceeded") && msg.contains("17") && msg.contains("10"),
+        "expected BudgetExceeded with 17/10, got {msg}",
+    );
+}
+
 /// Helper that produces a Z.ai-shaped chat-completions response carrying
 /// `text` as the assistant's reply. Mirrors `candidate_body` for Gemini.
 fn zai_chat_body(text: &str) -> String {
