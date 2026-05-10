@@ -659,6 +659,44 @@ fn repair_loop_streams_each_iteration_and_invokes_on_chunk() {
 }
 
 #[test]
+fn gemini_stream_tolerates_intermediate_frame_without_content() {
+    // Real Gemini streams interleave text-bearing frames with metadata
+    // frames that carry only `finishReason` (and sometimes only
+    // `safetyRatings`) — no `content` block. If the SSE accumulator
+    // treats the absent field as a parse error it aborts the entire
+    // stream and the caller sees a one-token response. Replay that
+    // exact shape: first frame text, second frame finish-only, then a
+    // usage tail. Expect the full text to round-trip and usage to land.
+    let text_frame = serde_json::json!({
+        "candidates": [{"content":{"parts":[{"text":"scene { box \"a\" (size=[1,1,1]) }"}], "role":"model"}, "index":0}],
+    })
+    .to_string();
+    let finish_frame = serde_json::json!({
+        "candidates": [{"finishReason":"STOP", "index":0}],
+    })
+    .to_string();
+    let tail = serde_json::json!({
+        "usageMetadata": {
+            "promptTokenCount": 7,
+            "candidatesTokenCount": 14,
+            "totalTokenCount": 21,
+        }
+    })
+    .to_string();
+    let (port, _reqs) = start_sse_server(vec![text_frame, finish_frame, tail]);
+    let client = GeminiClient::with_base_url(
+        "test-key",
+        format!("http://127.0.0.1:{}/v1beta", port),
+    );
+    let mut cb = |_d: &str, _c: &str| {};
+    let resp = client
+        .stream_generate(&GenerateConfig::new("a box"), &mut cb)
+        .expect("stream must survive content-less frames");
+    assert_eq!(resp.text, "scene { box \"a\" (size=[1,1,1]) }");
+    assert_eq!(resp.usage.total_tokens, 21);
+}
+
+#[test]
 fn gemini_stream_enforces_budget_tokens_against_tail_usage() {
     // Streaming must apply the same client-side budget cap as the
     // non-streaming path. Tail-frame usage of 33 against a 20-token

@@ -845,6 +845,16 @@ struct RawGenerateEnvelope {
 
 #[derive(Debug, Deserialize)]
 struct RawCandidate {
+    // Gemini streams emit several candidate shapes during one response:
+    // text-bearing frames (`content.parts[0].text`), `finishReason`-only
+    // tail frames, and the occasional safety-ratings-only frame. Only
+    // the first carries a `content` block, so this field has to be
+    // tolerated as absent — without `#[serde(default)]` the SSE
+    // accumulator's `from_str` fails on the first non-text frame, sets
+    // `sse_err`, aborts the stream, and the caller sees a half-finished
+    // response. Found in production: a single `finishReason` frame from
+    // gemini-2.5-flash was cutting `modify` off after one token.
+    #[serde(default)]
     content: RawContent,
 }
 
