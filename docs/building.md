@@ -294,7 +294,7 @@ long side.
 
 ## Tranche schedule
 
-### Tranche 1 — minimum viable building (this PR)
+### Tranche 1 — minimum viable building (landed)
 
 Scope:
 
@@ -314,23 +314,47 @@ Scope:
 - `docs/dsl.md#building` section mirroring the Branch reference.
 - Tests: golden-hash determinism, validation diagnostics, lowering smoke.
 
-Hard constraints enforced as diagnostics during T1:
+### Tranche 2 — vertical (landed)
 
-- `floors_above` must equal `1`.
-- `floors_below` must equal `0`.
-- `elevators`, `staircases`, `skylights` must equal `0`.
-- `roof` must be `"flat"` if set.
+Scope (delivered):
 
-Each is a clear `Diagnostic::error` directing the user at the missing
-tranche — they show up as parse-time errors, not silent fall-throughs.
-
-### Tranche 2 — vertical
-
-- Multi-storey layout (`floors_above ≥ 1`, `floors_below ≥ 0`).
-- Staircase + elevator placement spanning floors with a global exclusion
-  zone the floorplan solver respects.
-- Top-floor skylight emission.
-- Stdlib `stair_simple`, `elevator_shaft_simple` modules.
+- Multi-storey iteration: `floors_above ≥ 1`, `floors_below ≥ 0`. Each
+  storey gets its own `floor_<n>` group at Y = `n * (ceiling_height +
+  ceiling_thickness)`. Basement storeys appear with a `b` prefix
+  (`floor_b1`).
+- Per-storey layout solve: rooms are sampled and distributed across
+  storeys proportionally to storey count. Each storey runs its own
+  scoring pass with a sub-seed derived from `seed + storey_mix`.
+- Shared circulation: stairs and elevators are reserved in a column
+  along the east edge of the floorplate before any storey's room
+  layout runs, so they line up vertically across every storey. The
+  room area passed to BSP/grid is `bounds` minus the circulation
+  column.
+- Slabs carved: a storey's floor slab gets CSG-subtracted by every
+  circulation rect (except the bottommost storey, whose foundation
+  stays intact). Top-storey ceiling slab is carved by skylight rects.
+- Stair flights: one straight flight per storey transition (e.g. 3
+  storeys → 2 flights). Stamped with the stdlib `stair_simple` module
+  (or a synthetic step series if the module ref is missing).
+- Elevator shafts: a single shaft spans the entire Y range with one
+  `elevator_shaft_simple` module instance per building.
+- Top-storey skylights: `cfg.skylights` rectangles distributed across
+  room cells (no skylights over circulation cells). Same XY is carved
+  through the roof slab and used to stamp the skylight module.
+- Per-storey windows: `cfg.windows` distributed evenly across above-
+  ground storeys with the remainder biased to lower floors. Basements
+  receive no windows. Entrances stay on ground floor only.
+- Validator: T1 gates relaxed; new `W1113` warning fires if
+  `floors_above + floors_below > 1` and `staircases == 0` (the upper
+  storeys would be visually disconnected).
+- Stdlib: `stair_simple` (straight flight, tread-count derived from
+  rise), `elevator_shaft_simple` (four-wall vertical column).
+- `examples/three_storey_house.mog` exercising every T2 feature
+  (basement + ground + 2 upper storeys, stairs, elevator, skylights).
+- Tests: per-storey emission, Y stacking, stair count = N-1 per N
+  storeys, elevator emits a single shaft, skylight only on top storey,
+  upper floors have no entrance holes, stair XY consistent across
+  storeys, deterministic mesh hash under same seed.
 
 ### Tranche 3 — remaining layout styles + better scoring
 
@@ -403,12 +427,16 @@ Each file ≤ 800 lines. If any approaches the cap, split by sub-concern
 | `room_type.density` outside 0–10 | error | T1 |
 | `adjacency` references an unknown room-type name | error | T1 |
 | `floors_above < 1` | error | T1 |
-| `floors_above > 1` (or `floors_below > 0`, stairs, lifts, skylights, non-flat roof) | error in T1; valid in T2+ | T1 |
+| `floors_above ≥ 1`, `floors_below ≥ 0` (multi-storey) | valid since T2 | T2 |
+| `floors_above + floors_below > 1` with `staircases == 0` | warning `W1113` (upper floors disconnected) | T2 |
+| `staircases > 0` / `elevators > 0` / `skylights > 0` | valid since T2 | T2 |
+| Non-flat `roof=` | error `E1111` (pending tranche) | T1 |
+| `style` outside `grid`/`apartment-block` | error `E1110` (pending tranche) | T1 |
 | `rooms < 1` | error | T1 |
 | `floor_area` ≤ 0 | error | T1 |
-| External/internal/window/skylight module ref not found | error | T1 |
+| External/internal/window/skylight/stair/elevator module ref not found | error | T1 |
 | Layout solver produced 0 rooms after all attempts | error | T1 |
-| Adjacency rule mentions room-type whose count is 0 (after sampling) | warning | T2 |
+| Adjacency rule mentions room-type whose count is 0 (after sampling) | warning | T3 |
 
 All diagnostics carry the original AST span — building lowering is span-aware
 through-and-through.

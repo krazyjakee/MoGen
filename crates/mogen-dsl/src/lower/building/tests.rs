@@ -178,3 +178,177 @@ fn building_requires_room_type() {
         "expected error mentioning `room_type`, got: {msg}"
     );
 }
+
+// --- Tranche 2 tests ---
+
+const MULTI_FLOOR_SRC: &str = r#"
+material "concrete" (color=[0.8, 0.8, 0.8])
+building "tower" (
+  seed=3, style="grid",
+  floor_area=80, rooms=8,
+  floors_above=2, floors_below=1,
+  staircases=1, elevators=1,
+  mat="concrete",
+) {
+  room_type "office" (kind=staff_only, density=1)
+}
+"#;
+
+#[test]
+fn multi_storey_emits_one_floor_group_per_storey() {
+    let g = lower_src(MULTI_FLOOR_SRC);
+    // 3 storeys: floor_b1, floor_0, floor_1.
+    let floors: Vec<&str> = g
+        .nodes
+        .iter()
+        .filter(|n| n.name.starts_with("floor_"))
+        .map(|n| n.name.as_str())
+        .collect();
+    assert_eq!(
+        floors.len(),
+        3,
+        "expected 3 floor groups, got {floors:?}"
+    );
+    assert!(floors.contains(&"floor_b1"));
+    assert!(floors.contains(&"floor_0"));
+    assert!(floors.contains(&"floor_1"));
+}
+
+#[test]
+fn multi_storey_floors_stack_vertically_by_step() {
+    let g = lower_src(MULTI_FLOOR_SRC);
+    // ceiling_height (2.6) + ceiling_thickness (0.2) = step of 2.8.
+    let y_for = |name: &str| -> f32 {
+        g.nodes
+            .iter()
+            .find(|n| n.name == name)
+            .unwrap_or_else(|| panic!("no node named {name}"))
+            .transform
+            .translation
+            .y
+    };
+    let y_b1 = y_for("floor_b1");
+    let y_0 = y_for("floor_0");
+    let y_1 = y_for("floor_1");
+    let step = 2.6 + 0.2;
+    assert!((y_0 - y_b1 - step).abs() < 1e-3, "basement→ground step wrong: {} vs {step}", y_0 - y_b1);
+    assert!((y_1 - y_0 - step).abs() < 1e-3, "ground→upper step wrong: {} vs {step}", y_1 - y_0);
+}
+
+#[test]
+fn staircase_emits_one_flight_per_storey_pair() {
+    let g = lower_src(MULTI_FLOOR_SRC);
+    // 3 storeys → 2 transitions → 2 flights.
+    let flights = g
+        .nodes
+        .iter()
+        .filter(|n| n.role.as_deref() == Some("stair_flight"))
+        .count();
+    assert_eq!(flights, 2, "expected 2 flights between 3 storeys, got {flights}");
+}
+
+#[test]
+fn elevator_emits_a_single_shaft_for_the_whole_building() {
+    let g = lower_src(MULTI_FLOOR_SRC);
+    let shafts = g
+        .nodes
+        .iter()
+        .filter(|n| n.role.as_deref() == Some("elevator"))
+        .count();
+    assert_eq!(shafts, 1);
+}
+
+#[test]
+fn upper_floors_have_no_entrance_holes() {
+    let g = lower_src(MULTI_FLOOR_SRC);
+    // Entrances are tagged with role=ext_door; they should only sit
+    // under the storey-0 subtree.
+    let storey_for_node = |n_idx: usize| -> i32 {
+        // Walk up to find the floor_<x> ancestor.
+        let mut cur = Some(g.nodes[n_idx].parent);
+        while let Some(Some(p)) = cur {
+            let name = &g.nodes[p.0 as usize].name;
+            if let Some(rest) = name.strip_prefix("floor_") {
+                if let Ok(s) = rest.parse::<i32>() {
+                    return s;
+                } else if rest.starts_with('b') {
+                    return -(rest[1..].parse::<i32>().unwrap_or(0));
+                }
+            }
+            cur = Some(g.nodes[p.0 as usize].parent);
+        }
+        i32::MIN
+    };
+    for (i, n) in g.nodes.iter().enumerate() {
+        if n.role.as_deref() == Some("ext_door") {
+            assert_eq!(
+                storey_for_node(i),
+                0,
+                "ext_door must live under floor_0, found one under storey {}",
+                storey_for_node(i)
+            );
+        }
+    }
+}
+
+#[test]
+fn skylight_only_emits_on_top_storey() {
+    let src = r#"
+        material "c" (color=[0.8, 0.8, 0.8])
+        building "t" (
+          seed=2, style="grid", floor_area=60, rooms=4,
+          floors_above=2, staircases=1, skylights=2, mat="c",
+        ) {
+          room_type "office" (kind=staff_only, density=1)
+        }
+    "#;
+    let g = lower_src(src);
+    let skies = g.nodes.iter().filter(|n| n.role.as_deref() == Some("skylight")).count();
+    assert_eq!(skies, 2, "expected 2 skylights, got {skies}");
+}
+
+#[test]
+fn t2_layout_is_deterministic_under_same_seed() {
+    let a = lower_src(MULTI_FLOOR_SRC);
+    let b = lower_src(MULTI_FLOOR_SRC);
+    assert_eq!(a.nodes.len(), b.nodes.len(), "node count diverged");
+    let hash = |g: &SceneGraph| -> f64 {
+        let mut acc = 0.0f64;
+        for n in &g.nodes {
+            if let Some(m) = &n.mesh {
+                for p in &m.positions {
+                    acc += p[0] as f64;
+                    acc += p[1] as f64;
+                    acc += p[2] as f64;
+                }
+            }
+        }
+        acc
+    };
+    assert!((hash(&a) - hash(&b)).abs() < 1e-3, "mesh hash diverged under same seed");
+}
+
+#[test]
+fn stair_xy_consistent_across_storeys() {
+    let g = lower_src(MULTI_FLOOR_SRC);
+    let flight_positions: Vec<(f32, f32)> = g
+        .nodes
+        .iter()
+        .filter(|n| n.role.as_deref() == Some("stair_flight"))
+        .map(|n| {
+            // Flight transform is storey-local — walk up to its staircase
+            // parent and read that parent's XZ.
+            let parent_idx = n.parent.unwrap();
+            let p = &g.nodes[parent_idx.0 as usize];
+            (p.transform.translation.x, p.transform.translation.z)
+        })
+        .collect();
+    assert!(flight_positions.len() >= 2);
+    let (x0, z0) = flight_positions[0];
+    for (i, (x, z)) in flight_positions.iter().enumerate().skip(1) {
+        assert!(
+            (x - x0).abs() < 1e-3 && (z - z0).abs() < 1e-3,
+            "flight {i} XZ ({x},{z}) diverges from flight 0 ({x0},{z0}) — stairs misaligned across storeys"
+        );
+    }
+}

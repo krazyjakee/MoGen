@@ -54,12 +54,14 @@ const STDLIB_FILES: &[(&str, &str)] = &[
     ("terrain_patch.mog",         include_str!("../stdlib/terrain_patch.mog")),
     ("blob.mog",                  include_str!("../stdlib/blob.mog")),
     ("water_patch.mog",           include_str!("../stdlib/water_patch.mog")),
-    // Building modules — referenced by `building` for door, window, and
-    // skylight stamping. Each takes `width=`/`height=` so the building
-    // generator can size them to the opening.
+    // Building modules — referenced by `building` for door, window,
+    // skylight, staircase, and elevator stamping. Each takes parameters
+    // so the building generator can size them to the opening / shaft.
     ("door_simple.mog",           include_str!("../stdlib/door_simple.mog")),
     ("window_simple.mog",         include_str!("../stdlib/window_simple.mog")),
     ("skylight_simple.mog",       include_str!("../stdlib/skylight_simple.mog")),
+    ("stair_simple.mog",          include_str!("../stdlib/stair_simple.mog")),
+    ("elevator_shaft_simple.mog", include_str!("../stdlib/elevator_shaft_simple.mog")),
 ];
 
 static STDLIB: OnceLock<ModuleRegistry> = OnceLock::new();

@@ -1,10 +1,15 @@
-//! Per-room emission: a `room_<n>` group per cell carrying interior walls
-//! with door cutouts, and a `centre` connector at the room's centroid for
+//! Per-cell emission: one group per cell carrying interior walls with
+//! door cutouts and a `centre` connector at the cell's centroid for
 //! downstream furnishing modules to anchor to.
 //!
-//! Interior walls are deduplicated across rooms — the wall between rooms A
-//! and B is emitted once, as a child of A (the room with the lower index).
-//! This matches the convention adjacent to the visible mesh.
+//! Cells are room cells, staircases, or elevators (see `CellKind`). The
+//! group name reflects the kind so the outliner reads "room_0" vs
+//! "staircase_0" vs "elevator_0" — and so the lookup for the cab module
+//! (in emit/circulation.rs) can find a stable parent group.
+//!
+//! Interior walls are deduplicated across cells — the wall between cells
+//! A and B is emitted once, as a child of A (the cell with the lower
+//! index).
 
 use anyhow::Result;
 use glam::{Quat, Vec3};
@@ -15,7 +20,7 @@ use mogen_geom::{box_mesh, clean_csg_output, difference_many, transform_mesh};
 use crate::ast::Node;
 
 use super::super::config::BuildingCfg;
-use super::super::layout::{cell_type, Floorplate};
+use super::super::layout::{cell_kind_label, cell_kind_role, cell_type, CellKind, Floorplate};
 use super::openings::OpeningPlan;
 
 pub(super) fn emit_rooms(
@@ -30,19 +35,15 @@ pub(super) fn emit_rooms(
     let h = cfg.ceiling_height;
     let wt = cfg.wall_thickness;
 
-    // Pre-build the unique shared-edge wall list. Each entry is
-    // (lower-index room, higher-index room, edge axis, fixed-coord, range).
     let walls = collect_interior_walls(plate);
 
-    // Build per-room groups so we can stamp room-type metadata + a centre
-    // connector. Interior walls belong to the lower-index room of the pair.
-    let mut room_ids: Vec<NodeId> = Vec::with_capacity(plate.rooms.len());
+    let mut cell_ids: Vec<NodeId> = Vec::with_capacity(plate.rooms.len());
     for (i, cell) in plate.rooms.iter().enumerate() {
-        let typ = cell_type(cfg, cell);
         let centre = cell.rect.centre();
-        let room_id = graph.add_child(
+        let kind_label = cell_kind_label(cell);
+        let cell_id = graph.add_child(
             parent,
-            format!("room_{i}"),
+            format!("{kind_label}_{i}"),
             "group",
             Transform::from_trs(
                 Vec3::new(centre[0], 0.0, centre[1]),
@@ -50,32 +51,35 @@ pub(super) fn emit_rooms(
                 Vec3::ONE,
             ),
         );
-        graph.nodes[room_id.0 as usize].origin = origin.clone();
-        graph.nodes[room_id.0 as usize].role = Some("room".into());
-        graph.nodes[room_id.0 as usize]
-            .tags
-            .extend(["building".into(), format!("room_type={}", typ.name)]);
-        // Centre connector — anchor for downstream furnishing modules.
-        graph.nodes[room_id.0 as usize].connectors.push(Connector::from_at_dir(
+        graph.nodes[cell_id.0 as usize].origin = origin.clone();
+        graph.nodes[cell_id.0 as usize].role = Some(cell_kind_role(cell).into());
+        let mut tags = vec!["building".to_string(), kind_label.to_string()];
+        if let Some(typ) = cell_type(cfg, cell) {
+            tags.push(format!("room_type={}", typ.name));
+        }
+        graph.nodes[cell_id.0 as usize].tags.extend(tags);
+        graph.nodes[cell_id.0 as usize].connectors.push(Connector::from_at_dir(
             "centre".to_string(),
             Vec3::ZERO,
             Vec3::Y,
-            "room_centre".to_string(),
+            format!("{kind_label}_centre"),
             None,
         ));
-        // Apply per-room material override if the room type carries one.
-        if let Some(mat_name) = typ.mat.as_deref() {
-            if let Some(mid) = graph.find_material_scoped(mat_name, origin.as_deref()) {
-                graph.set_material(room_id, mid);
+        // Material override: rooms get their type's `mat=`, circulation
+        // cells inherit from the building wrapper.
+        if let Some(typ) = cell_type(cfg, cell) {
+            if let Some(mat_name) = typ.mat.as_deref() {
+                if let Some(mid) = graph.find_material_scoped(mat_name, origin.as_deref()) {
+                    graph.set_material(cell_id, mid);
+                }
             }
         }
-        if graph.nodes[room_id.0 as usize].material.is_none() {
-            inherit_material_from_chain(room_id, graph);
+        if graph.nodes[cell_id.0 as usize].material.is_none() {
+            inherit_material_from_chain(cell_id, graph);
         }
-        room_ids.push(room_id);
+        cell_ids.push(cell_id);
     }
 
-    // Emit each unique shared wall once, parented to the lower-index room.
     for (idx, (lo, hi, axis, fixed, range)) in walls.iter().enumerate() {
         let length = range.1 - range.0;
         if length <= wt * 1.5 {
@@ -89,11 +93,10 @@ pub(super) fn emit_rooms(
                 Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),
             ),
         };
-        let parent_room = room_ids[*lo];
+        let parent_cell = cell_ids[*lo];
 
-        // Translate world-space centre into room-local space.
-        let room_world = graph.nodes[parent_room.0 as usize].transform.translation;
-        let local = centre_xyz - room_world;
+        let cell_world = graph.nodes[parent_cell.0 as usize].transform.translation;
+        let local = centre_xyz - cell_world;
 
         let mut local_holes: Vec<[f32; 4]> = Vec::new();
         for door in &plan.interior_doors {
@@ -109,18 +112,25 @@ pub(super) fn emit_rooms(
         }
 
         let mesh = build_wall_mesh([length, h, wt], &local_holes);
+        let lo_kind = plate.rooms[*lo].kind;
+        let hi_kind = plate.rooms[*hi].kind;
+        let role = if matches!(lo_kind, CellKind::Room) && matches!(hi_kind, CellKind::Room) {
+            "interior_wall"
+        } else {
+            "service_wall"
+        };
         let wall_id = graph.add_child(
-            parent_room,
+            parent_cell,
             format!("interior_wall_{idx}_{lo}_{hi}"),
             "wall",
             Transform::from_trs(local, rot, Vec3::ONE),
         );
         graph.set_mesh(wall_id, mesh);
         graph.nodes[wall_id.0 as usize].origin = origin.clone();
-        graph.nodes[wall_id.0 as usize].role = Some("wall".into());
+        graph.nodes[wall_id.0 as usize].role = Some(role.into());
         graph.nodes[wall_id.0 as usize].tags.extend([
             "building".into(),
-            "interior_wall".into(),
+            role.into(),
         ]);
         inherit_material_from_chain(wall_id, graph);
     }
@@ -129,9 +139,7 @@ pub(super) fn emit_rooms(
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum WallAxis {
-    /// Wall lying along the Z axis (variable Z, fixed X).
     Vertical,
-    /// Wall lying along the X axis (variable X, fixed Z).
     Horizontal,
 }
 
@@ -144,7 +152,6 @@ fn collect_interior_walls(
         for j in (i + 1)..n {
             let a = &plate.rooms[i].rect;
             let b = &plate.rooms[j].rect;
-            // Vertical wall: matching x edge.
             if (a.x_max - b.x_min).abs() < 1e-3 {
                 let lo = a.z_min.max(b.z_min);
                 let hi = a.z_max.min(b.z_max);

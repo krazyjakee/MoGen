@@ -1,12 +1,12 @@
-//! Layout subsystem. Turns a `BuildingCfg` into a `Floorplate` — a list of
-//! non-overlapping axis-aligned room cells that tile a rectangle.
+//! Layout subsystem. Turns a `BuildingCfg` into one `Floorplate` per
+//! storey: a list of non-overlapping axis-aligned cells (rooms + shared
+//! circulation) that tile a rectangle.
 //!
-//! Each `style=` value picks its own algorithm; all return the same
-//! `Floorplate` shape so the emit pass is style-agnostic.
-//!
-//! Multiple attempts are run with different sub-seeds; the highest-scoring
-//! attempt (per `score.rs`) wins. Score ties break toward the lowest attempt
-//! index so the result is deterministic in the user-facing `seed=`.
+//! Each `style=` value picks its own algorithm for the *room* area; all
+//! return the same `Floorplate` shape so the emit pass is style-agnostic.
+//! Circulation cells (stairs / elevators) are reserved up front by
+//! `circulation::plan` and added to every storey at the same XY so a stair
+//! at floor N lands directly above the stair at floor N-1.
 
 mod grid;
 mod bsp;
@@ -14,6 +14,7 @@ mod score;
 
 use anyhow::{bail, Result};
 
+use super::circulation::{CirculationKind, CirculationPlan};
 use super::config::{BuildingCfg, RoomType, Style};
 use super::rng::{attempt_seed, weighted_pick};
 
@@ -47,7 +48,6 @@ impl Rect2 {
     /// Length of the shared edge with `other`, or `0.0` if they don't touch
     /// along a full edge (touching at a corner counts as 0).
     pub fn shared_edge_length(&self, other: &Rect2) -> f32 {
-        // Vertical shared edge: x matches one of x_min/x_max on each side.
         let x_share = (self.x_max - other.x_min).abs() < EDGE_EPS
             || (other.x_max - self.x_min).abs() < EDGE_EPS;
         let z_share = (self.z_max - other.z_min).abs() < EDGE_EPS
@@ -68,11 +68,24 @@ impl Rect2 {
 
 const EDGE_EPS: f32 = 1e-3;
 
-/// A single room cell on a floorplate.
+/// Kind discriminator for a `RoomCell`. Most cells are normal rooms; a
+/// minority are circulation cells (staircase or elevator) that share XY
+/// across every storey.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum CellKind {
+    Room,
+    Staircase,
+    Elevator,
+}
+
+/// A single cell on a floorplate. `room_type_index` indexes into
+/// `BuildingCfg.room_types` only when `kind == Room`; for circulation it's
+/// left at `usize::MAX` and downstream code branches on `kind`.
 #[derive(Clone, Debug)]
 pub(super) struct RoomCell {
     pub rect: Rect2,
     pub room_type_index: usize,
+    pub kind: CellKind,
 }
 
 #[derive(Clone, Debug)]
@@ -82,44 +95,159 @@ pub(super) struct Floorplate {
     pub rooms: Vec<RoomCell>,
 }
 
-/// Top-level entry point. Runs `ATTEMPTS` layout attempts and keeps the best.
-pub(super) fn solve(cfg: &BuildingCfg) -> Result<Floorplate> {
-    let mut best: Option<(f32, Floorplate)> = None;
-    for attempt in 0..ATTEMPTS {
-        let mut state = attempt_seed(cfg.seed, attempt);
-        let assigned_types = assign_room_types(cfg, cfg.rooms as usize, &mut state);
-        let layout = match cfg.style {
-            Style::Grid => grid::layout(cfg, &assigned_types, &mut state),
-            Style::ApartmentBlock => bsp::layout(cfg, &assigned_types, &mut state),
-        };
-        let s = score::score(cfg, &layout);
-        match &best {
-            None => best = Some((s, layout)),
-            // strict `>` so ties keep the lower attempt index (deterministic)
-            Some((bs, _)) if s > *bs => best = Some((s, layout)),
-            _ => {}
-        }
-    }
-    match best {
-        Some((_, plate)) => {
-            if plate.rooms.is_empty() {
-                bail!("building layout produced 0 rooms — try increasing `floor_area` or lowering `rooms`");
-            }
-            Ok(plate)
-        }
-        None => bail!("building layout solver failed to produce any candidate"),
-    }
+/// One floorplate per storey, plus the shared circulation plan.
+#[derive(Clone, Debug)]
+#[allow(dead_code)] // `bounds` is the building footprint reserved for the
+                    // T3 roof emitter (gabled/hipped need the footprint
+                    // independent of any one storey's room cells).
+pub(super) struct BuildingLayout {
+    pub bounds: Rect2,
+    pub storeys: Vec<StoreyPlate>,
+    pub circulation: CirculationPlan,
+}
+
+#[derive(Clone, Debug)]
+pub(super) struct StoreyPlate {
+    /// Signed storey index. `0` = ground, `1..N` = upper floors, `-1..-M`
+    /// = basements.
+    pub storey: i32,
+    pub plate: Floorplate,
 }
 
 const ATTEMPTS: u32 = 10;
 
+/// Top-level entry point.
+pub(super) fn solve(cfg: &BuildingCfg) -> Result<BuildingLayout> {
+    let (w, d) = floor_dims(cfg.floor_area);
+    let bounds = Rect2 {
+        x_min: -0.5 * w,
+        x_max: 0.5 * w,
+        z_min: -0.5 * d,
+        z_max: 0.5 * d,
+    };
+    let circ = super::circulation::plan(cfg, bounds);
+    // The room layout operates on the floorplate minus the circulation
+    // column. If circulation is present we leave a thin gap of wall
+    // thickness between the room area and the circulation column.
+    let layout_bounds = if circ.has_any() {
+        Rect2 {
+            x_min: bounds.x_min,
+            x_max: bounds.x_max - circ.column_width - cfg.wall_thickness,
+            z_min: bounds.z_min,
+            z_max: bounds.z_max,
+        }
+    } else {
+        bounds
+    };
+
+    let storey_ids = storey_indices(cfg);
+    let rooms_per_storey = distribute_rooms(cfg.rooms as usize, storey_ids.len());
+
+    let mut storeys = Vec::new();
+    for (i, s) in storey_ids.iter().enumerate() {
+        let plate = solve_storey(
+            cfg,
+            *s,
+            layout_bounds,
+            bounds,
+            &circ,
+            rooms_per_storey[i],
+        )?;
+        storeys.push(StoreyPlate {
+            storey: *s,
+            plate,
+        });
+    }
+
+    Ok(BuildingLayout {
+        bounds,
+        storeys,
+        circulation: circ,
+    })
+}
+
+fn solve_storey(
+    cfg: &BuildingCfg,
+    storey: i32,
+    layout_bounds: Rect2,
+    full_bounds: Rect2,
+    circ: &CirculationPlan,
+    room_count: usize,
+) -> Result<Floorplate> {
+    let mut best: Option<(f32, Vec<RoomCell>)> = None;
+    let storey_mix = (storey as i64).wrapping_mul(1_000_003) as u32;
+    for attempt in 0..ATTEMPTS {
+        let mut state = attempt_seed(cfg.seed.wrapping_add(storey_mix), attempt);
+        let assigned_types = assign_room_types(cfg, room_count, &mut state);
+        let room_cells = match cfg.style {
+            Style::Grid => grid::layout(layout_bounds, &assigned_types, &mut state),
+            Style::ApartmentBlock => bsp::layout(layout_bounds, &assigned_types, &mut state),
+        };
+        let scratch_plate = Floorplate {
+            bounds: full_bounds,
+            rooms: with_circulation(room_cells.clone(), circ),
+        };
+        let s = score::score(cfg, &scratch_plate);
+        match &best {
+            None => best = Some((s, room_cells)),
+            Some((bs, _)) if s > *bs => best = Some((s, room_cells)),
+            _ => {}
+        }
+    }
+    let Some((_, rooms)) = best else {
+        bail!("building layout solver failed to produce any candidate");
+    };
+    if rooms.is_empty() && room_count > 0 {
+        bail!(
+            "building layout produced 0 rooms on storey {storey} \
+             — try increasing `floor_area` or lowering `rooms`"
+        );
+    }
+    Ok(Floorplate {
+        bounds: full_bounds,
+        rooms: with_circulation(rooms, circ),
+    })
+}
+
+fn with_circulation(mut rooms: Vec<RoomCell>, circ: &CirculationPlan) -> Vec<RoomCell> {
+    for cell in &circ.cells {
+        rooms.push(RoomCell {
+            rect: cell.rect,
+            room_type_index: usize::MAX,
+            kind: match cell.kind {
+                CirculationKind::Staircase => CellKind::Staircase,
+                CirculationKind::Elevator => CellKind::Elevator,
+            },
+        });
+    }
+    rooms
+}
+
+fn storey_indices(cfg: &BuildingCfg) -> Vec<i32> {
+    let mut out = Vec::new();
+    let below = cfg.floors_below as i32;
+    let above = cfg.floors_above.max(1) as i32;
+    for s in -below..above {
+        out.push(s);
+    }
+    out
+}
+
+/// Distribute `total` rooms across `n` storeys, biased toward earlier
+/// storeys when there's a remainder. Always returns exactly `n` entries.
+fn distribute_rooms(total: usize, n: usize) -> Vec<usize> {
+    if n == 0 {
+        return Vec::new();
+    }
+    let base = total / n;
+    let extra = total % n;
+    (0..n)
+        .map(|i| if i < extra { base + 1 } else { base })
+        .collect()
+}
+
 /// Sample `count` room-type indices from `cfg.room_types`, weighted by
-/// density. The resulting list drives both the per-room count (each entry
-/// becomes one cell) and the room-type assignment for layout placement.
-///
-/// Always guarantees every declared room type with density > 0 appears at
-/// least once if `count >= active_types`, which keeps adjacency rules from
-/// silently no-op'ing because a sampled distribution happened to skip a type.
+/// density. Same logic as in T1 — moved into this module untouched.
 fn assign_room_types(cfg: &BuildingCfg, count: usize, state: &mut u32) -> Vec<usize> {
     let weights = cfg.density_weights();
     let active_indices: Vec<usize> = weights
@@ -132,8 +260,6 @@ fn assign_room_types(cfg: &BuildingCfg, count: usize, state: &mut u32) -> Vec<us
         return Vec::new();
     }
     let mut result: Vec<usize> = Vec::with_capacity(count);
-    // First, seed one of each active type up to `count`. Any remaining slots
-    // are sampled proportionally to weight.
     for &i in active_indices.iter().take(count) {
         result.push(i);
     }
@@ -141,8 +267,6 @@ fn assign_room_types(cfg: &BuildingCfg, count: usize, state: &mut u32) -> Vec<us
         let pick = weighted_pick(state, &weights);
         result.push(pick);
     }
-    // Shuffle so the "guaranteed singletons" don't all land at the front of
-    // the layout. Fisher-Yates with our deterministic RNG.
     for i in (1..result.len()).rev() {
         let j = (super::rng::step(state) as usize) % (i + 1);
         result.swap(i, j);
@@ -150,9 +274,6 @@ fn assign_room_types(cfg: &BuildingCfg, count: usize, state: &mut u32) -> Vec<us
     result
 }
 
-/// Aspect-aware floor dimensions for a target area. Width is along X, depth
-/// along Z; aspect target ≈ √2 keeps small footprints reading as buildings
-/// rather than corridors. Style-specific algorithms may further deform.
 pub(super) fn floor_dims(area: f32) -> (f32, f32) {
     let target_aspect = std::f32::consts::SQRT_2;
     let depth = (area / target_aspect).sqrt();
@@ -160,7 +281,29 @@ pub(super) fn floor_dims(area: f32) -> (f32, f32) {
     (width.max(2.0), depth.max(2.0))
 }
 
-/// Look up the `RoomType` for a cell. Helper used by both layout and emit.
-pub(super) fn cell_type<'a>(cfg: &'a BuildingCfg, cell: &RoomCell) -> &'a RoomType {
-    &cfg.room_types[cell.room_type_index]
+pub(super) fn cell_type<'a>(cfg: &'a BuildingCfg, cell: &RoomCell) -> Option<&'a RoomType> {
+    match cell.kind {
+        CellKind::Room => Some(&cfg.room_types[cell.room_type_index]),
+        _ => None,
+    }
+}
+
+pub(super) fn cell_kind_label(cell: &RoomCell) -> &'static str {
+    match cell.kind {
+        CellKind::Room => "room",
+        CellKind::Staircase => "staircase",
+        CellKind::Elevator => "elevator",
+    }
+}
+
+/// Role tag for the per-storey cell group. Distinct from the shaft's
+/// role (`staircase` / `elevator` set by `emit/circulation.rs`) so a tag
+/// search for "the building's elevator" doesn't conflict with "each
+/// floor's elevator landing".
+pub(super) fn cell_kind_role(cell: &RoomCell) -> &'static str {
+    match cell.kind {
+        CellKind::Room => "room",
+        CellKind::Staircase => "staircase_landing",
+        CellKind::Elevator => "elevator_landing",
+    }
 }

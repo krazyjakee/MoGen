@@ -1,0 +1,11 @@
+// summary: Simple straight-flight staircase. Authored along +Z: bottom step at z=-depth/2 (y=0), top step at z=+depth/2 (y=$rise). `width`/`depth` are the floorplan footprint; `rise` is the vertical distance from one floor to the next; `steps` is the tread count (default 14 gives ~0.2 m per step for a 2.8 m rise). Each tread is a right-triangle approximation: a box rising from y=0 to its top surface, so the underside of the flight is closed.
+module "stair_simple" (width=2.0, depth=3.0, rise=2.8, steps=14) {
+  group "stair_simple" {
+    for (var="i", from=0, to=$steps) {
+      box "step_$i" (
+        pos=[0, $rise * ($i + 1) / $steps * 0.5, $depth * -0.5 + ($i + 0.5) * $depth / $steps],
+        size=[$width - 0.1, $rise * ($i + 1) / $steps, $depth / $steps - 0.01]
+      )
+    }
+  }
+}

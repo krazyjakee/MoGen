@@ -127,30 +127,26 @@ pub(super) fn check_building(n: &Node, diags: &mut Vec<Diagnostic>) {
         }
     }
 
-    // Tranche 1 hard gates: multi-floor, circulation, skylights, non-flat
-    // roof — flag each with a pending-tranche error so authors get a clear
-    // path forward.
-    for (key, expected) in [
-        ("floors_above", 1.0),
-        ("floors_below", 0.0),
-        ("staircases", 0.0),
-        ("elevators", 0.0),
-        ("skylights", 0.0),
-    ] {
-        if let Some(Value::Number(v)) = n.attr(key) {
-            if (*v - expected).abs() > f32::EPSILON {
-                diags.push(
-                    Diagnostic::error(
-                        "E1112",
-                        format!(
-                            "`building.{key}={v}` requires features that arrive in Tranche 2 \
-                             (see docs/building.md); set `{key}={expected}` for now"
-                        ),
-                    )
-                    .with_span(n.span),
-                );
-            }
-        }
+    // Multi-storey buildings require at least one staircase so the upper
+    // floors are reachable. Elevators alone don't satisfy this in T2 — the
+    // cab geometry doesn't double as a service stair. Emitted as W1113 so
+    // the build still succeeds with isolated upper floors if the author
+    // explicitly chose `staircases=0`.
+    let floors_above = n.attr_number("floors_above").unwrap_or(1.0).max(1.0);
+    let floors_below = n.attr_number("floors_below").unwrap_or(0.0).max(0.0);
+    let staircases = n.attr_number("staircases").unwrap_or(0.0).max(0.0);
+    if floors_above + floors_below > 1.0 && staircases < 1.0 {
+        diags.push(
+            Diagnostic::warning(
+                "W1113",
+                format!(
+                    "multi-storey building (floors_above={floors_above}, floors_below={floors_below}) \
+                     has no staircase — upper floors will be visually disconnected. \
+                     Add `staircases=1` (or more) to link them."
+                ),
+            )
+            .with_span(n.span),
+        );
     }
 
     // Room-type / adjacency name cross-checks.

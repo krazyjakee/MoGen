@@ -523,13 +523,14 @@ mod building_validator_tests {
     }
 
     #[test]
-    fn rejects_t1_out_of_scope_features() {
-        // Multi-floor + skylights + non-flat roof should each emit E1112 /
-        // E1111 — the pending-tranche gate.
+    fn t2_multi_floor_without_stairs_warns() {
+        // Tranche 2 unlocks multi-storey but still expects the author to
+        // wire a staircase (otherwise the upper floor is visually
+        // disconnected). Non-flat roof is still gated (T4).
         let src = r#"
             material "c" (color=[0.5, 0.5, 0.5])
             building "x" (
-              seed=1, style="grid", floor_area=40, rooms=2,
+              seed=1, style="grid", floor_area=40, rooms=4,
               floors_above=2, skylights=1, roof="gabled",
               mat="c",
             ) {
@@ -538,12 +539,36 @@ mod building_validator_tests {
         "#;
         let diags = diags_for(src);
         assert!(
-            diags.iter().any(|d| d.code == "E1112"),
-            "expected E1112 for multi-floor, got: {diags:?}"
+            diags.iter().any(|d| d.code == "W1113"),
+            "expected W1113 for multi-floor without stairs, got: {diags:?}"
         );
         assert!(
             diags.iter().any(|d| d.code == "E1111"),
             "expected E1111 for non-flat roof, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn t2_multi_floor_with_stair_is_clean() {
+        let src = r#"
+            material "c" (color=[0.5, 0.5, 0.5])
+            building "x" (
+              seed=1, style="grid", floor_area=60, rooms=6,
+              floors_above=2, staircases=1, skylights=1,
+              mat="c",
+            ) {
+              room_type "office" (kind=staff_only, density=1)
+            }
+        "#;
+        let diags = diags_for(src);
+        let errs: Vec<_> = diags
+            .iter()
+            .filter(|d| matches!(d.severity, Severity::Error))
+            .collect();
+        assert!(errs.is_empty(), "T2 multi-floor + stair should be clean, got errors: {errs:?}");
+        assert!(
+            !diags.iter().any(|d| d.code == "W1113"),
+            "W1113 should not fire when a stair is present: {diags:?}"
         );
     }
 

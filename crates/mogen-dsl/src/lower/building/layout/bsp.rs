@@ -1,39 +1,20 @@
-//! `style="apartment-block"` layout: recursive binary-space-partition.
-//!
-//! Start from the floorplate rectangle. At each step, pick the longer axis
-//! and split it at a random position that respects a minimum cell size and
-//! a max aspect ratio cap. Stop when we have `rooms` leaves or no further
-//! split is viable.
+//! `style="apartment-block"` layout: recursive binary-space-partition over
+//! the room-layout rectangle (which excludes the circulation column on
+//! multi-storey buildings).
 
-use super::{Floorplate, Rect2, RoomCell};
-use super::super::config::BuildingCfg;
 use super::super::rng::rand_f01;
-use super::floor_dims;
+use super::{CellKind, Rect2, RoomCell};
 
-/// Minimum room cell extent (m) on either axis. Keeps the BSP from yielding
-/// hallway-sized slivers when `rooms` is large.
 const MIN_CELL_EXTENT: f32 = 1.6;
-/// Max aspect ratio cap (long/short). Splits that would push the larger
-/// child past this cap are biased toward the centre.
 const MAX_ASPECT: f32 = 2.6;
 
 pub(super) fn layout(
-    cfg: &BuildingCfg,
+    bounds: Rect2,
     assigned_types: &[usize],
     state: &mut u32,
-) -> Floorplate {
+) -> Vec<RoomCell> {
     let target_rooms = assigned_types.len().max(1);
-    let (w, d) = floor_dims(cfg.floor_area);
-    let bounds = Rect2 {
-        x_min: -0.5 * w,
-        x_max: 0.5 * w,
-        z_min: -0.5 * d,
-        z_max: 0.5 * d,
-    };
-
     let mut leaves: Vec<Rect2> = vec![bounds];
-    // Repeatedly split the most-splittable leaf until target_rooms is
-    // reached or no leaf can be split.
     while leaves.len() < target_rooms {
         let Some(idx) = pick_splittable(&leaves) else {
             break;
@@ -43,14 +24,9 @@ pub(super) fn layout(
             leaves[idx] = a;
             leaves.push(b);
         } else {
-            // Splitting failed even though it looked splittable — bail to
-            // avoid an infinite loop. The scoring pass will rank a smaller
-            // layout lower so other attempts may still win.
             break;
         }
     }
-
-    // Pair each leaf with an assigned type. Truncate or repeat as needed.
     let mut cells: Vec<RoomCell> = Vec::with_capacity(leaves.len());
     for (i, rect) in leaves.into_iter().enumerate() {
         let room_type_index = if assigned_types.is_empty() {
@@ -61,13 +37,12 @@ pub(super) fn layout(
         cells.push(RoomCell {
             rect,
             room_type_index,
+            kind: CellKind::Room,
         });
     }
-    Floorplate { bounds, rooms: cells }
+    cells
 }
 
-/// Index of the leaf with the largest minimum-cell margin (i.e. the one most
-/// comfortably splittable). Returns None if no leaf can be split further.
 fn pick_splittable(leaves: &[Rect2]) -> Option<usize> {
     let mut best: Option<(f32, usize)> = None;
     for (i, r) in leaves.iter().enumerate() {
@@ -75,8 +50,6 @@ fn pick_splittable(leaves: &[Rect2]) -> Option<usize> {
         if long < 2.0 * MIN_CELL_EXTENT {
             continue;
         }
-        // Prefer splitting the largest cell first — keeps the layout from
-        // degenerating into many thin slivers off a single big leaf.
         let score = r.area();
         match best {
             None => best = Some((score, i)),
@@ -93,8 +66,6 @@ fn split(rect: &Rect2, state: &mut u32) -> Option<(Rect2, Rect2)> {
     if extent < 2.0 * MIN_CELL_EXTENT {
         return None;
     }
-    // t ∈ [0.3, 0.7] biased toward centre; respect both min-cell and the
-    // aspect cap on each side.
     let mut t = 0.3 + rand_f01(state) * 0.4;
     let split_pos = if along_x {
         rect.x_min + t * extent
@@ -115,7 +86,6 @@ fn split(rect: &Rect2, state: &mut u32) -> Option<(Rect2, Rect2)> {
         b.z_min = split_pos;
     }
     if !cell_ok(&a) || !cell_ok(&b) {
-        // Nudge the split to the centre as a fallback.
         t = 0.5;
         let split_pos = if along_x {
             rect.x_min + t * extent
@@ -151,65 +121,22 @@ fn cell_ok(r: &Rect2) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lower::building::config::{BuildingCfg, RoomKind, RoomType, Roof, Style, WindowModules};
-
-    fn mock_cfg(rooms: u32, area: f32) -> BuildingCfg {
-        BuildingCfg {
-            seed: 1,
-            style: Style::ApartmentBlock,
-            mat_style: String::new(),
-            floor_area: area,
-            rooms,
-            floors_above: 1,
-            floors_below: 0,
-            windows: 0,
-            skylights: 0,
-            roof: Roof::Flat,
-            ceiling_height: 2.6,
-            door_w: 0.9,
-            door_h: 2.1,
-            window_w: 1.2,
-            window_h: 1.4,
-            wall_thickness: 0.12,
-            ceiling_thickness: 0.2,
-            entrances: 1,
-            external_door: "door_simple".into(),
-            internal_door: "door_simple".into(),
-            windows_mod: WindowModules {
-                small: "window_simple".into(),
-                medium: "window_simple".into(),
-                large: "window_simple".into(),
-            },
-            skylight_mod: "skylight_simple".into(),
-            elevators: 0,
-            staircases: 0,
-            room_types: vec![RoomType {
-                name: "any".into(),
-                kind: RoomKind::Public,
-                density: 1.0,
-                mat: None,
-                min_area: None,
-                max_area: None,
-            }],
-            adjacencies: vec![],
-        }
-    }
 
     #[test]
     fn bsp_produces_at_least_one_cell() {
-        let cfg = mock_cfg(4, 100.0);
+        let bounds = Rect2 { x_min: -5.0, x_max: 5.0, z_min: -5.0, z_max: 5.0 };
         let mut s = 12345u32;
-        let plate = layout(&cfg, &[0, 0, 0, 0], &mut s);
-        assert!(!plate.rooms.is_empty());
+        let cells = layout(bounds, &[0, 0, 0, 0], &mut s);
+        assert!(!cells.is_empty());
     }
 
     #[test]
     fn bsp_cells_do_not_overlap() {
-        let cfg = mock_cfg(6, 120.0);
+        let bounds = Rect2 { x_min: -6.0, x_max: 6.0, z_min: -5.0, z_max: 5.0 };
         let mut s = 77u32;
-        let plate = layout(&cfg, &[0; 6], &mut s);
-        for (i, a) in plate.rooms.iter().enumerate() {
-            for b in plate.rooms.iter().skip(i + 1) {
+        let cells = layout(bounds, &[0; 6], &mut s);
+        for (i, a) in cells.iter().enumerate() {
+            for b in cells.iter().skip(i + 1) {
                 let overlap = !(a.rect.x_max <= b.rect.x_min + 1e-4
                     || b.rect.x_max <= a.rect.x_min + 1e-4
                     || a.rect.z_max <= b.rect.z_min + 1e-4

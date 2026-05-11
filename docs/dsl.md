@@ -500,23 +500,23 @@ door / window / skylight modules. The result is one editable wrapper; the
 generated subtree below is stamped non-editable because the geometry is a
 pure function of `seed=` plus the declared attrs.
 
-Tranche 1 (current) implements single-storey, flat-roof buildings in
-`style="grid"` and `style="apartment-block"`. Multi-floor, stairs,
-elevators, skylights, and the remaining styles + roof shapes arrive in
-later tranches — see `docs/building.md` for the full plan.
+Tranches 1-2 (current) implement single- and multi-storey, flat-roof
+buildings in `style="grid"` and `style="apartment-block"`, with stairs,
+elevators, and top-floor skylights. The remaining styles + roof shapes
+arrive in later tranches — see `docs/building.md` for the full plan.
 
 | attribute | default | effect |
 |---|---|---|
 | `seed` | `1` | RNG seed; same seed = identical layout + geometry. |
-| `style` | `"grid"` | Layout algorithm. T1: `grid`, `apartment-block`. |
+| `style` | `"grid"` | Layout algorithm. T1-T2: `grid`, `apartment-block`. |
 | `mat_style` | `""` | Free-text style hint forwarded to material/texture generation. |
 | `floor_area` | `120` | Target floorplate area in m² (per floor). |
-| `rooms` | `4` | Total rooms across all floors. |
-| `floors_above` | `1` | Storeys above ground; T1 must be `1`. |
-| `floors_below` | `0` | Basement storeys; T1 must be `0`. |
-| `windows` | `0` | Total above-ground window count. |
-| `skylights` | `0` | Top-floor ceiling cutouts; T1 must be `0`. |
-| `roof` | `"flat"` | Roof shape; T1 only supports `flat`. |
+| `rooms` | `4` | Total rooms across all floors; distributed proportionally. |
+| `floors_above` | `1` | Storeys above ground (incl. ground floor). |
+| `floors_below` | `0` | Basement storeys. |
+| `windows` | `0` | Total above-ground window count; distributed across above-ground storeys. Basements get none. |
+| `skylights` | `0` | Top-storey ceiling cutouts. |
+| `roof` | `"flat"` | Roof shape; T1-T2 only supports `flat`. |
 | `ceiling_height` | `2.6` | Clear height per storey (m). |
 | `door_w`, `door_h` | `0.9, 2.1` | Door opening dimensions (m). |
 | `window_w`, `window_h` | `1.2, 1.4` | Window opening dimensions (m, medium class). Small = ×0.6, large = ×1.4. |
@@ -526,9 +526,9 @@ later tranches — see `docs/building.md` for the full plan.
 | `external_door` | `"door_simple"` | Stdlib / user module ref. Stamped at each entrance. |
 | `internal_door` | `"door_simple"` | Stamped at each interior opening. |
 | `window_small`, `window_medium`, `window_large` | `"window_simple"` | Per-class window module refs. |
-| `skylight` | `"skylight_simple"` | Skylight module ref (T2+). |
-| `elevators` | `0` | T2+. |
-| `staircases` | `0` | T2+. |
+| `skylight` | `"skylight_simple"` | Skylight module ref; carves the top ceiling slab. |
+| `elevators` | `0` | Vertical shafts spanning every storey; reserved on the east side of the floorplate. Stamped with the stdlib `elevator_shaft_simple` module. |
+| `staircases` | `0` | One straight flight per storey transition. Stamped with the stdlib `stair_simple` module. Strongly recommended when `floors_above + floors_below > 1` — the validator warns (`W1113`) if missing. |
 
 `building` accepts only `room_type` and `adjacency` children — every other
 child kind is a validation error.

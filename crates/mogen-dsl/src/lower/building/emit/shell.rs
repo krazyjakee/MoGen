@@ -1,7 +1,8 @@
 //! Emit the floor slab, ceiling slab, and the four perimeter walls of one
 //! storey. Perimeter walls carry entrance and window cutouts via the
 //! existing `wall` primitive's `holes=[[x,y,w,h], …]` spec — the geometry
-//! is one watertight mesh per side.
+//! is one watertight mesh per side. Slabs are carved by CSG when a
+//! staircase or elevator passes through them.
 
 use anyhow::Result;
 use glam::{Quat, Vec3};
@@ -11,15 +12,20 @@ use mogen_geom::{box_mesh, clean_csg_output, difference_many, transform_mesh};
 
 use crate::ast::Node;
 
+use super::super::circulation::CirculationPlan;
 use super::super::config::BuildingCfg;
 use super::super::layout::{Floorplate, Rect2};
 use super::openings::{Opening, OpeningPlan, WallSide};
+use super::StoreyCtx;
 
 pub(super) fn emit_shell(
     node: &Node,
     cfg: &BuildingCfg,
     plate: &Floorplate,
     plan: &OpeningPlan,
+    circ: &CirculationPlan,
+    skylight_rects: &[Rect2],
+    ctx: StoreyCtx,
     parent: NodeId,
     graph: &mut SceneGraph,
 ) -> Result<()> {
@@ -28,6 +34,14 @@ pub(super) fn emit_shell(
     let h = cfg.ceiling_height;
     let wt = cfg.wall_thickness;
 
+    // Floor slab. Carved with circulation holes unless this is the
+    // bottommost storey (the foundation/basement floor stays intact —
+    // stairs and elevators start here).
+    let floor_holes = if ctx.is_bottom {
+        Vec::new()
+    } else {
+        circ.cells.iter().map(|c| c.rect).collect()
+    };
     emit_slab(
         parent,
         graph,
@@ -38,18 +52,28 @@ pub(super) fn emit_shell(
         cfg.ceiling_thickness,
         "floor",
         wt,
+        &floor_holes,
     );
-    emit_slab(
-        parent,
-        graph,
-        &origin,
-        "slab_ceiling",
-        bounds,
-        h + cfg.ceiling_thickness * 0.5,
-        cfg.ceiling_thickness,
-        "ceiling",
-        wt,
-    );
+
+    // Ceiling slab: only the topmost storey emits one (it doubles as the
+    // roof for flat-roof buildings). Every other storey's ceiling IS the
+    // floor slab of the storey above. Skylight rects (planned upstream so
+    // shell + skylight emission see identical XY) are carved into it here
+    // so the slab geometry is one watertight mesh.
+    if ctx.is_top {
+        emit_slab(
+            parent,
+            graph,
+            &origin,
+            "slab_ceiling",
+            bounds,
+            h + cfg.ceiling_thickness * 0.5,
+            cfg.ceiling_thickness,
+            "ceiling",
+            wt,
+            skylight_rects,
+        );
+    }
 
     let perimeter = [
         (WallSide::North, "wall_N"),
@@ -73,15 +97,35 @@ fn emit_slab(
     thickness: f32,
     role: &str,
     wt: f32,
+    holes_xz: &[Rect2],
 ) {
-    // Include the wall thickness in the slab footprint so the perimeter walls
-    // sit atop / under the slab without a visible seam.
+    // Include the wall thickness in the slab footprint so the perimeter
+    // walls sit atop / under the slab without a visible seam.
     let pad = wt;
     let w = bounds.width() + 2.0 * pad;
     let d = bounds.depth() + 2.0 * pad;
     let cx = 0.5 * (bounds.x_min + bounds.x_max);
     let cz = 0.5 * (bounds.z_min + bounds.z_max);
-    let mesh = box_mesh([w, thickness, d], UvMode::Tile);
+    let base = box_mesh([w, thickness, d], UvMode::Tile);
+    let mesh = if holes_xz.is_empty() {
+        base
+    } else {
+        let cutouts: Vec<Mesh> = holes_xz
+            .iter()
+            .map(|r| {
+                let hw = r.width().max(1e-4);
+                let hd = r.depth().max(1e-4);
+                let hcx = 0.5 * (r.x_min + r.x_max) - cx;
+                let hcz = 0.5 * (r.z_min + r.z_max) - cz;
+                let cutout = box_mesh([hw, thickness + 0.02, hd], UvMode::Tile);
+                transform_mesh(
+                    &cutout,
+                    glam::Mat4::from_translation(Vec3::new(hcx, 0.0, hcz)),
+                )
+            })
+            .collect();
+        clean_csg_output(&difference_many(&base, &cutouts))
+    };
     let id = graph.add_child(
         parent,
         name.to_string(),
@@ -111,11 +155,6 @@ fn emit_perimeter_wall(
     let h = cfg.ceiling_height;
     let wt = cfg.wall_thickness;
 
-    // Wall geometry: a thin box in local space with X along the wall, Y up,
-    // and Z into the wall (matching the existing `wall` primitive's
-    // convention). We compute the local-frame holes for each opening on
-    // this side, build the watertight mesh manually, and place the result
-    // with a transform.
     let (length, mid_pos, rot) = wall_frame(bounds, side, wt);
 
     let mut local_holes: Vec<[f32; 4]> = Vec::new();
@@ -152,33 +191,26 @@ fn emit_perimeter_wall(
     Ok(())
 }
 
-/// Returns (length-along-wall, midpoint-xz, rotation) for a perimeter side.
-/// The wall's local frame is X along the wall, Y up, Z into the wall normal.
 fn wall_frame(bounds: &Rect2, side: WallSide, wt: f32) -> (f32, [f32; 2], Quat) {
     let mid_x = 0.5 * (bounds.x_min + bounds.x_max);
     let mid_z = 0.5 * (bounds.z_min + bounds.z_max);
     let half_pad = wt * 0.5;
     match side {
-        // +Z side. Wall's X axis is world X. Local Z points to +Z (outside).
         WallSide::North => (
             bounds.width() + 2.0 * wt,
             [mid_x, bounds.z_max + half_pad],
             Quat::IDENTITY,
         ),
-        // -Z side. Rotate 180° around Y so local Z points to -Z (outside).
         WallSide::South => (
             bounds.width() + 2.0 * wt,
             [mid_x, bounds.z_min - half_pad],
             Quat::from_rotation_y(std::f32::consts::PI),
         ),
-        // +X side. Rotate -90° around Y so local X follows world Z (running
-        // along the wall) and local Z points to +X.
         WallSide::East => (
             bounds.depth() + 2.0 * wt,
             [bounds.x_max + half_pad, mid_z],
             Quat::from_rotation_y(-std::f32::consts::FRAC_PI_2),
         ),
-        // -X side. Rotate +90° around Y.
         WallSide::West => (
             bounds.depth() + 2.0 * wt,
             [bounds.x_min - half_pad, mid_z],
@@ -187,8 +219,6 @@ fn wall_frame(bounds: &Rect2, side: WallSide, wt: f32) -> (f32, [f32; 2], Quat) 
     }
 }
 
-/// Convert an opening to wall-local `[cx, cy, w, h]` (the `wall` primitive's
-/// hole convention).
 fn opening_local(
     op: &Opening,
     side: WallSide,
@@ -203,18 +233,12 @@ fn opening_local(
         WallSide::West => op.z - 0.5 * (bounds.z_min + bounds.z_max),
     };
     let cy = op.sill + 0.5 * op.height - 0.5 * height;
-    // Reject openings that overflow the wall — keeps the carve operation
-    // from producing degenerate slivers.
     if op.width >= length - 0.2 || op.height >= height - 0.1 {
         return None;
     }
     Some([along, cy, op.width, op.height])
 }
 
-/// Build a `wall`-shaped mesh manually: a thin box with rectangular holes
-/// carved through the Z axis. Mirrors the existing `wall` primitive lowering
-/// but we author it inline so we don't have to round-trip through synthetic
-/// AST construction. The output is cleaned for export.
 fn build_wall_mesh(size: [f32; 3], holes: &[[f32; 4]]) -> Mesh {
     let base = box_mesh(size, UvMode::Tile);
     if holes.is_empty() {
@@ -242,9 +266,6 @@ fn side_tag(side: WallSide) -> &'static str {
     }
 }
 
-/// Inherit material from the nearest ancestor that has one. The building
-/// wrapper picks up its `mat=` via `apply_metadata`, so this propagates
-/// downward into the shell.
 fn inherit_material_from_chain(id: NodeId, graph: &mut SceneGraph) {
     if graph.nodes[id.0 as usize].material.is_some() {
         return;

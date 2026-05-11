@@ -1,0 +1,36 @@
+// Three-storey townhouse with a basement, exercising every T2 feature:
+// multiple storeys above + one below ground, a staircase + elevator
+// shared across every floor, exterior windows on the above-ground
+// storeys, and a roof-level skylight that carves the top ceiling slab.
+
+material "warm_wood"  (color=[0.55, 0.38, 0.22], roughness=0.75)
+material "tile"       (color=[0.86, 0.86, 0.83], roughness=0.35)
+material "oak"        (color=[0.62, 0.45, 0.28], roughness=0.7)
+material "plaster"    (color=[0.92, 0.91, 0.88], roughness=0.85)
+material "white_tile" (color=[0.95, 0.95, 0.95], roughness=0.3)
+
+building "townhouse" (
+  seed=17,
+  style="apartment-block",
+  floor_area=110,
+  rooms=14,
+  floors_above=3,
+  floors_below=1,
+  windows=18,
+  skylights=2,
+  entrances=1,
+  staircases=1,
+  elevators=1,
+  ceiling_height=2.6,
+  mat="plaster",
+) {
+  room_type "bedroom"  (kind=private, density=4, mat="warm_wood")
+  room_type "kitchen"  (kind=service, density=2, mat="tile")
+  room_type "living"   (kind=public,  density=3, mat="oak")
+  room_type "bathroom" (kind=service, density=2, mat="white_tile")
+  room_type "study"    (kind=private, density=1, mat="warm_wood")
+  room_type "storage"  (kind=utility, density=1, mat="plaster")
+
+  adjacency "kitchen"  (adjacent_to=["living"], away_from=["bedroom"])
+  adjacency "bathroom" (adjacent_to=["bedroom"])
+}
