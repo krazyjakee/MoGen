@@ -3,11 +3,13 @@ use std::time::Instant;
 use eframe::egui;
 
 use crate::app::types::UndoKey;
-use crate::app::util::format_inspector_scalar;
 use crate::app::MogenStudioApp;
 
 mod deform_rows;
 mod geom_params;
+mod light_editor;
+mod modifiers;
+mod transform_grid;
 mod use_wrap;
 
 use deform_rows::{
@@ -22,7 +24,6 @@ impl MogenStudioApp {
     /// or when the selection came from a replicator / CSG expansion.
     pub(in crate::app) fn ui_selected(&mut self, ui: &mut egui::Ui) {
         use crate::edit;
-        use crate::gizmo::GizmoMode;
         use crate::viewer::PendingEdit;
 
         let Some(sel) = self.viewer.primary_selection() else {
@@ -217,45 +218,6 @@ impl MogenStudioApp {
             return;
         }
 
-        // Gizmo mode switch — mirrors the viewport overlay buttons so a user
-        // staring at the inspector can flip modes without pointing at the
-        // canvas.
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            let cur = self.viewer.gizmo_mode();
-            for (label, mode) in [
-                ("Move", GizmoMode::Translate),
-                ("Rotate", GizmoMode::Rotate),
-                ("Scale", GizmoMode::Scale),
-            ] {
-                if ui.selectable_label(cur == mode, label).clicked() {
-                    self.viewer.set_gizmo_mode(mode);
-                }
-            }
-        });
-
-        // For attached nodes the live transform is `attach + user`. Show
-        // the user-authored portion so the inspector reflects what's in
-        // the source — and so a writeback doesn't double-count the attach
-        // contribution on the next compile.
-        let (effective_translation, effective_rotation) = match node.attach_binding.as_ref() {
-            Some(b) => (
-                node.transform.translation - b.anchor_vec3(),
-                node.transform.rotation * b.rotation_quat().inverse(),
-            ),
-            None => (node.transform.translation, node.transform.rotation),
-        };
-        let t_scale = node.transform.scale;
-        let (rx_rad, ry_rad, rz_rad) = effective_rotation.to_euler(glam::EulerRot::XYZ);
-        let mut tx = effective_translation.x;
-        let mut ty = effective_translation.y;
-        let mut tz = effective_translation.z;
-        let mut rx = rx_rad.to_degrees();
-        let mut ry = ry_rad.to_degrees();
-        let mut rz = rz_rad.to_degrees();
-        let mut sx = t_scale.x;
-        let mut sy = t_scale.y;
-        let mut sz = t_scale.z;
         let node_span = node.source_span;
         let node_id = sel;
         // Snapshot of connectors taken early so the connector-list section
@@ -265,146 +227,15 @@ impl MogenStudioApp {
 
         let mut edits: Vec<PendingEdit> = Vec::new();
 
-        // DSL shortcut/corner-form attrs that override the canonical
-        // transform field. The inspector strips these on commit for the
-        // same reason the gizmo does — otherwise a node authored with `x=`
-        // / `from=` / `rx=` shorthand would silently win on recompile and
-        // make the just-typed value snap back. Kept in sync with the
-        // viewport gizmo's shadow lists in `viewer/state.rs`.
-        let pos_shadows: Vec<String> = ["x", "y", "z", "from", "to"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-        let rot_shadows: Vec<String> =
-            ["rx", "ry", "rz"].iter().map(|s| s.to_string()).collect();
-
-        ui.add_space(6.0);
-        egui::Grid::new("inspector_transform")
-            .num_columns(4)
-            .spacing([6.0, 4.0])
-            .show(ui, |ui| {
-                ui.label("Translate");
-                let mut emit_pos = false;
-                if ui.add(egui::DragValue::new(&mut tx).speed(0.02)).changed() {
-                    emit_pos = true;
-                }
-                if ui.add(egui::DragValue::new(&mut ty).speed(0.02)).changed() {
-                    emit_pos = true;
-                }
-                if ui.add(egui::DragValue::new(&mut tz).speed(0.02)).changed() {
-                    emit_pos = true;
-                }
-                if emit_pos {
-                    // Emit the full `pos=[x,y,z]` vector and strip shadow
-                    // attrs. The previous per-axis `x=`/`y=`/`z=` writes
-                    // left two attrs fighting in the header (`pos=…` plus a
-                    // stale `x=`); whichever won depended on
-                    // `transform_from_attrs` resolution order.
-                    edits.push(PendingEdit::SetAttrCanonical {
-                        node: node_id,
-                        attr: "pos".into(),
-                        value: format!(
-                            "[{}, {}, {}]",
-                            format_inspector_scalar(tx),
-                            format_inspector_scalar(ty),
-                            format_inspector_scalar(tz),
-                        ),
-                        delete: pos_shadows.clone(),
-                    });
-                }
-                ui.end_row();
-
-                ui.label("Rotate°");
-                let mut emit_rot = false;
-                if ui.add(egui::DragValue::new(&mut rx).speed(0.5).suffix("°")).changed() {
-                    emit_rot = true;
-                }
-                if ui.add(egui::DragValue::new(&mut ry).speed(0.5).suffix("°")).changed() {
-                    emit_rot = true;
-                }
-                if ui.add(egui::DragValue::new(&mut rz).speed(0.5).suffix("°")).changed() {
-                    emit_rot = true;
-                }
-                if emit_rot {
-                    edits.push(PendingEdit::SetAttrCanonical {
-                        node: node_id,
-                        attr: "rot".into(),
-                        value: format!(
-                            "[{}, {}, {}]",
-                            format_inspector_scalar(rx),
-                            format_inspector_scalar(ry),
-                            format_inspector_scalar(rz),
-                        ),
-                        delete: rot_shadows.clone(),
-                    });
-                }
-                ui.end_row();
-
-                ui.label("Scale");
-                let pre_sx = sx;
-                let pre_sy = sy;
-                let pre_sz = sz;
-                let linked = self.inspector_scale_linked;
-                let mut changed_axis: Option<u8> = None;
-                if ui.add(egui::DragValue::new(&mut sx).speed(0.02)).changed() {
-                    changed_axis = Some(0);
-                }
-                if ui.add(egui::DragValue::new(&mut sy).speed(0.02)).changed() {
-                    changed_axis = Some(1);
-                }
-                if ui.add(egui::DragValue::new(&mut sz).speed(0.02)).changed() {
-                    changed_axis = Some(2);
-                }
-                if let Some(axis) = changed_axis {
-                    if linked {
-                        // Multiply the other two axes by the same ratio the
-                        // dragged axis just took, falling back to uniform
-                        // when the old value is ~0 — otherwise the others
-                        // would stay at 0 and silently swallow the drag.
-                        let (new_v, old_v) = match axis {
-                            0 => (sx, pre_sx),
-                            1 => (sy, pre_sy),
-                            _ => (sz, pre_sz),
-                        };
-                        if old_v.abs() > 1.0e-6 {
-                            let ratio = new_v / old_v;
-                            sx = pre_sx * ratio;
-                            sy = pre_sy * ratio;
-                            sz = pre_sz * ratio;
-                        } else {
-                            sx = new_v;
-                            sy = new_v;
-                            sz = new_v;
-                        }
-                    }
-                    edits.push(PendingEdit::SetAttrCanonical {
-                        node: node_id,
-                        attr: "scale".into(),
-                        // Scale has no DSL shortcut attrs.
-                        delete: Vec::new(),
-                        value: format!(
-                            "[{}, {}, {}]",
-                            format_inspector_scalar(sx),
-                            format_inspector_scalar(sy),
-                            format_inspector_scalar(sz),
-                        ),
-                    });
-                }
-                let link_label = if linked { "🔗" } else { "🔓" };
-                let link_tip = if linked {
-                    "Scale axes linked — drag any axis to scale all three (click to unlink)"
-                } else {
-                    "Scale axes independent (click to link)"
-                };
-                if ui
-                    .selectable_label(linked, link_label)
-                    .on_hover_text(link_tip)
-                    .clicked()
-                {
-                    self.inspector_scale_linked = !linked;
-                }
-                ui.end_row();
-            });
+        // Gizmo-mode toggle + translate/rotate/scale grid.
+        transform_grid::render(
+            ui,
+            &self.viewer,
+            node,
+            &mut self.inspector_scale_linked,
+            node_id,
+            &mut edits,
+        );
 
         // Material picker — pick from the scene's authored materials and
         // write `material="<name>"` back into the node header. Skip nodes that
@@ -500,142 +331,19 @@ impl MogenStudioApp {
             }
         }
 
-        // CSG op switch — flip union/difference/intersect on the same node
-        // without retyping. Lowering keys off `node.kind`, so we use a
-        // dedicated PendingEdit::ChangeKind via a span rewrite below.
+        // CSG op switch + array / mirror modifier rows.
         let mut change_kind_to: Option<&'static str> = None;
-        if matches!(node.kind.as_str(), "union" | "difference" | "intersect") {
-            ui.add_space(8.0);
-            ui.separator();
-            ui.label(egui::RichText::new("CSG op").strong());
-            let cur = node.kind.as_str();
-            ui.horizontal(|ui| {
-                for k in ["union", "difference", "intersect"] {
-                    let selected = cur == k;
-                    if ui.selectable_label(selected, k).clicked() && !selected {
-                        change_kind_to = Some(match k {
-                            "union" => "union",
-                            "difference" => "difference",
-                            "intersect" => "intersect",
-                            _ => unreachable!(),
-                        });
-                    }
-                }
-            });
-        }
-
-        // Array / mirror modifier rows. Scalar count/axis/start_angle for
-        // arrays; axis-only for mirror. Replicators are not editable in the
-        // inspector when their wrapper isn't `editable`, but the wrapper
-        // *itself* stays editable per `lower::layout` so this still applies.
-        match node.kind.as_str() {
-            "array" => {
-                ui.add_space(8.0);
-                ui.separator();
-                ui.label(egui::RichText::new("Array").strong());
-                if let Some(span) = node_span {
-                    let src_view = self.files[i].source.clone();
-                    let cur_count = crate::edit::get_attr(&src_view, span, "count")
-                        .and_then(|s| s.parse::<f32>().ok())
-                        .unwrap_or(1.0);
-                    let cur_around = crate::edit::get_attr(&src_view, span, "around")
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| "Y".into());
-                    let cur_start = crate::edit::get_attr(&src_view, span, "start_angle")
-                        .and_then(|s| s.parse::<f32>().ok())
-                        .unwrap_or(0.0);
-                    egui::Grid::new(("inspector_array", node_id.0))
-                        .num_columns(2)
-                        .spacing([6.0, 4.0])
-                        .show(ui, |ui| {
-                            ui.label("Count");
-                            let mut count = cur_count.max(1.0);
-                            if ui
-                                .add(egui::DragValue::new(&mut count).speed(0.1).range(1.0..=512.0))
-                                .changed()
-                            {
-                                edits.push(PendingEdit::SetAttrCanonical {
-                                    node: node_id,
-                                    attr: "count".into(),
-                                    value: (count.round() as i32).to_string(),
-                                    delete: Vec::new(),
-                                });
-                            }
-                            ui.end_row();
-
-                            ui.label("Around");
-                            let mut around = cur_around.clone();
-                            egui::ComboBox::from_id_salt(("inspector_array_axis", node_id.0))
-                                .selected_text(around.as_str())
-                                .show_ui(ui, |ui| {
-                                    for axis in ["X", "Y", "Z"] {
-                                        if ui
-                                            .selectable_value(&mut around, axis.into(), axis)
-                                            .clicked()
-                                            && around.as_str() != cur_around.as_str()
-                                        {
-                                            edits.push(PendingEdit::SetAttrCanonical {
-                                                node: node_id,
-                                                attr: "around".into(),
-                                                value: axis.into(),
-                                                delete: Vec::new(),
-                                            });
-                                        }
-                                    }
-                                });
-                            ui.end_row();
-
-                            ui.label("Start °");
-                            let mut start = cur_start;
-                            if ui
-                                .add(egui::DragValue::new(&mut start).speed(0.5).suffix("°"))
-                                .changed()
-                            {
-                                edits.push(PendingEdit::SetAttrCanonical {
-                                    node: node_id,
-                                    attr: "start_angle".into(),
-                                    value: format_inspector_scalar(start),
-                                    delete: Vec::new(),
-                                });
-                            }
-                            ui.end_row();
-                        });
-                }
-            }
-            "mirror" => {
-                ui.add_space(8.0);
-                ui.separator();
-                ui.label(egui::RichText::new("Mirror").strong());
-                if let Some(span) = node_span {
-                    let src_view = self.files[i].source.clone();
-                    let cur_axis = crate::edit::get_attr(&src_view, span, "axis")
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| "X".into());
-                    ui.horizontal(|ui| {
-                        ui.label("Axis");
-                        let mut axis = cur_axis.clone();
-                        egui::ComboBox::from_id_salt(("inspector_mirror_axis", node_id.0))
-                            .selected_text(axis.as_str())
-                            .show_ui(ui, |ui| {
-                                for a in ["X", "Y", "Z"] {
-                                    if ui
-                                        .selectable_value(&mut axis, a.into(), a)
-                                        .clicked()
-                                        && axis.as_str() != cur_axis.as_str()
-                                    {
-                                        edits.push(PendingEdit::SetAttrCanonical {
-                                            node: node_id,
-                                            attr: "axis".into(),
-                                            value: a.into(),
-                                            delete: Vec::new(),
-                                        });
-                                    }
-                                }
-                            });
-                    });
-                }
-            }
-            _ => {}
+        {
+            let src_view = self.files[i].source.clone();
+            modifiers::render(
+                ui,
+                node,
+                node_span,
+                &src_view,
+                node_id,
+                &mut edits,
+                &mut change_kind_to,
+            );
         }
 
         // Mesh path picker — a `kind="mesh"` node loads a `.glb` from disk via
@@ -858,235 +566,32 @@ impl MogenStudioApp {
 
         // Light editor — punctual lights expose kind/colour/intensity (and the
         // kind-conditional range / cone angles) through the same span-aware
-        // edit pipeline as the transform grid. A kind switch carries a
-        // `delete` list so attrs that no longer apply (`range` for
-        // directional, `inner_cone` / `outer_cone` for non-spot) don't sit
-        // around poisoning the next compile with a validation error.
+        // edit pipeline as the transform grid.
+        let mut wants_remove_range = false;
         if let Some(light) = node.light.as_ref() {
-            use mogen_core::LightKind;
-
-            // Copy light fields into locals so the grid closure doesn't keep
-            // a borrow on `self.files` — the "remove range" branch needs to
-            // call `&mut self` methods (push_undo / break_undo_chain) and
-            // would otherwise collide with the outer `node` borrow.
-            let kind = light.kind;
-            let light_color = light.color;
-            let light_intensity = light.intensity;
-            let light_range = light.range;
-            let light_inner_deg = light.inner_cone_rad.to_degrees();
-            let light_outer_deg = light.outer_cone_rad.to_degrees();
-            let mut wants_remove_range = false;
-
-            ui.add_space(8.0);
-            ui.separator();
-            ui.label(egui::RichText::new("Light").strong());
-
-            egui::Grid::new("inspector_light")
-                .num_columns(2)
-                .spacing([6.0, 4.0])
-                .show(ui, |ui| {
-                    ui.label("Kind");
-                    let mut new_kind = kind;
-                    egui::ComboBox::from_id_salt("light_kind")
-                        .selected_text(match new_kind {
-                            LightKind::Directional => "directional",
-                            LightKind::Point => "point",
-                            LightKind::Spot => "spot",
-                        })
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(
-                                &mut new_kind,
-                                LightKind::Directional,
-                                "directional",
-                            );
-                            ui.selectable_value(&mut new_kind, LightKind::Point, "point");
-                            ui.selectable_value(&mut new_kind, LightKind::Spot, "spot");
-                        });
-                    if new_kind != kind {
-                        let mut to_delete: Vec<String> = Vec::new();
-                        if matches!(new_kind, LightKind::Directional) {
-                            to_delete.push("range".into());
-                        }
-                        if !matches!(new_kind, LightKind::Spot) {
-                            to_delete.push("inner_cone".into());
-                            to_delete.push("outer_cone".into());
-                        }
-                        let dsl = match new_kind {
-                            LightKind::Directional => "directional",
-                            LightKind::Point => "point",
-                            LightKind::Spot => "spot",
-                        };
-                        edits.push(PendingEdit::SetAttrCanonical {
-                            node: node_id,
-                            attr: "kind".into(),
-                            value: dsl.into(),
-                            delete: to_delete,
-                        });
-                    }
-                    ui.end_row();
-
-                    ui.label("Color");
-                    let mut color = light_color;
-                    if ui.color_edit_button_rgb(&mut color).changed() {
-                        edits.push(PendingEdit::SetAttrCanonical {
-                            node: node_id,
-                            attr: "color".into(),
-                            value: format!(
-                                "[{}, {}, {}]",
-                                format_inspector_scalar(color[0]),
-                                format_inspector_scalar(color[1]),
-                                format_inspector_scalar(color[2]),
-                            ),
-                            delete: Vec::new(),
-                        });
-                    }
-                    ui.end_row();
-
-                    ui.label("Intensity");
-                    let mut intensity = light_intensity;
-                    let suffix = if matches!(kind, LightKind::Directional) {
-                        " lx"
-                    } else {
-                        " cd"
-                    };
-                    if ui
-                        .add(
-                            egui::DragValue::new(&mut intensity)
-                                .speed(0.1)
-                                .suffix(suffix)
-                                .range(0.0..=f32::INFINITY),
-                        )
-                        .changed()
-                    {
-                        edits.push(PendingEdit::SetAttrCanonical {
-                            node: node_id,
-                            attr: "intensity".into(),
-                            value: format_inspector_scalar(intensity),
-                            delete: Vec::new(),
-                        });
-                    }
-                    ui.end_row();
-
-                    if matches!(kind, LightKind::Point | LightKind::Spot) {
-                        ui.label("Range");
-                        match light_range {
-                            Some(r) => {
-                                let mut range = r;
-                                ui.horizontal(|ui| {
-                                    if ui
-                                        .add(
-                                            egui::DragValue::new(&mut range)
-                                                .speed(0.1)
-                                                .range(0.001..=f32::INFINITY),
-                                        )
-                                        .changed()
-                                    {
-                                        edits.push(PendingEdit::SetAttrCanonical {
-                                            node: node_id,
-                                            attr: "range".into(),
-                                            value: format_inspector_scalar(range),
-                                            delete: Vec::new(),
-                                        });
-                                    }
-                                    if ui
-                                        .small_button("✕")
-                                        .on_hover_text("Remove range (unlimited)")
-                                        .clicked()
-                                    {
-                                        // PendingEdit can only set+delete-
-                                        // shadows; do the primary-attr delete
-                                        // outside the closure to avoid a
-                                        // double borrow on `self.files`.
-                                        wants_remove_range = true;
-                                    }
-                                });
-                            }
-                            None => {
-                                ui.horizontal(|ui| {
-                                    ui.label(
-                                        egui::RichText::new("(unlimited)").italics().weak(),
-                                    );
-                                    if ui.small_button("+ set").clicked() {
-                                        edits.push(PendingEdit::SetAttrCanonical {
-                                            node: node_id,
-                                            attr: "range".into(),
-                                            value: "8".into(),
-                                            delete: Vec::new(),
-                                        });
-                                    }
-                                });
-                            }
-                        }
-                        ui.end_row();
-                    }
-
-                    if matches!(kind, LightKind::Spot) {
-                        ui.label("Inner cone");
-                        let mut inner = light_inner_deg;
-                        // Spec: 0 ≤ inner ≤ outer ≤ 90°. Outer cone clamps
-                        // separately below; inner shares the same cap.
-                        if ui
-                            .add(
-                                egui::DragValue::new(&mut inner)
-                                    .speed(0.5)
-                                    .suffix("°")
-                                    .range(0.0..=90.0),
-                            )
-                            .changed()
-                        {
-                            edits.push(PendingEdit::SetAttrCanonical {
-                                node: node_id,
-                                attr: "inner_cone".into(),
-                                value: format_inspector_scalar(inner),
-                                delete: Vec::new(),
-                            });
-                        }
-                        ui.end_row();
-
-                        ui.label("Outer cone");
-                        let mut outer = light_outer_deg;
-                        if ui
-                            .add(
-                                egui::DragValue::new(&mut outer)
-                                    .speed(0.5)
-                                    .suffix("°")
-                                    .range(0.0..=90.0),
-                            )
-                            .changed()
-                        {
-                            edits.push(PendingEdit::SetAttrCanonical {
-                                node: node_id,
-                                attr: "outer_cone".into(),
-                                value: format_inspector_scalar(outer),
-                                delete: Vec::new(),
-                            });
-                        }
-                        ui.end_row();
-                    }
-                });
-
-            if wants_remove_range {
-                if let Some(span) = node_span {
-                    let before = self.files[i].source.clone();
-                    let new_src = crate::edit::delete_attr(&before, span, "range");
-                    {
-                        let f = &mut self.files[i];
-                        f.source = new_src;
-                        f.dirty = f.source != f.last_saved_source;
-                        f.needs_compile = true;
-                        f.last_edit_at = Some(Instant::now());
-                    }
-                    self.break_undo_chain(i);
-                    self.push_undo(
-                        i,
-                        before,
-                        UndoKey {
-                            surface: "inspector-action",
-                            attr: None,
-                            node_path: Vec::new(),
-                        },
-                    );
+            wants_remove_range = light_editor::render(ui, light, node_id, &mut edits);
+        }
+        if wants_remove_range {
+            if let Some(span) = node_span {
+                let before = self.files[i].source.clone();
+                let new_src = crate::edit::delete_attr(&before, span, "range");
+                {
+                    let f = &mut self.files[i];
+                    f.source = new_src;
+                    f.dirty = f.source != f.last_saved_source;
+                    f.needs_compile = true;
+                    f.last_edit_at = Some(Instant::now());
                 }
+                self.break_undo_chain(i);
+                self.push_undo(
+                    i,
+                    before,
+                    UndoKey {
+                        surface: "inspector-action",
+                        attr: None,
+                        node_path: Vec::new(),
+                    },
+                );
             }
         }
 
