@@ -491,6 +491,90 @@ Wrap a `branch` in a `group` and apply `scale=` / `rot=` to compose
 forests, antlers, vines, or root systems out of the same generator. Pair
 it with the stdlib `branch` and `leaf` modules for hand-tuned shapes.
 
+### Building
+
+`building` is a procedural building-interior generator. One node expands
+into a full subtree of floor / ceiling slabs, perimeter walls with windows
+and entrance cutouts, interior walls with door cutouts, and stamped
+door / window / skylight modules. The result is one editable wrapper; the
+generated subtree below is stamped non-editable because the geometry is a
+pure function of `seed=` plus the declared attrs.
+
+Tranche 1 (current) implements single-storey, flat-roof buildings in
+`style="grid"` and `style="apartment-block"`. Multi-floor, stairs,
+elevators, skylights, and the remaining styles + roof shapes arrive in
+later tranches — see `docs/building.md` for the full plan.
+
+| attribute | default | effect |
+|---|---|---|
+| `seed` | `1` | RNG seed; same seed = identical layout + geometry. |
+| `style` | `"grid"` | Layout algorithm. T1: `grid`, `apartment-block`. |
+| `mat_style` | `""` | Free-text style hint forwarded to material/texture generation. |
+| `floor_area` | `120` | Target floorplate area in m² (per floor). |
+| `rooms` | `4` | Total rooms across all floors. |
+| `floors_above` | `1` | Storeys above ground; T1 must be `1`. |
+| `floors_below` | `0` | Basement storeys; T1 must be `0`. |
+| `windows` | `0` | Total above-ground window count. |
+| `skylights` | `0` | Top-floor ceiling cutouts; T1 must be `0`. |
+| `roof` | `"flat"` | Roof shape; T1 only supports `flat`. |
+| `ceiling_height` | `2.6` | Clear height per storey (m). |
+| `door_w`, `door_h` | `0.9, 2.1` | Door opening dimensions (m). |
+| `window_w`, `window_h` | `1.2, 1.4` | Window opening dimensions (m, medium class). Small = ×0.6, large = ×1.4. |
+| `wall_thickness` | `0.12` | Exterior / interior wall thickness (m). |
+| `ceiling_thickness` | `0.2` | Slab thickness (m). |
+| `entrances` | `1` | Ground-floor external door count. |
+| `external_door` | `"door_simple"` | Stdlib / user module ref. Stamped at each entrance. |
+| `internal_door` | `"door_simple"` | Stamped at each interior opening. |
+| `window_small`, `window_medium`, `window_large` | `"window_simple"` | Per-class window module refs. |
+| `skylight` | `"skylight_simple"` | Skylight module ref (T2+). |
+| `elevators` | `0` | T2+. |
+| `staircases` | `0` | T2+. |
+
+`building` accepts only `room_type` and `adjacency` children — every other
+child kind is a validation error.
+
+```
+room_type "<name>" (kind=public|private|service|utility|secure|staff_only,
+                    density=0..10,
+                    mat="<material>",
+                    min_area=…, max_area=…)
+```
+
+- `kind` is required.
+- `density` weights how often the type is sampled when the generator
+  assigns rooms — density 0 disables the type entirely.
+- `mat` overrides the per-room floor / wall material.
+
+```
+adjacency "<room_type_name>" (adjacent_to=["a", "b"], away_from=["c"])
+```
+
+Adjacency rules are **soft** — the solver runs 10 layout attempts at
+different sub-seeds and keeps the highest-scoring one. Each metre of
+shared wall between two room types in `adjacent_to` adds +1; each metre
+between two types in `away_from` subtracts 1. A rule that names a
+room-type not declared in this building is a validation error.
+
+Example:
+
+```
+material "wood" (color=[0.6, 0.4, 0.2], roughness=0.7)
+material "tile" (color=[0.9, 0.9, 0.88], roughness=0.3)
+
+building "house" (
+  seed=4, style="apartment-block",
+  floor_area=85, rooms=6, windows=6, entrances=1,
+  mat="wood",
+) {
+  room_type "bedroom"  (kind=private, density=4)
+  room_type "kitchen"  (kind=service, density=1, mat="tile")
+  room_type "living"   (kind=public,  density=2)
+  room_type "bathroom" (kind=service, density=2, mat="tile")
+  adjacency "kitchen"  (adjacent_to=["living"])
+  adjacency "bathroom" (adjacent_to=["bedroom"])
+}
+```
+
 Default values mean that `cylinder "leg"` with no attrs is a 1 m unit-radius
 cylinder centered on the origin. Every primitive is authored in its local
 frame and then positioned via `pos`/`rot`/`scale`.

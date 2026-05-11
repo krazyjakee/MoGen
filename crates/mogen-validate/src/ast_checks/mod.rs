@@ -5,6 +5,7 @@
 //! schema lives in [`schema`], with per-kind structural rules in [`rules`]
 //! and name collection / import resolution in [`collect`].
 
+mod building_rules;
 mod collect;
 mod rules;
 mod schema;

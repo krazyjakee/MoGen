@@ -51,6 +51,9 @@ pub(super) fn lower_into(
     if node.kind == "branch" {
         return expand_branch(node, parent, graph);
     }
+    if node.kind == "building" {
+        return super::building::expand_building(node, parent, graph);
+    }
     if node.kind == "light" {
         return lower_light(node, parent, graph);
     }
