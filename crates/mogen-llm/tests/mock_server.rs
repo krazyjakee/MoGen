@@ -578,6 +578,105 @@ fn start_sse_server_per_request(
     (port, requests)
 }
 
+/// Mock that answers `:streamGenerateContent` with SSE `sse_frames` and
+/// any other path (notably `:generateContent`) with `non_streaming_json`.
+/// Used to exercise the repair loop's transparent stream-to-non-stream
+/// fallback: streaming hits the bad endpoint, non-streaming hits the
+/// good one.
+fn start_gemini_dual_endpoint_mock(
+    sse_frames: Vec<String>,
+    non_streaming_json: String,
+) -> u16 {
+    let server = tiny_http::Server::http("127.0.0.1:0").expect("bind dual mock");
+    let port = server.server_addr().to_ip().expect("ipv4").port();
+    let sse_frames = std::sync::Arc::new(sse_frames);
+    let non_streaming_json = std::sync::Arc::new(non_streaming_json);
+    thread::spawn(move || {
+        for mut req in server.incoming_requests() {
+            let mut body = String::new();
+            req.as_reader().read_to_string(&mut body).ok();
+            let url = req.url().to_string();
+            if url.contains(":streamGenerateContent") {
+                let mut payload = String::new();
+                for frame in sse_frames.iter() {
+                    payload.push_str("data: ");
+                    payload.push_str(frame);
+                    payload.push_str("\n\n");
+                }
+                payload.push_str("data: [DONE]\n\n");
+                let resp = tiny_http::Response::from_string(payload).with_header(
+                    "Content-Type: text/event-stream"
+                        .parse::<tiny_http::Header>()
+                        .unwrap(),
+                );
+                let _ = req.respond(resp);
+            } else {
+                let resp = tiny_http::Response::from_string((*non_streaming_json).clone())
+                    .with_header(
+                        "Content-Type: application/json"
+                            .parse::<tiny_http::Header>()
+                            .unwrap(),
+                    );
+                let _ = req.respond(resp);
+            }
+        }
+    });
+    port
+}
+
+#[test]
+fn repair_loop_falls_back_to_non_streaming_when_stream_errors() {
+    // Streaming endpoint returns zero text-bearing frames — the
+    // accumulator surfaces an `EmptyResponse` error. The repair loop
+    // must transparently re-issue the call against the non-streaming
+    // endpoint and use *that* response as the source of truth. Without
+    // this fallback, a single streaming hiccup turns into a hard
+    // failure even when the underlying `:generateContent` endpoint is
+    // perfectly healthy — which is exactly what was happening in
+    // production when Gemini/OpenAI returned an unparseable
+    // intermediate frame.
+    let bad_stream = vec![]; // forces the SSE accumulator to see only `[DONE]`
+    let good_dsl = "scene { box \"b\" (size=[1,1,1]) }";
+    let non_streaming = serde_json::json!({
+        "candidates": [{"content":{"parts":[{"text": good_dsl}]}}],
+        "usageMetadata": {
+            "promptTokenCount": 8,
+            "candidatesTokenCount": 16,
+            "totalTokenCount": 24,
+        }
+    })
+    .to_string();
+    let port = start_gemini_dual_endpoint_mock(bad_stream, non_streaming);
+    let client = LlmClient::with_base_url(
+        Provider::Gemini,
+        "test-key",
+        format!("http://127.0.0.1:{}/v1beta", port),
+    );
+
+    let chunk_fires: Arc<Mutex<u32>> = Arc::new(Mutex::new(0));
+    let chunk_fires_cb = chunk_fires.clone();
+    let outcome = generate_with_repair(
+        &client,
+        GenerateConfig::new("a box"),
+        &RepairConfig {
+            max_iters: 0,
+            on_iteration: None,
+            on_chunk: Some(Box::new(move |_d, _c| {
+                *chunk_fires_cb.lock().unwrap() += 1;
+            })),
+            allow_edit_mode: false,
+        },
+    )
+    .expect("fallback should rescue the call");
+
+    assert!(outcome.is_ok(), "diagnostics: {:?}", outcome.diagnostics);
+    assert!(outcome.dsl.contains("box \"b\""), "got: {:?}", outcome.dsl);
+    // The bad stream had no text frames, so on_chunk should never
+    // have fired even once — confirms the fallback didn't double-emit
+    // progress from streaming's partial state.
+    assert_eq!(*chunk_fires.lock().unwrap(), 0);
+}
+
 fn gemini_stream_frame(text: &str) -> String {
     serde_json::json!({
         "candidates": [{"content":{"parts":[{"text": text}]}}],

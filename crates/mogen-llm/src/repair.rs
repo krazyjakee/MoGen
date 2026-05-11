@@ -175,14 +175,28 @@ fn run_repair_loop(
     let mut prev_dsl: Option<String> = prev_dsl_init;
 
     for iter in 0..=repair.max_iters {
-        // When the caller supplied a chunk callback, stream the model
-        // response so progress can be reported mid-call. Providers
-        // without a streaming implementation transparently fall back
-        // to non-streaming inside `stream_generate`.
+        // When the caller supplied a chunk callback, *try* to stream
+        // the model response so progress can be reported mid-call. If
+        // streaming fails for any reason — a provider-specific frame
+        // shape the SSE accumulator can't make sense of, a connection
+        // that drops mid-stream, an empty/short response that won't
+        // validate — transparently fall back to a fresh non-streaming
+        // call. The non-streaming path is the source of truth for the
+        // response content; streaming is opportunistic UX sugar layered
+        // on top, and a streaming bug must never block the user's
+        // request from completing.
+        //
+        // The fallback re-issues the call rather than reusing whatever
+        // partial text streaming managed to accumulate, because a
+        // partial response would just push the repair loop into a
+        // wasted iteration on garbage.
         let resp = match &repair.on_chunk {
             Some(cb) => {
                 let mut adapter = |delta: &str, cumulative: &str| cb(delta, cumulative);
-                client.stream_generate(&cfg, &mut adapter)?
+                match client.stream_generate(&cfg, &mut adapter) {
+                    Ok(r) => r,
+                    Err(_) => client.generate(&cfg)?,
+                }
             }
             None => client.generate(&cfg)?,
         };
