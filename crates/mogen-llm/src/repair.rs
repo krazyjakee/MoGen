@@ -179,23 +179,38 @@ fn run_repair_loop(
         // the model response so progress can be reported mid-call. If
         // streaming fails for any reason — a provider-specific frame
         // shape the SSE accumulator can't make sense of, a connection
-        // that drops mid-stream, an empty/short response that won't
-        // validate — transparently fall back to a fresh non-streaming
-        // call. The non-streaming path is the source of truth for the
-        // response content; streaming is opportunistic UX sugar layered
-        // on top, and a streaming bug must never block the user's
-        // request from completing.
+        // that drops mid-stream, an empty/short response, a server
+        // that closes the body after one token — transparently fall
+        // back to a fresh non-streaming call. The non-streaming path
+        // is the source of truth for the response content; streaming
+        // is opportunistic UX sugar layered on top, and a streaming
+        // bug must never block the user's request from completing.
+        //
+        // Two fallback triggers:
+        // - `Err(_)`: the SSE accumulator or HTTP layer rejected the
+        //   stream outright.
+        // - Suspiciously short successful response: a "successful"
+        //   stream that returns under `STREAM_MIN_USEFUL_LEN` bytes
+        //   means the model only managed a brief preamble like
+        //   "I'll modify…" or "Thinking…" before the server closed
+        //   the body, which is almost always a stream-transport
+        //   hiccup rather than a genuine model output. The threshold
+        //   is deliberately small (30 bytes) so any real edit-block
+        //   response or even a minimal `scene { … }` rewrite gets
+        //   through, while a preamble-only truncation triggers the
+        //   re-issue.
         //
         // The fallback re-issues the call rather than reusing whatever
         // partial text streaming managed to accumulate, because a
         // partial response would just push the repair loop into a
         // wasted iteration on garbage.
+        const STREAM_MIN_USEFUL_LEN: usize = 30;
         let resp = match &repair.on_chunk {
             Some(cb) => {
                 let mut adapter = |delta: &str, cumulative: &str| cb(delta, cumulative);
                 match client.stream_generate(&cfg, &mut adapter) {
-                    Ok(r) => r,
-                    Err(_) => client.generate(&cfg)?,
+                    Ok(r) if r.text.trim().len() >= STREAM_MIN_USEFUL_LEN => r,
+                    Ok(_) | Err(_) => client.generate(&cfg)?,
                 }
             }
             None => client.generate(&cfg)?,

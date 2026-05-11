@@ -48,6 +48,13 @@ pub struct StreamStatus {
 /// `scene_thing`). Each anchor is the byte-exact form the grammar
 /// emits at the start of a declaration.
 const STAGES: &[(&str, &str)] = &[
+    // Modify-with-edits responses (SEARCH/REPLACE blocks) come first
+    // so they win on Modify calls — the model emits these top-down
+    // and rarely also contains a top-level `meta(` or `scene {` in
+    // the search/replace bodies. Anchored on the marker text the
+    // repair loop's `parse_edit_blocks` expects byte-for-byte.
+    ("<<<<<<< SEARCH", "writing edits"),
+    (">>>>>>> REPLACE", "applying edits"),
     ("meta(", "writing header"),
     ("meta (", "writing header"),
     ("material(", "choosing materials"),
@@ -204,6 +211,23 @@ mod tests {
         let skin = "meta(x)\nscene {\n  skeleton \"arm\" {}\n  cylinder \"c\" (radius=0.1, skin=\"arm\"";
         let out = s2.observe(skin).unwrap();
         assert!(out.starts_with("binding skin"), "got {out:?}");
+    }
+
+    #[test]
+    fn search_replace_block_surfaces_writing_edits_label() {
+        // Modify-with-edit responses start with `<<<<<<< SEARCH` and
+        // rarely embed top-level DSL kind keywords in their bodies, so
+        // without an edit-block anchor `pick_label` falls through to
+        // `None` and the status stays at "thinking…" for the whole
+        // call — that was confusing users into thinking modify had
+        // hung.
+        let mut s = StreamStatus::default();
+        let mid = "<<<<<<< SEARCH\nfoo\n=======\nbar\n";
+        let out = s.observe(mid).unwrap();
+        assert!(out.starts_with("writing edits"), "got {out:?}");
+        let complete = "<<<<<<< SEARCH\nfoo\n=======\nbar\n>>>>>>> REPLACE\n";
+        let out = s.observe(complete).unwrap();
+        assert!(out.starts_with("applying edits"), "got {out:?}");
     }
 
     #[test]

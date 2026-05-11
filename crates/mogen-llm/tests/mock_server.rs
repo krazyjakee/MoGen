@@ -625,6 +625,56 @@ fn start_gemini_dual_endpoint_mock(
 }
 
 #[test]
+fn repair_loop_falls_back_to_non_streaming_when_stream_returns_truncated_text() {
+    // Server-side truncation (max_tokens, content filter, body
+    // closed after a brief preamble) is a real production failure
+    // mode that the SSE accumulator can't detect — from its
+    // perspective the stream completed cleanly. The repair loop has
+    // to look at the returned text length and treat a few-byte
+    // "successful" response as a stream-transport hiccup, re-issuing
+    // the call against the non-streaming endpoint so the user gets
+    // the proper response instead of having their file overwritten
+    // with a junk preamble like "I'll modify…".
+    let truncated = "I'll modify";
+    let truncated_frame = serde_json::json!({
+        "candidates": [{"content":{"parts":[{"text": truncated}]}}],
+        "usageMetadata": {"promptTokenCount":1,"candidatesTokenCount":1,"totalTokenCount":2},
+    })
+    .to_string();
+    let good_dsl = "scene { box \"b\" (size=[1,1,1]) }";
+    let non_streaming = serde_json::json!({
+        "candidates": [{"content":{"parts":[{"text": good_dsl}]}}],
+        "usageMetadata": {
+            "promptTokenCount": 8,
+            "candidatesTokenCount": 16,
+            "totalTokenCount": 24,
+        }
+    })
+    .to_string();
+    let port = start_gemini_dual_endpoint_mock(vec![truncated_frame], non_streaming);
+    let client = LlmClient::with_base_url(
+        Provider::Gemini,
+        "test-key",
+        format!("http://127.0.0.1:{}/v1beta", port),
+    );
+
+    let outcome = generate_with_repair(
+        &client,
+        GenerateConfig::new("a box"),
+        &RepairConfig {
+            max_iters: 0,
+            on_iteration: None,
+            on_chunk: Some(Box::new(|_d, _c| {})),
+            allow_edit_mode: false,
+        },
+    )
+    .expect("fallback should rescue the call");
+
+    assert!(outcome.is_ok(), "diagnostics: {:?}", outcome.diagnostics);
+    assert!(outcome.dsl.contains("box \"b\""), "got: {:?}", outcome.dsl);
+}
+
+#[test]
 fn repair_loop_falls_back_to_non_streaming_when_stream_errors() {
     // Streaming endpoint returns zero text-bearing frames — the
     // accumulator surfaces an `EmptyResponse` error. The repair loop
