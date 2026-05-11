@@ -54,7 +54,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use js_sys::{Function, Map, Promise};
 use mogen_core::{Diagnostic, Severity};
-use mogen_dsl::{LoadedFile, Loader};
+use mogen_dsl::{parse_registry_spec, LoadedFile, Loader, Node, RegistrySpec};
 use mogen_export::{
     build_glb_with_options_and_source, ExportOptions, MapTextureSource,
 };
@@ -290,6 +290,40 @@ impl<'a> Loader for JsLoader<'a> {
             )),
         }
     }
+
+    /// Resolve a `use "@user/slug[@v]"` registry reference from the
+    /// pre-populated cache. The cache is keyed by the verbatim token
+    /// (`spec.raw`) — the same string the BFS prefetch passed to
+    /// `fetch_dep` — so a hit here means the JS host already returned
+    /// the source. The synthesised `canonical` matches the convention
+    /// documented on the default trait impl in mogen-dsl: a stable
+    /// `registry/<user>/<slug>/<version-or-latest>` PathBuf that won't
+    /// collide with any real filesystem path the desktop FsLoader emits.
+    fn load_registry(&mut self, spec: &RegistrySpec) -> Result<LoadedFile> {
+        match self.cache.get(&spec.raw) {
+            Some(src) => {
+                let canonical = match spec.version {
+                    Some(v) => PathBuf::from(format!(
+                        "registry/{}/{}/{}",
+                        spec.user, spec.slug, v
+                    )),
+                    None => PathBuf::from(format!(
+                        "registry/{}/{}/latest",
+                        spec.user, spec.slug
+                    )),
+                };
+                Ok(LoadedFile {
+                    canonical,
+                    source: src.clone(),
+                })
+            }
+            None => Err(anyhow::anyhow!(
+                "use \"{}\" — fetch_dep did not supply source for this \
+                 registry reference (wasm prefetch bug)",
+                spec.raw
+            )),
+        }
+    }
 }
 
 /// Drain a JS `Map<string, Uint8Array>` of texture bytes into a Rust
@@ -397,24 +431,62 @@ async fn prefetch_imports(
             })?;
             cache.insert(spec.clone(), src);
         }
-        // Parse to discover transitive imports. Errors here are silent —
-        // the main pipeline will report them with proper file routing.
+        // Parse to discover transitive imports + registry refs. Errors
+        // here are silent — the main pipeline will report them with
+        // proper file routing.
         if let Some(src) = cache.get(&spec) {
             if let Ok(ast) = mogen_dsl::parse(src) {
-                for n in &ast {
-                    if n.kind == "import" {
-                        if let Some(child) = n.name.clone() {
-                            if !seen.contains(&child) {
-                                queue.push(child);
-                            }
-                        }
-                    }
-                }
+                enqueue_specs(&ast, &seen, &mut queue);
             }
         }
     }
 
     Ok(())
+}
+
+/// Walk `nodes` (and their children) and push every reachable import
+/// spec or registry-use spec into `queue` if it isn't already seen.
+///
+/// Two kinds of nodes are interesting to the wasm prefetch:
+///
+/// - `import "path.mog"` — the literal path is the cache key
+///   `JsLoader::load` will look up.
+/// - `use "@user/slug[@v]"` — when the token parses as a registry spec
+///   (via `parse_registry_spec`, the same parser the lowering walker
+///   uses), the verbatim token is the cache key `JsLoader::load_registry`
+///   will look up.
+///
+/// Other `use` nodes (local module instantiations like
+/// `use "chair"`) are skipped: they reference a `module` declared in
+/// the same compilation unit, so there's nothing to fetch.
+///
+/// The walk descends into `n.children` so a `use` nested inside a
+/// `scene { ... }` body (or any other container) is also queued —
+/// matching `mogen_dsl::module::imports::walk::collect_registry_refs`.
+fn enqueue_specs(nodes: &[Node], seen: &HashSet<String>, queue: &mut Vec<String>) {
+    for n in nodes {
+        match n.kind.as_str() {
+            "import" => {
+                if let Some(child) = &n.name {
+                    if !seen.contains(child) && !queue.contains(child) {
+                        queue.push(child.clone());
+                    }
+                }
+            }
+            "use" => {
+                if let Some(name) = &n.name {
+                    if parse_registry_spec(name).is_some()
+                        && !seen.contains(name)
+                        && !queue.contains(name)
+                    {
+                        queue.push(name.clone());
+                    }
+                }
+            }
+            _ => {}
+        }
+        enqueue_specs(&n.children, seen, queue);
+    }
 }
 
 /// Best-effort conversion of a JsValue error to a string for surfacing in
@@ -428,5 +500,107 @@ fn js_err_to_string(e: &JsValue) -> String {
                 .and_then(|m| m.as_string())
         })
         .unwrap_or_else(|| format!("{:?}", e))
+}
+
+#[cfg(test)]
+mod tests {
+    //! Host-side tests for the plain-Rust bits of this crate. The full
+    //! `compile_files` entry point can't be exercised from `cargo test`
+    //! because it crosses the wasm-bindgen boundary; `wasm-pack test`
+    //! covers that. The two pieces tested here — `JsLoader::load_registry`
+    //! and `enqueue_specs` — were both bug sites that caused E0701 to
+    //! surface on MoGHub `/new?edit=` for any model containing a
+    //! `use "@user/slug"` directive, so they're worth a sanity check.
+    use super::*;
+    use mogen_dsl::parse;
+
+    fn loader_cache(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn load_registry_returns_cached_source_with_synthetic_canonical_for_pinned_version() {
+        let cache = loader_cache(&[("@alice/chair@3", "module chair {}")]);
+        let mut loader = JsLoader { cache: &cache };
+        let spec = parse_registry_spec("@alice/chair@3").unwrap();
+        let loaded = loader.load_registry(&spec).expect("registry hit");
+        assert_eq!(loaded.source, "module chair {}");
+        assert_eq!(loaded.canonical, PathBuf::from("registry/alice/chair/3"));
+    }
+
+    #[test]
+    fn load_registry_canonical_for_unpinned_ref_is_latest() {
+        let cache = loader_cache(&[("@alice/chair", "module chair {}")]);
+        let mut loader = JsLoader { cache: &cache };
+        let spec = parse_registry_spec("@alice/chair").unwrap();
+        let loaded = loader.load_registry(&spec).expect("registry hit");
+        assert_eq!(loaded.canonical, PathBuf::from("registry/alice/chair/latest"));
+    }
+
+    #[test]
+    fn load_registry_errors_when_prefetch_missed_the_spec() {
+        let cache = loader_cache(&[]);
+        let mut loader = JsLoader { cache: &cache };
+        let spec = parse_registry_spec("@alice/chair@3").unwrap();
+        let err = loader.load_registry(&spec).expect_err("must miss");
+        // Must NOT surface the mogen-dsl default's E0701 message — that
+        // would mean `load_registry` fell through to the trait default,
+        // which is exactly the bug this patch fixes.
+        let msg = err.to_string();
+        assert!(
+            !msg.contains("no registry-aware loader is installed"),
+            "miss must not fall through to the default E0701 message: {msg}"
+        );
+        assert!(msg.contains("fetch_dep"), "miss message should name fetch_dep: {msg}");
+    }
+
+    /// Mirrors what `prefetch_imports` does between fetches: BFS the
+    /// AST, queue every interesting spec, refuse to re-queue.
+    fn collect_queue(source: &str) -> Vec<String> {
+        let ast = parse(source).expect("test source must parse");
+        let seen = HashSet::new();
+        let mut queue: Vec<String> = Vec::new();
+        enqueue_specs(&ast, &seen, &mut queue);
+        queue
+    }
+
+    #[test]
+    fn enqueue_specs_picks_up_top_level_import() {
+        let q = collect_queue("import \"parts.mog\"");
+        assert_eq!(q, vec!["parts.mog".to_string()]);
+    }
+
+    #[test]
+    fn enqueue_specs_picks_up_registry_use() {
+        let q = collect_queue("use \"@alice/chair@3\"");
+        assert_eq!(q, vec!["@alice/chair@3".to_string()]);
+    }
+
+    #[test]
+    fn enqueue_specs_ignores_local_named_use() {
+        // `use "chair"` references a local `module chair` — nothing to
+        // fetch. The lowering pass binds it from the in-source modules.
+        let q = collect_queue("module chair {}\nuse \"chair\"");
+        assert!(q.is_empty(), "queue should not contain a local use: {q:?}");
+    }
+
+    #[test]
+    fn enqueue_specs_dedupes_when_same_ref_appears_twice() {
+        let q = collect_queue("use \"@alice/chair@3\"\nuse \"@alice/chair@3\"");
+        assert_eq!(q, vec!["@alice/chair@3".to_string()]);
+    }
+
+    #[test]
+    fn enqueue_specs_skips_already_seen_specs() {
+        let ast = parse("use \"@alice/chair@3\"").unwrap();
+        let mut seen = HashSet::new();
+        seen.insert("@alice/chair@3".to_string());
+        let mut queue: Vec<String> = Vec::new();
+        enqueue_specs(&ast, &seen, &mut queue);
+        assert!(queue.is_empty(), "already-seen spec must not re-queue: {queue:?}");
+    }
 }
 
