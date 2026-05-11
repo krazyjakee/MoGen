@@ -128,6 +128,60 @@ impl MogenStudioApp {
             }
         }
 
+        // Defence in depth: refuse to clobber a previously-parseable file
+        // with an unparseable response. The repair loop already does its
+        // best to keep `outcome.dsl` valid (the edit-mode apply-failure
+        // path now preserves the baseline + emits E0801), but a separate
+        // class of bugs — model returning prose-as-rewrite, providers we
+        // haven't shipped a stream-fallback for yet, future regressions —
+        // can still produce a `meta(…)` block prepended to whatever
+        // markup the model emitted. Silently writing that to the file is
+        // the worst-case studio behaviour: the user's working DSL gets
+        // replaced with something they can't compile, and the only way
+        // back is the undo stack.
+        //
+        // Scope intentionally narrow:
+        //   - only when the response has diagnostics (success path
+        //     untouched),
+        //   - only when the response fails to even parse (E0001) — a
+        //     parseable-but-validator-flagged response is still useful
+        //     to surface to the user,
+        //   - only when the pre-LLM source itself parsed (otherwise
+        //     we're guarding nothing).
+        // Textures keeps its existing behaviour because the texture
+        // splice runs against an AST the worker already validated.
+        let dsl_has_parse_error = outcome.diagnostics.iter().any(|d| d.code == "E0001");
+        let prev_parses = mogen_llm::validate_text(&pre_source)
+            .iter()
+            .all(|d| d.code != "E0001");
+        if dsl_has_parse_error
+            && prev_parses
+            && !matches!(outcome.kind, LlmKind::Textures)
+        {
+            if let Some(p) = outcome.retry_prompt {
+                f.llm_last_prompt = Some((outcome.kind, p));
+            }
+            let headline = format!(
+                "{}: model returned unparseable response",
+                outcome.kind.label(),
+            );
+            f.llm_error = Some(crate::app::types::LlmErrorInfo {
+                headline: headline.clone(),
+                detail: format!(
+                    "After {} call(s), the model never produced valid DSL. The file \
+                     was left unchanged to avoid overwriting it with the broken \
+                     response. Retry, or rephrase the prompt — the error banner \
+                     stays until you Dismiss or Retry.",
+                    outcome.calls,
+                ),
+                class: crate::app::types::LlmErrorClass::Other,
+                retryable: true,
+                action: None,
+            });
+            f.status = format!("{}: response not applied — see banner", outcome.kind.label());
+            return;
+        }
+
         // Remember the prompt so a post-success Retry (e.g. to re-roll the
         // seed) can reuse it.
         if let Some(p) = outcome.retry_prompt {

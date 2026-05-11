@@ -675,6 +675,53 @@ fn repair_loop_falls_back_to_non_streaming_when_stream_returns_truncated_text() 
 }
 
 #[test]
+fn repair_loop_falls_back_to_non_streaming_when_stream_returns_long_prose_preamble() {
+    // A 60+ byte prose preamble (well past the old 30-byte length gate)
+    // that doesn't contain edit-block markers and doesn't parse as DSL.
+    // The content-aware `stream_response_is_useful` predicate rejects it
+    // so the loop falls back to the non-streaming endpoint, which here
+    // returns valid DSL — proving the gate isn't being defeated by long
+    // preambles the way the old length-only gate was.
+    let prose_preamble = "Sure, I'll help with that. Let me think about how to modify the file to satisfy your request.";
+    let prose_frame = serde_json::json!({
+        "candidates": [{"content":{"parts":[{"text": prose_preamble}]}}],
+        "usageMetadata": {"promptTokenCount":4,"candidatesTokenCount":20,"totalTokenCount":24},
+    })
+    .to_string();
+    let good_dsl = "scene { box \"b\" (size=[1,1,1]) }";
+    let non_streaming = serde_json::json!({
+        "candidates": [{"content":{"parts":[{"text": good_dsl}]}}],
+        "usageMetadata": {
+            "promptTokenCount": 8,
+            "candidatesTokenCount": 16,
+            "totalTokenCount": 24,
+        }
+    })
+    .to_string();
+    let port = start_gemini_dual_endpoint_mock(vec![prose_frame], non_streaming);
+    let client = LlmClient::with_base_url(
+        Provider::Gemini,
+        "test-key",
+        format!("http://127.0.0.1:{}/v1beta", port),
+    );
+
+    let outcome = generate_with_repair(
+        &client,
+        GenerateConfig::new("a box"),
+        &RepairConfig {
+            max_iters: 0,
+            on_iteration: None,
+            on_chunk: Some(Box::new(|_d, _c| {})),
+            allow_edit_mode: false,
+        },
+    )
+    .expect("fallback should rescue the call");
+
+    assert!(outcome.is_ok(), "diagnostics: {:?}", outcome.diagnostics);
+    assert!(outcome.dsl.contains("box \"b\""), "got: {:?}", outcome.dsl);
+}
+
+#[test]
 fn repair_loop_falls_back_to_non_streaming_when_stream_errors() {
     // Streaming endpoint returns zero text-bearing frames — the
     // accumulator surfaces an `EmptyResponse` error. The repair loop
@@ -1126,3 +1173,170 @@ fn edit_mode_falls_back_to_rewrite_when_model_returns_full_dsl() {
         outcome.dsl
     );
 }
+
+// ---------------------------------------------------------------------------
+// Trace: what does the Studio Modify path actually do when the model emits a
+// realistic-but-unhelpful response? Runs `generate_edits_with_repair` against
+// a mock that streams a typical "preamble + non-matching SEARCH block" and
+// prints the candidate DSL + diagnostics at each iteration so we can watch
+// where the response goes wrong. Run with:
+//
+//   cargo test -p mogen-llm --test mock_server trace_modify_preamble_then_bad_edit_block -- --nocapture
+// ---------------------------------------------------------------------------
+#[test]
+fn trace_modify_preamble_then_bad_edit_block() {
+    // Baseline matches what a real `.mog` looks like — a meta header plus a
+    // small scene. The non-matching SEARCH block paraphrases the source so
+    // it doesn't match byte-for-byte, which is the dominant real failure
+    // mode for SEARCH/REPLACE responses. `seed` is a string per the meta
+    // schema (the production `embed_seed_header` writes it that way).
+    let baseline = "meta(seed=\"1\", prompt=\"a box\")\n\
+                    scene {\n  \
+                      box \"b\" (size=[1,1,1])\n\
+                    }\n";
+    // Model response: a 60+ byte preamble (well past the 30-byte gate),
+    // then a SEARCH block whose SEARCH text uses different whitespace from
+    // the baseline so `apply_edit_blocks` rejects it.
+    let response_text = "Sure — I'll make the box taller.\n\n\
+                         <<<<<<< SEARCH\n\
+                         box \"b\"(size=[1,1,1])\n\
+                         =======\n\
+                         box \"b\" (size=[1,2,1])\n\
+                         >>>>>>> REPLACE\n";
+
+    // Per-iteration counters so we can see whether streaming or non-streaming
+    // fired. Both endpoints return the SAME response — real-world failure mode.
+    let stream_calls = Arc::new(Mutex::new(0u32));
+    let nonstream_calls = Arc::new(Mutex::new(0u32));
+    let stream_clone = stream_calls.clone();
+    let nonstream_clone = nonstream_calls.clone();
+
+    let port = {
+        let server = tiny_http::Server::http("127.0.0.1:0").expect("bind");
+        let port = server.server_addr().to_ip().expect("ipv4").port();
+        let frame = serde_json::json!({
+            "candidates": [{"content":{"parts":[{"text": response_text}]}}],
+            "usageMetadata": {"promptTokenCount":10,"candidatesTokenCount":40,"totalTokenCount":50},
+        })
+        .to_string();
+        let non_streaming = frame.clone();
+        thread::spawn(move || {
+            for mut req in server.incoming_requests() {
+                let mut body = String::new();
+                req.as_reader().read_to_string(&mut body).ok();
+                let url = req.url().to_string();
+                if url.contains(":streamGenerateContent") {
+                    *stream_clone.lock().unwrap() += 1;
+                    let mut payload = String::new();
+                    payload.push_str("data: ");
+                    payload.push_str(&frame);
+                    payload.push_str("\n\ndata: [DONE]\n\n");
+                    let resp = tiny_http::Response::from_string(payload).with_header(
+                        "Content-Type: text/event-stream"
+                            .parse::<tiny_http::Header>()
+                            .unwrap(),
+                    );
+                    let _ = req.respond(resp);
+                } else {
+                    *nonstream_clone.lock().unwrap() += 1;
+                    let resp = tiny_http::Response::from_string(non_streaming.clone())
+                        .with_header(
+                            "Content-Type: application/json"
+                                .parse::<tiny_http::Header>()
+                                .unwrap(),
+                        );
+                    let _ = req.respond(resp);
+                }
+            }
+        });
+        port
+    };
+
+    let client = LlmClient::with_base_url(
+        Provider::Gemini,
+        "test-key",
+        format!("http://127.0.0.1:{}/v1beta", port),
+    );
+
+    // on_iteration prints the diagnostics the loop saw between calls.
+    let on_iter = Box::new(|iter: u32, diags: &[mogen_core::Diagnostic]| {
+        eprintln!("\n--- repair iteration {iter} starting ---");
+        for d in diags {
+            eprintln!(
+                "  diag [{}] {:?} {}",
+                d.code, d.severity, d.message
+            );
+        }
+    });
+
+    let chunk_fires = Arc::new(Mutex::new(0u32));
+    let chunk_fires_cb = chunk_fires.clone();
+
+    eprintln!("=== baseline ===");
+    eprintln!("{baseline}");
+    eprintln!("=== model response (literal, will be returned by EVERY call) ===");
+    eprintln!("{response_text}");
+    eprintln!("=== response length (trimmed) = {} bytes (>= 30 byte gate? {}) ===",
+        response_text.trim().len(),
+        response_text.trim().len() >= 30,
+    );
+
+    let outcome = generate_edits_with_repair(
+        &client,
+        GenerateConfig::new("make the box taller"),
+        &RepairConfig {
+            max_iters: 2,
+            on_iteration: Some(on_iter),
+            on_chunk: Some(Box::new(move |_d, c| {
+                *chunk_fires_cb.lock().unwrap() += 1;
+                eprintln!("on_chunk: cumulative={:?}", c);
+            })),
+            allow_edit_mode: true,
+        },
+        baseline,
+    )
+    .expect("loop should not error — it must return Ok with diagnostics");
+
+    eprintln!("\n=== FINAL OUTCOME ===");
+    eprintln!("call_count   = {}", outcome.call_count);
+    eprintln!("stream_calls = {}", *stream_calls.lock().unwrap());
+    eprintln!("nonstream    = {}", *nonstream_calls.lock().unwrap());
+    eprintln!("chunk_fires  = {}", *chunk_fires.lock().unwrap());
+    eprintln!("is_ok        = {}", outcome.is_ok());
+    eprintln!("diagnostics  = {} entry/entries", outcome.diagnostics.len());
+    for d in &outcome.diagnostics {
+        eprintln!("  [{}] {}", d.code, d.message);
+    }
+    eprintln!("--- outcome.dsl (this is what apply_llm_outcome writes to f.source) ---");
+    eprintln!("{}", outcome.dsl);
+    eprintln!("--- end outcome.dsl ---");
+
+    // Post-fix contract: the loop should NEVER hand a caller back markup
+    // pretending to be DSL. When `apply_edit_blocks` fails the loop must
+    //   1) keep the previous (valid) DSL as the candidate, and
+    //   2) surface a synthetic E0801 diagnostic so the next iteration has
+    //      something actionable.
+    // The pre-fix behaviour returned the edit-block markup as `outcome.dsl`,
+    // which `apply_llm_outcome` then wrote to the user's file. These
+    // assertions pin the new contract.
+    assert!(
+        !outcome.is_ok(),
+        "loop should still flag the call as failed",
+    );
+    assert!(
+        !outcome.dsl.contains("<<<<<<< SEARCH"),
+        "outcome.dsl must NOT carry edit-block markup forward (would clobber the user's file): {}",
+        outcome.dsl,
+    );
+    assert!(
+        outcome.dsl.contains("box \"b\""),
+        "outcome.dsl should be the baseline DSL when apply fails, got: {}",
+        outcome.dsl,
+    );
+    assert!(
+        outcome.diagnostics.iter().any(|d| d.code == "E0801"),
+        "expected an E0801 synthetic diagnostic in: {:?}",
+        outcome.diagnostics,
+    );
+}
+

@@ -189,27 +189,25 @@ fn run_repair_loop(
         // Two fallback triggers:
         // - `Err(_)`: the SSE accumulator or HTTP layer rejected the
         //   stream outright.
-        // - Suspiciously short successful response: a "successful"
-        //   stream that returns under `STREAM_MIN_USEFUL_LEN` bytes
-        //   means the model only managed a brief preamble like
-        //   "I'll modify…" or "Thinking…" before the server closed
-        //   the body, which is almost always a stream-transport
-        //   hiccup rather than a genuine model output. The threshold
-        //   is deliberately small (30 bytes) so any real edit-block
-        //   response or even a minimal `scene { … }` rewrite gets
-        //   through, while a preamble-only truncation triggers the
-        //   re-issue.
+        // - Content-shape rejection: a "successful" stream whose body
+        //   is neither SEARCH/REPLACE markup nor parseable DSL is a
+        //   prose-only response (preamble truncation, server-side
+        //   safety reply, the model giving up). Re-issuing through
+        //   the non-streaming endpoint is the cheapest way to discover
+        //   whether the streamed text was a transport hiccup or a
+        //   genuine response — and if it really is genuine, the loop
+        //   uses it on the next iteration with a real diagnostic for
+        //   the model to act on.
         //
         // The fallback re-issues the call rather than reusing whatever
         // partial text streaming managed to accumulate, because a
         // partial response would just push the repair loop into a
         // wasted iteration on garbage.
-        const STREAM_MIN_USEFUL_LEN: usize = 30;
         let resp = match &repair.on_chunk {
             Some(cb) => {
                 let mut adapter = |delta: &str, cumulative: &str| cb(delta, cumulative);
                 match client.stream_generate(&cfg, &mut adapter) {
-                    Ok(r) if r.text.trim().len() >= STREAM_MIN_USEFUL_LEN => r,
+                    Ok(r) if stream_response_is_useful(&r.text) => r,
                     Ok(_) | Err(_) => client.generate(&cfg)?,
                 }
             }
@@ -218,24 +216,52 @@ fn run_repair_loop(
         calls += 1;
         total_usage.add(&resp.usage);
 
-        // Materialise the candidate DSL. Edit-mode: try to parse + apply
-        // SEARCH/REPLACE blocks against the previous attempt; on any failure
-        // (no blocks, malformed, missing/ambiguous match) fall through to
-        // treating the response as a full rewrite. The validator will catch
-        // it if neither interpretation is valid DSL.
-        let dsl = if asked_for_edits {
+        // Materialise the candidate DSL. Edit-mode has three sub-cases:
+        //   - parse + apply succeed → use the merged DSL.
+        //   - parse fails outright (no markers, malformed) → treat the
+        //     response as a full rewrite. `validate_text` catches it if
+        //     the body isn't actually DSL.
+        //   - parse succeeds but apply fails (`SearchNotFound`,
+        //     `SearchAmbiguous`, `EmptySearch`) → the model emitted
+        //     valid markers but the SEARCH text didn't match the
+        //     baseline. Carrying the raw markup forward as if it were
+        //     DSL was the old bug; instead, keep `prev` as the
+        //     candidate and surface a synthetic E0801 diagnostic so the
+        //     repair loop has actionable feedback for the next
+        //     iteration.
+        let (dsl, edit_apply_error) = if asked_for_edits {
             let prev = prev_dsl.as_deref().unwrap_or("");
-            match parse_edit_blocks(&resp.text)
-                .and_then(|blocks| apply_edit_blocks(prev, &blocks))
-            {
-                Ok(merged) => merged,
-                Err(_) => strip_markdown_fences(&resp.text),
+            match parse_edit_blocks(&resp.text) {
+                Ok(blocks) => match apply_edit_blocks(prev, &blocks) {
+                    Ok(merged) => (merged, None),
+                    Err(e) => (prev.to_string(), Some(e)),
+                },
+                Err(_) => (strip_markdown_fences(&resp.text), None),
             }
         } else {
-            strip_markdown_fences(&resp.text)
+            (strip_markdown_fences(&resp.text), None)
         };
 
-        let diags = validate_text(&dsl);
+        let mut diags = validate_text(&dsl);
+        if let Some(e) = edit_apply_error {
+            // Synthetic diagnostic so the repair loop has an actionable
+            // message to feed back. Inserted at the head of the list so
+            // the model sees it first when `repair_message` renders the
+            // diagnostics. The detail names the failure mode (search
+            // not found / ambiguous / empty) and the offending snippet
+            // — `EditError::Display` already formats both.
+            diags.insert(
+                0,
+                Diagnostic::error(
+                    "E0801",
+                    format!(
+                        "SEARCH/REPLACE block could not be applied to the existing file: {e}. \
+                         Re-emit each block with SEARCH copied BYTE-FOR-BYTE from the existing \
+                         file — match whitespace, punctuation, and indentation exactly."
+                    ),
+                ),
+            );
+        }
 
         if !has_errors(&diags) {
             return Ok(GenerateOutcome {
@@ -291,6 +317,40 @@ fn run_repair_loop(
     unreachable!("for loop always returns");
 }
 
+/// True when a streamed response is shaped like content we can actually do
+/// something with. Used as the gate before accepting a streaming response as
+/// authoritative; failures trigger the non-streaming fallback.
+///
+/// Three pass conditions:
+/// - Too short to be a real model output (< 30 bytes after trimming) is
+///   almost always a server-side truncation, regardless of content shape.
+///   The length floor is the cheap pre-filter the old gate did, preserved
+///   so an obviously-truncated response doesn't even make it to the
+///   parse-trial below.
+/// - Contains the SEARCH marker → the model attempted the surgical-edit
+///   form. Whether each block applies is decided downstream; if it doesn't,
+///   the repair loop's `E0801` synthetic diagnostic gives the next
+///   iteration a real lever to pull. We do *not* require the closing
+///   `REPLACE` marker because a truncated edit-block response is still
+///   recognisable as one and should follow the same downstream path
+///   rather than re-issuing the call (which would just produce the same
+///   truncation).
+/// - Trial-parses as DSL → the model returned a full rewrite, or a
+///   well-formed file alongside markup. We rely on `mogen_dsl::parse`
+///   instead of substring matching so a prose response that happens to
+///   include the word "scene" doesn't sneak past.
+pub(crate) fn stream_response_is_useful(text: &str) -> bool {
+    const STREAM_MIN_USEFUL_LEN: usize = 30;
+    let trimmed = text.trim();
+    if trimmed.len() < STREAM_MIN_USEFUL_LEN {
+        return false;
+    }
+    if trimmed.contains("<<<<<<< SEARCH") {
+        return true;
+    }
+    mogen_dsl::parse(&strip_markdown_fences(text)).is_ok()
+}
+
 /// Validate DSL text, producing a Diagnostic list. Parse errors are promoted to
 /// a synthetic E0001 diagnostic; lowering failures (e.g. unresolved `attach`
 /// references) are promoted to E0701 so the repair loop can emit them in the
@@ -342,6 +402,10 @@ pub fn is_local_only(diags: &[Diagnostic]) -> bool {
             | "E0413" | "E0414" | "E0421"
             // attach attrs
             | "E0601" | "E0602"
+            // SEARCH/REPLACE apply failure — model already attempted
+            // edit mode, the right retry is another edit-block call
+            // with the hint that SEARCH must match byte-for-byte.
+            | "E0801"
         );
         if !local {
             return false;
@@ -655,6 +719,7 @@ pub fn fix_hint(code: &str) -> Option<&'static str> {
         "E1006" => "Joint index out of range — a bone referenced by a `track` isn't in the declared skeleton. Add it or rename the track.",
         "E1007" => "Vertex weights don't sum to 1.0 — the mesh has vertices outside every bone's envelope. Widen `envelope=` on the nearest bone so each vertex sits inside at least one bone's radius (0.15–0.25 m for a humanoid limb).",
         "E1101" => "Disconnected part clusters — either `attach` the orphan parts to the main body (directly or through an intermediate), or put `tags=\"floating\"` on the orphan subtree (or an ancestor) if the gap is intentional (chandelier, rotor, orbiting body).",
+        "E0801" => "Your SEARCH text didn't appear verbatim in the file. Copy the SEARCH region BYTE-FOR-BYTE from the source (preserve every space, newline, and punctuation mark). If a fragment is ambiguous, expand SEARCH with surrounding context until it appears exactly once.",
         _ => return None,
     })
 }
@@ -991,6 +1056,7 @@ mod tests {
             "E0411", "E0412", "E0413", "E0414", "E0421",
             "E0501", "E0502", "E0503", "E0504", "E0505",
             "E0601", "E0602", "E0701",
+            "E0801",
             "E1001", "E1002", "E1003", "E1004", "E1005", "E1006", "E1007",
             "E1101",
         ] {
@@ -999,5 +1065,50 @@ mod tests {
         // Warnings and unknowns fall through.
         assert!(fix_hint("W0102").is_none());
         assert!(fix_hint("E9999").is_none());
+    }
+
+    #[test]
+    fn stream_response_is_useful_accepts_edit_blocks() {
+        let body = "I'll edit the file.\n\n<<<<<<< SEARCH\nfoo\n=======\nbar\n>>>>>>> REPLACE\n";
+        assert!(stream_response_is_useful(body));
+    }
+
+    #[test]
+    fn stream_response_is_useful_accepts_parseable_dsl() {
+        let body = "scene { box \"b\" (size=[1,1,1]) }\n";
+        assert!(stream_response_is_useful(body));
+    }
+
+    #[test]
+    fn stream_response_is_useful_accepts_dsl_inside_markdown_fences() {
+        let body = "```mogen\nscene { box \"b\" (size=[1,1,1]) }\n```\n";
+        assert!(stream_response_is_useful(body));
+    }
+
+    #[test]
+    fn stream_response_is_useful_rejects_short_response() {
+        // The old 30-byte length floor is preserved as a fast pre-filter.
+        assert!(!stream_response_is_useful("I'll modify"));
+    }
+
+    #[test]
+    fn stream_response_is_useful_rejects_long_prose_preamble() {
+        // The exact bug from the trace test: a 60+ byte prose preamble
+        // that mentions "scene" in a sentence but doesn't parse as DSL.
+        // The old 30-byte gate accepted this; the content-aware gate
+        // rejects it so the fallback re-issues the call.
+        let body = "Sure — I'll modify the scene to make the legs taller. Stand by while I work on it.";
+        assert!(!stream_response_is_useful(body));
+    }
+
+    #[test]
+    fn stream_response_is_useful_accepts_edit_blocks_even_when_search_wont_match() {
+        // The downstream `apply_edit_blocks` may still reject the body
+        // (mismatched SEARCH text), but that's handled by the E0801
+        // synthetic diagnostic — the stream-gate's job is just to
+        // decide whether to re-issue. A SEARCH marker means the model
+        // tried; re-issuing would only produce the same response.
+        let body = "<<<<<<< SEARCH\nthis won't match anything\n=======\nreplacement\n>>>>>>> REPLACE\n";
+        assert!(stream_response_is_useful(body));
     }
 }
