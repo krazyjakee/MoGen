@@ -16,9 +16,9 @@ pub use meta::{
     upsert_meta_attr, upsert_meta_list_attr,
 };
 pub use module::{
-    collect_local_import_files, collect_modules, expand_modules, resolve_imports,
-    resolve_imports_with_loader, FsLoader, LoadedFile, Loader, ModuleDef, ModuleRegistry, Param,
-    ParamDefault,
+    collect_local_import_files, collect_modules, expand_modules, parse_registry_spec,
+    resolve_imports, resolve_imports_with_loader, FsLoader, LoadedFile, Loader, ModuleDef,
+    ModuleRegistry, Param, ParamDefault, RegistrySpec,
 };
 pub use parser::parse;
 pub use stdlib::stdlib_registry;
