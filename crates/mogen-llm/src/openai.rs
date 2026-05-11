@@ -113,14 +113,25 @@ impl OpenAIClient {
 
         let mut cumulative = String::new();
         let mut last_usage: Option<RawUsage> = None;
-        let mut sse_err: Option<OpenAIError> = None;
+        // First per-frame parse error, surfaced only if we end up with
+        // zero accumulated text. Real OpenAI-compatible servers ship a
+        // grab-bag of frame shapes that drift between models (reasoning
+        // deltas, `delta: null` finish frames on some compatibility
+        // gateways, server-side error envelopes embedded as SSE data,
+        // …). Aborting the whole stream on the first surprise turned a
+        // mostly-good response into a one-token cut-off, so we now
+        // tolerate per-frame parse failures and only error out if
+        // nothing usable arrived.
+        let mut first_parse_err: Option<OpenAIError> = None;
 
         crate::stream_sse::for_each_sse_data(resp, |payload| {
             let parsed: RawChatChunk = match serde_json::from_str(payload) {
                 Ok(v) => v,
                 Err(e) => {
-                    sse_err = Some(OpenAIError::InvalidResponse(e.to_string()));
-                    return false;
+                    if first_parse_err.is_none() {
+                        first_parse_err = Some(OpenAIError::InvalidResponse(e.to_string()));
+                    }
+                    return true;
                 }
             };
             // A streamed chunk usually has exactly one delta on the first
@@ -130,7 +141,8 @@ impl OpenAIClient {
             if let Some(delta_text) = parsed
                 .choices
                 .first()
-                .and_then(|c| c.delta.content.as_deref())
+                .and_then(|c| c.delta.as_ref())
+                .and_then(|d| d.content.as_deref())
             {
                 if !delta_text.is_empty() {
                     cumulative.push_str(delta_text);
@@ -144,11 +156,10 @@ impl OpenAIClient {
         })
         .map_err(|e| OpenAIError::InvalidResponse(format!("SSE read error: {e}")))?;
 
-        if let Some(e) = sse_err {
-            return Err(e);
-        }
         if cumulative.trim().is_empty() {
-            return Err(OpenAIError::EmptyResponse);
+            // Prefer the underlying parse error if we have one — gives
+            // the caller a chance to see *why* nothing accumulated.
+            return Err(first_parse_err.unwrap_or(OpenAIError::EmptyResponse));
         }
 
         let usage = last_usage
@@ -366,8 +377,13 @@ struct RawChatChunk {
 
 #[derive(Debug, Deserialize)]
 struct RawChunkChoice {
+    // `Option` rather than `#[serde(default)]` on a concrete `RawDelta`
+    // because some OpenAI-compatible gateways (and a few of OpenAI's
+    // own finish-reason frames) ship `"delta": null` explicitly — and
+    // `null` is not a valid input for a struct-typed field, so the
+    // frame would fail to parse and abort the stream.
     #[serde(default)]
-    delta: RawDelta,
+    delta: Option<RawDelta>,
 }
 
 #[derive(Debug, Default, Deserialize)]

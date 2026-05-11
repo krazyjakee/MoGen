@@ -727,6 +727,60 @@ fn gemini_stream_enforces_budget_tokens_against_tail_usage() {
 }
 
 #[test]
+fn openai_stream_tolerates_null_delta_and_unparseable_intermediate_frame() {
+    // Two production-realistic failure modes to verify a single bad
+    // frame doesn't tear down the stream:
+    // 1. `"delta": null` on a finish-reason frame — emitted by some
+    //    OpenAI-compatible gateways and historically by OpenAI's own
+    //    reasoning models. `null` can't deserialize into a struct, so
+    //    a naive `serde_json::from_str::<RawChatChunk>` rejects it.
+    // 2. A complete-garbage interleaved frame (server-side error
+    //    envelope, dropped chunk, partial body). The accumulator must
+    //    skip it and keep reading.
+    // Expect the full text from the surrounding good frames to land.
+    let text_frame = serde_json::json!({
+        "choices": [{"index":0, "delta":{"content":"scene { box \"a\" "}}],
+    })
+    .to_string();
+    let null_delta_frame = serde_json::json!({
+        "choices": [{"index":0, "delta": serde_json::Value::Null, "finish_reason":"stop"}],
+    })
+    .to_string();
+    let garbage_frame = String::from("not even json");
+    let text_frame_2 = serde_json::json!({
+        "choices": [{"index":0, "delta":{"content":"(size=[1,1,1]) }"}}],
+    })
+    .to_string();
+    let tail = serde_json::json!({
+        "choices": [],
+        "usage": {
+            "prompt_tokens": 5,
+            "completion_tokens": 12,
+            "total_tokens": 17,
+        }
+    })
+    .to_string();
+    let (port, _reqs) = start_sse_server(vec![
+        text_frame,
+        null_delta_frame,
+        garbage_frame,
+        text_frame_2,
+        tail,
+    ]);
+    let client = LlmClient::with_base_url(
+        Provider::OpenAI,
+        "test-key",
+        format!("http://127.0.0.1:{}/v1", port),
+    );
+    let mut cb = |_d: &str, _c: &str| {};
+    let resp = client
+        .stream_generate(&GenerateConfig::new("a box"), &mut cb)
+        .expect("stream must survive a null delta and a garbage interleaved frame");
+    assert_eq!(resp.text, "scene { box \"a\" (size=[1,1,1]) }");
+    assert_eq!(resp.usage.total_tokens, 17);
+}
+
+#[test]
 fn openai_stream_enforces_budget_tokens_against_tail_usage() {
     // Same contract as the Gemini test above, exercised through the
     // OpenAI streaming path so a regression in either client surfaces

@@ -492,14 +492,22 @@ impl GeminiClient {
 
         let mut cumulative = String::new();
         let mut last_usage: Option<RawUsageMetadata> = None;
-        let mut sse_err: Option<GeminiError> = None;
+        // First per-frame parse error, retained only as a fallback for
+        // the empty-response case. Gemini emits a few candidate shapes
+        // mid-stream (text frames, `finishReason`-only tails, safety
+        // ratings) and the wire format drifts between model versions —
+        // a bad frame in the middle of an otherwise good response
+        // should not amputate the whole stream.
+        let mut first_parse_err: Option<GeminiError> = None;
 
         crate::stream_sse::for_each_sse_data(resp, |payload: &str| {
             let parsed: RawGenerateResponse = match serde_json::from_str(payload) {
                 Ok(v) => v,
                 Err(e) => {
-                    sse_err = Some(GeminiError::InvalidResponse(e.to_string()));
-                    return false;
+                    if first_parse_err.is_none() {
+                        first_parse_err = Some(GeminiError::InvalidResponse(e.to_string()));
+                    }
+                    return true;
                 }
             };
             if let Some(delta_text) = parsed
@@ -520,15 +528,13 @@ impl GeminiClient {
         })
         .map_err(|e| GeminiError::InvalidResponse(format!("SSE read error: {e}")))?;
 
-        if let Some(e) = sse_err {
-            return Err(e);
-        }
         // Mirror the OpenAI streaming path: a whitespace-only response
         // is just as useless as an empty one (no parser anchors land,
         // the repair loop has nothing to feed back), so treat them the
-        // same.
+        // same. Surface the first parse error if we have one so callers
+        // can debug *why* nothing arrived.
         if cumulative.trim().is_empty() {
-            return Err(GeminiError::EmptyResponse);
+            return Err(first_parse_err.unwrap_or(GeminiError::EmptyResponse));
         }
 
         let usage = last_usage
