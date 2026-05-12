@@ -2,6 +2,8 @@
 // splits the floorplate into rooms; soft adjacency rules keep the kitchen
 // near the living room and the bathrooms near the bedrooms.
 
+meta (mogen_version = "0.1.5")
+
 material "warm_wood" (color=[0.55, 0.38, 0.22], roughness=0.75)
 material "tile"      (color=[0.86, 0.86, 0.83], roughness=0.35)
 material "oak"       (color=[0.62, 0.45, 0.28], roughness=0.7)
@@ -10,12 +12,13 @@ material "white_tile" (color=[0.95, 0.95, 0.95], roughness=0.3)
 
 building "apartment" (
   seed=11,
-  style="apartment-block",
+  style="hotel-corridor",
   floor_area=85,
-  rooms=6,
+  rooms=7,
   windows=8,
   entrances=1,
   ceiling_height=2.6,
+  debug_hide_roof=1,
   mat="plaster",
 ) {
   room_type "bedroom"  (kind=private, density=4, mat="warm_wood")

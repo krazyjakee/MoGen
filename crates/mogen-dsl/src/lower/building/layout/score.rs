@@ -1,8 +1,16 @@
 //! Adjacency scoring for layout attempts. Higher score = better. The solver
 //! picks the highest-scoring attempt; ties break toward the lowest attempt
 //! index so the result remains deterministic in the user-facing `seed=`.
+//!
+//! Tranche 3 widens the score from "shared-edge adjacency only" to also
+//! reward sensible architectural priors (service rooms cluster, public
+//! rooms near the entrance, private/secure rooms away from it) and
+//! penalise rooms whose area falls outside their `room_type.min_area`
+//! / `max_area` band. All new terms are soft scalars so the solver can
+//! still pick a "less ideal but feasible" layout when the constraints
+//! collide.
 
-use super::super::config::BuildingCfg;
+use super::super::config::{BuildingCfg, RoomKind};
 use super::{cell_type, CellKind, Floorplate};
 
 pub(super) fn score(cfg: &BuildingCfg, plate: &Floorplate) -> f32 {
@@ -22,6 +30,11 @@ pub(super) fn score(cfg: &BuildingCfg, plate: &Floorplate) -> f32 {
             };
             total += rule_pair_score(cfg, &a_type.name, &b_type.name) * edge;
             total += rule_pair_score(cfg, &b_type.name, &a_type.name) * edge;
+            // Kind-based priors apply to every adjacent pair regardless
+            // of declared rules — they're the soft "common sense" layer
+            // that pushes the solver toward plausible floorplans even
+            // when the author doesn't spell out every rule.
+            total += kind_pair_prior(a_type.kind, b_type.kind) * edge;
         }
     }
 
@@ -37,8 +50,96 @@ pub(super) fn score(cfg: &BuildingCfg, plate: &Floorplate) -> f32 {
         }
     }
 
+    total += area_band_score(cfg, plate);
+    total += entrance_distance_score(cfg, plate);
+
     total
 }
+
+/// Penalise cells whose area falls outside their type's `[min_area,
+/// max_area]` band. Soft penalty: 0.2 per m² of shortfall/overshoot so a
+/// modest violation can still be picked over a worse-adjacency layout,
+/// but a glaring one (e.g. a 4 m² room declared `min_area=20`) will be
+/// dominated by this term.
+fn area_band_score(cfg: &BuildingCfg, plate: &Floorplate) -> f32 {
+    let mut total = 0.0;
+    for cell in &plate.rooms {
+        if !matches!(cell.kind, CellKind::Room) {
+            continue;
+        }
+        let Some(typ) = cell_type(cfg, cell) else {
+            continue;
+        };
+        let area = cell.rect.area();
+        if let Some(min_a) = typ.min_area {
+            if area < min_a {
+                total -= (min_a - area) * 0.2;
+            }
+        }
+        if let Some(max_a) = typ.max_area {
+            if area > max_a {
+                total -= (area - max_a) * 0.2;
+            }
+        }
+    }
+    total
+}
+
+/// Reward public rooms placed near the south entrance and private /
+/// secure rooms placed away from it. Returns 0 if there's no usable
+/// floorplate (degenerate case).
+fn entrance_distance_score(cfg: &BuildingCfg, plate: &Floorplate) -> f32 {
+    let max_d2 =
+        (plate.bounds.width().powi(2) + plate.bounds.depth().powi(2)).max(1e-3);
+    let max_d = max_d2.sqrt();
+    let entrance_x = 0.5 * (plate.bounds.x_min + plate.bounds.x_max);
+    let entrance_z = plate.bounds.z_min;
+    let mut total = 0.0;
+    for cell in &plate.rooms {
+        if !matches!(cell.kind, CellKind::Room) {
+            continue;
+        }
+        let Some(typ) = cell_type(cfg, cell) else {
+            continue;
+        };
+        let c = cell.rect.centre();
+        let dx = c[0] - entrance_x;
+        let dz = c[1] - entrance_z;
+        let t = ((dx * dx + dz * dz).sqrt() / max_d).clamp(0.0, 1.0);
+        // t=0 ⇒ at entrance, t=1 ⇒ furthest corner.
+        let weight = match typ.kind {
+            RoomKind::Public => -t * 0.6,           // closer is better
+            RoomKind::Private => -(1.0 - t) * 0.6,  // further is better
+            RoomKind::Secure => -(1.0 - t) * 0.8,   // strongly prefer further
+            RoomKind::Service => -t.min(1.0 - t) * 0.3, // prefer middle-ish
+            RoomKind::Utility => -(1.0 - t) * 0.2,  // tucked away
+            RoomKind::StaffOnly => -(1.0 - t) * 0.3,
+        };
+        total += weight;
+    }
+    total
+}
+
+/// Pairwise "good neighbour" prior keyed on `RoomKind`. These are gentle
+/// nudges, not hard rules — an author-declared `adjacency` rule with
+/// `±1.0 * edge_length` will outweigh them when they conflict.
+fn kind_pair_prior(a: RoomKind, b: RoomKind) -> f32 {
+    use RoomKind::*;
+    match (a, b) {
+        (Service, Service) => 0.25,
+        (Private, Private) => 0.20,
+        (Public, Service) | (Service, Public) => 0.15,
+        (Public, Public) => 0.10,
+        (Public, Private) | (Private, Public) => -0.25,
+        (Service, Private) | (Private, Service) => 0.10,
+        (Secure, Public) | (Public, Secure) => -0.35,
+        (Secure, Secure) => 0.20,
+        (StaffOnly, Public) | (Public, StaffOnly) => -0.20,
+        (Utility, Public) | (Public, Utility) => -0.10,
+        _ => 0.0,
+    }
+}
+
 
 fn rule_pair_score(cfg: &BuildingCfg, a_name: &str, b_name: &str) -> f32 {
     for rule in &cfg.adjacencies {

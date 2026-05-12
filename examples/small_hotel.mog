@@ -1,0 +1,32 @@
+// Small two-storey hotel illustrating `style="hotel-corridor"` from
+// building tranche 3. A single straight corridor runs along the long
+// axis of every floor; guest rooms are uniformly tiled on both sides.
+// The reception/lobby room on the ground floor sits adjacent to the
+// entrance through the kind-prior + entrance-distance terms in the
+// layout scorer.
+
+material "plaster"     (color=[0.94, 0.92, 0.88], roughness=0.85)
+material "warm_carpet" (color=[0.55, 0.32, 0.22], roughness=0.95)
+material "tile"        (color=[0.90, 0.90, 0.88], roughness=0.40)
+material "white_tile"  (color=[0.96, 0.96, 0.96], roughness=0.30)
+
+building "small_hotel" (
+  seed=13,
+  style="hotel-corridor",
+  floor_area=160,
+  rooms=14,
+  floors_above=2,
+  staircases=1,
+  elevators=1,
+  windows=18,
+  entrances=1,
+  ceiling_height=2.7,
+  mat="plaster",
+) {
+  room_type "guest"    (kind=private, density=6, mat="warm_carpet", min_area=14, max_area=22)
+  room_type "lobby"    (kind=public,  density=1, mat="tile",        min_area=18)
+  room_type "service"  (kind=service, density=1, mat="white_tile")
+
+  adjacency "lobby"   (adjacent_to=["service"])
+  adjacency "service" (away_from=["guest"])
+}

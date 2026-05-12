@@ -110,8 +110,15 @@ pub(super) fn emit_rooms(
             if !door_belongs_to_wall(door, axis, *fixed, range) {
                 continue;
             }
+            // Vertical interior walls are rotated +90° around Y (local +X
+            // → world -Z), so a door at world Z = `door.z` maps to local
+            // X = -(door.z - mid_along). Horizontal walls stay at
+            // identity so local X = door.x - mid_along. Currently doors
+            // always sit at the shared edge midpoint, masking the bug,
+            // but the formula needs to be correct for off-centre cases
+            // (T-junction clamping).
             let along = match axis {
-                WallAxis::Vertical => door.z - mid_along,
+                WallAxis::Vertical => mid_along - door.z,
                 WallAxis::Horizontal => door.x - mid_along,
             };
             let cy = 0.5 * door.height - 0.5 * h;

@@ -25,7 +25,16 @@ const BUILDING_ROOFS: &[&str] = &[
     "flat", "pitched", "gabled", "hipped", "mansard", "shed",
 ];
 
-const BUILDING_STYLES_T1: &[&str] = &["grid", "apartment-block"];
+/// Layout styles whose lowering is implemented. Authoring a style outside
+/// this set is rejected so an unimplemented style doesn't silently fall
+/// through to a different algorithm at build time. Grow this list as
+/// each tranche lands a new style.
+const BUILDING_STYLES_IMPLEMENTED: &[&str] = &[
+    "grid",
+    "apartment-block",
+    "hotel-corridor",
+    "office-core",
+];
 
 pub(super) fn check_building(n: &Node, diags: &mut Vec<Diagnostic>) {
     // Children must be `room_type` or `adjacency` only. Everything else gets
@@ -58,14 +67,14 @@ pub(super) fn check_building(n: &Node, diags: &mut Vec<Diagnostic>) {
                 )
                 .with_span(n.span),
             );
-        } else if !BUILDING_STYLES_T1.contains(&name) {
+        } else if !BUILDING_STYLES_IMPLEMENTED.contains(&name) {
             diags.push(
                 Diagnostic::error(
                     "E1110",
                     format!(
                         "building style \"{name}\" is reserved for a future tranche \
-                         — see docs/building.md (T1 supports: {})",
-                        BUILDING_STYLES_T1.join(", ")
+                         — see docs/building.md (currently supported: {})",
+                        BUILDING_STYLES_IMPLEMENTED.join(", ")
                     ),
                 )
                 .with_span(n.span),

@@ -14,6 +14,8 @@ use crate::ast::{Node, Value};
 pub(super) enum Style {
     Grid,
     ApartmentBlock,
+    HotelCorridor,
+    OfficeCore,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -32,7 +34,6 @@ pub(super) enum RoomKind {
 }
 
 #[derive(Clone, Debug)]
-#[allow(dead_code)] // `kind`, `min_area`, `max_area` honoured by T3+ scoring.
 pub(super) struct RoomType {
     pub name: String,
     pub kind: RoomKind,
@@ -102,7 +103,9 @@ pub(super) fn read_cfg(node: &Node) -> Result<BuildingCfg> {
     let style = match attr_str(node, "style").as_deref() {
         Some("grid") | None => Style::Grid,
         Some("apartment-block") => Style::ApartmentBlock,
-        Some(other) => bail!("unsupported building style \"{other}\" in Tranche 1"),
+        Some("hotel-corridor") => Style::HotelCorridor,
+        Some("office-core") => Style::OfficeCore,
+        Some(other) => bail!("unsupported building style \"{other}\""),
     };
     let roof = match attr_str(node, "roof").as_deref() {
         Some("flat") | None => Roof::Flat,
@@ -162,6 +165,25 @@ pub(super) fn read_cfg(node: &Node) -> Result<BuildingCfg> {
     }
     if room_types.is_empty() {
         bail!("`building` requires at least one `room_type` declaration");
+    }
+
+    // Hotel / office styles need a corridor cell. If the author didn't
+    // declare one we add a synthetic public corridor with density=0 so
+    // it's never sampled as a regular room but is still pickable by
+    // `corridor_type_index()` and lookups by name.
+    if matches!(style, Style::HotelCorridor | Style::OfficeCore)
+        && !room_types
+            .iter()
+            .any(|r| r.name.eq_ignore_ascii_case("corridor"))
+    {
+        room_types.push(RoomType {
+            name: "corridor".into(),
+            kind: RoomKind::Public,
+            density: 0.0,
+            mat: None,
+            min_area: None,
+            max_area: None,
+        });
     }
 
     Ok(BuildingCfg {

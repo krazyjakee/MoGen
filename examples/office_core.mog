@@ -1,0 +1,23 @@
+// `style="office-core"` example: central corridor spine with smaller
+// perpendicular offices flanking it. Office-core uses a tighter target
+// run length than hotel-corridor so the same floorplate carries more
+// cells, evoking the rhythm of a typical workspace floor.
+
+material "concrete" (color=[0.78, 0.78, 0.78], roughness=0.85)
+material "carpet"   (color=[0.30, 0.32, 0.36], roughness=0.95)
+material "glass"    (color=[0.85, 0.90, 0.95], roughness=0.10, metallic=0.05)
+
+building "office_core" (
+  seed=7,
+  style="office-core",
+  floor_area=180,
+  rooms=18,
+  floors_above=1,
+  windows=14,
+  entrances=1,
+  ceiling_height=2.8,
+  mat="concrete",
+) {
+  room_type "office"  (kind=staff_only, density=4, mat="carpet",  min_area=6, max_area=12)
+  room_type "meeting" (kind=public,     density=1, mat="glass",   min_area=12)
+}

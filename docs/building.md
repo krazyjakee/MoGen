@@ -213,8 +213,8 @@ room cells in floor-local coordinates.
 | `maze` | recursive backtracker on a grid, walls between cells removed by spanning tree | maze interiors |
 
 Tranches 2-4 implement these in priority order: **grid + apartment-block**
-land in Tranche 1; **hotel-corridor + office-core** in Tranche 3; **radial,
-organic, maze** in Tranche 4 once the layout interface is proven.
+landed in Tranche 1; **hotel-corridor + office-core** landed in Tranche 3;
+**radial, organic, maze** in Tranche 4 once the layout interface is proven.
 
 Each algorithm returns the same data:
 
@@ -250,8 +250,24 @@ determinism.
 
 `adjacent_to` and `away_from` are pure adjacency rules — they don't impose
 ordering, distance, or co-floor constraints. If finer control is needed,
-Tranche 3 can add `on_floor=…`, `near_entrance=…`, `min_distance=…` without
-breaking the existing surface.
+later tranches can add `on_floor=…`, `near_entrance=…`, `min_distance=…`
+without breaking the existing surface.
+
+Since Tranche 3 the scorer also bakes in:
+
+- **Kind-based priors** that nudge same-kind cells together (service↔service,
+  private↔private) and apart from contrasting kinds (public↔private,
+  public↔secure). These apply on top of the explicit `adjacency` rules.
+- **Distance-from-entrance** terms that pull `public` cells toward the
+  south entrance and push `private` / `secure` cells away from it. Service
+  cells prefer the middle of the plate.
+- **Area-band penalties** when a cell's area falls outside its `room_type`
+  `min_area` / `max_area` bound. Soft penalty (~0.2 per m² shortfall) so
+  the solver still picks a slightly-too-small room over a feasible-but-
+  badly-adjacent one.
+
+All four terms (declared rules, kind priors, entrance distance, area band)
+sum into a single score; the highest-scoring of 10 attempts wins.
 
 ---
 
@@ -358,11 +374,37 @@ Scope (delivered):
   upper floors have no entrance holes, stair XY consistent across
   storeys, deterministic mesh hash under same seed.
 
-### Tranche 3 — remaining layout styles + better scoring
+### Tranche 3 — remaining layout styles + better scoring (landed)
 
-- `hotel-corridor` and `office-core` algorithms.
-- `min_area` / `max_area` honoured by the solver.
-- Richer scoring: kind-based priors, distance-from-entrance term.
+Scope (delivered):
+
+- `style="hotel-corridor"` — single straight corridor along the longer
+  axis with uniformly tiled side rooms (≥ 2.4 m run per room). Falls
+  back to `grid` on floorplates too thin for a centre corridor + two
+  room strips.
+- `style="office-core"` — same machinery as hotel-corridor with a
+  tighter target run (~3 m) so the same floorplate carries roughly
+  twice as many cells per side. Reads as the rhythm of a typical
+  office floor.
+- Both styles synthesise a `corridor` room_type at `density=0` when
+  the author doesn't declare one, so the corridor cell can be picked
+  up by `pick_door_tree_root` and surfaced as `room_type=corridor`
+  in tags.
+- `min_area` / `max_area` honoured as a soft penalty (~0.2 per m²
+  shortfall) in `score.rs::area_band_score`.
+- Kind-based pairwise priors in `score.rs::kind_pair_prior` push
+  service-service and private-private clusters together and
+  public↔private / secure↔public pairs apart.
+- Distance-from-entrance term in `score.rs::entrance_distance_score`
+  pulls public cells toward the south entrance and pushes private /
+  secure cells away from it. Service prefers the plate's middle.
+- Validator: `BUILDING_STYLES_IMPLEMENTED` grew to include
+  `hotel-corridor` and `office-core`; the "reserved for a future
+  tranche" diagnostic now lists `radial`, `organic`, `maze` only.
+- Examples: `examples/small_hotel.mog`, `examples/office_core.mog`.
+- Tests: hotel/office corridor-cell smoke, hotel corridor centred on
+  long axis, `min_area` honoured, entrance-distance prior doesn't
+  regress prior layouts.
 
 ### Tranche 4 — roof shapes + organics
 
@@ -403,16 +445,24 @@ crates/mogen-dsl/src/lower/building/
     roof.rs     ~100 LOC  Tranche 1: flat only; stubs the other variants.
 ```
 
-Tranches 2-4 will add:
+Tranches 2-3 added (each ≤ 800 lines):
 
 ```
-  layout/hotel.rs
-  layout/office.rs
+  layout/corridor.rs     apartment-block with explicit central corridor (T2)
+  layout/hotel.rs        hotel-corridor style (T3)
+  layout/office.rs       office-core style (T3, thin wrapper over hotel core)
+  emit/circulation.rs    stairs + elevators (T2)
+  emit/skylight.rs       top-floor skylight cutouts + module stamps (T2)
+  emit/wall_build.rs     wall-with-holes mesh assembly (T2 refactor)
+```
+
+Tranche 4 will add:
+
+```
   layout/radial.rs
   layout/organic.rs
   layout/maze.rs
-  emit/circulation.rs   stairs + elevators
-  emit/roof.rs          remaining shapes
+  emit/roof.rs          non-flat roof shapes
 ```
 
 Each file ≤ 800 lines. If any approaches the cap, split by sub-concern
@@ -433,7 +483,7 @@ Each file ≤ 800 lines. If any approaches the cap, split by sub-concern
 | `floors_above + floors_below > 1` with `staircases == 0` | warning `W1113` (upper floors disconnected) | T2 |
 | `staircases > 0` / `elevators > 0` / `skylights > 0` | valid since T2 | T2 |
 | Non-flat `roof=` | error `E1111` (pending tranche) | T1 |
-| `style` outside `grid`/`apartment-block` | error `E1110` (pending tranche) | T1 |
+| `style` outside `grid`/`apartment-block`/`hotel-corridor`/`office-core` | error `E1110` (pending tranche) | T1 (set widened in T3) |
 | `rooms < 1` | error | T1 |
 | `floor_area` ≤ 0 | error | T1 |
 | External/internal/window/skylight/stair/elevator module ref not found | error | T1 |

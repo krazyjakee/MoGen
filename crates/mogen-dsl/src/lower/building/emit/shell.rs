@@ -235,11 +235,22 @@ fn opening_local(
     length: f32,
     height: f32,
 ) -> Option<[f32; 4]> {
+    // Map the opening's world position into the wall mesh's local X axis
+    // (its long axis). The wall is rotated around Y so that its local +X
+    // points along the perimeter; the sign here matches that rotation:
+    //   North (rot=identity):     local +X → world +X →  along =  Δx
+    //   South (rot=180° Y):       local +X → world -X →  along = -Δx
+    //   East  (rot=-90° Y):       local +X → world +Z →  along =  Δz
+    //   West  (rot=+90° Y):       local +X → world -Z →  along = -Δz
+    // Previously East/West were swapped, which placed every perimeter
+    // hole mirrored about the wall's centre — the visible symptom was
+    // that east/west window models sat in front of the wrong-sized hole
+    // (small window in a large hole, large in a small).
     let along = match side {
         WallSide::North => op.x - 0.5 * (bounds.x_min + bounds.x_max),
         WallSide::South => -(op.x - 0.5 * (bounds.x_min + bounds.x_max)),
-        WallSide::East => -(op.z - 0.5 * (bounds.z_min + bounds.z_max)),
-        WallSide::West => op.z - 0.5 * (bounds.z_min + bounds.z_max),
+        WallSide::East => op.z - 0.5 * (bounds.z_min + bounds.z_max),
+        WallSide::West => -(op.z - 0.5 * (bounds.z_min + bounds.z_max)),
     };
     let cy = op.sill + 0.5 * op.height - 0.5 * height;
     if op.width >= length - 0.2 || op.height >= height - 0.1 {

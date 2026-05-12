@@ -11,6 +11,8 @@
 mod grid;
 mod bsp;
 mod corridor;
+mod hotel;
+mod office;
 mod score;
 
 use anyhow::{bail, Result};
@@ -188,6 +190,18 @@ fn solve_storey(
                 }
                 None => bsp::layout(layout_bounds, &assigned_types, &mut state),
             },
+            Style::HotelCorridor => {
+                let idx = cfg
+                    .corridor_type_index()
+                    .expect("hotel-corridor synthesises a corridor type in read_cfg");
+                hotel::layout(layout_bounds, &assigned_types, idx, &mut state)
+            }
+            Style::OfficeCore => {
+                let idx = cfg
+                    .corridor_type_index()
+                    .expect("office-core synthesises a corridor type in read_cfg");
+                office::layout(layout_bounds, &assigned_types, idx, &mut state)
+            }
         };
         let scratch_plate = Floorplate {
             bounds: full_bounds,
