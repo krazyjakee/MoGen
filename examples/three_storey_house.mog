@@ -3,6 +3,8 @@
 // shared across every floor, exterior windows on the above-ground
 // storeys, and a roof-level skylight that carves the top ceiling slab.
 
+meta (mogen_version = "0.1.5")
+
 material "warm_wood"  (color=[0.55, 0.38, 0.22], roughness=0.75)
 material "tile"       (color=[0.86, 0.86, 0.83], roughness=0.35)
 material "oak"        (color=[0.62, 0.45, 0.28], roughness=0.7)
@@ -13,11 +15,13 @@ building "townhouse" (
   seed=17,
   style="apartment-block",
   floor_area=110,
-  rooms=14,
+  rooms=24,
   floors_above=3,
   floors_below=1,
   windows=18,
   skylights=2,
+  debug_hide_roof=1,
+  debug_render_floor=0,
   entrances=1,
   staircases=1,
   elevators=1,

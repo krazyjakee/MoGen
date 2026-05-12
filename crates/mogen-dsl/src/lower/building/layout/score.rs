@@ -174,6 +174,7 @@ mod tests {
             style: Style::Grid,
             mat_style: String::new(),
             floor_area: 100.0,
+            cellar_area: None,
             rooms: 2,
             floors_above: 1,
             floors_below: 0,

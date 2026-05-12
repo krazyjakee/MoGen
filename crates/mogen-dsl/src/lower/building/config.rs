@@ -16,11 +16,28 @@ pub(super) enum Style {
     ApartmentBlock,
     HotelCorridor,
     OfficeCore,
+    Radial,
+    Organic,
+    Maze,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Roof {
     Flat,
+    /// Gable along the longer axis (the v1 axis-aligned implementation treats
+    /// `pitched` as a synonym of `gabled`: sloped end-faces would require non-
+    /// axis-aligned vertices we have nowhere to round-trip through).
+    Gabled,
+    Pitched,
+    Hipped,
+    Mansard,
+    Shed,
+}
+
+impl Roof {
+    pub fn is_flat(self) -> bool {
+        matches!(self, Roof::Flat)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,12 +75,16 @@ pub(super) struct WindowModules {
 }
 
 #[derive(Clone, Debug)]
-#[allow(dead_code)] // `mat_style`, multi-floor, circulation, skylight fields land in T2+.
+#[allow(dead_code)] // `mat_style` is forwarded to texture generation only; not used during lowering.
 pub(super) struct BuildingCfg {
     pub seed: u32,
     pub style: Style,
     pub mat_style: String,
     pub floor_area: f32,
+    /// Optional smaller footprint for below-ground storeys. `None` means
+    /// basements reuse `floor_area`. When `Some`, every storey with
+    /// `storey < 0` is solved against this footprint instead.
+    pub cellar_area: Option<f32>,
     pub rooms: u32,
     pub floors_above: u32,
     pub floors_below: u32,
@@ -105,15 +126,27 @@ pub(super) fn read_cfg(node: &Node) -> Result<BuildingCfg> {
         Some("apartment-block") => Style::ApartmentBlock,
         Some("hotel-corridor") => Style::HotelCorridor,
         Some("office-core") => Style::OfficeCore,
+        Some("radial") => Style::Radial,
+        Some("organic") => Style::Organic,
+        Some("maze") => Style::Maze,
         Some(other) => bail!("unsupported building style \"{other}\""),
     };
     let roof = match attr_str(node, "roof").as_deref() {
         Some("flat") | None => Roof::Flat,
-        Some(other) => bail!("unsupported building roof \"{other}\" in Tranche 1"),
+        Some("gabled") => Roof::Gabled,
+        Some("pitched") => Roof::Pitched,
+        Some("hipped") => Roof::Hipped,
+        Some("mansard") => Roof::Mansard,
+        Some("shed") => Roof::Shed,
+        Some(other) => bail!("unsupported building roof \"{other}\""),
     };
     let mat_style = attr_str(node, "mat_style").unwrap_or_default();
 
     let floor_area = node.attr_number("floor_area").unwrap_or(120.0).max(4.0);
+    let cellar_area = node
+        .attr_number("cellar_area")
+        .filter(|v| *v > 0.0)
+        .map(|v| v.max(4.0));
     let rooms = node.attr_number("rooms").unwrap_or(4.0).max(1.0) as u32;
     let floors_above = node.attr_number("floors_above").unwrap_or(1.0).max(1.0) as u32;
     let floors_below = node.attr_number("floors_below").unwrap_or(0.0).max(0.0) as u32;
@@ -191,6 +224,7 @@ pub(super) fn read_cfg(node: &Node) -> Result<BuildingCfg> {
         style,
         mat_style,
         floor_area,
+        cellar_area,
         rooms,
         floors_above,
         floors_below,

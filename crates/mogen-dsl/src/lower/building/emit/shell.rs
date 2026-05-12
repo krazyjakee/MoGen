@@ -56,12 +56,16 @@ pub(super) fn emit_shell(
         &floor_holes,
     );
 
-    // Ceiling slab: only the topmost storey emits one (it doubles as the
-    // roof for flat-roof buildings). Every other storey's ceiling IS the
-    // floor slab of the storey above. Skylight rects (planned upstream so
-    // shell + skylight emission see identical XY) are carved into it here
-    // so the slab geometry is one watertight mesh.
-    if ctx.is_top {
+    // Ceiling slab: only the topmost storey emits one — and only when the
+    // roof is `flat`, in which case the slab IS the roof. For every non-
+    // flat roof (gabled/pitched/hipped/mansard/shed) `roof::emit_roof`
+    // replaces the slab with a proper roof mesh, so emitting a slab here
+    // would leave a flat plane visible from below through the attic.
+    // Every other storey's ceiling IS the floor slab of the storey above.
+    // Skylight rects (planned upstream so shell + skylight emission see
+    // identical XY) are carved into it here so the slab geometry is one
+    // watertight mesh.
+    if ctx.is_top && cfg.roof.is_flat() {
         emit_slab(
             parent,
             graph,

@@ -182,7 +182,7 @@ pub fn attrs_for_kind(kind: &str) -> &'static [&'static str] {
             "form", "leader_bias", "multi_stem",
         ],
         "building" => &[
-            "seed", "style", "mat_style", "floor_area", "rooms",
+            "seed", "style", "mat_style", "floor_area", "cellar_area", "rooms",
             "floors_above", "floors_below", "windows", "skylights", "roof",
             "ceiling_height", "door_w", "door_h", "window_w", "window_h",
             "wall_thickness", "ceiling_thickness", "entrances",
@@ -385,6 +385,7 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         | ("branch", "multi_stem") => "number",
         ("branch", "leaf_mat") | ("branch", "form") => "string",
         ("building", "floor_area")
+        | ("building", "cellar_area")
         | ("building", "rooms")
         | ("building", "floors_above")
         | ("building", "floors_below")

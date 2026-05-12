@@ -1,8 +1,9 @@
 # Building interior generation
 
-This document is the long-lived plan for the `building` feature. The PR that
-landed Tranche 1 covers a slice of the surface; the rest of this file maps the
-full design so subsequent PRs can pick up without reconstructing the intent.
+This document is the long-lived plan for the `building` feature. Tranches 1–4
+have all landed; every layout style and roof shape originally specified is
+implemented. The tranche schedule below stays in the doc as the change log;
+the surface above the schedule describes the current behaviour.
 
 `building` is a top-level node kind that expands deterministically into a full
 multi-room interior — walls, floor/ceiling slabs, openings, doors, windows,
@@ -63,6 +64,7 @@ building "house" (
 | `style` | `"grid"` | enum | Layout algorithm. See [Styles](#styles). |
 | `mat_style` | `""` | string | Free-text style hint forwarded to material/texture generation. Has no geometric effect. |
 | `floor_area` | `120` | m², per floor | Target floorplate area; the layout solver picks an aspect ratio close to √2 unless `style` overrides. |
+| `cellar_area` | _unset_ | m² | Optional smaller footprint for basement storeys. When set, every storey with `floors_below` ≥ 1 uses this area instead of `floor_area`, east-aligned with the above-ground plate so the vertical-circulation column stays shared. Clamped to ≤ `floor_area`. |
 | `rooms` | `4` | int ≥ 1 | Total rooms across **all** floors. Distributed proportionally to floor area. |
 | `floors_above` | `1` | int ≥ 1 | Storeys above ground (incl. ground floor). |
 | `floors_below` | `0` | int ≥ 0 | Basement storeys. |
@@ -173,20 +175,26 @@ ast::Node{kind="building"}
    │
    └─ lower::building::expand_building(node, parent, graph)
         1. read_cfg              — AST attrs → BuildingCfg
-        2. sample_rooms_per_floor — distribute `rooms` across floors using
-                                    floor_area weights and per-type density
-        3. layout::solve         — for each floor, run style-specific
-                                    subdivision, score adjacency, pick the
-                                    best of N attempts
-        4. emit::shell           — perimeter walls with hole specs for
-                                    entrances + windows; slabs
-        5. emit::rooms           — interior walls with door holes
-        6. emit::openings        — instantiate door/window/skylight modules
-                                    at hole centres
-        7. emit::circulation     — staircase boxes (interior cutouts on
-                                    each floor's slab), elevator shafts
-        8. emit::roof            — style-driven roof geometry
-        9. mark wrapper subtree non-editable
+        2. layout::solve         — compute bounds_above (and a smaller
+                                    east-aligned bounds_below when
+                                    `cellar_area` is set), plan the
+                                    shared circulation column against the
+                                    smaller of the two, then for each
+                                    storey run the style-specific
+                                    subdivision (best of N attempts under
+                                    score::score).
+        3. emit::shell           — perimeter walls with hole specs for
+                                    entrances + windows; slabs (top slab
+                                    is suppressed when roof != Flat).
+        4. emit::rooms           — interior walls with door holes.
+        5. emit::openings        — instantiate door/window/skylight
+                                    modules at hole centres.
+        6. emit::circulation     — staircase flights and elevator shafts
+                                    spanning every storey.
+        7. emit::roof            — Flat: no-op (slab IS the roof).
+                                    Non-flat: one or more roof meshes
+                                    plus gable end-walls.
+        8. mark wrapper subtree non-editable.
 ```
 
 Module instantiation reuses the existing module-expansion machinery: the
@@ -212,9 +220,13 @@ room cells in floor-local coordinates.
 | `organic` | Voronoi from seeded cell centres, axis-aligned snap of edges | clinic / lobby |
 | `maze` | recursive backtracker on a grid, walls between cells removed by spanning tree | maze interiors |
 
-Tranches 2-4 implement these in priority order: **grid + apartment-block**
-landed in Tranche 1; **hotel-corridor + office-core** landed in Tranche 3;
-**radial, organic, maze** in Tranche 4 once the layout interface is proven.
+All seven styles ship after Tranche 4: **grid + apartment-block** landed in
+Tranche 1; **hotel-corridor + office-core** in Tranche 3; **radial, organic,
+maze** in Tranche 4. All cells remain axis-aligned rectangles — the more
+"organic" styles approximate their conceptual shape under that constraint
+(`radial` produces concentric rectangular bands; `organic` jitters grid
+lines deterministically; `maze` extracts one full-axis corridor from a
+spanning tree and emits the remaining cells as small rooms).
 
 Each algorithm returns the same data:
 
@@ -289,24 +301,31 @@ re-attempts that floor with a different layout seed.
 
 ---
 
-## Roof (Tranche 4)
+## Roof
 
 `roof="flat"`: top-storey ceiling slab is the roof; trivial.
 
-For pitched/gabled/hipped/mansard/shed: the top slab is replaced by a roof
-mesh generated via existing primitives (`prism`, `wedge`, `extrude`) and
-parametrised by an internal `pitch_degrees=30` default.
+For every other shape the top-storey ceiling slab is **suppressed** and a
+roof mesh is emitted in its place. Default pitch is 30° (`roof_h = 0.5 *
+min(width, depth) * tan(30°)`); there is no per-roof attribute for pitch
+in v1.
 
-`roof="gabled"`: two `wedge` meshes mirrored across the long axis, with two
-triangular end walls extruded from the floorplate.
+| `roof=` | construction |
+|---|---|
+| `shed` | one `wedge_mesh` spanning the whole footprint, sloping south→north |
+| `pitched` / `gabled` | two `wedge_mesh` halves meeting at a ridge along the longer axis, plus two triangular end-walls extruded from `extrude_mesh` flush with the perimeter walls. `pitched` is a synonym of `gabled` in v1 — sloped end-faces would require non-axis-aligned vertices we have no representation for |
+| `hipped` | one `frustum_mesh` whose top edge collapses to an apex (square footprint) or a ridge along the longer axis (rectangular footprint) — four slopes from a single watertight mesh |
+| `mansard` | two stacked frustums: a steep ~60° lower tier and a shallow upper tier tapering to a short ridge (Second Empire profile) |
 
-`roof="hipped"`: four `wedge` slopes meeting at a ridge or apex.
+Every roof child carries `role="roof"`; gable end-walls carry
+`role="gable_wall"`. The roof's base Y is `ceiling_height` (the top of the
+perimeter walls), so the roof sits flush against the walls without a gap.
 
-`roof="mansard"`: lower steep slope (60°) + upper shallow slope (15°), each
-built from `frustum`/`wedge`.
-
-`roof="shed"`: single `wedge` over the whole footprint sloping toward one
-long side.
+**Skylight × non-flat roof:** `skylights > 0` only works with `roof="flat"`
+in T4 — the skylight planner short-circuits when the roof isn't flat and
+the validator emits warning `W1114` so the author notices the silent drop.
+Cutting holes through a sloped wedge would need CSG against the roof
+mesh; that's saved for a future tranche.
 
 ---
 
@@ -406,13 +425,35 @@ Scope (delivered):
   long axis, `min_area` honoured, entrance-distance prior doesn't
   regress prior layouts.
 
-### Tranche 4 — roof shapes + organics
+### Tranche 4 — roof shapes + organic styles + cellar (landed)
 
-- `pitched`, `gabled`, `hipped`, `mansard`, `shed` roof emitters.
-- `radial`, `organic`, `maze` layout algorithms.
-- Basement-specific layout (`floors_below > 0` may reuse the ground floor's
-  footprint or a smaller cellar footprint via a `cellar_area=` attr added
-  here).
+Scope (delivered):
+
+- Five non-flat roof shapes (`pitched`, `gabled`, `hipped`, `mansard`,
+  `shed`) implemented in `emit/roof.rs` from `wedge_mesh`,
+  `frustum_mesh`, and `extrude_mesh`. The top-storey ceiling slab is
+  suppressed for every non-flat roof so the roof mesh provides the
+  upper closure of the volume.
+- Three new layout styles (`radial`, `organic`, `maze`) in
+  `layout/radial.rs`, `layout/organic.rs`, `layout/maze.rs`. All return
+  axis-aligned `Vec<RoomCell>` and fall back to `grid::layout` on plates
+  too small to honour their idiom.
+- `cellar_area=` attribute: optional smaller footprint for basement
+  storeys. East-aligned with the above-ground plate so the
+  vertical-circulation column stays shared across every storey. Clamped
+  to ≤ `floor_area` (a larger cellar can't exist beneath a smaller
+  ground floor); the validator emits `W1116` if the author tries.
+- New validator warnings: `W1114` (skylights are skipped under non-flat
+  roofs), `W1115` (cellar too small for the circulation column),
+  `W1116` (cellar larger than ground floor — silently clamped).
+- `E1111` retired — every entry in `BUILDING_ROOFS` is now implemented.
+- Examples: `examples/gabled_house.mog`, `examples/radial_lobby.mog`,
+  `examples/mansard_brownstone.mog` (the brownstone exercises every T4
+  axis in one file).
+- Tests: per-roof smoke (gabled/hipped/mansard/shed), top-slab
+  suppression, skylight-under-non-flat-roof warning, per-style layout
+  smoke, basement-shrinks-only, basement-reuses-when-unset, and a
+  cross-feature determinism check.
 
 ---
 
@@ -456,13 +497,13 @@ Tranches 2-3 added (each ≤ 800 lines):
   emit/wall_build.rs     wall-with-holes mesh assembly (T2 refactor)
 ```
 
-Tranche 4 will add:
+Tranche 4 added (all ≤ 800 lines):
 
 ```
-  layout/radial.rs
-  layout/organic.rs
-  layout/maze.rs
-  emit/roof.rs          non-flat roof shapes
+  layout/radial.rs       concentric rectangular bands (T4)
+  layout/organic.rs      jittered-grid Voronoi-ish layout (T4)
+  layout/maze.rs         spanning-tree corridor + leaf-room cells (T4)
+  emit/roof.rs           five non-flat roof shapes (T4 rewrite)
 ```
 
 Each file ≤ 800 lines. If any approaches the cap, split by sub-concern
@@ -482,8 +523,11 @@ Each file ≤ 800 lines. If any approaches the cap, split by sub-concern
 | `floors_above ≥ 1`, `floors_below ≥ 0` (multi-storey) | valid since T2 | T2 |
 | `floors_above + floors_below > 1` with `staircases == 0` | warning `W1113` (upper floors disconnected) | T2 |
 | `staircases > 0` / `elevators > 0` / `skylights > 0` | valid since T2 | T2 |
-| Non-flat `roof=` | error `E1111` (pending tranche) | T1 |
-| `style` outside `grid`/`apartment-block`/`hotel-corridor`/`office-core` | error `E1110` (pending tranche) | T1 (set widened in T3) |
+| Non-flat `roof=` | ~~error `E1111`~~ retired in T4 — every shape is implemented | T1 (retired T4) |
+| `style` outside the implemented set | error `E1110` (pending tranche) | T1 (set widened in T3 and T4) |
+| `skylights > 0` with non-flat `roof` | warning `W1114` (skipped) | T4 |
+| `cellar_area` too small for circulation column | warning `W1115` (lowering may bail) | T4 |
+| `cellar_area > floor_area` | warning `W1116` (lowering clamps to `floor_area`) | T4 |
 | `rooms < 1` | error | T1 |
 | `floor_area` ≤ 0 | error | T1 |
 | External/internal/window/skylight/stair/elevator module ref not found | error | T1 |

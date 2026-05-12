@@ -12,10 +12,11 @@ const ROOM_TYPE_KINDS: &[&str] = &[
     "public", "private", "service", "utility", "secure", "staff_only",
 ];
 
-/// Allowed `building.style` values. Tranche 1 only implements `grid` and
-/// `apartment-block` — the others parse without error so authors can prepare
-/// scenes ahead of later tranches, but `check_building` flags them with a
-/// pending-tranche warning so they don't silently fall through to `grid`.
+/// Allowed `building.style` values. After Tranche 4 every entry here also
+/// has a lowering implementation, so `BUILDING_STYLES_IMPLEMENTED` mirrors
+/// this list. The two are kept separate so a future tranche introducing a
+/// new style can land the grammar acceptance and the lowering in separate
+/// PRs again.
 const BUILDING_STYLES: &[&str] = &[
     "grid", "apartment-block", "office-core", "hotel-corridor",
     "radial", "organic", "maze",
@@ -27,13 +28,15 @@ const BUILDING_ROOFS: &[&str] = &[
 
 /// Layout styles whose lowering is implemented. Authoring a style outside
 /// this set is rejected so an unimplemented style doesn't silently fall
-/// through to a different algorithm at build time. Grow this list as
-/// each tranche lands a new style.
+/// through to a different algorithm at build time.
 const BUILDING_STYLES_IMPLEMENTED: &[&str] = &[
     "grid",
     "apartment-block",
     "hotel-corridor",
     "office-core",
+    "radial",
+    "organic",
+    "maze",
 ];
 
 pub(super) fn check_building(n: &Node, diags: &mut Vec<Diagnostic>) {
@@ -94,18 +97,10 @@ pub(super) fn check_building(n: &Node, diags: &mut Vec<Diagnostic>) {
                 )
                 .with_span(n.span),
             );
-        } else if name != "flat" {
-            diags.push(
-                Diagnostic::error(
-                    "E1111",
-                    format!(
-                        "roof=\"{name}\" arrives in a future tranche — see docs/building.md \
-                         (T1 supports: flat)"
-                    ),
-                )
-                .with_span(n.span),
-            );
         }
+        // (E1111 retired in Tranche 4: every BUILDING_ROOFS entry is now
+        // implemented. Code reserved — don't recycle it for a different
+        // condition.)
     }
 
     // Bounded counts that must be positive.
@@ -113,6 +108,7 @@ pub(super) fn check_building(n: &Node, diags: &mut Vec<Diagnostic>) {
     check_min(n, "floors_above", 1.0, "E1104", diags);
     check_min(n, "entrances", 1.0, "E1104", diags);
     check_min_strict_positive(n, "floor_area", "E1104", diags);
+    check_min_strict_positive(n, "cellar_area", "E1104", diags);
     check_min_strict_positive(n, "ceiling_height", "E1104", diags);
     check_min_strict_positive(n, "door_w", "E1104", diags);
     check_min_strict_positive(n, "door_h", "E1104", diags);
@@ -144,6 +140,8 @@ pub(super) fn check_building(n: &Node, diags: &mut Vec<Diagnostic>) {
     let floors_above = n.attr_number("floors_above").unwrap_or(1.0).max(1.0);
     let floors_below = n.attr_number("floors_below").unwrap_or(0.0).max(0.0);
     let staircases = n.attr_number("staircases").unwrap_or(0.0).max(0.0);
+    let elevators = n.attr_number("elevators").unwrap_or(0.0).max(0.0);
+    let skylights = n.attr_number("skylights").unwrap_or(0.0).max(0.0);
     if floors_above + floors_below > 1.0 && staircases < 1.0 {
         diags.push(
             Diagnostic::warning(
@@ -156,6 +154,69 @@ pub(super) fn check_building(n: &Node, diags: &mut Vec<Diagnostic>) {
             )
             .with_span(n.span),
         );
+    }
+
+    // Skylights only cut through flat ceilings in T4. A non-flat roof would
+    // need CSG-cutting a sloped wedge mesh, which is out of scope for this
+    // tranche — the skylight planner is short-circuited and the modules
+    // simply don't get emitted, so warn the author rather than silently
+    // dropping the request.
+    let roof_name = n
+        .attr("roof")
+        .and_then(as_string_or_ident)
+        .unwrap_or("flat");
+    if skylights > 0.0 && roof_name != "flat" {
+        diags.push(
+            Diagnostic::warning(
+                "W1114",
+                format!(
+                    "skylights are only carved through flat roofs in T4 \
+                     — `skylights={skylights}` will be ignored under roof=\"{roof_name}\". \
+                     Set `roof=\"flat\"` to use skylights."
+                ),
+            )
+            .with_span(n.span),
+        );
+    }
+
+    // Cellar circulation overflow guard. The east circulation column is
+    // planned once against the above-ground footprint so stairs/elevators
+    // line up vertically; if `cellar_area` shrinks the basement footprint
+    // below the column's reach, the lowering pass will abort. Catch it
+    // here with a clearer warning whose span points at the building node.
+    if let Some(cellar) = n.attr_number("cellar_area").filter(|v| *v > 0.0) {
+        let floor_area = n.attr_number("floor_area").unwrap_or(120.0).max(4.0);
+        let circulation_cells = staircases + elevators;
+        // Heuristic mirrors `floor_dims()`'s SQRT_2 aspect: shorter side of
+        // the cellar must clear the 2 m circulation column plus 2 m of
+        // breathing room for at least one room.
+        let cellar_short_side = (cellar / std::f32::consts::SQRT_2).sqrt();
+        if circulation_cells > 0.0 && cellar_short_side < 4.0 {
+            diags.push(
+                Diagnostic::warning(
+                    "W1115",
+                    format!(
+                        "cellar_area={cellar} m² is too small to fit the vertical-circulation column \
+                         (stair/elevator) — basement lowering will fail. Either grow \
+                         `cellar_area` or drop `staircases`/`elevators` for this building."
+                    ),
+                )
+                .with_span(n.span),
+            );
+        }
+        if cellar > floor_area {
+            diags.push(
+                Diagnostic::warning(
+                    "W1116",
+                    format!(
+                        "cellar_area={cellar} m² exceeds floor_area={floor_area} m² \
+                         — the basement would stick out under the above-ground footprint. \
+                         The lowering pass will clamp the basement to floor_area."
+                    ),
+                )
+                .with_span(n.span),
+            );
+        }
     }
 
     // Room-type / adjacency name cross-checks.

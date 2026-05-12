@@ -12,7 +12,7 @@ material "white_tile" (color=[0.95, 0.95, 0.95], roughness=0.3)
 
 building "apartment" (
   seed=11,
-  style="hotel-corridor",
+  style="apartment-block",
   floor_area=85,
   rooms=7,
   windows=8,

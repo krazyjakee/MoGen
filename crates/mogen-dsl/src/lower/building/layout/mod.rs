@@ -13,6 +13,9 @@ mod bsp;
 mod corridor;
 mod hotel;
 mod office;
+mod radial;
+mod organic;
+mod maze;
 mod score;
 
 use anyhow::{bail, Result};
@@ -121,33 +124,69 @@ const ATTEMPTS: u32 = 10;
 
 /// Top-level entry point.
 pub(super) fn solve(cfg: &BuildingCfg) -> Result<BuildingLayout> {
-    let (w, d) = floor_dims(cfg.floor_area);
-    let bounds = Rect2 {
-        x_min: -0.5 * w,
-        x_max: 0.5 * w,
-        z_min: -0.5 * d,
-        z_max: 0.5 * d,
-    };
-    let circ = super::circulation::plan(cfg, bounds);
-    // The room layout operates on the floorplate minus the circulation
-    // column. If circulation is present we leave a thin gap of wall
-    // thickness between the room area and the circulation column.
-    let layout_bounds = if circ.has_any() {
-        Rect2 {
-            x_min: bounds.x_min,
-            x_max: bounds.x_max - circ.column_width - cfg.wall_thickness,
-            z_min: bounds.z_min,
-            z_max: bounds.z_max,
-        }
+    let bounds_above = bounds_for_area(cfg.floor_area);
+    // Cellar uses a smaller footprint when `cellar_area` is set. We clamp
+    // the cellar to never exceed `floor_area` — a larger cellar would stick
+    // out under the above-ground walls (the validator warns about this with
+    // W1116; here we silently clamp so lowering still succeeds). The
+    // basement is east-aligned with the above-ground plate so they share
+    // the east wall — that's where the circulation column lives, and
+    // sharing the wall is what keeps stairs aligned vertically across
+    // every storey when the cellar is smaller than the ground floor.
+    let cellar_effective = cfg
+        .cellar_area
+        .map(|c| c.min(cfg.floor_area))
+        .unwrap_or(cfg.floor_area);
+    let bounds_below = if cfg.cellar_area.is_some() {
+        east_aligned_bounds(cellar_effective, bounds_above)
     } else {
-        bounds
+        bounds_above
     };
+
+    // Plan circulation against the smaller of the two plates so the column
+    // is guaranteed to fit in every storey. Once the cellar is east-aligned
+    // with the above-ground plate, the column lands on the east wall of
+    // both (the shared edge) — so above-ground floors still see the
+    // column on their east boundary, basement floors do too.
+    let circ_bounds = if cfg.cellar_area.is_some() {
+        bounds_below
+    } else {
+        bounds_above
+    };
+    let circ = super::circulation::plan(cfg, circ_bounds);
+
+    // Hard-fail if the column literally doesn't fit in the basement, even
+    // after east-alignment (e.g. cellar is too shallow on Z). The
+    // validator W1115 warns ahead of time; this catches the residual.
+    if cfg.cellar_area.is_some() && circ.has_any() {
+        for cell in &circ.cells {
+            let fits_x =
+                cell.rect.x_min >= bounds_below.x_min - 1e-3 && cell.rect.x_max <= bounds_below.x_max + 1e-3;
+            let fits_z =
+                cell.rect.z_min >= bounds_below.z_min - 1e-3 && cell.rect.z_max <= bounds_below.z_max + 1e-3;
+            if !fits_x || !fits_z {
+                bail!(
+                    "cellar_area={} m² is too small to fit the vertical circulation column \
+                     — grow `cellar_area` or drop `staircases`/`elevators`",
+                    cfg.cellar_area.unwrap_or(0.0)
+                );
+            }
+        }
+    }
+
+    let layout_bounds_above = layout_bounds_for(bounds_above, &circ, cfg.wall_thickness);
+    let layout_bounds_below = layout_bounds_for(bounds_below, &circ, cfg.wall_thickness);
 
     let storey_ids = storey_indices(cfg);
     let rooms_per_storey = distribute_rooms(cfg.rooms as usize, storey_ids.len());
 
     let mut storeys = Vec::new();
     for (i, s) in storey_ids.iter().enumerate() {
+        let (bounds, layout_bounds) = if *s < 0 {
+            (bounds_below, layout_bounds_below)
+        } else {
+            (bounds_above, layout_bounds_above)
+        };
         let plate = solve_storey(
             cfg,
             *s,
@@ -163,10 +202,55 @@ pub(super) fn solve(cfg: &BuildingCfg) -> Result<BuildingLayout> {
     }
 
     Ok(BuildingLayout {
-        bounds,
+        bounds: bounds_above,
         storeys,
         circulation: circ,
     })
+}
+
+fn bounds_for_area(area: f32) -> Rect2 {
+    let (w, d) = floor_dims(area);
+    Rect2 {
+        x_min: -0.5 * w,
+        x_max: 0.5 * w,
+        z_min: -0.5 * d,
+        z_max: 0.5 * d,
+    }
+}
+
+/// Build a smaller rectangle of the given `area` whose **east edge** is
+/// aligned with `reference`'s east edge. The Z axis is centered on the
+/// reference Z midpoint (basements tend to sit under the centre of the
+/// building, not its south wall). Used so a basement plate of
+/// `cellar_area` shares a wall with the above-ground plate — that wall is
+/// where the circulation column lives, and sharing it keeps stairs
+/// aligned vertically across every storey without forcing the basement
+/// to match the full ground footprint.
+fn east_aligned_bounds(area: f32, reference: Rect2) -> Rect2 {
+    let (w, d) = floor_dims(area);
+    let z_mid = 0.5 * (reference.z_min + reference.z_max);
+    Rect2 {
+        x_min: reference.x_max - w,
+        x_max: reference.x_max,
+        z_min: z_mid - 0.5 * d,
+        z_max: z_mid + 0.5 * d,
+    }
+}
+
+fn layout_bounds_for(bounds: Rect2, circ: &CirculationPlan, wall_thickness: f32) -> Rect2 {
+    // The room layout operates on the floorplate minus the circulation
+    // column. If circulation is present we leave a thin gap of wall
+    // thickness between the room area and the circulation column.
+    if circ.has_any() {
+        Rect2 {
+            x_min: bounds.x_min,
+            x_max: bounds.x_max - circ.column_width - wall_thickness,
+            z_min: bounds.z_min,
+            z_max: bounds.z_max,
+        }
+    } else {
+        bounds
+    }
 }
 
 fn solve_storey(
@@ -202,6 +286,9 @@ fn solve_storey(
                     .expect("office-core synthesises a corridor type in read_cfg");
                 office::layout(layout_bounds, &assigned_types, idx, &mut state)
             }
+            Style::Radial => radial::layout(layout_bounds, &assigned_types, &mut state),
+            Style::Organic => organic::layout(layout_bounds, &assigned_types, &mut state),
+            Style::Maze => maze::layout(layout_bounds, &assigned_types, &mut state),
         };
         let scratch_plate = Floorplate {
             bounds: full_bounds,

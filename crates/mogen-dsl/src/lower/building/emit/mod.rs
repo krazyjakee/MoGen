@@ -116,6 +116,6 @@ pub(super) fn emit_floor(
         skylight::emit_skylights_at(node, cfg, &skylight_rects, sky_group, graph)?;
     }
 
-    roof::emit_roof(node, cfg, plate, floor_group, graph)?;
+    roof::emit_roof(node, cfg, plate, ctx, floor_group, graph)?;
     Ok(())
 }

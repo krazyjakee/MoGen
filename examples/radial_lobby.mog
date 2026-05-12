@@ -1,0 +1,30 @@
+// Rotunda-style lobby with `style="radial"` from building tranche 4.
+// Concentric rectangular bands stand in for a polar subdivision while
+// keeping the cells axis-aligned — the visual hierarchy reads as a
+// central reception surrounded by smaller perimeter offices. The
+// `roof="hipped"` shape (a single inset frustum) caps the volume with
+// four slopes meeting at a short ridge, the natural roofing for a
+// near-square footprint.
+
+meta (mogen_version = "0.1.5")
+
+material "stone"  (color=[0.78, 0.74, 0.70], roughness=0.70)
+material "oak"    (color=[0.50, 0.30, 0.18], roughness=0.85)
+material "tile"   (color=[0.90, 0.90, 0.88], roughness=0.40)
+
+building "radial_lobby" (
+  seed=4,
+  style="radial",
+  roof="hipped",
+  floor_area=100,
+  rooms=9,
+  debug_hide_roof=1,
+  entrances=1,
+  windows=8,
+  ceiling_height=3.0,
+  mat="stone",
+) {
+  room_type "reception" (kind=public,     density=1, mat="tile", min_area=12)
+  room_type "office"    (kind=staff_only, density=4, mat="oak")
+  room_type "service"   (kind=service,    density=1, mat="tile")
+}

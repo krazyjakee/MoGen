@@ -526,7 +526,9 @@ mod building_validator_tests {
     fn t2_multi_floor_without_stairs_warns() {
         // Tranche 2 unlocks multi-storey but still expects the author to
         // wire a staircase (otherwise the upper floor is visually
-        // disconnected). Non-flat roof is still gated (T4).
+        // disconnected). Tranche 4 implements all roof shapes — pairing a
+        // non-flat roof with skylights now produces W1114 (skylights are
+        // ignored under non-flat roofs) instead of the retired E1111.
         let src = r#"
             material "c" (color=[0.5, 0.5, 0.5])
             building "x" (
@@ -543,8 +545,12 @@ mod building_validator_tests {
             "expected W1113 for multi-floor without stairs, got: {diags:?}"
         );
         assert!(
-            diags.iter().any(|d| d.code == "E1111"),
-            "expected E1111 for non-flat roof, got: {diags:?}"
+            diags.iter().any(|d| d.code == "W1114"),
+            "expected W1114 for skylights under non-flat roof, got: {diags:?}"
+        );
+        assert!(
+            !diags.iter().any(|d| d.code == "E1111"),
+            "E1111 was retired in T4; got: {diags:?}"
         );
     }
 

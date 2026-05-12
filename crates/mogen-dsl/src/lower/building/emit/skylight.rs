@@ -18,7 +18,7 @@ use mogen_geom::box_mesh;
 use crate::ast::{Node, Value};
 use crate::module::expand_modules;
 
-use super::super::config::BuildingCfg;
+use super::super::config::{BuildingCfg, Roof};
 use super::super::layout::{CellKind, Floorplate, Rect2};
 use super::super::rng::{attempt_seed, rand_f01};
 use super::StoreyCtx;
@@ -35,6 +35,13 @@ pub(super) fn plan_skylights(
     ctx: StoreyCtx,
 ) -> Vec<Rect2> {
     if cfg.skylights == 0 || !ctx.has_skylights() {
+        return Vec::new();
+    }
+    // Non-flat roofs replace the top ceiling slab with a roof mesh — the
+    // skylight planner assumes a flat slab to carve, so skylights are
+    // currently ignored under non-flat roofs. The validator emits W1114
+    // ahead of time so the author sees the silent drop.
+    if !matches!(cfg.roof, Roof::Flat) {
         return Vec::new();
     }
     let mut state = attempt_seed(cfg.seed, 1337u32);
