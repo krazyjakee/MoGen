@@ -68,8 +68,8 @@ mod tests {
     #[test]
     #[ignore = "winit EventLoop requires main thread; not runnable under cargo test"]
     fn render_dsl_to_png_smoke() {
-        let dsl = std::fs::read_to_string("../../examples/i_beam.mog")
-            .expect("examples/i_beam.mog missing");
+        let dsl = std::fs::read_to_string("../../examples/features/i_beam.mog")
+            .expect("examples/features/i_beam.mog missing");
         let png = super::render_dsl_to_png(&dsl, None).expect("render failed");
         // PNG magic: 89 50 4E 47 0D 0A 1A 0A
         assert!(png.len() > 8, "png too short: {}", png.len());

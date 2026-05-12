@@ -346,7 +346,7 @@ Scope:
 - Roof: `flat` only.
 - No elevators, no staircases (validation rejects nonzero counts in T1).
 - Stdlib: `door_simple`, `window_simple`, `skylight_simple`.
-- `examples/apartment.mog`, `examples/grid_office.mog`.
+- `examples/buildings/apartment.mog`, `examples/buildings/grid_office.mog`.
 - `docs/dsl.md#building` section mirroring the Branch reference.
 - Tests: golden-hash determinism, validation diagnostics, lowering smoke.
 
@@ -385,7 +385,7 @@ Scope (delivered):
   storeys would be visually disconnected).
 - Stdlib: `stair_simple` (straight flight, tread-count derived from
   rise), `elevator_shaft_simple` (four-wall vertical column).
-- `examples/three_storey_house.mog` exercising every T2 feature
+- `examples/buildings/three_storey_house.mog` exercising every T2 feature
   (basement + ground + 2 upper storeys, stairs, elevator, skylights).
 - Tests: per-storey emission, Y stacking, stair count = N-1 per N
   storeys, elevator emits a single shaft, skylight only on top storey,
@@ -419,7 +419,7 @@ Scope (delivered):
 - Validator: `BUILDING_STYLES_IMPLEMENTED` grew to include
   `hotel-corridor` and `office-core`; the "reserved for a future
   tranche" diagnostic now lists `radial`, `organic`, `maze` only.
-- Examples: `examples/small_hotel.mog`, `examples/office_core.mog`.
+- Examples: `examples/buildings/small_hotel.mog`, `examples/buildings/office_core.mog`.
 - Tests: hotel/office corridor-cell smoke, hotel corridor centred on
   long axis, `min_area` honoured, entrance-distance prior doesn't
   regress prior layouts.
@@ -446,8 +446,8 @@ Scope (delivered):
   roofs), `W1115` (cellar too small for the circulation column),
   `W1116` (cellar larger than ground floor — silently clamped).
 - `E1111` retired — every entry in `BUILDING_ROOFS` is now implemented.
-- Examples: `examples/gabled_house.mog`, `examples/radial_lobby.mog`,
-  `examples/mansard_brownstone.mog` (the brownstone exercises every T4
+- Examples: `examples/buildings/gabled_house.mog`, `examples/buildings/radial_lobby.mog`,
+  `examples/buildings/mansard_brownstone.mog` (the brownstone exercises every T4
   axis in one file).
 - Tests: per-roof smoke (gabled/hipped/mansard/shed), top-slab
   suppression, skylight-under-non-flat-roof warning, per-style layout
@@ -541,9 +541,9 @@ through-and-through.
 
 T1 must add:
 
-1. `building_grid_smoke` — parse + lower `examples/grid_office.mog`, assert
+1. `building_grid_smoke` — parse + lower `examples/buildings/grid_office.mog`, assert
    ≥ 4 wall nodes + 1 floor + 1 ceiling + ≥ 1 door instance.
-2. `building_apartment_smoke` — same for `examples/apartment.mog`.
+2. `building_apartment_smoke` — same for `examples/buildings/apartment.mog`.
 3. `building_deterministic` — same `seed=` produces identical mesh hashes
    across two `lower` calls.
 4. `building_rejects_t2_features` — `floors_above=2` emits the expected

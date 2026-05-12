@@ -911,7 +911,7 @@ fn lod_scale_also_scales_explicit_segments() {
 
 #[test]
 fn lod_scale_scales_explicit_heightfield_grid() {
-    // Regression for examples/heightfield_terrain.mog and wave_water.mog —
+    // Regression for examples/nature/heightfield_terrain.mog and wave_water.mog —
     // both pin segments_u/segments_v and would otherwise ignore lod_scale.
     let baseline = lower_src(
         r#"scene { heightfield "h" (size=[6, 6], segments_u=64, segments_v=64) }"#,

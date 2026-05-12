@@ -150,9 +150,9 @@ this command at the end of their flows. If you've already authored a
 `.mog`, `build` is what you run.
 
 ```sh
-mogen build examples/chair.mog --out chair.glb
-mogen build examples/chair.mog --out chair.fbx          # extension dispatch
-mogen build examples/chair.mog --format fbx             # → chair.fbx
+mogen build examples/furniture/chair.mog --out chair.glb
+mogen build examples/furniture/chair.mog --out chair.fbx          # extension dispatch
+mogen build examples/furniture/chair.mog --format fbx             # → chair.fbx
 ```
 
 ### FBX format notes
@@ -204,8 +204,8 @@ mode emits one diagnostic per line in the format the LLM repair loop
 consumes.
 
 ```sh
-mogen check examples/chair.mog                          # human-readable
-mogen check examples/chair.mog --json | jq .            # machine-readable
+mogen check examples/furniture/chair.mog                          # human-readable
+mogen check examples/furniture/chair.mog --json | jq .            # machine-readable
 ```
 
 ---
@@ -295,8 +295,8 @@ override it explicitly. That makes `modify` reproducible for a given
 prompt + seed pair.
 
 ```sh
-mogen modify examples/chair.mog "make the legs taller"
-mogen modify examples/chair.mog "add armrests" --dsl-out chair_armed.mog --dry-run
+mogen modify examples/furniture/chair.mog "make the legs taller"
+mogen modify examples/furniture/chair.mog "add armrests" --dsl-out chair_armed.mog --dry-run
 ```
 
 ---
@@ -313,7 +313,7 @@ mogen animate <input.mog> "<prompt>" [common LLM flags]
 ```
 
 ```sh
-mogen animate examples/drone.mog "spin every rotor at 120 rpm"
+mogen animate examples/vehicles/drone.mog "spin every rotor at 120 rpm"
 mogen animate examples/door.mog "make the door swing open over 1.2 seconds"
 ```
 
@@ -382,9 +382,9 @@ still get their `*_texture` attr spliced into the source, just without
 an API call or a local re-derivation.
 
 ```sh
-mogen textures examples/chair.mog --style "weathered oak"
-mogen textures examples/drone.mog --no-occlusion --texture-size 512
-mogen textures examples/chair.mog --dry-run                          # see the plan first
+mogen textures examples/furniture/chair.mog --style "weathered oak"
+mogen textures examples/vehicles/drone.mog --no-occlusion --texture-size 512
+mogen textures examples/furniture/chair.mog --dry-run                          # see the plan first
 ```
 
 ---
@@ -437,7 +437,7 @@ mogen moghub info     @user/cool-stool
 mogen moghub download @user/cool-stool --version 3 --out stool/
 mogen moghub like     @user/cool-stool
 mogen moghub comment  @user/cool-stool "great topology!"
-mogen moghub publish  examples/chair.mog --title "Parametric chair" --tags "chair,furniture"
+mogen moghub publish  examples/furniture/chair.mog --title "Parametric chair" --tags "chair,furniture"
 ```
 
 ### `moghub whoami`
@@ -572,9 +572,9 @@ parent directory are rejected so the upload bundle stays
 self-contained.
 
 ```sh
-mogen moghub publish examples/chair.mog --title "Parametric chair" --tags "chair,furniture"
-mogen moghub publish examples/chair.mog -m "added armrests"          # appends a new version
-mogen moghub publish examples/chair.mog --new --visibility unlisted  # forks off a fresh model
+mogen moghub publish examples/furniture/chair.mog --title "Parametric chair" --tags "chair,furniture"
+mogen moghub publish examples/furniture/chair.mog -m "added armrests"          # appends a new version
+mogen moghub publish examples/furniture/chair.mog --new --visibility unlisted  # forks off a fresh model
 ```
 
 ---

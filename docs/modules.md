@@ -192,7 +192,7 @@ other materials your accessories need at the top of the scene
 (scene-level declarations win under the first-wins dedup, so they
 also override the figure's defaults).
 
-See `examples/businessman_casual.mog` for a worked example that adds
+See `examples/characters/businessman_casual.mog` for a worked example that adds
 a jacket, dress-shirt panel, cuffs, dress shoes, beard, and hair cap
 onto a `humanoid_full` rig using only slot connectors and inline
 geometry.

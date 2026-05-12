@@ -401,7 +401,7 @@ mod tests {
     #[test]
     fn default_textures_dir_uses_mog_stem() {
         assert_eq!(
-            default_textures_dir(Path::new("examples/chair.mog")),
+            default_textures_dir(Path::new("examples/furniture/chair.mog")),
             PathBuf::from("textures").join("chair"),
         );
         assert_eq!(

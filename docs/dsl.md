@@ -282,7 +282,7 @@ cylinder "spire" (radius=0.4, height=4.0, twist_y=70, twist_y_range=[0.6, 1.0])
 Default tessellation auto-bumps (×2 segments / +1 icosphere subdivision)
 when a smooth deformer is present; explicit `segments=`/`rings=`/
 `subdivisions=` always override. Modifiers don't apply to `mesh` (loaded
-glb) primitives. See `examples/asteroid_field.mog`.
+glb) primitives. See `examples/nature/asteroid_field.mog`.
 
 ---
 
