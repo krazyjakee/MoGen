@@ -15,7 +15,7 @@ use crate::ast::Node;
 use super::super::circulation::{CirculationKind, CirculationPlan};
 use super::super::config::BuildingCfg;
 use super::super::layout::{Floorplate, Rect2};
-use super::circulation::{STAIR_HALF_FRACTION, STAIR_TRANSIT_STRIP_DEPTH};
+use super::circulation::STAIR_ENTRY_DEPTH;
 use super::openings::{Opening, OpeningPlan, WallSide};
 use super::wall_build::wall_with_holes;
 use super::StoreyCtx;
@@ -40,12 +40,12 @@ pub(super) fn emit_shell(
     // bottommost storey (the foundation/basement floor stays intact —
     // stairs and elevators start here).
     //
-    // For staircases the cutout is intentionally smaller than the full
-    // cell: the stair body lives in the east half (see `emit/circulation.rs`
-    // — `STAIR_HALF_FRACTION`), and the south end keeps a strip of slab
-    // intact so the user can cross from the west-half landing back to
-    // the bottom of the next flight at floor level. Without that strip,
-    // climbing past floor 0 leaves the user stranded over a hole.
+    // For staircases the cutout preserves a south entry zone on every
+    // storey — that's the platform the user steps onto from the adjacent
+    // room (door cutout in the west wall lands here) and the landing the
+    // descending flight delivers them to. The rest of the cell is cut so
+    // both half-flights and the mid-landing have clearance to span the
+    // full storey height. See `emit/circulation.rs` for the layout.
     let floor_holes: Vec<Rect2> = if ctx.is_bottom {
         Vec::new()
     } else {
@@ -106,21 +106,18 @@ pub(super) fn emit_shell(
     Ok(())
 }
 
-/// Hole rect for a staircase cell on an upper storey's floor slab. Cuts
-/// only the east half (where the stair body sits) and preserves a strip
-/// at the south end of that half so the walker can step from the
-/// west-half landing onto the bottom of the next flight without
-/// crossing a hole. West half is preserved entirely — it's the
-/// landing slab.
+/// Hole rect for a staircase cell on an upper storey's floor slab. The
+/// switchback occupies the full width north of the entry zone — both
+/// half-flights and the mid-landing need clearance to span a full
+/// storey — so the cutout is the cell minus the south entry strip. The
+/// preserved strip is the platform the door from the adjacent room
+/// opens onto on every floor.
 fn staircase_slab_hole(cell: Rect2) -> Rect2 {
-    let x_mid = 0.5 * (cell.x_min + cell.x_max) + (0.5 - STAIR_HALF_FRACTION) * 0.5 * cell.width();
-    // The strip's depth caps at half the cell depth so a very shallow
-    // cell still leaves *some* cutout for the stair body to pierce.
-    let strip = STAIR_TRANSIT_STRIP_DEPTH.min(cell.depth() * 0.5);
+    let entry = STAIR_ENTRY_DEPTH.min(cell.depth() * 0.6);
     Rect2 {
-        x_min: x_mid,
+        x_min: cell.x_min,
         x_max: cell.x_max,
-        z_min: cell.z_min + strip,
+        z_min: cell.z_min + entry,
         z_max: cell.z_max,
     }
 }
