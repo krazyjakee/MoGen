@@ -21,7 +21,9 @@ mod score;
 
 use anyhow::{bail, Result};
 
-use super::circulation::{CirculationKind, CirculationPlan};
+use super::circulation::{
+    CirculationKind, CirculationPlan, STAIR_ENTRY_DEPTH,
+};
 use super::config::{BuildingCfg, RoomType, Style};
 use super::rng::{attempt_seed, weighted_pick};
 
@@ -75,6 +77,17 @@ impl Rect2 {
 
 const EDGE_EPS: f32 = 1e-3;
 
+/// Which of the four axis-aligned faces of a cell or floorplate something
+/// sits on. Lives here (not in the `emit` layer) because layout-time data
+/// — specifically `DoorSlot` on a `RoomCell` — needs to name a face.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum WallSide {
+    North,
+    East,
+    South,
+    West,
+}
+
 /// Kind discriminator for a `RoomCell`. Most cells are normal rooms; a
 /// minority are circulation cells (staircase or elevator) that share XY
 /// across every storey.
@@ -85,14 +98,39 @@ pub(super) enum CellKind {
     Elevator,
 }
 
+/// A strip along one face of a cell where a door is allowed to land.
+///
+/// Used by `place_interior_doors` to constrain door placement on cells
+/// that have internal structure the shared-edge math doesn't know about
+/// — most notably staircases, whose only valid storey-floor-height entry
+/// is the south entry zone (the back half of the cell is a half-storey
+/// landing or a flight cutout, so a door there opens into mid-air).
+///
+/// `along_min..along_max` is in world-space layout coordinates: x for
+/// North/South faces, z for East/West faces.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct DoorSlot {
+    pub side: WallSide,
+    pub along_min: f32,
+    pub along_max: f32,
+}
+
 /// A single cell on a floorplate. `room_type_index` indexes into
 /// `BuildingCfg.room_types` only when `kind == Room`; for circulation it's
 /// left at `usize::MAX` and downstream code branches on `kind`.
+///
+/// `door_slots` restricts where interior doors may be carved on this
+/// cell's perimeter. An empty vec means "anywhere along a shared edge"
+/// (the default for plain rooms and for elevators, which run their own
+/// shaft-door pipeline). A non-empty vec means a candidate edge must
+/// overlap at least one slot by a door's width before the door planner
+/// will consider it.
 #[derive(Clone, Debug)]
 pub(super) struct RoomCell {
     pub rect: Rect2,
     pub room_type_index: usize,
     pub kind: CellKind,
+    pub door_slots: Vec<DoorSlot>,
 }
 
 #[derive(Clone, Debug)]
@@ -330,16 +368,41 @@ fn solve_storey(
 
 fn with_circulation(mut rooms: Vec<RoomCell>, circ: &CirculationPlan) -> Vec<RoomCell> {
     for cell in &circ.cells {
+        let kind = match cell.kind {
+            CirculationKind::Staircase => CellKind::Staircase,
+            CirculationKind::Elevator => CellKind::Elevator,
+        };
+        let door_slots = match kind {
+            CellKind::Staircase => staircase_door_slots(&cell.rect),
+            // Elevators have their own shaft-door pipeline that places a
+            // centred opening on the open face; leaving slots empty here
+            // means `place_interior_doors` skips the elevator entirely
+            // (it already explicitly bails on elevator edges).
+            CellKind::Elevator | CellKind::Room => Vec::new(),
+        };
         rooms.push(RoomCell {
             rect: cell.rect,
             room_type_index: usize::MAX,
-            kind: match cell.kind {
-                CirculationKind::Staircase => CellKind::Staircase,
-                CirculationKind::Elevator => CellKind::Elevator,
-            },
+            kind,
+            door_slots,
         });
     }
     rooms
+}
+
+/// Door slots for a switchback staircase: the south entry zone is the
+/// only strip at storey-floor height that touches a walkable platform.
+/// We expose it on three faces (east, west, south) so whichever neighbour
+/// the BFS picks can attach there. The north face has no slot — its
+/// neighbour would walk through the door onto the half-storey mid-landing,
+/// which sits 1.5 m above the storey floor.
+fn staircase_door_slots(r: &Rect2) -> Vec<DoorSlot> {
+    let entry_z_max = r.z_min + STAIR_ENTRY_DEPTH;
+    vec![
+        DoorSlot { side: WallSide::East,  along_min: r.z_min, along_max: entry_z_max },
+        DoorSlot { side: WallSide::West,  along_min: r.z_min, along_max: entry_z_max },
+        DoorSlot { side: WallSide::South, along_min: r.x_min, along_max: r.x_max },
+    ]
 }
 
 fn storey_indices(cfg: &BuildingCfg) -> Vec<i32> {

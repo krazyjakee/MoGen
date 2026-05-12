@@ -56,6 +56,7 @@ pub(super) fn layout(
             rect,
             room_type_index: type_at(*emitted, assigned_types),
             kind: CellKind::Room,
+            door_slots: Vec::new(),
         });
         *emitted += 1;
     };

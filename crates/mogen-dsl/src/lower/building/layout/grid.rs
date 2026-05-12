@@ -55,6 +55,7 @@ pub(super) fn layout(
                 },
                 room_type_index: assigned_types[idx],
                 kind: CellKind::Room,
+                door_slots: Vec::new(),
             });
             idx += 1;
             if idx >= rooms {

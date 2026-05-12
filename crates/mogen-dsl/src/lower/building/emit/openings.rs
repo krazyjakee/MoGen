@@ -12,7 +12,7 @@
 
 use super::super::circulation::CirculationPlan;
 use super::super::config::BuildingCfg;
-use super::super::layout::{CellKind, Floorplate, Rect2, RoomCell};
+use super::super::layout::{CellKind, Floorplate, Rect2, RoomCell, WallSide};
 use super::super::rng::{attempt_seed, rand_f01, rand_range};
 use super::StoreyCtx;
 
@@ -37,14 +37,6 @@ pub(super) enum WindowClass {
     Small,
     Medium,
     Large,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum WallSide {
-    North,
-    East,
-    South,
-    West,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -277,7 +269,7 @@ fn place_interior_doors(
     if n < 2 {
         return;
     }
-    let mut edges: Vec<(usize, usize, f32, [f32; 2], f32)> = Vec::new();
+    let mut edges: Vec<(usize, usize, SharedEdge, f32)> = Vec::new();
     for i in 0..n {
         for j in (i + 1)..n {
             // Never carve a door between two circulation cells — you
@@ -299,19 +291,21 @@ fn place_interior_doors(
             {
                 continue;
             }
-            let edge = plate.rooms[i].rect.shared_edge_length(&plate.rooms[j].rect);
+            // Cell-aware edge: shared range clipped to each cell's
+            // `door_slots`. For staircases this rejects any edge that
+            // doesn't overlap the south entry zone, so the BFS won't
+            // try to attach via the flight cutout or the mid-landing.
+            let Some(edge) = slot_clipped_edge(&plate.rooms[i], &plate.rooms[j]) else {
+                continue;
+            };
+            let raw_edge_len = plate.rooms[i].rect.shared_edge_length(&plate.rooms[j].rect);
+            let door_w = edge_door_width(cfg, &plate.rooms[i], &plate.rooms[j], raw_edge_len);
             // Eligibility uses the standard door width so the BFS can
             // still reach an elevator whose neighbour is too narrow to
             // hold the wider 1.5× doorway — connectivity beats ideal
-            // sizing. Width selection happens per-edge below.
-            if edge >= cfg.door_w * 1.1 {
-                let door_w = edge_door_width(cfg, &plate.rooms[i], &plate.rooms[j], edge);
-                let mid = shared_edge_door_anchor(
-                    &plate.rooms[i],
-                    &plate.rooms[j],
-                    cfg,
-                );
-                edges.push((i, j, edge, mid, door_w));
+            // sizing. Width selection happens per-edge above.
+            if edge.span() >= cfg.door_w * 1.1 {
+                edges.push((i, j, edge, door_w));
             }
         }
     }
@@ -323,7 +317,7 @@ fn place_interior_doors(
     while let Some(u) = queue.pop_front() {
         let mut neighbours: Vec<usize> = edges
             .iter()
-            .filter_map(|(a, b, _, _, _)| {
+            .filter_map(|(a, b, _, _)| {
                 if *a == u && !visited[*b] {
                     Some(*b)
                 } else if *b == u && !visited[*a] {
@@ -342,24 +336,22 @@ fn place_interior_doors(
                 continue;
             }
             visited[v] = true;
-            if let Some((_, _, _, mid, door_w)) = edges
+            if let Some((_, _, edge, door_w)) = edges
                 .iter()
-                .find(|(a, b, _, _, _)| (*a == u && *b == v) || (*a == v && *b == u))
+                .find(|(a, b, _, _)| (*a == u && *b == v) || (*a == v && *b == u))
             {
                 let facing = interior_facing(&plate.rooms[u].rect, &plate.rooms[v].rect);
-                // `shared_edge_midpoint` already gave us the geometric
-                // midpoint along the shared edge; we additionally clamp it
-                // away from the corner so the door clears any perpendicular
-                // wall sitting at a T-junction. Corner margin =
-                // door_w/2 + wall_thickness so the door's edge stops at
-                // least a wall-thickness short of the adjacent corner.
+                // The slot-clipped range already encodes whatever bias
+                // the cell wanted (e.g. staircase → south entry zone),
+                // so a plain midpoint anchor lands inside the valid
+                // strip by construction. We still corner-clamp to keep
+                // the door a wall-thickness clear of any perpendicular
+                // wall at a T-junction; for slots shorter than 2×
+                // `corner_margin` the clamp degrades to the slot
+                // midpoint, which is the best we can do.
                 let corner_margin = 0.5 * door_w + cfg.wall_thickness;
-                let (x, z) = clamp_door_to_edge(
-                    &plate.rooms[u].rect,
-                    &plate.rooms[v].rect,
-                    *mid,
-                    corner_margin,
-                );
+                let along = clamp_centre(edge.midpoint(), edge.lo, edge.hi, corner_margin);
+                let (x, z) = edge.world_xz(along);
                 plan.interior_doors.push(Opening {
                     kind: OpeningKind::InteriorDoor,
                     x,
@@ -376,26 +368,123 @@ fn place_interior_doors(
     }
 }
 
-/// Clamp a door's anchor along its shared edge so it stops at least
-/// `corner_margin` from each end. If the edge is shorter than 2× the
-/// margin (a very small shared edge from BSP), we centre the door and
-/// accept the corner overlap — the door has to land somewhere.
-fn clamp_door_to_edge(a: &Rect2, b: &Rect2, mid: [f32; 2], corner_margin: f32) -> (f32, f32) {
-    // Vertical shared edge (along Z) at x = a.x_max or b.x_max.
-    if (a.x_max - b.x_min).abs() < 1e-3 || (b.x_max - a.x_min).abs() < 1e-3 {
+/// Which axis a shared edge runs along, plus the fixed perpendicular
+/// coordinate of the face. Carried alongside the clipped range so the
+/// BFS can rebuild `(x, z)` from a 1D anchor without re-deriving which
+/// side the edge was on.
+#[derive(Clone, Copy, Debug)]
+enum EdgeAxis {
+    /// Edge runs along Z (vertical wall at fixed x = `fixed`).
+    Z { fixed: f32 },
+    /// Edge runs along X (horizontal wall at fixed z = `fixed`).
+    X { fixed: f32 },
+}
+
+/// A door-eligible segment of the shared edge between two cells:
+/// the raw shared range intersected with each cell's `door_slots`.
+#[derive(Clone, Copy, Debug)]
+struct SharedEdge {
+    axis: EdgeAxis,
+    lo: f32,
+    hi: f32,
+}
+
+impl SharedEdge {
+    fn span(&self) -> f32 {
+        (self.hi - self.lo).max(0.0)
+    }
+    fn midpoint(&self) -> f32 {
+        0.5 * (self.lo + self.hi)
+    }
+    fn world_xz(&self, along: f32) -> (f32, f32) {
+        match self.axis {
+            EdgeAxis::Z { fixed } => (fixed, along),
+            EdgeAxis::X { fixed } => (along, fixed),
+        }
+    }
+}
+
+/// Compute the shared edge between `a` and `b`, clipped to each cell's
+/// `door_slots`. Returns `None` when:
+/// - the rects do not share a full edge,
+/// - the raw overlap is degenerate, or
+/// - either cell publishes door slots and none of them cover the shared
+///   edge (e.g. a staircase whose neighbour only touches its flight
+///   cutout — no walkable platform behind the door at storey-floor
+///   height).
+fn slot_clipped_edge(a: &RoomCell, b: &RoomCell) -> Option<SharedEdge> {
+    let (a_side, b_side, axis, lo, hi) = shared_edge_sides(&a.rect, &b.rect)?;
+    if hi <= lo {
+        return None;
+    }
+    let (lo, hi) = clip_to_slots(a, a_side, lo, hi)?;
+    let (lo, hi) = clip_to_slots(b, b_side, lo, hi)?;
+    if hi <= lo {
+        return None;
+    }
+    Some(SharedEdge { axis, lo, hi })
+}
+
+/// Identify the shared edge between two adjacent rects: which face of
+/// each cell touches, which axis the edge runs along (with the fixed
+/// perpendicular coordinate), and the raw overlap range along that axis.
+fn shared_edge_sides(
+    a: &Rect2,
+    b: &Rect2,
+) -> Option<(WallSide, WallSide, EdgeAxis, f32, f32)> {
+    if (a.x_max - b.x_min).abs() < 1e-3 {
         let lo = a.z_min.max(b.z_min);
         let hi = a.z_max.min(b.z_max);
-        let z = clamp_centre(mid[1], lo, hi, corner_margin);
-        return (mid[0], z);
+        return Some((WallSide::East, WallSide::West, EdgeAxis::Z { fixed: a.x_max }, lo, hi));
     }
-    // Horizontal shared edge (along X).
-    if (a.z_max - b.z_min).abs() < 1e-3 || (b.z_max - a.z_min).abs() < 1e-3 {
+    if (b.x_max - a.x_min).abs() < 1e-3 {
+        let lo = a.z_min.max(b.z_min);
+        let hi = a.z_max.min(b.z_max);
+        return Some((WallSide::West, WallSide::East, EdgeAxis::Z { fixed: a.x_min }, lo, hi));
+    }
+    if (a.z_max - b.z_min).abs() < 1e-3 {
         let lo = a.x_min.max(b.x_min);
         let hi = a.x_max.min(b.x_max);
-        let x = clamp_centre(mid[0], lo, hi, corner_margin);
-        return (x, mid[1]);
+        return Some((WallSide::North, WallSide::South, EdgeAxis::X { fixed: a.z_max }, lo, hi));
     }
-    (mid[0], mid[1])
+    if (b.z_max - a.z_min).abs() < 1e-3 {
+        let lo = a.x_min.max(b.x_min);
+        let hi = a.x_max.min(b.x_max);
+        return Some((WallSide::South, WallSide::North, EdgeAxis::X { fixed: a.z_min }, lo, hi));
+    }
+    None
+}
+
+/// Intersect `[lo, hi]` with the widest matching slot on `cell`'s `side`.
+/// Cells with no slots are unrestricted (`Some((lo, hi))`); cells that
+/// publish slots but none overlap the edge return `None`, which kills
+/// the candidate edge.
+fn clip_to_slots(
+    cell: &RoomCell,
+    side: WallSide,
+    lo: f32,
+    hi: f32,
+) -> Option<(f32, f32)> {
+    if cell.door_slots.is_empty() {
+        return Some((lo, hi));
+    }
+    let mut best: Option<(f32, f32)> = None;
+    for slot in &cell.door_slots {
+        if slot.side != side {
+            continue;
+        }
+        let s_lo = slot.along_min.max(lo);
+        let s_hi = slot.along_max.min(hi);
+        if s_hi <= s_lo {
+            continue;
+        }
+        best = Some(match best {
+            None => (s_lo, s_hi),
+            Some((blo, bhi)) if (s_hi - s_lo) > (bhi - blo) => (s_lo, s_hi),
+            Some(b) => b,
+        });
+    }
+    best
 }
 
 fn is_circulation(kind: &CellKind) -> bool {
@@ -680,85 +769,6 @@ fn exterior_segment(
         WallSide::East => (cell.rect.z_min, cell.rect.z_max, bounds.x_max, [1.0, 0.0, 0.0]),
         WallSide::West => (cell.rect.z_min, cell.rect.z_max, bounds.x_min, [-1.0, 0.0, 0.0]),
     }
-}
-
-/// Pick a door anchor along the shared edge between two cells.
-///
-/// Defaults to the geometric midpoint of the shared edge, with two
-/// per-kind biases:
-/// - **Staircase ↔ room:** the door is shifted toward the staircase's
-///   south entry zone so it lands on the platform the switchback
-///   expects users to step onto (off-centre would put it next to the
-///   mid-landing slab edge or over the flight cutout).
-/// - **Elevator ↔ room:** the door is anchored on the elevator's
-///   geometric centre so it sits midway across the 2 m face regardless
-///   of how the neighbouring room is sized along the shared axis. For
-///   the common case where the room fully overlaps the elevator's
-///   range this is identical to the midpoint; for partial overlaps it
-///   pulls the door toward the centred position the elevator presents
-///   on its open face, instead of sliding to whichever third of the
-///   2 m face the room happens to cover.
-fn shared_edge_door_anchor(
-    a: &RoomCell,
-    b: &RoomCell,
-    cfg: &BuildingCfg,
-) -> [f32; 2] {
-    let mid = shared_edge_midpoint(&a.rect, &b.rect);
-    let stair_target = |s: &Rect2| -> Option<f32> {
-        // South entry zone runs from s.z_min to s.z_min + STAIR_ENTRY_DEPTH.
-        // Anchor at the centre of that zone so the door lands squarely
-        // on the platform.
-        Some(s.z_min + 0.5 * super::circulation::STAIR_ENTRY_DEPTH)
-    };
-    let elev_target = |e: &Rect2| -> Option<f32> {
-        Some(0.5 * (e.z_min + e.z_max))
-    };
-    let target_z = match (a.kind, b.kind) {
-        (CellKind::Staircase, _) if !matches!(b.kind, CellKind::Staircase) => stair_target(&a.rect),
-        (_, CellKind::Staircase) if !matches!(a.kind, CellKind::Staircase) => stair_target(&b.rect),
-        (CellKind::Elevator, _) if !matches!(b.kind, CellKind::Elevator) => elev_target(&a.rect),
-        (_, CellKind::Elevator) if !matches!(a.kind, CellKind::Elevator) => elev_target(&b.rect),
-        _ => None,
-    };
-    let Some(target_z) = target_z else {
-        return mid;
-    };
-    // Only bias the Z component if the shared edge is vertical (runs
-    // along Z) — that's the wall the door sits in. Horizontal edges
-    // get the unchanged midpoint.
-    let vertical_edge = (a.rect.x_max - b.rect.x_min).abs() < 1e-3
-        || (b.rect.x_max - a.rect.x_min).abs() < 1e-3;
-    if !vertical_edge {
-        return mid;
-    }
-    let lo = a.rect.z_min.max(b.rect.z_min);
-    let hi = a.rect.z_max.min(b.rect.z_max);
-    let margin = 0.5 * cfg.door_w + cfg.wall_thickness;
-    let z = if hi - lo > 2.0 * margin {
-        target_z.clamp(lo + margin, hi - margin)
-    } else {
-        0.5 * (lo + hi)
-    };
-    [mid[0], z]
-}
-
-fn shared_edge_midpoint(a: &Rect2, b: &Rect2) -> [f32; 2] {
-    if (a.x_max - b.x_min).abs() < 1e-3 {
-        return [a.x_max, 0.5 * (a.z_min.max(b.z_min) + a.z_max.min(b.z_max))];
-    }
-    if (b.x_max - a.x_min).abs() < 1e-3 {
-        return [b.x_max, 0.5 * (a.z_min.max(b.z_min) + a.z_max.min(b.z_max))];
-    }
-    if (a.z_max - b.z_min).abs() < 1e-3 {
-        return [0.5 * (a.x_min.max(b.x_min) + a.x_max.min(b.x_max)), a.z_max];
-    }
-    if (b.z_max - a.z_min).abs() < 1e-3 {
-        return [0.5 * (a.x_min.max(b.x_min) + a.x_max.min(b.x_max)), b.z_max];
-    }
-    [
-        0.5 * (a.centre()[0] + b.centre()[0]),
-        0.5 * (a.centre()[1] + b.centre()[1]),
-    ]
 }
 
 fn interior_facing(a: &Rect2, b: &Rect2) -> [f32; 3] {

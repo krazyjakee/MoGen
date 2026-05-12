@@ -263,7 +263,7 @@ mod tests {
     }
 
     fn room_cell(rect: Rect2, idx: usize) -> RoomCell {
-        RoomCell { rect, room_type_index: idx, kind: CellKind::Room }
+        RoomCell { rect, room_type_index: idx, kind: CellKind::Room, door_slots: Vec::new() }
     }
 
     #[test]
@@ -302,7 +302,7 @@ mod tests {
             rooms: vec![
                 room_cell(rect(0.0, 4.0, 0.0, 4.0), 0),
                 // A circulation cell sharing an edge — must be ignored.
-                RoomCell { rect: rect(4.0, 8.0, 0.0, 4.0), room_type_index: usize::MAX, kind: CellKind::Staircase },
+                RoomCell { rect: rect(4.0, 8.0, 0.0, 4.0), room_type_index: usize::MAX, kind: CellKind::Staircase, door_slots: Vec::new() },
             ],
         };
         let s = score(&cfg, &plate);

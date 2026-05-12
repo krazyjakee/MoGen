@@ -55,6 +55,7 @@ pub(super) fn layout(
         rect: split.corridor,
         room_type_index: corridor_type_idx,
         kind: CellKind::Room,
+        door_slots: Vec::new(),
     });
     if count_a > 0 {
         cells.extend(bsp::layout(split.half_a, types_a, state));

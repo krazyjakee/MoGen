@@ -32,7 +32,9 @@ use mogen_geom::{box_mesh, transform_mesh};
 use crate::ast::{Node, Value};
 use crate::module::expand_modules;
 
-use super::super::circulation::{CirculationCell, CirculationKind};
+use super::super::circulation::{
+    CirculationCell, CirculationKind, STAIR_ENTRY_DEPTH, STAIR_LANDING_DEPTH,
+};
 use super::super::config::BuildingCfg;
 use super::super::layout::{BuildingLayout, CellKind, Floorplate, Rect2, StoreyPlate};
 use super::openings::elevator_door_z;
@@ -64,10 +66,10 @@ use super::wall_build::wall_with_holes;
 /// The entry zone preserves the floor slab on every storey — it's the
 /// landing the door from the adjacent room opens onto and the platform
 /// the user steps off onto after climbing. Shell.rs reads these to
-/// build the matching slab cutout (everything north of the entry zone).
-pub(in super::super) const STAIR_ENTRY_DEPTH: f32 = 1.0;
-pub(in super::super) const STAIR_LANDING_DEPTH: f32 = 1.0;
-
+/// build the matching slab cutout (everything north of the entry zone);
+/// the planner side (`super::super::circulation`) owns the constants so
+/// `layout` can derive `RoomCell::door_slots` from the same source.
+///
 /// Width of the central spine between the two parallel half-flights.
 /// Just enough to keep the flights from sharing a tread vertex and to
 /// leave a visible slot for the inner handrail to live in.
