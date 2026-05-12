@@ -4,11 +4,11 @@
 //! BFS (rooted at the corridor by `pick_door_tree_root`) gives every room
 //! a door directly onto the corridor — exactly what a hotel/dorm wants.
 //!
-//! Distinct from `corridor.rs` (which is the apartment-block style with an
-//! explicit central corridor + BSP-on-the-halves): hotel rooms are
-//! uniformly sized along the corridor instead of being recursively BSP'd,
-//! so the result reads as the regular rhythm of identical rooms typical
-//! of hotels rather than the irregular flat layouts BSP produces.
+//! Distinct from `bsp.rs` (the `apartment-block` style, which subdivides
+//! the whole floorplate without a corridor): hotel rooms are uniformly
+//! sized along the corridor instead of being recursively BSP'd, so the
+//! result reads as the regular rhythm of identical rooms typical of
+//! hotels rather than the irregular flat layouts BSP produces.
 
 use super::common::{filter_types_excluding, split_with_corridor};
 use super::{grid, CellKind, Rect2, RoomCell};
