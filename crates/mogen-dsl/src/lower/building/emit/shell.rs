@@ -16,6 +16,7 @@ use super::super::circulation::CirculationPlan;
 use super::super::config::BuildingCfg;
 use super::super::layout::{Floorplate, Rect2};
 use super::openings::{Opening, OpeningPlan, WallSide};
+use super::wall_build::wall_with_holes;
 use super::StoreyCtx;
 
 pub(super) fn emit_shell(
@@ -110,14 +111,22 @@ fn emit_slab(
     let mesh = if holes_xz.is_empty() {
         base
     } else {
+        // Cutout boxes are inflated by `pad_xy` on every in-plane axis they
+        // reach, so a hole that ends exactly at the slab edge (e.g. a
+        // staircase carved out of the east-side circulation column) still
+        // emerges as a cleanly cut U-shape rather than as a manifold-
+        // degenerate coplanar face. The vertical inflation is small and
+        // symmetric so the cutout pokes through the top and bottom of the
+        // slab.
+        let pad_xy = 0.05f32;
         let cutouts: Vec<Mesh> = holes_xz
             .iter()
             .map(|r| {
-                let hw = r.width().max(1e-4);
-                let hd = r.depth().max(1e-4);
+                let hw = (r.width() + 2.0 * pad_xy).max(1e-4);
+                let hd = (r.depth() + 2.0 * pad_xy).max(1e-4);
                 let hcx = 0.5 * (r.x_min + r.x_max) - cx;
                 let hcz = 0.5 * (r.z_min + r.z_max) - cz;
-                let cutout = box_mesh([hw, thickness + 0.02, hd], UvMode::Tile);
+                let cutout = box_mesh([hw, thickness + 0.1, hd], UvMode::Tile);
                 transform_mesh(
                     &cutout,
                     glam::Mat4::from_translation(Vec3::new(hcx, 0.0, hcz)),
@@ -167,7 +176,7 @@ fn emit_perimeter_wall(
         }
     }
 
-    let mesh = build_wall_mesh([length, h, wt], &local_holes);
+    let mesh = wall_with_holes([length, h, wt], &local_holes);
     let role = "exterior_wall";
     let id = graph.add_child(
         parent,
@@ -237,24 +246,6 @@ fn opening_local(
         return None;
     }
     Some([along, cy, op.width, op.height])
-}
-
-fn build_wall_mesh(size: [f32; 3], holes: &[[f32; 4]]) -> Mesh {
-    let base = box_mesh(size, UvMode::Tile);
-    if holes.is_empty() {
-        return base;
-    }
-    let cutouts: Vec<Mesh> = holes
-        .iter()
-        .map(|&[hx, hy, hw, hh]| {
-            let c = box_mesh(
-                [hw.max(1e-4), hh.max(1e-4), size[2] + 0.02],
-                UvMode::Tile,
-            );
-            transform_mesh(&c, glam::Mat4::from_translation(Vec3::new(hx, hy, 0.0)))
-        })
-        .collect();
-    clean_csg_output(&difference_many(&base, &cutouts))
 }
 
 fn side_tag(side: WallSide) -> &'static str {

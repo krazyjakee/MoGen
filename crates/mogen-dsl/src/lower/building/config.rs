@@ -85,6 +85,13 @@ pub(super) struct BuildingCfg {
     pub staircases: u32,
     pub room_types: Vec<RoomType>,
     pub adjacencies: Vec<AdjacencyRule>,
+    /// Debug-only: when true, suppress the top-storey ceiling slab (and its
+    /// skylights) so a flat-roof building can be inspected from above.
+    pub debug_hide_roof: bool,
+    /// Debug-only: when set, render only this signed storey index, with no
+    /// ceiling and no vertical circulation — lets callers peek inside one
+    /// floor of a multi-storey building.
+    pub debug_render_floor: Option<i32>,
 }
 
 pub(super) fn read_cfg(node: &Node) -> Result<BuildingCfg> {
@@ -124,6 +131,14 @@ pub(super) fn read_cfg(node: &Node) -> Result<BuildingCfg> {
     let entrances = node.attr_number("entrances").unwrap_or(1.0).max(1.0) as u32;
     let elevators = node.attr_number("elevators").unwrap_or(0.0).max(0.0) as u32;
     let staircases = node.attr_number("staircases").unwrap_or(0.0).max(0.0) as u32;
+
+    let debug_hide_roof = node
+        .attr_number("debug_hide_roof")
+        .map(|n| n.abs() > 0.5)
+        .unwrap_or(false);
+    let debug_render_floor = node
+        .attr_number("debug_render_floor")
+        .map(|n| n.round() as i32);
 
     let external_door = attr_str(node, "external_door").unwrap_or_else(|| "door_simple".into());
     let internal_door = attr_str(node, "internal_door").unwrap_or_else(|| "door_simple".into());
@@ -176,6 +191,8 @@ pub(super) fn read_cfg(node: &Node) -> Result<BuildingCfg> {
         staircases,
         room_types,
         adjacencies,
+        debug_hide_roof,
+        debug_render_floor,
     })
 }
 
@@ -244,5 +261,15 @@ impl BuildingCfg {
     /// Per-room-type sampling weight. Density 0 → never sampled.
     pub fn density_weights(&self) -> Vec<f32> {
         self.room_types.iter().map(|r| r.density.max(0.0)).collect()
+    }
+
+    /// Index of the room_type whose name is `"corridor"`, if one is
+    /// declared. Used by the apartment-block layout to switch from plain
+    /// BSP to a corridor-and-side-rooms layout, and by the door planner to
+    /// root the spanning tree at the corridor so all rooms open onto it.
+    pub fn corridor_type_index(&self) -> Option<usize> {
+        self.room_types
+            .iter()
+            .position(|r| r.name.eq_ignore_ascii_case("corridor"))
     }
 }

@@ -107,6 +107,8 @@ mod tests {
                 adjacent_to: adjacent_to.into_iter().map(String::from).collect(),
                 away_from: away_from.into_iter().map(String::from).collect(),
             }],
+            debug_hide_roof: false,
+            debug_render_floor: None,
         }
     }
 

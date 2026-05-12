@@ -81,6 +81,8 @@ building "house" (
 | `skylight` | `"skylight_simple"` | module ref | Stamped at each skylight opening. |
 | `elevators` | `0` | int ≥ 0 | Vertical shafts spanning every storey. |
 | `staircases` | `0` | int ≥ 0 | Stairwells spanning adjacent storeys (≥1 if `floors_above + floors_below > 1`). |
+| `debug_hide_roof` | `0` | bool (0/1) | Debug: drop the top-storey ceiling slab (and its skylights) so the interior can be seen from above. |
+| `debug_render_floor` | _unset_ | signed int storey | Debug: render only the given storey index (`0` = ground, `1..` = upper, `-1..` = basement). The rendered floor gets no ceiling and vertical circulation is skipped. |
 
 ### Child node kinds
 

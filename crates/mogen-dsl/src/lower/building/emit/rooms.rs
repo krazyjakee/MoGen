@@ -14,14 +14,14 @@
 use anyhow::Result;
 use glam::{Quat, Vec3};
 
-use mogen_core::{Connector, NodeId, SceneGraph, Transform, UvMode};
-use mogen_geom::{box_mesh, clean_csg_output, difference_many, transform_mesh};
+use mogen_core::{Connector, NodeId, SceneGraph, Transform};
 
 use crate::ast::Node;
 
 use super::super::config::BuildingCfg;
 use super::super::layout::{cell_kind_label, cell_kind_role, cell_type, CellKind, Floorplate};
 use super::openings::OpeningPlan;
+use super::wall_build::wall_with_holes;
 
 pub(super) fn emit_rooms(
     node: &Node,
@@ -86,12 +86,19 @@ pub(super) fn emit_rooms(
             continue;
         }
         let mid_along = 0.5 * (range.0 + range.1);
+        // Wall mesh has its long axis on local X. A "Vertical" wall (a
+        // vertical line on the floor plan, running along world Z at fixed
+        // world X) therefore needs a 90° Y rotation to map its local X axis
+        // onto world Z. A "Horizontal" wall already runs along world X so it
+        // stays at IDENTITY. The opposite assignment was the source of the
+        // chaotic interior — every interior wall sat perpendicular to where
+        // its containing cells expected it.
         let (centre_xyz, rot) = match axis {
-            WallAxis::Vertical => (Vec3::new(*fixed, 0.5 * h, mid_along), Quat::IDENTITY),
-            WallAxis::Horizontal => (
-                Vec3::new(mid_along, 0.5 * h, *fixed),
+            WallAxis::Vertical => (
+                Vec3::new(*fixed, 0.5 * h, mid_along),
                 Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),
             ),
+            WallAxis::Horizontal => (Vec3::new(mid_along, 0.5 * h, *fixed), Quat::IDENTITY),
         };
         let parent_cell = cell_ids[*lo];
 
@@ -111,7 +118,7 @@ pub(super) fn emit_rooms(
             local_holes.push([along, cy, door.width, door.height]);
         }
 
-        let mesh = build_wall_mesh([length, h, wt], &local_holes);
+        let mesh = wall_with_holes([length, h, wt], &local_holes);
         let lo_kind = plate.rooms[*lo].kind;
         let hi_kind = plate.rooms[*hi].kind;
         let role = if matches!(lo_kind, CellKind::Room) && matches!(hi_kind, CellKind::Room) {
@@ -200,24 +207,6 @@ fn door_belongs_to_wall(
                 && door.x <= range.1 + 1e-3
         }
     }
-}
-
-fn build_wall_mesh(size: [f32; 3], holes: &[[f32; 4]]) -> mogen_core::Mesh {
-    let base = box_mesh(size, UvMode::Tile);
-    if holes.is_empty() {
-        return base;
-    }
-    let cutouts: Vec<mogen_core::Mesh> = holes
-        .iter()
-        .map(|&[hx, hy, hw, hh]| {
-            let c = box_mesh(
-                [hw.max(1e-4), hh.max(1e-4), size[2] + 0.02],
-                UvMode::Tile,
-            );
-            transform_mesh(&c, glam::Mat4::from_translation(Vec3::new(hx, hy, 0.0)))
-        })
-        .collect();
-    clean_csg_output(&difference_many(&base, &cutouts))
 }
 
 fn inherit_material_from_chain(id: NodeId, graph: &mut SceneGraph) {

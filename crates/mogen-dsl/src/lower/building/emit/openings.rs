@@ -126,7 +126,7 @@ fn place_interior_doors(
             }
         }
     }
-    let root = room_nearest_entrance(plate);
+    let root = pick_door_tree_root(cfg, plate);
     let mut visited = vec![false; n];
     let mut queue = std::collections::VecDeque::new();
     visited[root] = true;
@@ -158,10 +158,23 @@ fn place_interior_doors(
                 .find(|(a, b, _, _)| (*a == u && *b == v) || (*a == v && *b == u))
             {
                 let facing = interior_facing(&plate.rooms[u].rect, &plate.rooms[v].rect);
+                // `shared_edge_midpoint` already gave us the geometric
+                // midpoint along the shared edge; we additionally clamp it
+                // away from the corner so the door clears any perpendicular
+                // wall sitting at a T-junction. Corner margin =
+                // door_w/2 + wall_thickness so the door's edge stops at
+                // least a wall-thickness short of the adjacent corner.
+                let corner_margin = 0.5 * cfg.door_w + cfg.wall_thickness;
+                let (x, z) = clamp_door_to_edge(
+                    &plate.rooms[u].rect,
+                    &plate.rooms[v].rect,
+                    *mid,
+                    corner_margin,
+                );
                 plan.interior_doors.push(Opening {
                     kind: OpeningKind::InteriorDoor,
-                    x: mid[0],
-                    z: mid[1],
+                    x,
+                    z,
                     sill: 0.0,
                     width: cfg.door_w,
                     height: cfg.door_h,
@@ -172,6 +185,36 @@ fn place_interior_doors(
             queue.push_back(v);
         }
     }
+}
+
+/// Clamp a door's anchor along its shared edge so it stops at least
+/// `corner_margin` from each end. If the edge is shorter than 2× the
+/// margin (a very small shared edge from BSP), we centre the door and
+/// accept the corner overlap — the door has to land somewhere.
+fn clamp_door_to_edge(a: &Rect2, b: &Rect2, mid: [f32; 2], corner_margin: f32) -> (f32, f32) {
+    // Vertical shared edge (along Z) at x = a.x_max or b.x_max.
+    if (a.x_max - b.x_min).abs() < 1e-3 || (b.x_max - a.x_min).abs() < 1e-3 {
+        let lo = a.z_min.max(b.z_min);
+        let hi = a.z_max.min(b.z_max);
+        let z = clamp_centre(mid[1], lo, hi, corner_margin);
+        return (mid[0], z);
+    }
+    // Horizontal shared edge (along X).
+    if (a.z_max - b.z_min).abs() < 1e-3 || (b.z_max - a.z_min).abs() < 1e-3 {
+        let lo = a.x_min.max(b.x_min);
+        let hi = a.x_max.min(b.x_max);
+        let x = clamp_centre(mid[0], lo, hi, corner_margin);
+        return (x, mid[1]);
+    }
+    (mid[0], mid[1])
+}
+
+fn clamp_centre(value: f32, lo: f32, hi: f32, margin: f32) -> f32 {
+    let span = hi - lo;
+    if span <= 2.0 * margin {
+        return 0.5 * (lo + hi);
+    }
+    value.clamp(lo + margin, hi - margin)
 }
 
 fn place_windows(
@@ -320,7 +363,19 @@ fn interior_facing(a: &Rect2, b: &Rect2) -> [f32; 3] {
     }
 }
 
-fn room_nearest_entrance(plate: &Floorplate) -> usize {
+/// Pick the cell that anchors the interior-door spanning tree. When a
+/// `corridor` room_type is declared, we prefer the corridor cell so the
+/// BFS fans doors out from the corridor to every adjacent room (hub-and-
+/// spoke). Without a corridor we fall back to the room nearest the south
+/// entrance, which gives an entry-room-first chain.
+fn pick_door_tree_root(cfg: &BuildingCfg, plate: &Floorplate) -> usize {
+    if let Some(corridor_idx) = cfg.corridor_type_index() {
+        for (i, cell) in plate.rooms.iter().enumerate() {
+            if matches!(cell.kind, CellKind::Room) && cell.room_type_index == corridor_idx {
+                return i;
+            }
+        }
+    }
     let target = [
         0.5 * (plate.bounds.x_min + plate.bounds.x_max),
         plate.bounds.z_min,

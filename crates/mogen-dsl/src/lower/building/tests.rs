@@ -329,6 +329,87 @@ fn t2_layout_is_deterministic_under_same_seed() {
 }
 
 #[test]
+fn debug_hide_roof_drops_top_storey_ceiling() {
+    // Baseline: a single-storey flat-roof building emits two slabs
+    // (floor + ceiling). Setting debug_hide_roof should drop the ceiling.
+    let base = MIN_GRID_SRC;
+    let with_flag = MIN_GRID_SRC.replace(
+        "mat=\"concrete\",",
+        "mat=\"concrete\", debug_hide_roof=1,",
+    );
+    let g0 = lower_src(base);
+    let g1 = lower_src(&with_flag);
+    assert_eq!(count_kind(&g0, "slab"), 2, "baseline should have 2 slabs");
+    assert_eq!(
+        count_kind(&g1, "slab"),
+        1,
+        "debug_hide_roof should drop the ceiling slab"
+    );
+}
+
+#[test]
+fn debug_hide_roof_suppresses_skylights() {
+    let src_base = r#"
+        material "c" (color=[0.8, 0.8, 0.8])
+        building "t" (
+          seed=2, style="grid", floor_area=60, rooms=4,
+          floors_above=1, skylights=2, mat="c",
+        ) {
+          room_type "office" (kind=staff_only, density=1)
+        }
+    "#;
+    let src_hide = src_base.replace("mat=\"c\",", "mat=\"c\", debug_hide_roof=1,");
+    let g0 = lower_src(src_base);
+    let g1 = lower_src(&src_hide);
+    let skies = |g: &SceneGraph| {
+        g.nodes
+            .iter()
+            .filter(|n| n.role.as_deref() == Some("skylight"))
+            .count()
+    };
+    assert_eq!(skies(&g0), 2, "baseline should emit 2 skylights");
+    assert_eq!(
+        skies(&g1),
+        0,
+        "debug_hide_roof should suppress skylight emission"
+    );
+}
+
+#[test]
+fn debug_render_floor_isolates_a_single_storey() {
+    // 3 storeys (b1, 0, 1). debug_render_floor=1 should keep only floor_1
+    // and skip vertical circulation between storeys.
+    let src = MULTI_FLOOR_SRC.replace(
+        "mat=\"concrete\",",
+        "mat=\"concrete\", debug_render_floor=1,",
+    );
+    let g = lower_src(&src);
+    let floors: Vec<&str> = g
+        .nodes
+        .iter()
+        .filter(|n| n.name.starts_with("floor_"))
+        .map(|n| n.name.as_str())
+        .collect();
+    assert_eq!(floors, vec!["floor_1"], "should isolate exactly floor_1");
+    // No ceiling slab on the rendered floor (which was top → no ceiling
+    // means only one slab, the floor).
+    assert_eq!(count_kind(&g, "slab"), 1, "isolated floor has no ceiling");
+    // Circulation skipped entirely.
+    let flights = g
+        .nodes
+        .iter()
+        .filter(|n| n.role.as_deref() == Some("stair_flight"))
+        .count();
+    assert_eq!(flights, 0, "circulation should be skipped when isolating a floor");
+    let shafts = g
+        .nodes
+        .iter()
+        .filter(|n| n.role.as_deref() == Some("elevator"))
+        .count();
+    assert_eq!(shafts, 0, "elevator should be skipped when isolating a floor");
+}
+
+#[test]
 fn stair_xy_consistent_across_storeys() {
     let g = lower_src(MULTI_FLOOR_SRC);
     let flight_positions: Vec<(f32, f32)> = g

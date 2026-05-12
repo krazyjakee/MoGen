@@ -189,6 +189,7 @@ pub fn attrs_for_kind(kind: &str) -> &'static [&'static str] {
             "external_door", "internal_door",
             "window_small", "window_medium", "window_large", "skylight",
             "elevators", "staircases",
+            "debug_hide_roof", "debug_render_floor",
         ],
         "room_type" => &["kind", "density", "mat", "min_area", "max_area"],
         "adjacency" => &["adjacent_to", "away_from"],
@@ -398,7 +399,9 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         | ("building", "ceiling_thickness")
         | ("building", "entrances")
         | ("building", "elevators")
-        | ("building", "staircases") => "number",
+        | ("building", "staircases")
+        | ("building", "debug_hide_roof")
+        | ("building", "debug_render_floor") => "number",
         ("building", "style")
         | ("building", "mat_style")
         | ("building", "roof")

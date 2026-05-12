@@ -70,7 +70,23 @@ pub(super) fn expand_building(
         .max()
         .unwrap_or(0);
 
-    for storey_plate in &layout.storeys {
+    // `debug_render_floor` isolates one storey: filter the list down to it
+    // and pretend it's both the bottom (no floor cutouts) and not the top
+    // (no ceiling slab / skylights) so the result reads as a clean
+    // floorplate. Falls back to all storeys if the requested index doesn't
+    // exist in the layout.
+    let storeys_to_emit: Vec<&StoreyPlate> = match cfg.debug_render_floor {
+        Some(target) if layout.storeys.iter().any(|s| s.storey == target) => layout
+            .storeys
+            .iter()
+            .filter(|s| s.storey == target)
+            .collect(),
+        _ => layout.storeys.iter().collect(),
+    };
+    let isolated_floor = cfg.debug_render_floor.is_some() && storeys_to_emit.len() == 1;
+
+    for storey_plate in &storeys_to_emit {
+        let force_no_ceiling = cfg.debug_hide_roof || isolated_floor;
         emit_storey(
             node,
             &cfg,
@@ -78,6 +94,8 @@ pub(super) fn expand_building(
             storey_plate,
             bottom_storey,
             top_storey,
+            isolated_floor,
+            force_no_ceiling,
             wrapper_id,
             graph,
         )?;
@@ -85,16 +103,19 @@ pub(super) fn expand_building(
 
     // Vertical circulation (stair flights between adjacent storeys) lives in
     // its own subtree under the wrapper so it can span Y without juggling
-    // per-storey local frames.
-    emit::circulation::emit_circulation(
-        node,
-        &cfg,
-        &layout,
-        bottom_storey,
-        top_storey,
-        wrapper_id,
-        graph,
-    )?;
+    // per-storey local frames. Skipped when isolating a single floor —
+    // dangling flights between unrendered storeys would just be visual noise.
+    if !isolated_floor {
+        emit::circulation::emit_circulation(
+            node,
+            &cfg,
+            &layout,
+            bottom_storey,
+            top_storey,
+            wrapper_id,
+            graph,
+        )?;
+    }
 
     // Stamp the whole subtree non-editable so the inspector won't let users
     // hand-tweak generated walls (a rebuild would wipe the edits).
@@ -112,6 +133,8 @@ fn emit_storey(
     storey_plate: &StoreyPlate,
     bottom_storey: i32,
     top_storey: i32,
+    isolated_floor: bool,
+    force_no_ceiling: bool,
     wrapper_id: NodeId,
     graph: &mut SceneGraph,
 ) -> Result<()> {
@@ -129,10 +152,15 @@ fn emit_storey(
         format!("storey={}", storey),
     ]);
 
+    // Isolated debug floor: pretend it's the bottom (no stair cutouts in
+    // the floor slab) regardless of where it actually sits in the stack.
+    let is_top_topology = storey == top_storey;
+    let is_top = is_top_topology && !force_no_ceiling;
+    let is_bottom = storey == bottom_storey || isolated_floor;
     let ctx = emit::StoreyCtx {
         storey,
-        is_bottom: storey == bottom_storey,
-        is_top: storey == top_storey,
+        is_bottom,
+        is_top,
         bottom_storey,
         top_storey,
     };
