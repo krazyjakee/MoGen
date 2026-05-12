@@ -3,6 +3,7 @@
 //! multi-storey buildings).
 
 use super::super::rng::rand_f01;
+use super::common::type_at;
 use super::{CellKind, Rect2, RoomCell};
 
 const MIN_CELL_EXTENT: f32 = 1.6;
@@ -29,14 +30,9 @@ pub(super) fn layout(
     }
     let mut cells: Vec<RoomCell> = Vec::with_capacity(leaves.len());
     for (i, rect) in leaves.into_iter().enumerate() {
-        let room_type_index = if assigned_types.is_empty() {
-            0
-        } else {
-            assigned_types[i % assigned_types.len()]
-        };
         cells.push(RoomCell {
             rect,
-            room_type_index,
+            room_type_index: type_at(i, assigned_types),
             kind: CellKind::Room,
         });
     }

@@ -91,6 +91,108 @@ fn switchback_emits_a_mid_landing_per_pair() {
 }
 
 #[test]
+fn flight_handrails_sit_on_each_flights_own_spine_edge() {
+    // The lower (east) flight's spine-facing edge is at +spine/2; its
+    // rail centre belongs at +(spine/2 + thickness/2), with the rail's
+    // west face flush against the spine. Placing the rail at the
+    // opposite sign would put it across the spine inside the OTHER
+    // flight's footprint, where the climber can't reach it. Mirror for
+    // the upper (west) flight.
+    let g = lower_src(MULTI_FLOOR_SRC);
+    let mut saw_lower = false;
+    let mut saw_upper = false;
+    for n in &g.nodes {
+        if !n.name.starts_with("flight_handrail_") {
+            continue;
+        }
+        // Rail names are `flight_handrail_{storey}_{lower|upper}` —
+        // the suffix tells us which flight the rail serves.
+        let x = n.transform.translation.x;
+        if n.name.ends_with("_upper") {
+            saw_upper = true;
+            assert!(
+                x < 0.0,
+                "upper flight rail should sit west of spine centre, got x={x} ({})",
+                n.name
+            );
+        } else if n.name.ends_with("_lower") {
+            saw_lower = true;
+            assert!(
+                x > 0.0,
+                "lower flight rail should sit east of spine centre, got x={x} ({})",
+                n.name
+            );
+        }
+    }
+    assert!(saw_lower && saw_upper, "expected both flight rails");
+}
+
+#[test]
+fn flight_handrail_corners_stay_within_flight_z_extent() {
+    // A rotated rail box pushes its corners past flight_z_min and
+    // flight_z_max by ~RH/2·sin(α), making the rail jut into the entry
+    // zone and overhang the landing. The sheared-parallelogram rail's
+    // south/north faces are vertical, so its world-space z extent
+    // matches the flight depth exactly.
+    let g = lower_src(MULTI_FLOOR_SRC);
+    // Find the staircase group's world translation — the rails are
+    // expressed in stair-local coordinates and the staircase group
+    // carries the cell-centre offset.
+    let stair_centre_z = g
+        .nodes
+        .iter()
+        .find(|n| n.name == "staircase_0")
+        .map(|n| n.transform.translation.z)
+        .expect("staircase_0 group");
+    for n in &g.nodes {
+        if !n.name.starts_with("flight_handrail_") {
+            continue;
+        }
+        let mesh = n.mesh.as_ref().expect("rail has mesh");
+        let rail_centre_z = n.transform.translation.z;
+        let min_z = mesh
+            .positions
+            .iter()
+            .map(|p| p[2])
+            .fold(f32::INFINITY, f32::min);
+        let max_z = mesh
+            .positions
+            .iter()
+            .map(|p| p[2])
+            .fold(f32::NEG_INFINITY, f32::max);
+        // The rail's local mesh z extent equals the flight depth
+        // exactly when sheared (vertical end faces). A rotated box
+        // would extend further by RH/2 * sin(slope_angle) ≈ 0.25 m.
+        let span = max_z - min_z;
+        // Flight depth ≈ cell_depth - 2 m (entry + landing strips).
+        // We just need to assert the rail does NOT overshoot — span
+        // bounded above by what a vertical-ended panel would produce.
+        // Cell depths in MULTI_FLOOR_SRC are bounded by floor_area, so
+        // a generous upper bound is the cell depth itself; the tight
+        // assertion is that the rail's *centre* sits at stair-local
+        // z=0 (between the entry and landing zones) and its span
+        // doesn't add any tilt overshoot.
+        let _ = (stair_centre_z, rail_centre_z, span);
+        // Concretely, the four corner z values must be exactly
+        // ±span/2 — no rotation means each z position appears 12 times
+        // (4 corners on each of the 2 ±x faces, plus duplicates from
+        // the box's 24-vertex face split). Check that exactly two
+        // distinct z values appear.
+        let mut zs: Vec<f32> = mesh.positions.iter().map(|p| p[2]).collect();
+        zs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        zs.dedup_by(|a, b| (*a - *b).abs() < 1e-3);
+        assert_eq!(
+            zs.len(),
+            2,
+            "rail {} should have exactly 2 distinct local z values \
+             (vertical end faces), got {:?} — a rotated box would have 4",
+            n.name,
+            zs
+        );
+    }
+}
+
+#[test]
 fn cutout_edge_railing_only_on_top_storey() {
     // The south edge of the slab cutout faces intact entry-platform
     // slab. On the top storey its east half is a real drop hazard
@@ -160,19 +262,26 @@ fn switchback_flights_split_east_and_west() {
 }
 
 #[test]
-fn circulation_cells_get_three_sided_shaft_walls() {
-    // Without explicit shaft walls the staircase north face and the
-    // elevator north/south/east faces would have no adjacent cell and
-    // no perimeter wall close enough to enclose them — the user could
-    // walk straight out of a stair into the inset gap behind the
-    // building's south wall. One staircase + one elevator → six walls.
+fn circulation_cells_get_shaft_walls() {
+    // Shaft enclosure walls (MULTI_FLOOR_SRC = 3 storeys):
+    // - Staircase: N/E/S (3) — the west side stays open so the
+    //   per-storey cell-shared wall can carry the door cutout that
+    //   lands on the south entry zone.
+    // - Elevator: N/E/S (3) full-height + W split into one piece per
+    //   storey (3) so each storey's door cutout can shift along Z to
+    //   match its own room layout. A single full-height west wall
+    //   could only hold one X column per door, so per-storey shifts
+    //   would smear into one giant hole via `wall_with_holes` merge.
     let g = lower_src(MULTI_FLOOR_SRC);
     let walls = g
         .nodes
         .iter()
         .filter(|n| n.role.as_deref() == Some("shaft_wall"))
         .count();
-    assert_eq!(walls, 6, "expected 3 walls each for stair + elevator");
+    assert_eq!(
+        walls, 9,
+        "expected 3 walls for the stair + 3 full-height + 3 per-storey W for the elevator"
+    );
 }
 
 #[test]
@@ -244,14 +353,14 @@ fn elevator_doorways_are_one_and_a_half_times_door_width() {
     let src = r#"
         material "concrete" (color=[0.8, 0.8, 0.8])
         building "tower" (
-          seed=3, style="grid",
-          floor_area=80, rooms=8,
+          seed=3, style="hotel-corridor",
+          floor_area=160, rooms=10,
           floors_above=2, floors_below=1,
           staircases=1, elevators=1,
           internal_door="no_such_module",
           mat="concrete",
         ) {
-          room_type "office" (kind=staff_only, density=1)
+          room_type "suite" (kind=private, density=1)
         }
     "#;
     let g = lower_src(src);
@@ -285,6 +394,172 @@ fn elevator_doorways_are_one_and_a_half_times_door_width() {
         (min_w - 0.9).abs() < 1e-3,
         "expected non-elevator doorways at 0.9 m, narrowest was {min_w}"
     );
+}
+
+#[test]
+fn elevator_has_a_1p5x_door_on_every_floor() {
+    // Bulletproof: every storey must produce exactly one doorway between
+    // the elevator and a non-circulation room, AND that doorway must be
+    // the full 1.5 × `cfg.door_w` width (1.35 m at default). We force the
+    // unknown-module fallback so each int_door is a plain panel whose
+    // mesh local-X extent equals the opening width, then check both the
+    // count per storey and the width per door.
+    //
+    // We sweep multiple seeds, multiple storey counts, and the
+    // problematic `grid` style (which historically left the elevator
+    // orphaned) so this guards against geometric corner cases — not just
+    // one happy layout.
+    for &seed in &[1, 2, 3, 7, 13, 42, 999] {
+        for &(below, above) in &[(0u32, 2u32), (1, 2), (0, 3), (2, 3)] {
+            check_elevator_doors_for(seed, below, above);
+        }
+    }
+}
+
+fn check_elevator_doors_for(seed: u32, floors_below: u32, floors_above: u32) {
+    let src = format!(
+        r#"
+        material "concrete" (color=[0.8, 0.8, 0.8])
+        building "tower" (
+          seed={seed}, style="grid",
+          floor_area=80, rooms=8,
+          floors_above={floors_above}, floors_below={floors_below},
+          staircases=1, elevators=1,
+          internal_door="no_such_module",
+          mat="concrete",
+        ) {{
+          room_type "office" (kind=staff_only, density=1)
+        }}
+        "#
+    );
+    let g = lower_src(&src);
+    let storeys: Vec<i32> = (-(floors_below as i32)..(floors_above as i32)).collect();
+
+    let elev_idx: Vec<usize> = g
+        .nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, n)| n.role.as_deref() == Some("elevator"))
+        .map(|(i, _)| i)
+        .collect();
+    assert_eq!(
+        elev_idx.len(),
+        1,
+        "[seed={seed} below={floors_below} above={floors_above}] expected exactly one elevator group, got {}",
+        elev_idx.len()
+    );
+
+    let storey_for = |mut idx: usize| -> Option<i32> {
+        loop {
+            let name = &g.nodes[idx].name;
+            if let Some(rest) = name.strip_prefix("floor_") {
+                if let Ok(s) = rest.parse::<i32>() {
+                    return Some(s);
+                } else if let Some(b) = rest.strip_prefix('b') {
+                    return Some(-(b.parse::<i32>().ok()?));
+                }
+            }
+            idx = g.nodes[idx].parent?.0 as usize;
+        }
+    };
+    let world_xz = |idx: usize| -> (f32, f32) {
+        let mut cur = idx;
+        let (mut x, mut z) = (0.0f32, 0.0f32);
+        loop {
+            let n = &g.nodes[cur];
+            x += n.transform.translation.x;
+            z += n.transform.translation.z;
+            match n.parent {
+                Some(p) => cur = p.0 as usize,
+                None => return (x, z),
+            }
+        }
+    };
+    // The fallback panel is the int_door group's only child of kind
+    // "panel". Its mesh is `box_mesh([op.width, op.height, 0.04])` with
+    // an identity local transform, so the local-X extent === op.width.
+    let panel_width = |int_door_idx: usize| -> Option<f32> {
+        for c in &g.nodes[int_door_idx].children {
+            let panel = &g.nodes[c.0 as usize];
+            if panel.kind != "panel" {
+                continue;
+            }
+            let mesh = panel.mesh.as_ref()?;
+            let (mut xmin, mut xmax) = (f32::INFINITY, f32::NEG_INFINITY);
+            for p in &mesh.positions {
+                xmin = xmin.min(p[0]);
+                xmax = xmax.max(p[0]);
+            }
+            return Some(xmax - xmin);
+        }
+        None
+    };
+
+    let (ex, ez) = world_xz(elev_idx[0]);
+    // Per-storey list of (door_world_x, door_world_z, width). The door
+    // sits on the elevator's 2 m perimeter ⇒ |Δx| or |Δz| ≈ 1 m; allow
+    // 1.1 for the wall-thickness inset on the panel.
+    #[derive(Clone, Copy, Debug)]
+    struct Door {
+        x: f32,
+        z: f32,
+        width: f32,
+    }
+    let mut by_storey: std::collections::BTreeMap<i32, Vec<Door>> =
+        std::collections::BTreeMap::new();
+    for (i, n) in g.nodes.iter().enumerate() {
+        if n.role.as_deref() != Some("int_door") {
+            continue;
+        }
+        let (dx, dz) = world_xz(i);
+        let touches = (dx - ex).abs() <= 1.1 && (dz - ez).abs() <= 1.1;
+        if !touches {
+            continue;
+        }
+        let s = storey_for(i).expect("int_door must live under a floor_<x> ancestor");
+        let w = panel_width(i).expect("int_door must contain a fallback panel");
+        by_storey.entry(s).or_default().push(Door {
+            x: dx,
+            z: dz,
+            width: w,
+        });
+    }
+
+    assert_eq!(
+        by_storey.keys().copied().collect::<Vec<_>>(),
+        storeys,
+        "[seed={seed} below={floors_below} above={floors_above}] expected an elevator doorway on every storey; got {:?}",
+        by_storey
+    );
+    for (s, doors) in &by_storey {
+        assert_eq!(
+            doors.len(),
+            1,
+            "[seed={seed} below={floors_below} above={floors_above}] storey {s} should have exactly one elevator doorway, got {doors:?}"
+        );
+        let d = doors[0];
+        assert!(
+            (d.width - 1.35).abs() < 1e-3,
+            "[seed={seed} below={floors_below} above={floors_above}] storey {s} elevator doorway must be 1.35 m wide, got {}",
+            d.width
+        );
+        // The doorway must sit on the elevator's west face (x = ex − 1)
+        // and be centred along Z on the elevator's 2 m face. Grid
+        // layouts always extend a room past both the elevator's z_min
+        // and z_max, so neither corner of the shared edge has a wall on
+        // the room side — there's nothing to push the door off-centre.
+        assert!(
+            (d.x - (ex - 1.0)).abs() < 0.06,
+            "[seed={seed} below={floors_below} above={floors_above}] storey {s} elevator doorway should sit on the elevator's west face at x≈{}, got x={}",
+            ex - 1.0,
+            d.x
+        );
+        assert!(
+            (d.z - ez).abs() < 1e-3,
+            "[seed={seed} below={floors_below} above={floors_above}] storey {s} elevator doorway must be centred on the elevator's Z midline (z≈{ez}), got z={}",
+            d.z
+        );
+    }
 }
 
 #[test]

@@ -12,6 +12,7 @@
 //! declared, or when only enough room budget exists for the corridor and
 //! one room).
 
+use super::common::{filter_types_excluding, split_with_corridor};
 use super::{bsp, CellKind, Rect2, RoomCell};
 
 const CORRIDOR_WIDTH: f32 = 1.5;
@@ -34,61 +35,12 @@ pub(super) fn layout(
     // Strip any corridor instances out of the type list — the BSP'd halves
     // are room-only. We then keep `assigned_types.len()` total cells
     // (corridor + side rooms summing back to the requested count).
-    let side_types: Vec<usize> = assigned_types
-        .iter()
-        .copied()
-        .filter(|&i| i != corridor_type_idx)
-        .collect();
+    let side_types = filter_types_excluding(assigned_types, corridor_type_idx);
     if side_types.is_empty() {
         return bsp::layout(bounds, assigned_types, state);
     }
 
-    let half = 0.5 * CORRIDOR_WIDTH;
-    let (corridor_rect, half_a, half_b) = if along_x {
-        let mid_z = 0.5 * (bounds.z_min + bounds.z_max);
-        (
-            Rect2 {
-                x_min: bounds.x_min,
-                x_max: bounds.x_max,
-                z_min: mid_z - half,
-                z_max: mid_z + half,
-            },
-            Rect2 {
-                x_min: bounds.x_min,
-                x_max: bounds.x_max,
-                z_min: bounds.z_min,
-                z_max: mid_z - half,
-            },
-            Rect2 {
-                x_min: bounds.x_min,
-                x_max: bounds.x_max,
-                z_min: mid_z + half,
-                z_max: bounds.z_max,
-            },
-        )
-    } else {
-        let mid_x = 0.5 * (bounds.x_min + bounds.x_max);
-        (
-            Rect2 {
-                x_min: mid_x - half,
-                x_max: mid_x + half,
-                z_min: bounds.z_min,
-                z_max: bounds.z_max,
-            },
-            Rect2 {
-                x_min: bounds.x_min,
-                x_max: mid_x - half,
-                z_min: bounds.z_min,
-                z_max: bounds.z_max,
-            },
-            Rect2 {
-                x_min: mid_x + half,
-                x_max: bounds.x_max,
-                z_min: bounds.z_min,
-                z_max: bounds.z_max,
-            },
-        )
-    };
+    let split = split_with_corridor(bounds, CORRIDOR_WIDTH);
 
     // Split the side-room types across the two halves. The half closer to
     // the south entrance gets the slight majority when the count is odd —
@@ -100,15 +52,15 @@ pub(super) fn layout(
 
     let mut cells: Vec<RoomCell> = Vec::new();
     cells.push(RoomCell {
-        rect: corridor_rect,
+        rect: split.corridor,
         room_type_index: corridor_type_idx,
         kind: CellKind::Room,
     });
     if count_a > 0 {
-        cells.extend(bsp::layout(half_a, types_a, state));
+        cells.extend(bsp::layout(split.half_a, types_a, state));
     }
     if count_b > 0 {
-        cells.extend(bsp::layout(half_b, types_b, state));
+        cells.extend(bsp::layout(split.half_b, types_b, state));
     }
     cells
 }

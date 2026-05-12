@@ -85,15 +85,16 @@ fn area_band_score(cfg: &BuildingCfg, plate: &Floorplate) -> f32 {
     total
 }
 
-/// Reward public rooms placed near the south entrance and private /
-/// secure rooms placed away from it. Returns 0 if there's no usable
-/// floorplate (degenerate case).
+/// Reward public rooms placed near any entrance and private / secure
+/// rooms placed away from every entrance. Returns 0 if there's no usable
+/// floorplate (degenerate case). Mirrors `place_entrances`'s round-robin
+/// side distribution so the prior tracks where the doors will actually
+/// land, not just the canonical south face.
 fn entrance_distance_score(cfg: &BuildingCfg, plate: &Floorplate) -> f32 {
     let max_d2 =
         (plate.bounds.width().powi(2) + plate.bounds.depth().powi(2)).max(1e-3);
     let max_d = max_d2.sqrt();
-    let entrance_x = 0.5 * (plate.bounds.x_min + plate.bounds.x_max);
-    let entrance_z = plate.bounds.z_min;
+    let anchors = entrance_anchors(cfg, plate);
     let mut total = 0.0;
     for cell in &plate.rooms {
         if !matches!(cell.kind, CellKind::Room) {
@@ -103,9 +104,16 @@ fn entrance_distance_score(cfg: &BuildingCfg, plate: &Floorplate) -> f32 {
             continue;
         };
         let c = cell.rect.centre();
-        let dx = c[0] - entrance_x;
-        let dz = c[1] - entrance_z;
-        let t = ((dx * dx + dz * dz).sqrt() / max_d).clamp(0.0, 1.0);
+        let mut min_d = f32::INFINITY;
+        for a in &anchors {
+            let dx = c[0] - a[0];
+            let dz = c[1] - a[1];
+            let d = (dx * dx + dz * dz).sqrt();
+            if d < min_d {
+                min_d = d;
+            }
+        }
+        let t = (min_d / max_d).clamp(0.0, 1.0);
         // t=0 ⇒ at entrance, t=1 ⇒ furthest corner.
         let weight = match typ.kind {
             RoomKind::Public => -t * 0.6,           // closer is better
@@ -118,6 +126,46 @@ fn entrance_distance_score(cfg: &BuildingCfg, plate: &Floorplate) -> f32 {
         total += weight;
     }
     total
+}
+
+/// Predicted entrance anchor positions for the layout scorer.
+///
+/// Layout solving runs before opening placement, so we can't read actual
+/// entrance positions out of an `OpeningPlan`. Instead we duplicate the
+/// round-robin side distribution from `emit::openings::place_entrances`
+/// (S → N → E → W) but skip the per-entrance jitter, anchoring each
+/// entrance at the midpoint of its share of the wall. That's the
+/// expected entrance location to within ~`door_w`; the scoring weights
+/// are soft enough that the small jitter doesn't change which layout
+/// wins.
+fn entrance_anchors(cfg: &BuildingCfg, plate: &Floorplate) -> Vec<[f32; 2]> {
+    let count = cfg.entrances.max(1) as usize;
+    let mut per_side: [usize; 4] = [0; 4];
+    for i in 0..count {
+        per_side[i % 4] += 1;
+    }
+    let bounds = &plate.bounds;
+    let mut anchors: Vec<[f32; 2]> = Vec::with_capacity(count);
+    let push = |anchors: &mut Vec<[f32; 2]>, along_min: f32, span: f32, n: usize, on_x: bool, fixed: f32| {
+        for i in 0..n {
+            let t = (i as f32 + 1.0) / (n as f32 + 1.0);
+            let along = along_min + t * span;
+            if on_x {
+                anchors.push([along, fixed]);
+            } else {
+                anchors.push([fixed, along]);
+            }
+        }
+    };
+    // South (index 0).
+    push(&mut anchors, bounds.x_min, bounds.x_max - bounds.x_min, per_side[0], true, bounds.z_min);
+    // North.
+    push(&mut anchors, bounds.x_min, bounds.x_max - bounds.x_min, per_side[1], true, bounds.z_max);
+    // East.
+    push(&mut anchors, bounds.z_min, bounds.z_max - bounds.z_min, per_side[2], false, bounds.x_max);
+    // West.
+    push(&mut anchors, bounds.z_min, bounds.z_max - bounds.z_min, per_side[3], false, bounds.x_min);
+    anchors
 }
 
 /// Pairwise "good neighbour" prior keyed on `RoomKind`. These are gentle

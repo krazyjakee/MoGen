@@ -20,6 +20,7 @@ use crate::module::expand_modules;
 
 use super::super::config::{BuildingCfg, Roof};
 use super::super::layout::{CellKind, Floorplate, Rect2};
+use super::super::materials::SKYLIGHT_GLASS_MAT;
 use super::super::rng::{attempt_seed, rand_f01};
 use super::StoreyCtx;
 
@@ -115,6 +116,15 @@ pub(super) fn emit_skylights_at(
         graph.nodes[sky_id.0 as usize]
             .tags
             .extend(["building".into(), "skylight".into()]);
+
+        // Bind glass onto the wrapping group so the stdlib skylight pane
+        // (which has no explicit `mat=`) inherits a transparent pane
+        // instead of falling through to the wall material.
+        if let Some(mid) =
+            graph.find_material_scoped(SKYLIGHT_GLASS_MAT, origin.as_deref())
+        {
+            graph.set_material(sky_id, mid);
+        }
 
         if reg.contains(&cfg.skylight_mod) {
             let synth = Node {

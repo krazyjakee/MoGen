@@ -24,17 +24,18 @@
 //! that fills the carved column.
 
 use anyhow::Result;
-use glam::{Quat, Vec3};
+use glam::{Mat4, Quat, Vec3, Vec4};
 
 use mogen_core::{NodeId, SceneGraph, Span, Transform, UvMode};
-use mogen_geom::box_mesh;
+use mogen_geom::{box_mesh, transform_mesh};
 
 use crate::ast::{Node, Value};
 use crate::module::expand_modules;
 
 use super::super::circulation::{CirculationCell, CirculationKind};
 use super::super::config::BuildingCfg;
-use super::super::layout::{BuildingLayout, CellKind, Floorplate, Rect2};
+use super::super::layout::{BuildingLayout, CellKind, Floorplate, Rect2, StoreyPlate};
+use super::openings::elevator_door_z;
 use super::wall_build::wall_with_holes;
 
 /// Switchback layout — depths along the cell's Z axis, measured from
@@ -121,7 +122,17 @@ pub(in super::super) fn emit_circulation(
                 )?;
             }
             CirculationKind::Elevator => {
-                emit_elevator(node, cfg, cell, i, bottom_storey, top_storey, circ_group, graph)?;
+                emit_elevator(
+                    node,
+                    cfg,
+                    cell,
+                    i,
+                    bottom_storey,
+                    top_storey,
+                    &layout.storeys,
+                    circ_group,
+                    graph,
+                )?;
             }
         }
     }
@@ -360,11 +371,16 @@ fn emit_staircase(
             graph,
         )?;
 
-        // Flight handrails on each flight's open (spine-facing) edge.
+        // Flight handrails sit on each flight's spine-facing edge. The
+        // east flight's open edge is at +spine/2 (its west face), so the
+        // rail centre sits at +(spine/2 + thickness/2) with its west
+        // face flush against the spine. The west flight mirrors. This
+        // puts each rail on the user's open hand side as they climb and
+        // gives the mid-landing rail clean shared edges to butt against.
         emit_flight_handrail(
             node,
             s,
-            -(0.5 * spine + 0.5 * RAILING_THICKNESS), // west edge of east flight
+            0.5 * spine + 0.5 * RAILING_THICKNESS, // east flight's spine edge
             y_floor,
             flight_z_min,
             flight_z_max,
@@ -376,7 +392,7 @@ fn emit_staircase(
         emit_flight_handrail(
             node,
             s,
-            0.5 * spine + 0.5 * RAILING_THICKNESS, // east edge of west flight
+            -(0.5 * spine + 0.5 * RAILING_THICKNESS), // west flight's spine edge
             y_mid,
             flight_z_min,
             flight_z_max,
@@ -594,11 +610,17 @@ fn emit_mid_landing(
     inherit_material_from_chain(id, graph);
 }
 
-/// Sloped solid-panel handrail along a flight's open (spine-facing) edge.
-/// The panel tilts to match the flight's slope so its bottom edge tracks
-/// the treads' top surface roughly one tread above. Without a railing
-/// here the user can walk straight off the inner edge of either flight
-/// into the open shaft.
+/// Sloped solid-panel handrail along a flight's spine-facing edge.
+///
+/// Built as a sheared box — a parallelogram in YZ extruded by
+/// `RAILING_THICKNESS` along X — rather than a rotated box. The
+/// bottom and top edges slant with the flight's slope so the rail
+/// tracks the treads, while the south and north end faces stay
+/// vertical and align exactly with `flight_z_min` / `flight_z_max`.
+/// A rotated box would push its top-south and bottom-north corners
+/// past the flight footprint by ≈ RH/2·sin(α), leaving the rail
+/// jutting into the entry zone and the landing instead of butting
+/// flush against the mid-landing rail and the cutout-edge rail.
 #[allow(clippy::too_many_arguments)]
 fn emit_flight_handrail(
     node: &Node,
@@ -615,24 +637,35 @@ fn emit_flight_handrail(
     let origin = node.origin.clone();
     let flight_d = flight_z_max - flight_z_min;
     let z_centre = 0.5 * (flight_z_min + flight_z_max);
-    let slope = rise / flight_d;
-    let slope_angle = slope.atan();
-    // Panel authored along +Z, height up +Y, thickness across X. Tilt
-    // around the X axis to follow the flight's slope. The sign flips
-    // for north→south flights so the panel rises toward the user's
-    // direction of ascent.
-    let angle = match dir {
-        FlightDir::SouthToNorth => -slope_angle,
-        FlightDir::NorthToSouth => slope_angle,
+    // Slope of the panel's bottom/top edges, in world stair-local frame.
+    // Positive = rises toward +Z (south→north). The upper flight
+    // ascends in the opposite direction so its rail tracks the negative
+    // slope of its own treads — y decreases as z grows.
+    let slope = match dir {
+        FlightDir::SouthToNorth => rise / flight_d,
+        FlightDir::NorthToSouth => -rise / flight_d,
     };
-    // Centre y: place so the panel's bottom edge sits a small clearance
-    // above the flight's mid-slope height (the tread top at the centre
-    // of the flight). cos(angle) is positive in both directions.
-    let clearance = 0.02;
-    let mid_step_y = y_base + 0.5 * rise + clearance;
-    let centre_y = mid_step_y + 0.5 * RAILING_HEIGHT * angle.cos().abs();
-    let size = [RAILING_THICKNESS, RAILING_HEIGHT, flight_d];
-    let mesh = box_mesh(size, UvMode::Tile);
+    // Shear an axis-aligned box (thickness × RH × flight_d) by `slope`
+    // along Y-by-Z. Each vertex's y is offset by `slope * z`, turning
+    // the box into a parallelepiped whose ±z faces stay vertical at
+    // ±flight_d/2 and whose ±y faces slant in lockstep.
+    let base = box_mesh(
+        [RAILING_THICKNESS, RAILING_HEIGHT, flight_d],
+        UvMode::Tile,
+    );
+    let shear = Mat4::from_cols(
+        Vec4::new(1.0, 0.0, 0.0, 0.0),
+        Vec4::new(0.0, 1.0, 0.0, 0.0),
+        Vec4::new(0.0, slope, 1.0, 0.0),
+        Vec4::new(0.0, 0.0, 0.0, 1.0),
+    );
+    let mesh = transform_mesh(&base, shear);
+    // After shearing, the panel's bottom edge runs from
+    // (z=-d/2, y=-h/2 - slope·d/2) to (z=+d/2, y=-h/2 + slope·d/2).
+    // Translating by centre_y = y_base + rise/2 + RH/2 lands the
+    // bottom-south corner at y_base and bottom-north at y_base + rise
+    // for an ascending flight, and the mirror for a descending one.
+    let centre_y = y_base + 0.5 * rise + 0.5 * RAILING_HEIGHT;
     let id = graph.add_child(
         parent,
         format!("flight_handrail_{}_{}", storey_label(storey), match dir {
@@ -642,7 +675,7 @@ fn emit_flight_handrail(
         "box",
         Transform::from_trs(
             Vec3::new(x_pos, centre_y, z_centre),
-            Quat::from_rotation_x(angle),
+            Quat::IDENTITY,
             Vec3::ONE,
         ),
     );
@@ -743,6 +776,7 @@ fn emit_cutout_edge_railing(
     inherit_material_from_chain(id, graph);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_elevator(
     node: &Node,
     cfg: &BuildingCfg,
@@ -750,16 +784,16 @@ fn emit_elevator(
     idx: usize,
     bottom_storey: i32,
     top_storey: i32,
+    storeys: &[StoreyPlate],
     parent: NodeId,
     graph: &mut SceneGraph,
 ) -> Result<()> {
     let origin = node.origin.clone();
     let centre = cell.rect.centre();
+    let step = cfg.ceiling_height + cfg.ceiling_thickness;
     let storeys_spanned = (top_storey - bottom_storey + 1).max(1) as f32;
-    let total_h = storeys_spanned * (cfg.ceiling_height + cfg.ceiling_thickness);
-    let y_centre = bottom_storey as f32 * (cfg.ceiling_height + cfg.ceiling_thickness)
-        + 0.5 * total_h
-        - 0.5 * cfg.ceiling_thickness;
+    let total_h = storeys_spanned * step;
+    let y_centre = bottom_storey as f32 * step + 0.5 * total_h - 0.5 * cfg.ceiling_thickness;
 
     let shaft_group = graph.add_child(
         parent,
@@ -777,11 +811,11 @@ fn emit_elevator(
         .tags
         .extend(["building".into(), "elevator".into()]);
 
-    // Three-sided shaft enclosure (N/E/S). The west side is intentionally
-    // left open — the per-storey cell-shared wall on that face (emitted
-    // by `rooms.rs`) already carries the door cutout placed by the door
-    // BFS. Adding a continuous shaft wall there would sit just behind
-    // the cell wall and visually plug the door from inside the shaft.
+    // N/E/S solid walls, full-height. The W face is split into one piece
+    // per storey below so each storey's door cutout can shift along Z to
+    // match its own room layout — a single full-height wall could only
+    // hold one X column per door (wall_with_holes merges X-overlapping
+    // spans), so the per-storey shifts would smear into one giant hole.
     emit_shaft_enclosure(
         cell.rect.width(),
         cell.rect.depth(),
@@ -790,14 +824,95 @@ fn emit_elevator(
         graph,
         &origin,
     );
+    emit_elevator_west_walls(
+        cfg,
+        cell,
+        storeys,
+        bottom_storey,
+        top_storey,
+        y_centre,
+        shaft_group,
+        graph,
+        &origin,
+    );
     Ok(())
 }
 
-/// Emit N/E/S walls forming a three-sided enclosure for a circulation
-/// cell, parented to `group` (which the caller has already centred on
-/// the cell in XZ and at the cell's mid-Y). Skips the west wall — the
-/// per-storey cell walls on that face carry the door cutout to the
-/// adjacent room, so this enclosure stays open on the door side.
+/// Per-storey west wall pieces for the elevator. Each piece is one
+/// `step` (ceiling + slab) tall, stacks flush against its neighbours, and
+/// carries this storey's door cutout at the Z chosen by
+/// `openings::elevator_door_z` — shifted off-centre when a room-room
+/// interior wall would T-junction the elevator's west face inside the
+/// cutout volume.
+#[allow(clippy::too_many_arguments)]
+fn emit_elevator_west_walls(
+    cfg: &BuildingCfg,
+    cell: &CirculationCell,
+    storeys: &[StoreyPlate],
+    bottom_storey: i32,
+    top_storey: i32,
+    y_centre: f32,
+    group: NodeId,
+    graph: &mut SceneGraph,
+    origin: &Option<std::path::PathBuf>,
+) {
+    let cell_w = cell.rect.width();
+    let cell_d = cell.rect.depth();
+    let step = cfg.ceiling_height + cfg.ceiling_thickness;
+    let thickness = 0.05;
+    let half = 0.5 * thickness;
+    let elev_centre_z = 0.5 * (cell.rect.z_min + cell.rect.z_max);
+    let door_w_default = cfg.door_w * 1.5;
+    let door_h = cfg.door_h;
+    let w_length = cell_d + 0.1;
+
+    for sp in storeys {
+        let s = sp.storey;
+        if s < bottom_storey || s > top_storey {
+            continue;
+        }
+        let elev_cell = sp.plate.rooms.iter().find(|c| {
+            matches!(c.kind, CellKind::Elevator)
+                && (c.rect.x_min - cell.rect.x_min).abs() < 1e-3
+                && (c.rect.z_min - cell.rect.z_min).abs() < 1e-3
+        });
+        let z_world = match elev_cell {
+            Some(ec) => elevator_door_z(cfg, &sp.plate, ec),
+            None => elev_centre_z,
+        };
+        // Wall rotation = +π/2 about Y, so wall local +X maps to parent
+        // local -Z. Door at parent (elevator-group) local Z =
+        // z_world - elev_centre_z ⇒ wall local x = elev_centre_z - z_world.
+        let along = elev_centre_z - z_world;
+
+        let storey_y = s as f32 * step;
+        let piece_centre_y = storey_y + 0.5 * cfg.ceiling_height - y_centre;
+        let piece_height = step;
+        // Door bottom flush with the storey floor (= piece bottom + ct/2).
+        let cy_local = -0.5 * piece_height + 0.5 * door_h + 0.5 * cfg.ceiling_thickness;
+        let hole = [along, cy_local, door_w_default, door_h];
+        let mesh = wall_with_holes([w_length, piece_height, thickness], &[hole]);
+        let pos = Vec3::new(-0.5 * cell_w - half, piece_centre_y, 0.0);
+        let rot = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
+        let id = graph.add_child(
+            group,
+            format!("shaft_wall_w_{}", storey_label(s)),
+            "wall",
+            Transform::from_trs(pos, rot, Vec3::ONE),
+        );
+        graph.set_mesh(id, mesh);
+        graph.nodes[id.0 as usize].origin = origin.clone();
+        graph.nodes[id.0 as usize].role = Some("shaft_wall".into());
+        inherit_material_from_chain(id, graph);
+    }
+}
+
+/// Emit the N/E/S solid walls of a shaft enclosure, parented to `group`
+/// (which the caller has already centred on the cell in XZ and at the
+/// cell's mid-Y). The west face is always left to the caller:
+/// staircases let the per-storey cell-shared wall from `rooms.rs` carry
+/// the door cutout, while elevators emit per-storey west pieces via
+/// `emit_elevator_west_walls`.
 fn emit_shaft_enclosure(
     cell_w: f32,
     cell_d: f32,

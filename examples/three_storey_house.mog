@@ -12,16 +12,15 @@ material "plaster"    (color=[0.92, 0.91, 0.88], roughness=0.85)
 material "white_tile" (color=[0.95, 0.95, 0.95], roughness=0.3)
 
 building "townhouse" (
-  seed=17,
+  seed=14,
   style="apartment-block",
   floor_area=110,
-  rooms=24,
+  rooms=20,
   floors_above=3,
   floors_below=1,
-  windows=18,
+  windows=28,
   skylights=2,
   debug_hide_roof=1,
-  debug_render_floor=1,
   entrances=1,
   staircases=1,
   elevators=1,

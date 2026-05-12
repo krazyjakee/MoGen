@@ -1,10 +1,10 @@
-// summary: Simple skylight: a square glass pane in a thin metal frame. Authored bottom-anchored on the +Y face of a horizontal slab. `width`/`height` are the opening dimensions (default 1.0 × 1.0 m).
+// summary: Simple skylight: a square glass pane in a thin metal frame. Authored bottom-anchored on the +Y face of a horizontal slab. `width`/`height` are the opening dimensions (default 1.0 × 1.0 m). Frame strips bind to the `skylight_frame` material; the pane inherits from its parent group so the building can bind it to `window_glass`.
 module "skylight_simple" (width=1.0, height=1.0) {
   group "skylight_simple" {
-    box "frame_n" (pos=[0, 0.02, $height *  0.5], size=[$width + 0.1, 0.04, 0.05])
-    box "frame_s" (pos=[0, 0.02, $height * -0.5], size=[$width + 0.1, 0.04, 0.05])
-    box "frame_e" (pos=[$width *  0.5, 0.02, 0], size=[0.05, 0.04, $height])
-    box "frame_w" (pos=[$width * -0.5, 0.02, 0], size=[0.05, 0.04, $height])
+    box "frame_n" (pos=[0, 0.02, $height *  0.5], size=[$width + 0.1, 0.04, 0.05], mat="skylight_frame")
+    box "frame_s" (pos=[0, 0.02, $height * -0.5], size=[$width + 0.1, 0.04, 0.05], mat="skylight_frame")
+    box "frame_e" (pos=[$width *  0.5, 0.02, 0], size=[0.05, 0.04, $height], mat="skylight_frame")
+    box "frame_w" (pos=[$width * -0.5, 0.02, 0], size=[0.05, 0.04, $height], mat="skylight_frame")
     box "pane" (pos=[0, 0.0, 0], size=[$width - 0.04, 0.01, $height - 0.04])
   }
 }

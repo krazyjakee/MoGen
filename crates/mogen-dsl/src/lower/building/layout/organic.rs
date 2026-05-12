@@ -7,6 +7,7 @@
 //! Falls back to a uniform grid when jitter would shrink any cell below
 //! the architectural minimum (1.6 m on either axis).
 
+use super::common::pick_aspect_grid;
 use super::{CellKind, Rect2, RoomCell};
 use super::super::rng::rand_f01;
 
@@ -24,7 +25,7 @@ pub(super) fn layout(
         return Vec::new();
     }
 
-    let (cols_target, _) = pick_grid(rooms);
+    let (cols_target, _) = pick_aspect_grid(rooms);
     // Reduce rows to the minimum needed to fit every room — `pick_grid`
     // optimises for aspect ratio with waste tolerated, but for a layout
     // that must tile the whole floorplate we'd rather have a partial
@@ -113,34 +114,6 @@ fn jittered_lines(
     }
     lines.push(max);
     lines
-}
-
-fn pick_grid(rooms: usize) -> (usize, usize) {
-    if rooms <= 1 {
-        return (1, 1);
-    }
-    let root = (rooms as f32).sqrt().round() as usize;
-    let root = root.max(1);
-    let target = std::f32::consts::SQRT_2;
-    let mut best: Option<(f32, usize, usize)> = None;
-    for c in root.saturating_sub(2).max(1)..=(root + 2) {
-        for r in root.saturating_sub(2).max(1)..=(root + 2) {
-            if c * r < rooms {
-                continue;
-            }
-            let aspect = c as f32 / r as f32;
-            let aspect_err = (aspect - target).abs();
-            let waste = ((c * r) - rooms) as f32 * 0.05;
-            let cost = aspect_err + waste;
-            match best {
-                None => best = Some((cost, c, r)),
-                Some((bc, _, _)) if cost < bc => best = Some((cost, c, r)),
-                _ => {}
-            }
-        }
-    }
-    let (_, c, r) = best.unwrap_or((0.0, root, root));
-    (c, r)
 }
 
 #[cfg(test)]

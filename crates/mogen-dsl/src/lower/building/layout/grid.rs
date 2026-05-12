@@ -8,6 +8,7 @@
 //! the circulation column, if any — so multi-storey buildings with a
 //! reserved stair column place rooms only in the room area.
 
+use super::common::pick_aspect_grid;
 use super::{CellKind, Rect2, RoomCell};
 
 pub(super) fn layout(
@@ -16,23 +17,39 @@ pub(super) fn layout(
     _state: &mut u32,
 ) -> Vec<RoomCell> {
     let rooms = assigned_types.len().max(1);
-    let (cols, rows) = pick_grid(rooms);
+    let (cols, _rows) = pick_aspect_grid(rooms);
 
-    let cell_w = bounds.width() / cols as f32;
-    let cell_d = bounds.depth() / rows as f32;
+    // Use only as many rows as the assigned room count actually needs.
+    // The picker may choose e.g. 3×2 for 3 rooms (closer to √2 aspect),
+    // which would leave the entire north row empty — and any
+    // circulation cell sitting in that empty band ends up without a
+    // room neighbour, leaving the BFS unable to place a doorway from
+    // a room into the elevator/staircase. Collapsing the empty rows
+    // means the assigned rooms span the full floorplate in Z and so
+    // always border the circulation column. The last row may still be
+    // short on cells (partial fill across X), but that gap sits in the
+    // floorplate interior, not under the column.
+    let effective_rows = rooms.div_ceil(cols).max(1);
+
+    let cell_d = bounds.depth() / effective_rows as f32;
     let mut cells: Vec<RoomCell> = Vec::with_capacity(rooms);
     let mut idx = 0usize;
-    for r in 0..rows {
-        for c in 0..cols {
-            if idx >= rooms {
-                break;
-            }
-            let x0 = bounds.x_min + c as f32 * cell_w;
+    'rows: for r in 0..effective_rows {
+        let row_cells = (rooms - idx).min(cols);
+        // When the final row can't fill all `cols`, stretch its cells
+        // horizontally to span the entire bounds width. This keeps the
+        // east edge — where multi-storey circulation columns dock —
+        // covered by a room cell on every storey, so the door planner
+        // can always carve a doorway from a room into the
+        // staircase/elevator.
+        let row_cell_w = bounds.width() / row_cells as f32;
+        for c in 0..row_cells {
+            let x0 = bounds.x_min + c as f32 * row_cell_w;
             let z0 = bounds.z_min + r as f32 * cell_d;
             cells.push(RoomCell {
                 rect: Rect2 {
                     x_min: x0,
-                    x_max: x0 + cell_w,
+                    x_max: x0 + row_cell_w,
                     z_min: z0,
                     z_max: z0 + cell_d,
                 },
@@ -40,63 +57,17 @@ pub(super) fn layout(
                 kind: CellKind::Room,
             });
             idx += 1;
+            if idx >= rooms {
+                break 'rows;
+            }
         }
     }
     cells
 }
 
-/// Pick `(cols, rows)` such that `cols * rows >= rooms` and the aspect is
-/// as close to √2 as possible. Walks candidates around √rooms outward.
-fn pick_grid(rooms: usize) -> (usize, usize) {
-    if rooms <= 1 {
-        return (1, 1);
-    }
-    let root = (rooms as f32).sqrt().round() as usize;
-    let root = root.max(1);
-    let target = std::f32::consts::SQRT_2;
-    let mut best: Option<(f32, usize, usize)> = None;
-    for c in root.saturating_sub(2).max(1)..=(root + 2) {
-        for r in root.saturating_sub(2).max(1)..=(root + 2) {
-            if c * r < rooms {
-                continue;
-            }
-            let aspect = c as f32 / r as f32;
-            let aspect_err = (aspect - target).abs();
-            let waste = ((c * r) - rooms) as f32 * 0.05;
-            let cost = aspect_err + waste;
-            match best {
-                None => best = Some((cost, c, r)),
-                Some((bc, _, _)) if cost < bc => best = Some((cost, c, r)),
-                _ => {}
-            }
-        }
-    }
-    let (_, c, r) = best.unwrap_or((0.0, root, root));
-    (c, r)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn pick_grid_4_covers_at_least_four_cells() {
-        let (c, r) = pick_grid(4);
-        assert!(c * r >= 4, "grid {c}x{r} does not cover 4 rooms");
-        assert!(c >= r, "expected width ≥ depth, got {c}x{r}");
-    }
-
-    #[test]
-    fn pick_grid_6_returns_3x2() {
-        let (c, r) = pick_grid(6);
-        assert_eq!(c * r, 6);
-        assert!(c >= r);
-    }
-
-    #[test]
-    fn pick_grid_handles_one() {
-        assert_eq!(pick_grid(1), (1, 1));
-    }
 
     #[test]
     fn grid_tiles_passed_bounds() {

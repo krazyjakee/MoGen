@@ -10,6 +10,7 @@
 //! plain grid when the floorplate is too small to support the outer ring
 //! at a sensible room width.
 
+use super::common::type_at;
 use super::{CellKind, Rect2, RoomCell};
 
 /// Below this short-side extent (m) the rings collapse into rooms thinner
@@ -51,10 +52,9 @@ pub(super) fn layout(
     let mut cells: Vec<RoomCell> = Vec::with_capacity(1 + 4 * rings);
     let mut emitted = 0usize;
     let push = |rect: Rect2, cells: &mut Vec<RoomCell>, emitted: &mut usize| {
-        let type_idx = assigned_types[*emitted % rooms];
         cells.push(RoomCell {
             rect,
-            room_type_index: type_idx,
+            room_type_index: type_at(*emitted, assigned_types),
             kind: CellKind::Room,
         });
         *emitted += 1;

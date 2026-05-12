@@ -1,30 +1,35 @@
-// summary: Simple window: thin frame border + a thin glass pane. Authored bottom-anchored in the wall plane; +Z is the outside face. `width`/`height` should match the building opening.
+// summary: Simple window: thin frame border + a thin glass pane. Authored bottom-anchored in the wall plane; +Z is the outside face. `width`/`height` should match the building opening. Frame strips + mullion bind to the `window_frame` material; the pane inherits from its parent group so the building can swap in `window_glass`.
 module "window_simple" (width=1.2, height=1.4) {
   group "window_simple" {
     box "frame_top" (
       pos=[0, $height - 0.04, 0],
-      size=[$width + 0.08, 0.08, 0.05]
+      size=[$width + 0.08, 0.08, 0.05],
+      mat="window_frame"
     )
     box "frame_bottom" (
       pos=[0, 0.04, 0],
-      size=[$width + 0.08, 0.08, 0.05]
+      size=[$width + 0.08, 0.08, 0.05],
+      mat="window_frame"
     )
     box "frame_left" (
       pos=[$width * -0.5 + -0.02, $height * 0.5, 0],
-      size=[0.04, $height, 0.05]
+      size=[0.04, $height, 0.05],
+      mat="window_frame"
     )
     box "frame_right" (
       pos=[$width * 0.5 + 0.02, $height * 0.5, 0],
-      size=[0.04, $height, 0.05]
+      size=[0.04, $height, 0.05],
+      mat="window_frame"
     )
     // Centre mullion — visually breaks the pane up so the window doesn't
     // read as a flat panel even on small windows.
     box "mullion" (
       pos=[0, $height * 0.5, 0],
-      size=[0.03, $height - 0.16, 0.04]
+      size=[0.03, $height - 0.16, 0.04],
+      mat="window_frame"
     )
-    // Glass pane: very thin slab, will pick up the surrounding material
-    // unless the caller provides a glass material override on the building.
+    // Glass pane: very thin slab; inherits material from the wrapping
+    // opening group so the building can bind it to `window_glass`.
     box "pane" (
       pos=[0, $height * 0.5, 0.0],
       size=[$width - 0.06, $height - 0.12, 0.01]

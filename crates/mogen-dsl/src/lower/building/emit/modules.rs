@@ -22,6 +22,7 @@ use crate::ast::{Node, Value};
 use crate::module::{expand_modules, ModuleRegistry};
 
 use super::super::config::BuildingCfg;
+use super::super::materials::{EXT_DOOR_MAT, INT_DOOR_MAT, SKYLIGHT_GLASS_MAT, WINDOW_GLASS_MAT};
 use super::openings::{Opening, OpeningKind, OpeningPlan, WindowClass};
 
 pub(super) fn emit_module_instances(
@@ -38,10 +39,16 @@ pub(super) fn emit_module_instances(
         .unwrap_or_default();
 
     for op in &plan.entrances {
-        emit_one(parent_node, parent, graph, &reg, op, &cfg.external_door, "ext_door")?;
+        emit_one(
+            parent_node, parent, graph, &reg, op,
+            &cfg.external_door, "ext_door", Some(EXT_DOOR_MAT),
+        )?;
     }
     for op in &plan.interior_doors {
-        emit_one(parent_node, parent, graph, &reg, op, &cfg.internal_door, "int_door")?;
+        emit_one(
+            parent_node, parent, graph, &reg, op,
+            &cfg.internal_door, "int_door", Some(INT_DOOR_MAT),
+        )?;
     }
     for op in &plan.windows {
         let module_name = match op.kind {
@@ -50,10 +57,16 @@ pub(super) fn emit_module_instances(
             OpeningKind::Window(WindowClass::Large) => &cfg.windows_mod.large,
             _ => continue,
         };
-        emit_one(parent_node, parent, graph, &reg, op, module_name, "window")?;
+        emit_one(
+            parent_node, parent, graph, &reg, op,
+            module_name, "window", Some(WINDOW_GLASS_MAT),
+        )?;
     }
     for op in &plan.skylights {
-        emit_one(parent_node, parent, graph, &reg, op, &cfg.skylight_mod, "skylight")?;
+        emit_one(
+            parent_node, parent, graph, &reg, op,
+            &cfg.skylight_mod, "skylight", Some(SKYLIGHT_GLASS_MAT),
+        )?;
     }
     Ok(())
 }
@@ -66,6 +79,7 @@ fn emit_one(
     op: &Opening,
     module_name: &str,
     label: &str,
+    inherit_mat: Option<&str>,
 ) -> Result<()> {
     // The opening group carries the pose; the instantiated module's body is
     // authored at the origin facing +Z. We rotate the group so the module's
@@ -83,6 +97,19 @@ fn emit_one(
     graph.nodes[group_id.0 as usize]
         .tags
         .extend(["building".into(), label.into()]);
+
+    // Bind the per-opening-kind material onto the wrapping group so any
+    // child mesh without an explicit `mat=` (the stdlib door slab, the
+    // window/skylight pane) picks up `ext_door` / `int_door` /
+    // `window_glass` via ancestor inheritance instead of the wall plaster.
+    if let Some(mat_name) = inherit_mat {
+        if let Some(mid) = graph.find_material_scoped(
+            mat_name,
+            parent_node.origin.as_deref(),
+        ) {
+            graph.set_material(group_id, mid);
+        }
+    }
 
     if reg.contains(module_name) {
         // Synthesise `use "<module>" (width=op.width, height=op.height)`

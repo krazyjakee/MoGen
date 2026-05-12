@@ -15,6 +15,7 @@
 //! order). Falls back to a uniform grid when the plate is too small.
 
 use super::super::rng::step;
+use super::common::type_at;
 use super::{CellKind, Rect2, RoomCell};
 
 const TARGET_CELL: f32 = 2.0;
@@ -103,7 +104,7 @@ pub(super) fn layout(
     let mut cells: Vec<RoomCell> = Vec::with_capacity(cols * rows);
     cells.push(RoomCell {
         rect: corridor_rect,
-        room_type_index: assigned_types[0],
+        room_type_index: type_at(0, assigned_types),
         kind: CellKind::Room,
     });
 
@@ -112,13 +113,12 @@ pub(super) fn layout(
         if on_corridor(idx) {
             continue;
         }
-        let type_idx = assigned_types[emitted % rooms];
-        emitted += 1;
         cells.push(RoomCell {
             rect: to_rect(idx),
-            room_type_index: type_idx,
+            room_type_index: type_at(emitted, assigned_types),
             kind: CellKind::Room,
         });
+        emitted += 1;
     }
 
     cells

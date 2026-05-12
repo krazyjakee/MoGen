@@ -164,6 +164,18 @@ fn collect_interior_walls(
     let n = plate.rooms.len();
     for i in 0..n {
         for j in (i + 1)..n {
+            // Elevators emit their own four-sided shaft enclosure in
+            // `emit/circulation.rs` (N/E/S solid + W with one cutout
+            // per storey at the elevator's centred opening). Adding a
+            // per-storey cell-shared wall on the elevator face here
+            // would double the wall and let the cell-wall door cutout
+            // — which lands on the overlap midpoint, not the elevator
+            // centre — block the shaft's correctly-placed cutout.
+            if matches!(plate.rooms[i].kind, CellKind::Elevator)
+                || matches!(plate.rooms[j].kind, CellKind::Elevator)
+            {
+                continue;
+            }
             let a = &plate.rooms[i].rect;
             let b = &plate.rooms[j].rect;
             if (a.x_max - b.x_min).abs() < 1e-3 {

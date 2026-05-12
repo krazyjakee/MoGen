@@ -14,6 +14,7 @@
 
 mod circulation;
 mod config;
+mod materials;
 mod rng;
 mod layout;
 mod emit;
@@ -50,6 +51,11 @@ pub(super) fn expand_building(
     graph.nodes[wrapper_id.0 as usize].use_id = node.use_id;
     graph.nodes[wrapper_id.0 as usize].origin = node.origin.clone();
     apply_metadata(node, wrapper_id, graph)?;
+
+    // Stamp default frame / slab / glass materials before any opening module
+    // is expanded — the stdlib door / window / skylight bodies reference
+    // them by name. Anything the user already declared on this origin wins.
+    materials::ensure_opening_defaults(graph, node.origin.as_deref());
 
     let pre_expand_count = graph.nodes.len();
 

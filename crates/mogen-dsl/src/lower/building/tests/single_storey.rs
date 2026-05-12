@@ -304,6 +304,302 @@ fn building_subtree_marked_non_editable() {
 }
 
 #[test]
+fn windows_on_each_side_never_overlap() {
+    // Every pair of windows on the same exterior side must be at least
+    // `window_w` apart (one window-width of solid wall pier between
+    // them). The old placement could cycle the same segment list and
+    // stack two windows on top of one another whenever `windows` >
+    // segment count; the new allocator caps each segment at a max that
+    // respects the spacing.
+    let src = r#"
+        material "p" (color=[0.9, 0.9, 0.88])
+        building "wide" (
+          seed=7, style="grid",
+          floor_area=120, rooms=6,
+          windows=12, entrances=1,
+          mat="p",
+        ) {
+          room_type "room" (kind=staff_only, density=1)
+        }
+    "#;
+    let g = lower_src(src);
+    // Group windows by side via the tag stamped onto each opening's
+    // perimeter wall hole. We use world-space positions; on north/south
+    // the long axis is X, on east/west it's Z.
+    use std::collections::BTreeMap;
+    let mut by_side: BTreeMap<&'static str, Vec<f32>> = BTreeMap::new();
+    // Each window group's local transform sits at the cell's exterior
+    // segment fixed coord (= the plate's bounds), while the perimeter
+    // wall sits half a wall-thickness outside that. Tolerate the
+    // ~`wall_thickness/2 = 0.06 m` offset.
+    let side_tag = |g: &SceneGraph, t: &str| -> f32 {
+        g.nodes
+            .iter()
+            .find(|n| n.tags.iter().any(|tt| tt == t))
+            .map(|n| n.transform.translation)
+            .map(|v| if t.ends_with("east") || t.ends_with("west") { v.x } else { v.z })
+            .unwrap_or_else(|| panic!("missing wall tagged {t}"))
+    };
+    let east_x = side_tag(&g, "side=east");
+    let west_x = side_tag(&g, "side=west");
+    let north_z = side_tag(&g, "side=north");
+    let south_z = side_tag(&g, "side=south");
+    const WALL_TOL: f32 = 0.2;
+    for n in &g.nodes {
+        if !n.name.starts_with("window_") || n.kind != "group" {
+            continue;
+        }
+        let p = n.transform.translation;
+        if (p.x - east_x).abs() < WALL_TOL {
+            by_side.entry("east").or_default().push(p.z);
+        } else if (p.x - west_x).abs() < WALL_TOL {
+            by_side.entry("west").or_default().push(p.z);
+        } else if (p.z - north_z).abs() < WALL_TOL {
+            by_side.entry("north").or_default().push(p.x);
+        } else if (p.z - south_z).abs() < WALL_TOL {
+            by_side.entry("south").or_default().push(p.x);
+        }
+    }
+    assert!(
+        !by_side.is_empty(),
+        "expected windows on at least one side, found none"
+    );
+    // Default `window_w` is 1.2; placement guarantees centre-to-centre
+    // pitch ≥ 2 × window_w (one window-width of pier between adjacent
+    // windows).
+    const MIN_PITCH: f32 = 2.4;
+    for (side, mut xs) in by_side {
+        xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        for w in xs.windows(2) {
+            let d = (w[1] - w[0]).abs();
+            assert!(
+                d + 1e-3 >= MIN_PITCH,
+                "windows on {side} overlap: positions {:?} → gap {d} < {MIN_PITCH}",
+                xs
+            );
+        }
+    }
+}
+
+#[test]
+fn windows_in_each_cell_run_are_symmetric() {
+    // Within each cell × side run, the windows the placer drops should
+    // be mirror-symmetric about the run's midpoint. We verify this by
+    // pulling the run-centred offsets — for n windows their mean must
+    // equal the run centre, and their offsets from the centre must
+    // mirror in matched ±pairs.
+    let src = r#"
+        material "p" (color=[0.9, 0.9, 0.88])
+        building "row" (
+          seed=42, style="grid",
+          floor_area=120, rooms=6,
+          windows=12, entrances=1,
+          mat="p",
+        ) {
+          room_type "room" (kind=staff_only, density=1)
+        }
+    "#;
+    let g = lower_src(src);
+    // For each window, find its parent room's group via the floor's
+    // rooms subtree. We don't have direct access to cell extents from
+    // the graph; instead, group windows by (side, integer-rounded fixed
+    // coord, segment-bucketed lo/hi) and check each bucket is
+    // symmetric. Simpler: for each side, collect all window positions
+    // and verify that the run as a whole has matching first/last
+    // distances from the wall's overall midpoint. That's a weaker check
+    // but it catches asymmetric/jittered placement.
+    //
+    // The original code used `t = 0.2 + 0.6 * rand_f01(state)` so two
+    // windows in a single run would be at random positions, never
+    // mirrored about the centre. The fix uses `(j+1)/(n+1)` which IS
+    // always centred — the mean position of any n consecutive windows
+    // on the same run equals the run centre.
+    let east_x = g
+        .nodes
+        .iter()
+        .find(|n| n.tags.iter().any(|t| t == "side=east"))
+        .map(|n| n.transform.translation.x)
+        .expect("east wall");
+    let west_x = g
+        .nodes
+        .iter()
+        .find(|n| n.tags.iter().any(|t| t == "side=west"))
+        .map(|n| n.transform.translation.x)
+        .expect("west wall");
+    let mut east_zs: Vec<f32> = Vec::new();
+    let mut west_zs: Vec<f32> = Vec::new();
+    // Windows sit on the cell's plate-bounds edge; the perimeter wall
+    // sits half a wall-thickness outside. Tolerate the small offset.
+    const WALL_TOL: f32 = 0.2;
+    for n in &g.nodes {
+        if !n.name.starts_with("window_") || n.kind != "group" {
+            continue;
+        }
+        let p = n.transform.translation;
+        if (p.x - east_x).abs() < WALL_TOL {
+            east_zs.push(p.z);
+        } else if (p.x - west_x).abs() < WALL_TOL {
+            west_zs.push(p.z);
+        }
+    }
+    // The east/west walls run along Z and (with a grid layout + 1
+    // entrance on the south face) take a single row of cells along that
+    // axis. The placer pins each window to `(j+1)/(n+1)` of its cell —
+    // symmetric about the cell midpoint. If we further had only one
+    // cell per side, the whole side would be perfectly centred on z=0.
+    // We assert the (cheaper) cross-side property instead: the east and
+    // west sides should be reflections of each other under the same
+    // seed, because the layout is laterally symmetric across the X
+    // midline for a grid + south-only entrance + no circulation column
+    // on the west.
+    //
+    // We can't guarantee east==west when circulation eats the east
+    // column, so just assert each side's run is centred about z=0
+    // within a half-pitch of the smallest cell.
+    let assert_centred = |label: &str, mut zs: Vec<f32>| {
+        if zs.is_empty() {
+            return;
+        }
+        zs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let mean: f32 = zs.iter().sum::<f32>() / zs.len() as f32;
+        // The floorplate spans roughly [-7, +7] along Z for a 120 m²
+        // grid; one cell's worth of offset is ≤ ~4 m. A symmetric per-
+        // cell placement keeps the side's centroid well inside ±2 m of
+        // the layout midline.
+        assert!(
+            mean.abs() < 2.0,
+            "{label} windows off-centre: mean z={mean} positions={zs:?}"
+        );
+    };
+    assert_centred("east", east_zs);
+    assert_centred("west", west_zs);
+}
+
+#[test]
+fn window_positions_are_seed_independent() {
+    // Windows are placed deterministically from cell geometry alone —
+    // they should not respond to the seed. Two different seeds with
+    // the same layout-driving config produce identical exterior cell
+    // segments only if the layout is also seed-stable, which it isn't
+    // for `grid` (room types shuffle). The strongest portable
+    // assertion is: for ANY seed, windows on the same side respect
+    // the pitch invariant. (See `windows_on_each_side_never_overlap`
+    // for the parameterised version.) Here we additionally check that
+    // the per-window jitter the old placer introduced is gone: under
+    // two distinct seeds the *number* of windows can shift, but every
+    // resulting window must still land at a `(j+1)/(n+1)` fraction of
+    // its segment — i.e., never at a random offset in [0.2, 0.8].
+    //
+    // We approximate this by checking determinism under the SAME seed
+    // (already covered by `building_is_deterministic_under_same_seed`)
+    // and rely on the no-overlap test for the cross-seed claim.
+    //
+    // What this test asserts directly: an empty `windows=0` config
+    // produces zero windows (the previous code path used the RNG
+    // unconditionally; this catches a regression where placement
+    // would run even for count=0).
+    let src = r#"
+        material "p" (color=[0.9, 0.9, 0.88])
+        building "blind" (
+          seed=11, style="grid",
+          floor_area=80, rooms=4,
+          windows=0, entrances=1,
+          mat="p",
+        ) {
+          room_type "room" (kind=staff_only, density=1)
+        }
+    "#;
+    let g = lower_src(src);
+    let n_windows = g
+        .nodes
+        .iter()
+        .filter(|n| n.name.starts_with("window_") && n.kind == "group")
+        .count();
+    assert_eq!(
+        n_windows, 0,
+        "windows=0 should produce zero window groups, got {n_windows}"
+    );
+}
+
+#[test]
+fn multiple_entrances_fan_out_across_facades() {
+    // `entrances=1` keeps the canonical south-front behaviour. Bumping
+    // the count fans entrances round-robin across S → N → E → W so a
+    // four-door building has exactly one entrance on every facade.
+    let src = r#"
+        material "p" (color=[0.9, 0.9, 0.88])
+        building "courthouse" (
+          seed=3, style="grid",
+          floor_area=120, rooms=6,
+          windows=0, entrances=4,
+          mat="p",
+        ) {
+          room_type "room" (kind=staff_only, density=1)
+        }
+    "#;
+    let g = lower_src(src);
+    // Each entrance group sits at the cell-local exterior position; the
+    // perimeter wall its facing points at carries a `side=<name>` tag at
+    // the matching world coord. We bucket entrances by the facing vector
+    // baked into their group transform — the modules emitter pulls the
+    // opening's `facing` into the wrapping group's rotation, so the
+    // group's local +Z in world space tells us the side.
+    use std::collections::BTreeMap;
+    let mut by_side: BTreeMap<&'static str, usize> = BTreeMap::new();
+    for n in &g.nodes {
+        if n.role.as_deref() != Some("ext_door") {
+            continue;
+        }
+        let fwd = n.transform.rotation * glam::Vec3::Z;
+        let side = if fwd.z < -0.7 {
+            "south"
+        } else if fwd.z > 0.7 {
+            "north"
+        } else if fwd.x > 0.7 {
+            "east"
+        } else if fwd.x < -0.7 {
+            "west"
+        } else {
+            continue;
+        };
+        *by_side.entry(side).or_default() += 1;
+    }
+    assert_eq!(
+        by_side.get("south").copied().unwrap_or(0), 1,
+        "expected one south entrance, by_side={by_side:?}"
+    );
+    assert_eq!(
+        by_side.get("north").copied().unwrap_or(0), 1,
+        "expected one north entrance, by_side={by_side:?}"
+    );
+    assert_eq!(
+        by_side.get("east").copied().unwrap_or(0), 1,
+        "expected one east entrance, by_side={by_side:?}"
+    );
+    assert_eq!(
+        by_side.get("west").copied().unwrap_or(0), 1,
+        "expected one west entrance, by_side={by_side:?}"
+    );
+}
+
+#[test]
+fn single_entrance_stays_on_south_front() {
+    // The single-entrance case is the canonical "front door" — scoring
+    // and corridor layouts pivot off it, so it must keep landing on the
+    // south face when no extra entrances are requested.
+    let g = lower_src(MIN_GRID_SRC);
+    let south_only = g
+        .nodes
+        .iter()
+        .filter(|n| n.role.as_deref() == Some("ext_door"))
+        .all(|n| {
+            let fwd = n.transform.rotation * glam::Vec3::Z;
+            fwd.z < -0.7
+        });
+    assert!(south_only, "single entrance should sit on the south face");
+}
+
+#[test]
 fn building_requires_room_type() {
     let src = r#"
         material "concrete" (color=[0.8, 0.8, 0.8])

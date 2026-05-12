@@ -10,6 +10,7 @@
 //! so the result reads as the regular rhythm of identical rooms typical
 //! of hotels rather than the irregular flat layouts BSP produces.
 
+use super::common::{filter_types_excluding, split_with_corridor};
 use super::{grid, CellKind, Rect2, RoomCell};
 
 /// Corridor strip width.
@@ -55,61 +56,12 @@ pub(super) fn layout_with_target(
         return grid::layout(bounds, assigned_types, state);
     }
 
-    let side_types: Vec<usize> = assigned_types
-        .iter()
-        .copied()
-        .filter(|&i| i != corridor_type_idx)
-        .collect();
+    let side_types = filter_types_excluding(assigned_types, corridor_type_idx);
     if side_types.is_empty() {
         return grid::layout(bounds, assigned_types, state);
     }
 
-    let half = 0.5 * CORRIDOR_WIDTH;
-    let (corridor_rect, half_a, half_b) = if along_x {
-        let mid_z = 0.5 * (bounds.z_min + bounds.z_max);
-        (
-            Rect2 {
-                x_min: bounds.x_min,
-                x_max: bounds.x_max,
-                z_min: mid_z - half,
-                z_max: mid_z + half,
-            },
-            Rect2 {
-                x_min: bounds.x_min,
-                x_max: bounds.x_max,
-                z_min: bounds.z_min,
-                z_max: mid_z - half,
-            },
-            Rect2 {
-                x_min: bounds.x_min,
-                x_max: bounds.x_max,
-                z_min: mid_z + half,
-                z_max: bounds.z_max,
-            },
-        )
-    } else {
-        let mid_x = 0.5 * (bounds.x_min + bounds.x_max);
-        (
-            Rect2 {
-                x_min: mid_x - half,
-                x_max: mid_x + half,
-                z_min: bounds.z_min,
-                z_max: bounds.z_max,
-            },
-            Rect2 {
-                x_min: bounds.x_min,
-                x_max: mid_x - half,
-                z_min: bounds.z_min,
-                z_max: bounds.z_max,
-            },
-            Rect2 {
-                x_min: mid_x + half,
-                x_max: bounds.x_max,
-                z_min: bounds.z_min,
-                z_max: bounds.z_max,
-            },
-        )
-    };
+    let split = split_with_corridor(bounds, CORRIDOR_WIDTH);
 
     // Cap the per-side count so that every cell's run along the corridor
     // is at least `target_run`. Without this, requesting 30 rooms on a 5 m
@@ -126,12 +78,12 @@ pub(super) fn layout_with_target(
 
     let mut cells: Vec<RoomCell> = Vec::with_capacity(1 + types_a.len() + types_b.len());
     cells.push(RoomCell {
-        rect: corridor_rect,
+        rect: split.corridor,
         room_type_index: corridor_type_idx,
         kind: CellKind::Room,
     });
-    cells.extend(tile_along(half_a, types_a, along_x));
-    cells.extend(tile_along(half_b, types_b, along_x));
+    cells.extend(tile_along(split.half_a, types_a, along_x));
+    cells.extend(tile_along(split.half_b, types_b, along_x));
     cells
 }
 

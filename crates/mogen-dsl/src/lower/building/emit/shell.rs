@@ -145,21 +145,42 @@ fn emit_slab(
     let mesh = if holes_xz.is_empty() {
         base
     } else {
-        // Cutout boxes are inflated by `pad_xy` on every in-plane axis they
-        // reach, so a hole that ends exactly at the slab edge (e.g. a
-        // staircase carved out of the east-side circulation column) still
-        // emerges as a cleanly cut U-shape rather than as a manifold-
-        // degenerate coplanar face. The vertical inflation is small and
-        // symmetric so the cutout pokes through the top and bottom of the
-        // slab.
-        let pad_xy = 0.05f32;
+        // The cutout is padded PER AXIS to avoid two failure modes at once:
+        //
+        // 1. On axes where the hole touches the floorplate bounds (e.g. a
+        //    staircase in the east-side circulation column has its east
+        //    edge flush with `bounds.x_max`), the cutout must extend
+        //    through the perimeter wall thickness so the resulting slab
+        //    shows a clean U-shaped opening rather than a coplanar-face
+        //    sliver of intact slab clinging to the wall.
+        // 2. On interior axes the cutout must NOT inflate the hole, or
+        //    the slab loses a visible strip outside the actual cell —
+        //    e.g. the staircase entry strip narrows by `pad_xy`, leaving
+        //    a horizontal gap where neither the slab nor the top stair
+        //    tread is present at the user-facing y.
+        //
+        // The vertical inflation is small and symmetric so the cutout
+        // pokes through the top and bottom of the slab regardless.
+        let eps = 1e-3f32;
+        let exit_pad = wt + 0.01;
+        let bound_pad = |hole_edge: f32, slab_edge: f32| -> f32 {
+            if (hole_edge - slab_edge).abs() <= eps {
+                exit_pad
+            } else {
+                eps
+            }
+        };
         let cutouts: Vec<Mesh> = holes_xz
             .iter()
             .map(|r| {
-                let hw = (r.width() + 2.0 * pad_xy).max(1e-4);
-                let hd = (r.depth() + 2.0 * pad_xy).max(1e-4);
-                let hcx = 0.5 * (r.x_min + r.x_max) - cx;
-                let hcz = 0.5 * (r.z_min + r.z_max) - cz;
+                let pad_xmin = bound_pad(r.x_min, bounds.x_min);
+                let pad_xmax = bound_pad(r.x_max, bounds.x_max);
+                let pad_zmin = bound_pad(r.z_min, bounds.z_min);
+                let pad_zmax = bound_pad(r.z_max, bounds.z_max);
+                let hw = (r.width() + pad_xmin + pad_xmax).max(1e-4);
+                let hd = (r.depth() + pad_zmin + pad_zmax).max(1e-4);
+                let hcx = 0.5 * ((r.x_min - pad_xmin) + (r.x_max + pad_xmax)) - cx;
+                let hcz = 0.5 * ((r.z_min - pad_zmin) + (r.z_max + pad_zmax)) - cz;
                 let cutout = box_mesh([hw, thickness + 0.1, hd], UvMode::Tile);
                 transform_mesh(
                     &cutout,

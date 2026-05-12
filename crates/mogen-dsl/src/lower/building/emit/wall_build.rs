@@ -54,26 +54,40 @@ pub(super) fn wall_with_holes(size: [f32; 3], holes: &[[f32; 4]]) -> Mesh {
     }
     spans.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
 
-    // Merge X-overlapping holes. Should not happen in practice, but rounding
-    // noise across BSP/grid boundaries makes it cheap insurance — overlapping
-    // holes that collide on X would otherwise emit zero-width piers between
-    // them.
-    let mut merged: Vec<(f32, f32, f32, f32)> = Vec::new();
-    for s in spans {
-        if let Some(last) = merged.last_mut() {
-            if s.0 <= last.1 + 1e-3 {
-                last.1 = last.1.max(s.1);
-                last.2 = last.2.min(s.2);
-                last.3 = last.3.max(s.3);
+    // Group X-overlapping holes into "columns". Within a column the X-range
+    // is shared; each entry contributes its own Y-range. Stacked holes
+    // (same X, different Y — e.g. an elevator shaft's per-storey doorways)
+    // must keep their lintels/sills between them, so we preserve every
+    // Y-span instead of collapsing them into one.
+    let mut columns: Vec<(f32, f32, Vec<(f32, f32)>)> = Vec::new();
+    for (x0, x1, y0, y1) in spans {
+        if let Some(last) = columns.last_mut() {
+            if x0 <= last.1 + 1e-3 {
+                last.1 = last.1.max(x1);
+                last.2.push((y0, y1));
                 continue;
             }
         }
-        merged.push(s);
+        columns.push((x0, x1, vec![(y0, y1)]));
     }
 
     let mut acc = Mesh::default();
     let mut cursor = -half_x;
-    for &(x0, x1, y0, y1) in &merged {
+    for (x0, x1, mut ys) in columns {
+        // Merge any Y-overlapping holes within the column (rare; same
+        // insurance against rounding noise that the X pass already gave).
+        ys.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+        let mut y_merged: Vec<(f32, f32)> = Vec::new();
+        for (y0, y1) in ys {
+            if let Some(last) = y_merged.last_mut() {
+                if y0 <= last.1 + 1e-3 {
+                    last.1 = last.1.max(y1);
+                    continue;
+                }
+            }
+            y_merged.push((y0, y1));
+        }
+
         if x0 - cursor > 1e-3 {
             push_box(
                 &mut acc,
@@ -81,22 +95,32 @@ pub(super) fn wall_with_holes(size: [f32; 3], holes: &[[f32; 4]]) -> Mesh {
                 [x0 - cursor, height, thickness],
             );
         }
-        let lintel_h = half_y - y1;
+
+        // Walk bottom-to-top inside the column, emitting a horizontal
+        // strip wherever there is wall: from the floor up to the first
+        // hole (sill), between each adjacent pair of stacked holes, and
+        // from the last hole up to the ceiling (lintel).
+        let mut prev_y = -half_y;
+        for &(y0, y1) in &y_merged {
+            let strip_h = y0 - prev_y;
+            if strip_h > 1e-3 {
+                push_box(
+                    &mut acc,
+                    [0.5 * (x0 + x1), 0.5 * (prev_y + y0), 0.0],
+                    [x1 - x0, strip_h, thickness],
+                );
+            }
+            prev_y = y1;
+        }
+        let lintel_h = half_y - prev_y;
         if lintel_h > 1e-3 {
             push_box(
                 &mut acc,
-                [0.5 * (x0 + x1), 0.5 * (y1 + half_y), 0.0],
+                [0.5 * (x0 + x1), 0.5 * (prev_y + half_y), 0.0],
                 [x1 - x0, lintel_h, thickness],
             );
         }
-        let sill_h = y0 + half_y;
-        if sill_h > 1e-3 {
-            push_box(
-                &mut acc,
-                [0.5 * (x0 + x1), 0.5 * (-half_y + y0), 0.0],
-                [x1 - x0, sill_h, thickness],
-            );
-        }
+
         cursor = x1;
     }
     if half_x - cursor > 1e-3 {
@@ -160,6 +184,29 @@ mod tests {
         let m = wall_with_holes([4.0, h, 0.1], &[[0.0, cy, 0.9, door_h]]);
         // 3 pieces: left pier, right pier, lintel. No sill.
         assert_eq!(m.positions.len(), 24 * 3);
+    }
+
+    #[test]
+    fn stacked_holes_keep_intermediate_wall_strips() {
+        // Two holes at the same X but separated on Y — e.g. an elevator
+        // shaft's per-storey doorways. The wall between them (the lintel
+        // above the lower opening / sill below the upper) must survive.
+        // Wall is 6 m tall; lower hole at y∈[-2.9, -1.4], upper at
+        // y∈[0.1, 1.6]. Expected pieces around the single column:
+        //   left pier + right pier + sill (below lower) + middle strip
+        //   (between holes) + lintel (above upper) = 5 boxes.
+        let h = 6.0f32;
+        let door_h = 1.5f32;
+        let cy_lo = -2.9 + 0.5 * door_h; // -2.15
+        let cy_hi = 0.1 + 0.5 * door_h;  //  0.85
+        let m = wall_with_holes(
+            [4.0, h, 0.1],
+            &[
+                [0.0, cy_lo, 1.0, door_h],
+                [0.0, cy_hi, 1.0, door_h],
+            ],
+        );
+        assert_eq!(m.positions.len(), 24 * 5);
     }
 
     #[test]
