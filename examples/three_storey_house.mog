@@ -21,7 +21,7 @@ building "townhouse" (
   windows=18,
   skylights=2,
   debug_hide_roof=1,
-  debug_render_floor=0,
+  debug_render_floor=1,
   entrances=1,
   staircases=1,
   elevators=1,

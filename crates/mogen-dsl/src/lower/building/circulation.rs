@@ -3,10 +3,19 @@
 //! rooms around them and the emit pass can stamp the same module instances
 //! at consistent locations on every floor.
 //!
-//! T2 strategy: stack all circulation cells in a single column along the
-//! east edge of the floorplate. Simple, deterministic, and avoids the
-//! "carve a non-rectangular hole out of the BSP" problem entirely — the
-//! room-layout area is just a smaller rectangle.
+//! Strategy:
+//!
+//! - Without a corridor (grid / apartment-block / radial / organic / maze):
+//!   stack all circulation cells in a single column along the east edge of
+//!   the floorplate, packed from south to north.
+//! - With a corridor (hotel-corridor / office-core): place the stair just
+//!   south of the corridor and the elevator just north so each shares an
+//!   edge with the corridor — the door planner will then run a door
+//!   straight from the corridor into the cab. Extra stairs / elevators
+//!   stack outward from the corridor on their side.
+//!
+//! Both strategies keep XY consistent across every storey so a stair on
+//! floor N lands directly above the same XY on floor N-1.
 
 use super::config::BuildingCfg;
 use super::layout::Rect2;
@@ -47,7 +56,11 @@ impl CirculationPlan {
     // having to widen visibility later.
 }
 
-pub(super) fn plan(cfg: &BuildingCfg, bounds: Rect2) -> CirculationPlan {
+pub(super) fn plan(
+    cfg: &BuildingCfg,
+    bounds: Rect2,
+    corridor_z: Option<(f32, f32)>,
+) -> CirculationPlan {
     if cfg.staircases == 0 && cfg.elevators == 0 {
         return CirculationPlan::default();
     }
@@ -56,15 +69,59 @@ pub(super) fn plan(cfg: &BuildingCfg, bounds: Rect2) -> CirculationPlan {
     let column_x_min = bounds.x_max - column_w;
 
     let mut cells = Vec::new();
-    let mut z_cursor = bounds.z_min + COLUMN_INSET;
 
-    // Stairs go in first (closest to the south entrance for accessibility),
-    // then elevators stacked above.
+    if let Some((corridor_z_min, corridor_z_max)) = corridor_z {
+        // Pack stairs growing southward from the corridor's south wall and
+        // elevators growing northward from the corridor's north wall, so
+        // every cab shares an edge with the corridor and the door planner
+        // can stamp a door straight from the corridor into the shaft.
+        let mut south_cursor = corridor_z_min;
+        for _ in 0..cfg.staircases {
+            let z_min = south_cursor - STAIR_DEPTH;
+            if z_min < bounds.z_min + COLUMN_INSET {
+                break;
+            }
+            cells.push(CirculationCell {
+                rect: Rect2 {
+                    x_min: column_x_min,
+                    x_max: column_x_max,
+                    z_min,
+                    z_max: south_cursor,
+                },
+                kind: CirculationKind::Staircase,
+            });
+            south_cursor = z_min;
+        }
+        let mut north_cursor = corridor_z_max;
+        for _ in 0..cfg.elevators {
+            let z_max = north_cursor + ELEVATOR_DEPTH;
+            if z_max > bounds.z_max - COLUMN_INSET {
+                break;
+            }
+            cells.push(CirculationCell {
+                rect: Rect2 {
+                    x_min: column_x_min,
+                    x_max: column_x_max,
+                    z_min: north_cursor,
+                    z_max,
+                },
+                kind: CirculationKind::Elevator,
+            });
+            north_cursor = z_max;
+        }
+        return CirculationPlan {
+            cells,
+            column_width: column_w,
+        };
+    }
+
+    // No corridor: stack stairs first (closest to the south entrance for
+    // accessibility), then elevators above, with insets so consecutive
+    // cells don't share a wall (the column has no other cells alongside).
+    let mut z_cursor = bounds.z_min + COLUMN_INSET;
     for _ in 0..cfg.staircases {
         let z_max = z_cursor + STAIR_DEPTH;
         if z_max > bounds.z_max - COLUMN_INSET {
-            // Out of vertical room — drop remaining circulation. T3 will
-            // grow the floorplate to fit.
             break;
         }
         cells.push(CirculationCell {

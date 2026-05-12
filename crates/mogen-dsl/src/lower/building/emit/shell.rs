@@ -12,9 +12,10 @@ use mogen_geom::{box_mesh, clean_csg_output, difference_many, transform_mesh};
 
 use crate::ast::Node;
 
-use super::super::circulation::CirculationPlan;
+use super::super::circulation::{CirculationKind, CirculationPlan};
 use super::super::config::BuildingCfg;
 use super::super::layout::{Floorplate, Rect2};
+use super::circulation::{STAIR_HALF_FRACTION, STAIR_TRANSIT_STRIP_DEPTH};
 use super::openings::{Opening, OpeningPlan, WallSide};
 use super::wall_build::wall_with_holes;
 use super::StoreyCtx;
@@ -38,10 +39,23 @@ pub(super) fn emit_shell(
     // Floor slab. Carved with circulation holes unless this is the
     // bottommost storey (the foundation/basement floor stays intact —
     // stairs and elevators start here).
-    let floor_holes = if ctx.is_bottom {
+    //
+    // For staircases the cutout is intentionally smaller than the full
+    // cell: the stair body lives in the east half (see `emit/circulation.rs`
+    // — `STAIR_HALF_FRACTION`), and the south end keeps a strip of slab
+    // intact so the user can cross from the west-half landing back to
+    // the bottom of the next flight at floor level. Without that strip,
+    // climbing past floor 0 leaves the user stranded over a hole.
+    let floor_holes: Vec<Rect2> = if ctx.is_bottom {
         Vec::new()
     } else {
-        circ.cells.iter().map(|c| c.rect).collect()
+        circ.cells
+            .iter()
+            .map(|c| match c.kind {
+                CirculationKind::Staircase => staircase_slab_hole(c.rect),
+                CirculationKind::Elevator => c.rect,
+            })
+            .collect()
     };
     emit_slab(
         parent,
@@ -90,6 +104,25 @@ pub(super) fn emit_shell(
         emit_perimeter_wall(parent, graph, &origin, cfg, plate, plan, side, name)?;
     }
     Ok(())
+}
+
+/// Hole rect for a staircase cell on an upper storey's floor slab. Cuts
+/// only the east half (where the stair body sits) and preserves a strip
+/// at the south end of that half so the walker can step from the
+/// west-half landing onto the bottom of the next flight without
+/// crossing a hole. West half is preserved entirely — it's the
+/// landing slab.
+fn staircase_slab_hole(cell: Rect2) -> Rect2 {
+    let x_mid = 0.5 * (cell.x_min + cell.x_max) + (0.5 - STAIR_HALF_FRACTION) * 0.5 * cell.width();
+    // The strip's depth caps at half the cell depth so a very shallow
+    // cell still leaves *some* cutout for the stair body to pierce.
+    let strip = STAIR_TRANSIT_STRIP_DEPTH.min(cell.depth() * 0.5);
+    Rect2 {
+        x_min: x_mid,
+        x_max: cell.x_max,
+        z_min: cell.z_min + strip,
+        z_max: cell.z_max,
+    }
 }
 
 fn emit_slab(

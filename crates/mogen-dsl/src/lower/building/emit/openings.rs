@@ -119,6 +119,15 @@ fn place_interior_doors(
     let mut edges: Vec<(usize, usize, f32, [f32; 2])> = Vec::new();
     for i in 0..n {
         for j in (i + 1)..n {
+            // Never carve a door between two circulation cells — you
+            // can't step out of a stairwell into an elevator shaft, and
+            // wasting a tree edge here can leave the elevator/stair
+            // disconnected from the rest of the rooms.
+            if is_circulation(&plate.rooms[i].kind)
+                && is_circulation(&plate.rooms[j].kind)
+            {
+                continue;
+            }
             let edge = plate.rooms[i].rect.shared_edge_length(&plate.rooms[j].rect);
             if edge >= cfg.door_w * 1.1 {
                 let mid = shared_edge_midpoint(&plate.rooms[i].rect, &plate.rooms[j].rect);
@@ -207,6 +216,10 @@ fn clamp_door_to_edge(a: &Rect2, b: &Rect2, mid: [f32; 2], corner_margin: f32) -
         return (x, mid[1]);
     }
     (mid[0], mid[1])
+}
+
+fn is_circulation(kind: &CellKind) -> bool {
+    matches!(kind, CellKind::Staircase | CellKind::Elevator)
 }
 
 fn clamp_centre(value: f32, lo: f32, hi: f32, margin: f32) -> f32 {

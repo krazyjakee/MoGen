@@ -2,21 +2,26 @@
 //! single storey), so it lives in its own subtree under the wrapper and
 //! emits with absolute Y coordinates.
 //!
-//! T2 model:
+//! Model:
 //!
 //! - **Staircase**: one straight flight between each pair of consecutive
-//!   storeys, occupying the staircase's reserved XY cell. Each flight is
-//!   a series of `box` tread meshes climbing from y = s*(h+ct) to
-//!   y = (s+1)*(h+ct). The next flight (s+1 → s+2) sits in the same XY
-//!   but at the higher Y range — i.e., a stack of straight flights, the
-//!   simplest scheme that satisfies "user can walk between storeys".
-//! - **Elevator**: a vertical shaft spanning the full Y range with one
-//!   `use "<elevator_shaft_simple>"` instance at the ground floor's
-//!   level. Future tranches can add per-storey cab stamps.
+//!   storeys, occupying the **east half** of the staircase's reserved XY
+//!   cell. The west half stays clear at every storey and becomes a
+//!   landing on floor N+1 (its slab is preserved while the east half is
+//!   carved). Each flight is a series of `box` tread meshes climbing
+//!   south→north from y = s*(h+ct) to y = (s+1)*(h+ct). On the upper
+//!   storey, the user steps off the topmost step westward onto the
+//!   landing, walks south, crosses a narrow strip of preserved slab at
+//!   the cell's south end, and reaches the bottom of the next flight.
+//! - **Elevator**: a vertical shaft formed by the per-storey cell walls
+//!   (with door cutouts already carved by the interior-door planner)
+//!   stacked with slab holes between them. The shaft "module" emission
+//!   stays as an empty marker group; the actual enclosure comes from
+//!   the cell walls so door openings line up.
 //!
 //! No CSG carving here — the slab cutouts are handled in `shell.rs`'s
-//! per-storey emission. This module only authors the stair / shaft
-//! geometry that fills the carved column.
+//! per-storey emission. This module only authors the stair geometry
+//! that fills the carved column.
 
 use anyhow::Result;
 use glam::{Quat, Vec3};
@@ -30,6 +35,19 @@ use crate::module::expand_modules;
 use super::super::circulation::{CirculationCell, CirculationKind};
 use super::super::config::BuildingCfg;
 use super::super::layout::{BuildingLayout, Rect2};
+
+/// Fraction of a staircase cell's width occupied by the stair body. The
+/// remaining width is reserved as a landing on every storey above the
+/// bottom — so floor N+1 has somewhere to stand when you reach the top
+/// of a flight. Shell.rs reads this to compute the matching slab cutout.
+pub(in super::super) const STAIR_HALF_FRACTION: f32 = 0.5;
+
+/// Depth of the landing strip preserved at the south end of every
+/// staircase cell on floor N+1. The user steps west off the topmost
+/// stair onto the west-half landing, walks south, then crosses this
+/// strip at floor level to reach the bottom of the next flight on the
+/// east half. Sized so a person can stand and turn (≥ one tread).
+pub(in super::super) const STAIR_TRANSIT_STRIP_DEPTH: f32 = 1.0;
 
 pub(in super::super) fn emit_circulation(
     node: &Node,
@@ -121,6 +139,36 @@ fn emit_staircase(
         let y_start = s as f32 * step;
         emit_stair_flight(node, cfg, cell, s, y_start, h + ct, stair_group, graph)?;
     }
+
+    // Stair cell enclosure: same N/E/S three-sided wall set the elevator
+    // uses, so the staircase has a real wall on the elevator side and
+    // doesn't bleed open into the (otherwise unwalled) inset gap or the
+    // strip behind the south perimeter wall. The west wall is left open
+    // for the door from the adjacent room. The stair_group is at y=0,
+    // so the walls go into a child group offset to the shaft's mid-Y.
+    let storeys_spanned = (top_storey - bottom_storey + 1).max(1) as f32;
+    let total_h = storeys_spanned * step;
+    let y_centre =
+        bottom_storey as f32 * step + 0.5 * total_h - 0.5 * cfg.ceiling_thickness;
+    let enclosure = graph.add_child(
+        stair_group,
+        "shaft_walls".to_string(),
+        "group",
+        Transform::from_trs(
+            Vec3::new(0.0, y_centre, 0.0),
+            Quat::IDENTITY,
+            Vec3::ONE,
+        ),
+    );
+    graph.nodes[enclosure.0 as usize].origin = origin.clone();
+    emit_shaft_enclosure(
+        cell.rect.width(),
+        cell.rect.depth(),
+        total_h,
+        enclosure,
+        graph,
+        &origin,
+    );
     Ok(())
 }
 
@@ -144,12 +192,19 @@ fn emit_stair_flight(
         .with(|s| s.borrow().clone())
         .unwrap_or_default();
 
+    // Stair body occupies the east half of the cell; the west half is
+    // reserved as a landing on every upper floor (slab preserved there).
+    // `STAIR_HALF_FRACTION` keeps both halves the same width so the door
+    // planner and slab cutout can locate the divide by the cell's centre.
+    let flight_w = cell.rect.width() * STAIR_HALF_FRACTION;
+    let east_offset = cell.rect.width() * (0.5 - 0.5 * STAIR_HALF_FRACTION);
+
     let flight_group = graph.add_child(
         parent,
         format!("flight_{}", storey_label(storey)),
         "group",
         Transform::from_trs(
-            Vec3::new(0.0, y_start, 0.0),
+            Vec3::new(east_offset, y_start, 0.0),
             Quat::IDENTITY,
             Vec3::ONE,
         ),
@@ -160,7 +215,6 @@ fn emit_stair_flight(
         .tags
         .extend(["building".into(), "stair_flight".into()]);
 
-    let flight_w = cell.rect.width();
     let flight_d = cell.rect.depth();
     // Target ~18 cm per tread; clamp so a low rise still gets enough steps
     // for a sane stair (8 minimum keeps the visual readable).
@@ -181,21 +235,19 @@ fn emit_stair_flight(
             crate::lower::node::lower_into(n, Some(flight_group), graph)?;
         }
     } else {
-        emit_synthetic_stair(cell, rise, flight_group, graph, &origin);
+        emit_synthetic_stair(flight_w, flight_d, rise, flight_group, graph, &origin);
     }
     Ok(())
 }
 
 fn emit_synthetic_stair(
-    cell: &CirculationCell,
+    flight_w: f32,
+    flight_d: f32,
     rise: f32,
     parent: NodeId,
     graph: &mut SceneGraph,
     origin: &Option<std::path::PathBuf>,
 ) {
-    // Straight stair along +Z (depth axis), starting at z = -flight_d/2.
-    let flight_w = cell.rect.width();
-    let flight_d = cell.rect.depth();
     let target_rise = 0.18; // ~18 cm per step is comfortable.
     let steps = (rise / target_rise).round() as u32;
     let steps = steps.max(8);
@@ -257,39 +309,76 @@ fn emit_elevator(
         .tags
         .extend(["building".into(), "elevator".into()]);
 
-    let reg = crate::lower::MODULE_REGISTRY
-        .with(|s| s.borrow().clone())
-        .unwrap_or_default();
-    if reg.contains("elevator_shaft_simple") {
-        let synth = synth_use(node, "elevator_shaft_simple", &[
-            ("width", cell.rect.width()),
-            ("depth", cell.rect.depth()),
-            ("height", total_h),
-        ]);
-        let (expanded, use_parents) = expand_modules(&[synth], &reg)?;
-        for (k, v) in use_parents {
-            graph.use_parents.insert(k, v);
-        }
-        for n in &expanded {
-            crate::lower::node::lower_into(n, Some(shaft_group), graph)?;
-        }
-    } else {
-        // Fallback: a thin frame outline so the shaft is visible.
-        let outline = box_mesh(
-            [cell.rect.width(), total_h, cell.rect.depth()],
-            UvMode::Tile,
-        );
+    // Three-sided shaft enclosure (N/E/S). The west side is intentionally
+    // left open — the per-storey cell-shared wall on that face (emitted
+    // by `rooms.rs`) already carries the door cutout placed by the door
+    // BFS. Adding a continuous shaft wall there would sit just behind
+    // the cell wall and visually plug the door from inside the shaft.
+    emit_shaft_enclosure(
+        cell.rect.width(),
+        cell.rect.depth(),
+        total_h,
+        shaft_group,
+        graph,
+        &origin,
+    );
+    Ok(())
+}
+
+/// Emit N/E/S walls forming a three-sided enclosure for a circulation
+/// cell, parented to `group` (which the caller has already centred on
+/// the cell in XZ and at the cell's mid-Y). Skips the west wall — the
+/// per-storey cell walls on that face carry the door cutout to the
+/// adjacent room, so this enclosure stays open on the door side.
+fn emit_shaft_enclosure(
+    cell_w: f32,
+    cell_d: f32,
+    total_h: f32,
+    group: NodeId,
+    graph: &mut SceneGraph,
+    origin: &Option<std::path::PathBuf>,
+) {
+    let thickness = 0.05;
+    let half = 0.5 * thickness;
+    // Center each wall so its inner face sits flush with the cell
+    // boundary — the wall body lives just *outside* the cell. The stair
+    // body's first/last step ends a few mm short of the cell boundary,
+    // so this keeps the enclosure from z-fighting with the steps while
+    // still presenting a flush wall to anyone inside the cell.
+    let walls: [(&str, [f32; 3], [f32; 3]); 3] = [
+        (
+            "shaft_wall_n",
+            [0.0, 0.0, 0.5 * cell_d + half],
+            [cell_w + 0.1, total_h, thickness],
+        ),
+        (
+            "shaft_wall_e",
+            [0.5 * cell_w + half, 0.0, 0.0],
+            [thickness, total_h, cell_d + 0.1],
+        ),
+        (
+            "shaft_wall_s",
+            [0.0, 0.0, -0.5 * cell_d - half],
+            [cell_w + 0.1, total_h, thickness],
+        ),
+    ];
+    for (name, pos, size) in walls {
+        let mesh = box_mesh(size, UvMode::Tile);
         let id = graph.add_child(
-            shaft_group,
-            "shaft_volume",
+            group,
+            name.to_string(),
             "box",
-            Transform::IDENTITY,
+            Transform::from_trs(
+                Vec3::new(pos[0], pos[1], pos[2]),
+                Quat::IDENTITY,
+                Vec3::ONE,
+            ),
         );
-        graph.set_mesh(id, outline);
+        graph.set_mesh(id, mesh);
         graph.nodes[id.0 as usize].origin = origin.clone();
+        graph.nodes[id.0 as usize].role = Some("shaft_wall".into());
         inherit_material_from_chain(id, graph);
     }
-    Ok(())
 }
 
 fn synth_use(parent: &Node, name: &str, attrs: &[(&str, f32)]) -> Node {

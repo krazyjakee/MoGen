@@ -153,7 +153,12 @@ pub(super) fn solve(cfg: &BuildingCfg) -> Result<BuildingLayout> {
     } else {
         bounds_above
     };
-    let circ = super::circulation::plan(cfg, circ_bounds);
+    // For corridor-bearing styles, place circulation cells flush with the
+    // corridor's south/north walls so the door planner can stamp a door
+    // straight from the corridor into each shaft. Otherwise circulation
+    // stacks in the east-edge column on its own.
+    let corridor_z = corridor_z_range(cfg.style, bounds_above);
+    let circ = super::circulation::plan(cfg, circ_bounds, corridor_z);
 
     // Hard-fail if the column literally doesn't fit in the basement, even
     // after east-alignment (e.g. cellar is too shallow on Z). The
@@ -239,12 +244,14 @@ fn east_aligned_bounds(area: f32, reference: Rect2) -> Rect2 {
 
 fn layout_bounds_for(bounds: Rect2, circ: &CirculationPlan, wall_thickness: f32) -> Rect2 {
     // The room layout operates on the floorplate minus the circulation
-    // column. If circulation is present we leave a thin gap of wall
-    // thickness between the room area and the circulation column.
+    // column. Side rooms abut the column directly (no wall-thickness
+    // gap) — the shared edge is the column's west wall, which the room
+    // emitter will then wrap with an interior wall.
+    let _ = wall_thickness;
     if circ.has_any() {
         Rect2 {
             x_min: bounds.x_min,
-            x_max: bounds.x_max - circ.column_width - wall_thickness,
+            x_max: bounds.x_max - circ.column_width,
             z_min: bounds.z_min,
             z_max: bounds.z_max,
         }
@@ -278,13 +285,17 @@ fn solve_storey(
                 let idx = cfg
                     .corridor_type_index()
                     .expect("hotel-corridor synthesises a corridor type in read_cfg");
-                hotel::layout(layout_bounds, &assigned_types, idx, &mut state)
+                let mut cells = hotel::layout(layout_bounds, &assigned_types, idx, &mut state);
+                extend_corridor_through_column(&mut cells, idx, full_bounds, circ);
+                cells
             }
             Style::OfficeCore => {
                 let idx = cfg
                     .corridor_type_index()
                     .expect("office-core synthesises a corridor type in read_cfg");
-                office::layout(layout_bounds, &assigned_types, idx, &mut state)
+                let mut cells = office::layout(layout_bounds, &assigned_types, idx, &mut state);
+                extend_corridor_through_column(&mut cells, idx, full_bounds, circ);
+                cells
             }
             Style::Radial => radial::layout(layout_bounds, &assigned_types, &mut state),
             Style::Organic => organic::layout(layout_bounds, &assigned_types, &mut state),
@@ -393,6 +404,65 @@ pub(super) fn cell_type<'a>(cfg: &'a BuildingCfg, cell: &RoomCell) -> Option<&'a
         CellKind::Room => Some(&cfg.room_types[cell.room_type_index]),
         _ => None,
     }
+}
+
+/// Extend the corridor cell east through the circulation column so it shares
+/// edges with the stair / elevator cells the planner flushed against the
+/// corridor's south/north walls. Without this the corridor would terminate
+/// at `layout_bounds.x_max` with a 0.12 m gap before the column, leaving a
+/// floating wall segment on the corridor's east end and an elevator door
+/// that doesn't open onto the corridor.
+///
+/// No-op when:
+/// - the layout returned no corridor cell (e.g. hotel fell back to grid),
+/// - circulation is empty (no column to bridge to),
+/// - the corridor runs along Z (column is on the east edge, not aligned
+///   with the corridor's natural extension axis).
+fn extend_corridor_through_column(
+    cells: &mut [RoomCell],
+    corridor_type_idx: usize,
+    full_bounds: Rect2,
+    circ: &CirculationPlan,
+) {
+    if !circ.has_any() {
+        return;
+    }
+    let Some(corridor) = cells.iter_mut().find(|c| {
+        matches!(c.kind, CellKind::Room) && c.room_type_index == corridor_type_idx
+    }) else {
+        return;
+    };
+    // Only extend east when the corridor is X-aligned (the only case where
+    // `corridor_z_range()` returns Some and the planner placed circulation
+    // cells flush with the corridor's south/north walls). For a Z-aligned
+    // corridor the column would be on the wrong side and there's nothing
+    // to bridge.
+    if corridor.rect.width() < corridor.rect.depth() {
+        return;
+    }
+    corridor.rect.x_max = corridor.rect.x_max.max(full_bounds.x_max);
+}
+
+/// For hotel-corridor / office-core, return the corridor cell's Z extent
+/// so the circulation planner can flush its cells against the corridor.
+/// Mirrors `hotel.rs`'s mid_z + CORRIDOR_WIDTH/2 maths so the layout and
+/// the circulation cells line up exactly.
+pub(super) fn corridor_z_range(style: Style, bounds: Rect2) -> Option<(f32, f32)> {
+    const CORRIDOR_WIDTH: f32 = 1.8;
+    if !matches!(style, Style::HotelCorridor | Style::OfficeCore) {
+        return None;
+    }
+    // hotel.rs's `along_x` test: corridor runs along whichever axis is
+    // longer. We only support the X-axis variant for adjacent placement;
+    // for Z-axis corridors the column is on the east edge but the
+    // corridor's east end is at bounds.x_max — wrong axis — so fall back
+    // to stack-mode.
+    if bounds.width() < bounds.depth() {
+        return None;
+    }
+    let mid_z = 0.5 * (bounds.z_min + bounds.z_max);
+    let half = 0.5 * CORRIDOR_WIDTH;
+    Some((mid_z - half, mid_z + half))
 }
 
 pub(super) fn cell_kind_label(cell: &RoomCell) -> &'static str {

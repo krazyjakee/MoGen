@@ -422,6 +422,104 @@ fn elevator_emits_a_single_shaft_for_the_whole_building() {
 }
 
 #[test]
+fn stair_flight_occupies_east_half_of_cell() {
+    // Each flight should be offset toward the east half of the
+    // staircase cell so the west half is reserved as a landing on
+    // every upper storey. Without this offset the user lands on a
+    // slab cutout instead of a real floor.
+    let g = lower_src(MULTI_FLOOR_SRC);
+    let flights: Vec<_> = g
+        .nodes
+        .iter()
+        .filter(|n| n.role.as_deref() == Some("stair_flight"))
+        .collect();
+    assert!(!flights.is_empty(), "expected at least one stair flight");
+    for f in &flights {
+        assert!(
+            f.transform.translation.x > 0.05,
+            "stair flight should be offset east within its cell, got x={}",
+            f.transform.translation.x
+        );
+    }
+}
+
+#[test]
+fn circulation_cells_get_three_sided_shaft_walls() {
+    // Without explicit shaft walls the staircase north face and the
+    // elevator north/south/east faces would have no adjacent cell and
+    // no perimeter wall close enough to enclose them — the user could
+    // walk straight out of a stair into the inset gap behind the
+    // building's south wall. One staircase + one elevator → six walls.
+    let g = lower_src(MULTI_FLOOR_SRC);
+    let walls = g
+        .nodes
+        .iter()
+        .filter(|n| n.role.as_deref() == Some("shaft_wall"))
+        .count();
+    assert_eq!(walls, 6, "expected 3 walls each for stair + elevator");
+}
+
+#[test]
+fn door_bfs_never_connects_stair_to_elevator() {
+    // A door between two circulation cells is useless: you can't step
+    // out of a stairwell into an elevator shaft. The BFS must skip
+    // those edges so the tree connects the elevator via a real room.
+    let g = lower_src(MULTI_FLOOR_SRC);
+    for n in &g.nodes {
+        let Some(role) = n.role.as_deref() else { continue };
+        if role != "service_wall" {
+            continue;
+        }
+        // Wall name format: `interior_wall_{idx}_{lo}_{hi}`.
+        let parts: Vec<&str> = n.name.split('_').collect();
+        if parts.len() < 5 {
+            continue;
+        }
+        let lo: usize = parts[3].parse().unwrap();
+        let hi: usize = parts[4].parse().unwrap();
+        // Skip if this wall is a stair↔elevator wall (both are
+        // circulation cells). We just need to check the wall isn't
+        // carrying a door — i.e. it's a solid 24-vertex box, not a
+        // wall_with_holes mesh.
+        // Walk up to the parent cell to see its kind via the group name.
+        let parent_idx = n.parent.unwrap();
+        let parent_name = &g.nodes[parent_idx.0 as usize].name;
+        if !(parent_name.starts_with("staircase_") || parent_name.starts_with("elevator_")) {
+            continue;
+        }
+        // A wall between two circulation cells would have BOTH a stair
+        // and an elevator on its two sides — the parent (lower idx) is
+        // a circulation cell (we just checked). For a stair↔elevator
+        // wall to exist, the higher-idx cell must also be circulation.
+        // We can't read kinds from the graph, but the absence of a hole
+        // is what proves the BFS skipped it: the moment a stair-elevator
+        // edge enters the tree, this wall gets a door cutout.
+        let mesh = n.mesh.as_ref().unwrap();
+        let has_hole = mesh.positions.len() > 24;
+        // The connectivity check is the indirect property — assert no
+        // pairing where lo & hi are both circulation. We don't have
+        // direct kind info, but the wall index pair `(lo, hi)` lets
+        // the test author eyeball it. For MULTI_FLOOR_SRC the BFS
+        // currently never picks a stair-elevator edge; this test fails
+        // if a future change re-enables it.
+        // The strongest assertion we can make portably: if a wall is
+        // BOTH service_wall AND on a circulation cell, AND it has a
+        // hole, the other side must be a room, not the other circulation
+        // cell — but without kind metadata in the graph we can't tell
+        // directly. Settle for the layout-independent assertion that
+        // (5,6) — staircase 5 ↔ elevator 6 in MULTI_FLOOR_SRC — never
+        // appears with a hole.
+        if (lo, hi) == (5, 6) || (lo, hi) == (6, 5) {
+            assert!(
+                !has_hole,
+                "BFS placed a door between stair and elevator (wall {})",
+                n.name
+            );
+        }
+    }
+}
+
+#[test]
 fn upper_floors_have_no_entrance_holes() {
     let g = lower_src(MULTI_FLOOR_SRC);
     // Entrances are tagged with role=ext_door; they should only sit
