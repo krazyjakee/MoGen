@@ -116,7 +116,7 @@ fn place_interior_doors(
     if n < 2 {
         return;
     }
-    let mut edges: Vec<(usize, usize, f32, [f32; 2])> = Vec::new();
+    let mut edges: Vec<(usize, usize, f32, [f32; 2], f32)> = Vec::new();
     for i in 0..n {
         for j in (i + 1)..n {
             // Never carve a door between two circulation cells — you
@@ -129,13 +129,14 @@ fn place_interior_doors(
                 continue;
             }
             let edge = plate.rooms[i].rect.shared_edge_length(&plate.rooms[j].rect);
-            if edge >= cfg.door_w * 1.1 {
+            let door_w = edge_door_width(cfg, &plate.rooms[i], &plate.rooms[j]);
+            if edge >= door_w * 1.1 {
                 let mid = shared_edge_door_anchor(
                     &plate.rooms[i],
                     &plate.rooms[j],
                     cfg,
                 );
-                edges.push((i, j, edge, mid));
+                edges.push((i, j, edge, mid, door_w));
             }
         }
     }
@@ -147,7 +148,7 @@ fn place_interior_doors(
     while let Some(u) = queue.pop_front() {
         let mut neighbours: Vec<usize> = edges
             .iter()
-            .filter_map(|(a, b, _, _)| {
+            .filter_map(|(a, b, _, _, _)| {
                 if *a == u && !visited[*b] {
                     Some(*b)
                 } else if *b == u && !visited[*a] {
@@ -166,9 +167,9 @@ fn place_interior_doors(
                 continue;
             }
             visited[v] = true;
-            if let Some((_, _, _, mid)) = edges
+            if let Some((_, _, _, mid, door_w)) = edges
                 .iter()
-                .find(|(a, b, _, _)| (*a == u && *b == v) || (*a == v && *b == u))
+                .find(|(a, b, _, _, _)| (*a == u && *b == v) || (*a == v && *b == u))
             {
                 let facing = interior_facing(&plate.rooms[u].rect, &plate.rooms[v].rect);
                 // `shared_edge_midpoint` already gave us the geometric
@@ -177,7 +178,7 @@ fn place_interior_doors(
                 // wall sitting at a T-junction. Corner margin =
                 // door_w/2 + wall_thickness so the door's edge stops at
                 // least a wall-thickness short of the adjacent corner.
-                let corner_margin = 0.5 * cfg.door_w + cfg.wall_thickness;
+                let corner_margin = 0.5 * door_w + cfg.wall_thickness;
                 let (x, z) = clamp_door_to_edge(
                     &plate.rooms[u].rect,
                     &plate.rooms[v].rect,
@@ -189,7 +190,7 @@ fn place_interior_doors(
                     x,
                     z,
                     sill: 0.0,
-                    width: cfg.door_w,
+                    width: *door_w,
                     height: cfg.door_h,
                     side: None,
                     facing,
@@ -224,6 +225,19 @@ fn clamp_door_to_edge(a: &Rect2, b: &Rect2, mid: [f32; 2], corner_margin: f32) -
 
 fn is_circulation(kind: &CellKind) -> bool {
     matches!(kind, CellKind::Staircase | CellKind::Elevator)
+}
+
+/// Doorways onto an elevator cell are widened to 1.5× the standard door
+/// to read as proper elevator-lobby openings (and to fit a typical
+/// elevator's stretcher-clearance width). All other interior doors keep
+/// `cfg.door_w`. The elevator cell is 2 m × 2 m, so 1.5 × 0.9 = 1.35 m
+/// fits comfortably with a wall-thickness corner margin on each side.
+fn edge_door_width(cfg: &BuildingCfg, a: &RoomCell, b: &RoomCell) -> f32 {
+    if matches!(a.kind, CellKind::Elevator) || matches!(b.kind, CellKind::Elevator) {
+        cfg.door_w * 1.5
+    } else {
+        cfg.door_w
+    }
 }
 
 fn clamp_centre(value: f32, lo: f32, hi: f32, margin: f32) -> f32 {
