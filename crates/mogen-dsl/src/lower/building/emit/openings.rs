@@ -573,21 +573,22 @@ fn place_windows(
                 continue;
             }
             let (lo, hi, fixed, facing) = exterior_segment(cell, &plate.bounds, side);
-            if segment_covered_by_entrance(side, lo, hi, cfg, plan) {
-                continue;
+            let base = ExtSeg { side, lo, hi, fixed, facing };
+            // Carve out the wall span occupied by each entrance on this
+            // side plus a `cw/2` pier on either side (matching the
+            // half-pitch margin window-to-window). What remains is a list
+            // of sub-segments guaranteed clear of any entrance footprint;
+            // an entrance fully embedded in the original collapses the
+            // segment to zero sub-pieces, an entrance straddling the
+            // cell boundary takes a bite out of both neighbouring cells.
+            for sub in split_segment_by_entrances(base, cfg, cw, plan) {
+                // Need room for at least one window plus the half-pitch
+                // margin at each end the `(j+1)/(n+1)` placement gives.
+                if sub.hi - sub.lo < pitch {
+                    continue;
+                }
+                segments.push(sub);
             }
-            // Need room for at least one window plus the half-pitch
-            // margin at each end the `(j+1)/(n+1)` placement gives.
-            if hi - lo < pitch {
-                continue;
-            }
-            segments.push(ExtSeg {
-                side,
-                lo,
-                hi,
-                fixed,
-                facing,
-            });
         }
     }
     if segments.is_empty() {
@@ -651,23 +652,56 @@ fn side_order(s: WallSide) -> u8 {
     }
 }
 
-fn segment_covered_by_entrance(
-    side: WallSide,
-    lo: f32,
-    hi: f32,
+/// Slice a room's exterior wall segment around every entrance on the same
+/// side. Each entrance contributes a keep-out range
+/// `[centre - keep, centre + keep]` where
+/// `keep = door_w/2 + cw/2 + cw/2`: the entrance's half-width, plus a
+/// `cw/2` pier (the standard half-pitch margin), plus the maximum half-
+/// width of a window centre that could land flush with that pier. The
+/// returned sub-segments are guaranteed to admit window centres that don't
+/// overlap or butt against any entrance footprint.
+fn split_segment_by_entrances(
+    seg: ExtSeg,
     cfg: &BuildingCfg,
+    cw: f32,
     plan: &OpeningPlan,
-) -> bool {
-    plan.entrances.iter().any(|e| {
-        if e.side != Some(side) {
-            return false;
+) -> Vec<ExtSeg> {
+    let keep = cfg.door_w * 0.5 + cw;
+    let mut keepouts: Vec<(f32, f32)> = plan
+        .entrances
+        .iter()
+        .filter(|e| e.side == Some(seg.side))
+        .map(|e| {
+            let centre = match seg.side {
+                WallSide::South | WallSide::North => e.x,
+                WallSide::East | WallSide::West => e.z,
+            };
+            (centre - keep, centre + keep)
+        })
+        .filter(|(klo, khi)| *khi > seg.lo && *klo < seg.hi)
+        .collect();
+    if keepouts.is_empty() {
+        return vec![seg];
+    }
+    keepouts.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+
+    let mut out = Vec::new();
+    let mut cursor = seg.lo;
+    for (klo, khi) in keepouts {
+        let klo = klo.max(seg.lo);
+        let khi = khi.min(seg.hi);
+        if klo > cursor {
+            out.push(ExtSeg { lo: cursor, hi: klo, ..seg });
         }
-        let centre = match side {
-            WallSide::South | WallSide::North => e.x,
-            WallSide::East | WallSide::West => e.z,
-        };
-        centre - cfg.door_w >= lo && centre + cfg.door_w <= hi
-    })
+        cursor = cursor.max(khi);
+        if cursor >= seg.hi {
+            break;
+        }
+    }
+    if cursor < seg.hi {
+        out.push(ExtSeg { lo: cursor, hi: seg.hi, ..seg });
+    }
+    out
 }
 
 /// Distribute `count` windows across `segments`, weighted by length and
