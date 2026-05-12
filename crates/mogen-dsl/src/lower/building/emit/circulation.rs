@@ -400,12 +400,17 @@ fn emit_staircase(
         );
     }
 
-    // Cutout-edge handrail on every upper storey's slab. The cutout's
-    // south edge is the only fall hazard a user on floor s can walk up
-    // to from outside the stairs — west half of that edge is the top
-    // step of the upper flight (no railing wanted) and east half is a
-    // one-storey drop straight onto the lower flight below.
-    for s in (bottom_storey + 1)..=top_storey {
+    // Cutout-edge handrail on the top storey only. The cutout's south
+    // edge is the only fall hazard a user can walk up to from outside
+    // the stairs. On the top storey the east half of that edge is a
+    // one-storey drop straight onto the lower flight below (no flight
+    // ascends from the top), so a railing belongs there; the west half
+    // is the top step of the descending upper flight. On every
+    // intermediate storey the east half is where the next pair's
+    // lower flight begins — its first step sits at z = flight_z_min,
+    // so a railing here would wall off the base of the next ascent.
+    if top_storey > bottom_storey {
+        let s = top_storey;
         let y_floor = s as f32 * step_h;
         emit_cutout_edge_railing(
             node,
@@ -691,11 +696,13 @@ fn emit_landing_handrail(
     inherit_material_from_chain(id, graph);
 }
 
-/// Railing along the south edge of the slab cutout on every upper
-/// storey — the only edge facing intact slab where someone walking the
-/// entry platform could otherwise step off into a one-storey drop. The
-/// west half of that edge is the top step of the descending upper
-/// flight (no railing wanted), and the east half is the open drop.
+/// Railing along the south edge of the slab cutout on the top storey
+/// only — the only storey where the east half of that edge is a true
+/// drop (no flight ascends from the top). On intermediate storeys the
+/// east half is the first step of the next pair's lower flight, so a
+/// railing here would block the ascent. The west half of the edge is
+/// always the top step of the descending upper flight (no railing
+/// wanted).
 fn emit_cutout_edge_railing(
     node: &Node,
     storey: i32,
