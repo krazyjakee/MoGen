@@ -130,7 +130,11 @@ fn place_interior_doors(
             }
             let edge = plate.rooms[i].rect.shared_edge_length(&plate.rooms[j].rect);
             if edge >= cfg.door_w * 1.1 {
-                let mid = shared_edge_midpoint(&plate.rooms[i].rect, &plate.rooms[j].rect);
+                let mid = shared_edge_door_anchor(
+                    &plate.rooms[i],
+                    &plate.rooms[j],
+                    cfg,
+                );
                 edges.push((i, j, edge, mid));
             }
         }
@@ -341,6 +345,54 @@ fn exterior_segment(
         WallSide::East => (cell.rect.z_min, cell.rect.z_max, bounds.x_max, [1.0, 0.0, 0.0]),
         WallSide::West => (cell.rect.z_min, cell.rect.z_max, bounds.x_min, [-1.0, 0.0, 0.0]),
     }
+}
+
+/// Pick a door anchor along the shared edge between two cells. By
+/// default we use the geometric midpoint, but when one of the cells is
+/// a staircase we bias toward its south entry zone so the door lands
+/// on the platform the switchback expects users to enter at — without
+/// the bias the door midpoint sits next to the mid-landing slab edge
+/// or above the flight zone cutout, and there's nowhere to step onto.
+fn shared_edge_door_anchor(
+    a: &RoomCell,
+    b: &RoomCell,
+    cfg: &BuildingCfg,
+) -> [f32; 2] {
+    let mid = shared_edge_midpoint(&a.rect, &b.rect);
+    let stair_target = |s: &Rect2| -> Option<f32> {
+        // South entry zone runs from s.z_min to s.z_min + STAIR_ENTRY_DEPTH.
+        // Anchor at the centre of that zone so the door lands squarely
+        // on the platform.
+        Some(s.z_min + 0.5 * super::circulation::STAIR_ENTRY_DEPTH)
+    };
+    let target_z = match (
+        matches!(a.kind, CellKind::Staircase),
+        matches!(b.kind, CellKind::Staircase),
+    ) {
+        (true, false) => stair_target(&a.rect),
+        (false, true) => stair_target(&b.rect),
+        _ => None,
+    };
+    let Some(target_z) = target_z else {
+        return mid;
+    };
+    // Only bias the Z component if the shared edge is vertical (runs
+    // along Z) — that's the wall the door sits in. Horizontal edges
+    // get the unchanged midpoint.
+    let vertical_edge = (a.rect.x_max - b.rect.x_min).abs() < 1e-3
+        || (b.rect.x_max - a.rect.x_min).abs() < 1e-3;
+    if !vertical_edge {
+        return mid;
+    }
+    let lo = a.rect.z_min.max(b.rect.z_min);
+    let hi = a.rect.z_max.min(b.rect.z_max);
+    let margin = 0.5 * cfg.door_w + cfg.wall_thickness;
+    let z = if hi - lo > 2.0 * margin {
+        target_z.clamp(lo + margin, hi - margin)
+    } else {
+        0.5 * (lo + hi)
+    };
+    [mid[0], z]
 }
 
 fn shared_edge_midpoint(a: &Rect2, b: &Rect2) -> [f32; 2] {

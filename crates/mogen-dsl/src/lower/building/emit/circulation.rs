@@ -34,20 +34,52 @@ use crate::module::expand_modules;
 
 use super::super::circulation::{CirculationCell, CirculationKind};
 use super::super::config::BuildingCfg;
-use super::super::layout::{BuildingLayout, Rect2};
+use super::super::layout::{BuildingLayout, CellKind, Floorplate, Rect2};
+use super::wall_build::wall_with_holes;
 
-/// Fraction of a staircase cell's width occupied by the stair body. The
-/// remaining width is reserved as a landing on every storey above the
-/// bottom — so floor N+1 has somewhere to stand when you reach the top
-/// of a flight. Shell.rs reads this to compute the matching slab cutout.
-pub(in super::super) const STAIR_HALF_FRACTION: f32 = 0.5;
+/// Switchback layout — depths along the cell's Z axis, measured from
+/// the cell's south edge (`z_min`). The cell is split into three zones:
+///
+/// ```text
+///        z_max ┌────────────────────┐      (north)
+///              │   mid-landing      │  ── `STAIR_LANDING_DEPTH`
+///              │   (half-height,    │
+///              │    full width)     │
+///              ├────────────────────┤
+///              │  upper │  lower    │
+///              │  flight│  flight   │  ── flight zone (the rest)
+///              │  N→S   │  S→N      │
+///              │  asc   │  asc      │
+///              ├────────────────────┤
+///              │  entry / exit      │
+///              │  platform —        │  ── `STAIR_ENTRY_DEPTH`
+///              │  intact slab on    │
+///              │  every storey      │
+///        z_min └────────────────────┘      (south)
+///              x_min   x_mid   x_max
+///              (west)         (east)
+/// ```
+///
+/// The entry zone preserves the floor slab on every storey — it's the
+/// landing the door from the adjacent room opens onto and the platform
+/// the user steps off onto after climbing. Shell.rs reads these to
+/// build the matching slab cutout (everything north of the entry zone).
+pub(in super::super) const STAIR_ENTRY_DEPTH: f32 = 1.0;
+pub(in super::super) const STAIR_LANDING_DEPTH: f32 = 1.0;
 
-/// Depth of the landing strip preserved at the south end of every
-/// staircase cell on floor N+1. The user steps west off the topmost
-/// stair onto the west-half landing, walks south, then crosses this
-/// strip at floor level to reach the bottom of the next flight on the
-/// east half. Sized so a person can stand and turn (≥ one tread).
-pub(in super::super) const STAIR_TRANSIT_STRIP_DEPTH: f32 = 1.0;
+/// Width of the central spine between the two parallel half-flights.
+/// Just enough to keep the flights from sharing a tread vertex and to
+/// leave a visible slot for the inner handrail to live in.
+const STAIR_CENTRAL_SPINE: f32 = 0.05;
+
+/// Slab thickness of the mid-landing and entry/exit platforms. Kept
+/// thin so head clearance below remains close to `ceiling_height`.
+const STAIR_PLATFORM_THICKNESS: f32 = 0.08;
+
+/// Handrail dimensions. A single capped post on the open side of every
+/// flight and around the cutout edge on every upper storey.
+const RAILING_HEIGHT: f32 = 0.95;
+const RAILING_THICKNESS: f32 = 0.04;
 
 pub(in super::super) fn emit_circulation(
     node: &Node,
@@ -93,7 +125,146 @@ pub(in super::super) fn emit_circulation(
             }
         }
     }
+
+    emit_column_fillers(cfg, layout, circ_group, graph, &origin);
     Ok(())
+}
+
+/// Close the room-facing edge of the circulation column wherever no
+/// circulation cell sits. The room's east wall (per-storey, emitted by
+/// `rooms.rs`) only covers z ranges where a room cell shares an edge
+/// with a circulation cell — the `COLUMN_INSET` strips between stacked
+/// cells, and the column extent past the topmost / before the bottommost
+/// cell, would otherwise leave a slit (and sometimes a metres-wide hole)
+/// straight from the rooms into the unwalled column interior.
+///
+/// Fillers are emitted per-storey (not as one multi-storey slab) so each
+/// gets its own door cutout when the gap is wide enough to be a usable
+/// alcove and the storey has an adjacent room. A single multi-storey
+/// slab can't carry per-floor doors at the same z midpoint because
+/// `wall_with_holes` merges x-overlapping cutouts into one giant hole.
+fn emit_column_fillers(
+    cfg: &BuildingCfg,
+    layout: &BuildingLayout,
+    parent: NodeId,
+    graph: &mut SceneGraph,
+    origin: &Option<std::path::PathBuf>,
+) {
+    if !layout.circulation.has_any() {
+        return;
+    }
+    let column_x = layout.bounds.x_max - layout.circulation.column_width;
+
+    let mut intervals: Vec<(f32, f32)> = layout
+        .circulation
+        .cells
+        .iter()
+        .map(|c| (c.rect.z_min, c.rect.z_max))
+        .collect();
+    intervals.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+
+    let mut gaps: Vec<(f32, f32)> = Vec::new();
+    let mut cursor = layout.bounds.z_min;
+    for (a, b) in intervals {
+        if a - cursor > 1e-3 {
+            gaps.push((cursor, a));
+        }
+        if b > cursor {
+            cursor = b;
+        }
+    }
+    if layout.bounds.z_max - cursor > 1e-3 {
+        gaps.push((cursor, layout.bounds.z_max));
+    }
+    if gaps.is_empty() {
+        return;
+    }
+
+    let h = cfg.ceiling_height;
+    let step = h + cfg.ceiling_thickness;
+    let thickness = cfg.wall_thickness;
+    // Door cutouts only on gaps wide enough to read as a real alcove
+    // (door width plus a wall-thickness pier on each side, plus a bit of
+    // slack). Below this we leave the strip sealed — a slit ≤ door_w is
+    // wasted floorplan, not a habitable space.
+    let door_min_length = cfg.door_w + 2.0 * cfg.wall_thickness + 0.1;
+
+    for (idx, (z0, z1)) in gaps.iter().enumerate() {
+        let length = z1 - z0;
+        if length < 1e-3 {
+            continue;
+        }
+        let z_centre = 0.5 * (z0 + z1);
+        let allow_door = length >= door_min_length;
+
+        for storey_plate in &layout.storeys {
+            let s = storey_plate.storey;
+            let storey_floor = s as f32 * step;
+            let wall_centre_y = storey_floor + 0.5 * h;
+
+            let mut local_holes: Vec<[f32; 4]> = Vec::new();
+            if allow_door
+                && storey_has_adjacent_room(&storey_plate.plate, column_x, *z0, *z1)
+            {
+                // Wall is rotated +π/2 around Y (local +X → world -Z), so
+                // a door at the gap's z midpoint has along = 0. Wall y
+                // centre = storey_floor + h/2; door y centre = storey_floor
+                // + door_h/2; local cy = (door_h - h)/2.
+                let cy = 0.5 * (cfg.door_h - h);
+                local_holes.push([0.0, cy, cfg.door_w, cfg.door_h]);
+            }
+
+            let mesh = wall_with_holes([length, h, thickness], &local_holes);
+            let id = graph.add_child(
+                parent,
+                format!("column_filler_{idx}_{}", storey_label(s)),
+                "wall",
+                Transform::from_trs(
+                    Vec3::new(column_x, wall_centre_y, z_centre),
+                    Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),
+                    Vec3::ONE,
+                ),
+            );
+            graph.set_mesh(id, mesh);
+            graph.nodes[id.0 as usize].origin = origin.clone();
+            graph.nodes[id.0 as usize].role = Some("service_wall".into());
+            graph.nodes[id.0 as usize].tags.extend([
+                "building".into(),
+                "service_wall".into(),
+            ]);
+            inherit_material_from_chain(id, graph);
+        }
+    }
+}
+
+/// True when some `Room` cell on this storey shares its east edge with the
+/// column (`x_max == column_x`) and overlaps the gap's z range. Circulation
+/// cells are excluded — a door from a stair / elevator into the alcove
+/// would let people walk out of a stairwell sideways, which is what
+/// `place_interior_doors` was already careful to avoid.
+fn storey_has_adjacent_room(plate: &Floorplate, column_x: f32, z0: f32, z1: f32) -> bool {
+    for cell in &plate.rooms {
+        if !matches!(cell.kind, CellKind::Room) {
+            continue;
+        }
+        if (cell.rect.x_max - column_x).abs() > 1e-3 {
+            continue;
+        }
+        if cell.rect.z_min < z1 - 1e-3 && cell.rect.z_max > z0 + 1e-3 {
+            return true;
+        }
+    }
+    false
+}
+
+/// Direction the half-flight ascends within the cell's plan view. The
+/// lower flight (east half) ascends south→north; the upper flight (west
+/// half) ascends north→south so the user lands back at the south entry
+/// zone after the 180° turn at the mid-landing.
+#[derive(Clone, Copy, Debug)]
+enum FlightDir {
+    SouthToNorth,
+    NorthToSouth,
 }
 
 fn emit_staircase(
@@ -107,8 +278,7 @@ fn emit_staircase(
     graph: &mut SceneGraph,
 ) -> Result<()> {
     if top_storey == bottom_storey {
-        // Single-storey building: a staircase has nowhere to go. Skip
-        // emission rather than producing a flight with zero rise.
+        // Single-storey building: a staircase has nowhere to go.
         return Ok(());
     }
 
@@ -132,24 +302,129 @@ fn emit_staircase(
 
     let h = cfg.ceiling_height;
     let ct = cfg.ceiling_thickness;
-    let step = h + ct;
+    let step_h = h + ct;
 
-    // Stair runs from min storey up to max — one flight per storey-pair.
+    // Cell-local frame: x ∈ [-w/2, +w/2], z ∈ [-d/2, +d/2].
+    let cell_w = cell.rect.width();
+    let cell_d = cell.rect.depth();
+    let spine = STAIR_CENTRAL_SPINE;
+    let flight_z_min = -0.5 * cell_d + STAIR_ENTRY_DEPTH;
+    let flight_z_max = 0.5 * cell_d - STAIR_LANDING_DEPTH;
+    let flight_w = (0.5 * (cell_w - spine)).max(0.3);
+    // East flight occupies +x half, west flight −x half. The half-flight
+    // body sits at the centre of its half so the spine slot is symmetric
+    // and the open (handrail) edge lines up with the cell's mid-x.
+    let east_centre_x = 0.5 * spine + 0.5 * flight_w;
+    let west_centre_x = -(0.5 * spine + 0.5 * flight_w);
+    let half_rise = 0.5 * step_h;
+
     for s in bottom_storey..top_storey {
-        let y_start = s as f32 * step;
-        emit_stair_flight(node, cfg, cell, s, y_start, h + ct, stair_group, graph)?;
+        let y_floor = s as f32 * step_h;
+        let y_mid = y_floor + half_rise;
+
+        // Lower half-flight: east half, ascending south→north from
+        // floor s elevation to mid-height between s and s+1.
+        emit_half_flight(
+            node,
+            s,
+            "lower",
+            east_centre_x,
+            y_floor,
+            flight_z_min,
+            flight_z_max,
+            flight_w,
+            half_rise,
+            FlightDir::SouthToNorth,
+            stair_group,
+            graph,
+        )?;
+
+        // Mid-landing slab: full width, north zone, at mid-height. Both
+        // half-flights meet here so the user turns 180° on a flat slab.
+        emit_mid_landing(node, s, cell_w, cell_d, y_mid, stair_group, graph);
+
+        // Upper half-flight: west half, ascending north→south from
+        // mid-height to floor s+1 elevation.
+        emit_half_flight(
+            node,
+            s,
+            "upper",
+            west_centre_x,
+            y_mid,
+            flight_z_min,
+            flight_z_max,
+            flight_w,
+            half_rise,
+            FlightDir::NorthToSouth,
+            stair_group,
+            graph,
+        )?;
+
+        // Flight handrails on each flight's open (spine-facing) edge.
+        emit_flight_handrail(
+            node,
+            s,
+            -(0.5 * spine + 0.5 * RAILING_THICKNESS), // west edge of east flight
+            y_floor,
+            flight_z_min,
+            flight_z_max,
+            half_rise,
+            FlightDir::SouthToNorth,
+            stair_group,
+            graph,
+        );
+        emit_flight_handrail(
+            node,
+            s,
+            0.5 * spine + 0.5 * RAILING_THICKNESS, // east edge of west flight
+            y_mid,
+            flight_z_min,
+            flight_z_max,
+            half_rise,
+            FlightDir::NorthToSouth,
+            stair_group,
+            graph,
+        );
+
+        // Mid-landing south-edge railing in the central gap between the
+        // two flight access points. Spans the spine width so it never
+        // crosses where the flights actually meet the landing.
+        emit_landing_handrail(
+            node,
+            s,
+            flight_z_max,
+            y_mid,
+            spine,
+            stair_group,
+            graph,
+        );
     }
 
-    // Stair cell enclosure: same N/E/S three-sided wall set the elevator
-    // uses, so the staircase has a real wall on the elevator side and
-    // doesn't bleed open into the (otherwise unwalled) inset gap or the
-    // strip behind the south perimeter wall. The west wall is left open
-    // for the door from the adjacent room. The stair_group is at y=0,
-    // so the walls go into a child group offset to the shaft's mid-Y.
+    // Cutout-edge handrail on every upper storey's slab. The cutout's
+    // south edge is the only fall hazard a user on floor s can walk up
+    // to from outside the stairs — west half of that edge is the top
+    // step of the upper flight (no railing wanted) and east half is a
+    // one-storey drop straight onto the lower flight below.
+    for s in (bottom_storey + 1)..=top_storey {
+        let y_floor = s as f32 * step_h;
+        emit_cutout_edge_railing(
+            node,
+            s,
+            flight_z_min,
+            cell_w,
+            spine,
+            y_floor,
+            stair_group,
+            graph,
+        );
+    }
+
+    // Three-sided shaft enclosure (N/E/S). West face stays open so the
+    // per-storey cell wall (with its door cutout from `place_interior_doors`)
+    // is the boundary onto the adjacent room.
     let storeys_spanned = (top_storey - bottom_storey + 1).max(1) as f32;
-    let total_h = storeys_spanned * step;
-    let y_centre =
-        bottom_storey as f32 * step + 0.5 * total_h - 0.5 * cfg.ceiling_thickness;
+    let total_h = storeys_spanned * step_h;
+    let y_centre = bottom_storey as f32 * step_h + 0.5 * total_h - 0.5 * ct;
     let enclosure = graph.add_child(
         stair_group,
         "shaft_walls".to_string(),
@@ -161,65 +436,60 @@ fn emit_staircase(
         ),
     );
     graph.nodes[enclosure.0 as usize].origin = origin.clone();
-    emit_shaft_enclosure(
-        cell.rect.width(),
-        cell.rect.depth(),
-        total_h,
-        enclosure,
-        graph,
-        &origin,
-    );
+    emit_shaft_enclosure(cell_w, cell_d, total_h, enclosure, graph, &origin);
     Ok(())
 }
 
-fn emit_stair_flight(
+#[allow(clippy::too_many_arguments)]
+fn emit_half_flight(
     node: &Node,
-    cfg: &BuildingCfg,
-    cell: &CirculationCell,
     storey: i32,
-    y_start: f32,
+    label: &str,
+    centre_x: f32,
+    y_base: f32,
+    flight_z_min: f32,
+    flight_z_max: f32,
+    flight_w: f32,
     rise: f32,
+    dir: FlightDir,
     parent: NodeId,
     graph: &mut SceneGraph,
 ) -> Result<()> {
-    let _ = cfg; // T2 takes geometry directly from the cell+rise; cfg is
-                 // retained on the signature so T3's variable-tread
-                 // configuration can read it without a churning diff.
     let origin = node.origin.clone();
-    // Try to instantiate the stair_simple module sized to this flight; fall
-    // back to a synthetic straight flight if the module is missing.
-    let reg = crate::lower::MODULE_REGISTRY
-        .with(|s| s.borrow().clone())
-        .unwrap_or_default();
-
-    // Stair body occupies the east half of the cell; the west half is
-    // reserved as a landing on every upper floor (slab preserved there).
-    // `STAIR_HALF_FRACTION` keeps both halves the same width so the door
-    // planner and slab cutout can locate the divide by the cell's centre.
-    let flight_w = cell.rect.width() * STAIR_HALF_FRACTION;
-    let east_offset = cell.rect.width() * (0.5 - 0.5 * STAIR_HALF_FRACTION);
+    let flight_d = flight_z_max - flight_z_min;
+    let z_centre = 0.5 * (flight_z_min + flight_z_max);
+    // The flight is authored along +Z (ascending south→north in its
+    // local frame). For the upper flight the group is rotated 180° around
+    // Y so the same authored geometry ascends from north to south.
+    let rot = match dir {
+        FlightDir::SouthToNorth => Quat::IDENTITY,
+        FlightDir::NorthToSouth => Quat::from_rotation_y(std::f32::consts::PI),
+    };
 
     let flight_group = graph.add_child(
         parent,
-        format!("flight_{}", storey_label(storey)),
+        format!("flight_{}_{}", storey_label(storey), label),
         "group",
-        Transform::from_trs(
-            Vec3::new(east_offset, y_start, 0.0),
-            Quat::IDENTITY,
-            Vec3::ONE,
-        ),
+        Transform::from_trs(Vec3::new(centre_x, y_base, z_centre), rot, Vec3::ONE),
     );
     graph.nodes[flight_group.0 as usize].origin = origin.clone();
     graph.nodes[flight_group.0 as usize].role = Some("stair_flight".into());
-    graph.nodes[flight_group.0 as usize]
-        .tags
-        .extend(["building".into(), "stair_flight".into()]);
+    graph.nodes[flight_group.0 as usize].tags.extend([
+        "building".into(),
+        "stair_flight".into(),
+        label.into(),
+    ]);
 
-    let flight_d = cell.rect.depth();
-    // Target ~18 cm per tread; clamp so a low rise still gets enough steps
-    // for a sane stair (8 minimum keeps the visual readable).
+    // Target ~0.18 m rise per step. Half-flights have less rise than the
+    // old full-storey flight, so the minimum step count drops to 4 — a
+    // very low ceiling still gives a readable stair instead of being
+    // padded up to 8.
     let target_rise = 0.18;
-    let steps = ((rise / target_rise).round() as i32).max(8) as f32;
+    let steps = ((rise / target_rise).round() as i32).max(4) as f32;
+
+    let reg = crate::lower::MODULE_REGISTRY
+        .with(|s| s.borrow().clone())
+        .unwrap_or_default();
     if reg.contains("stair_simple") {
         let synth = synth_use(node, "stair_simple", &[
             ("width", flight_w),
@@ -248,16 +518,16 @@ fn emit_synthetic_stair(
     graph: &mut SceneGraph,
     origin: &Option<std::path::PathBuf>,
 ) {
-    let target_rise = 0.18; // ~18 cm per step is comfortable.
+    let target_rise = 0.18;
     let steps = (rise / target_rise).round() as u32;
-    let steps = steps.max(8);
+    let steps = steps.max(4);
     let tread = flight_d / steps as f32;
     let actual_rise = rise / steps as f32;
     for i in 0..steps {
         let step_height = actual_rise * (i as f32 + 1.0);
         let step_centre_y = 0.5 * step_height;
         let step_centre_z = -0.5 * flight_d + (i as f32 + 0.5) * tread;
-        let mesh = box_mesh([flight_w - 0.1, step_height, tread - 0.01], UvMode::Tile);
+        let mesh = box_mesh([flight_w - 0.1, step_height, tread], UvMode::Tile);
         let step_id = graph.add_child(
             parent,
             format!("step_{i}"),
@@ -273,6 +543,197 @@ fn emit_synthetic_stair(
         graph.nodes[step_id.0 as usize].role = Some("stair_step".into());
         inherit_material_from_chain(step_id, graph);
     }
+}
+
+/// Slab at half-storey height spanning the north landing zone. The
+/// two half-flights meet at its south edge — the lower flight's top
+/// step sits flush with the east end, the upper flight's bottom step
+/// with the west end.
+fn emit_mid_landing(
+    node: &Node,
+    storey: i32,
+    cell_w: f32,
+    cell_d: f32,
+    y_mid: f32,
+    parent: NodeId,
+    graph: &mut SceneGraph,
+) {
+    let origin = node.origin.clone();
+    let z_south = 0.5 * cell_d - STAIR_LANDING_DEPTH;
+    let z_north = 0.5 * cell_d;
+    let z_centre = 0.5 * (z_south + z_north);
+    let depth = z_north - z_south;
+    let mesh = box_mesh(
+        [cell_w, STAIR_PLATFORM_THICKNESS, depth],
+        UvMode::Tile,
+    );
+    // Top surface at y_mid; centre sits half a thickness below.
+    let y_centre = y_mid - 0.5 * STAIR_PLATFORM_THICKNESS;
+    let id = graph.add_child(
+        parent,
+        format!("mid_landing_{}", storey_label(storey)),
+        "box",
+        Transform::from_trs(
+            Vec3::new(0.0, y_centre, z_centre),
+            Quat::IDENTITY,
+            Vec3::ONE,
+        ),
+    );
+    graph.set_mesh(id, mesh);
+    graph.nodes[id.0 as usize].origin = origin.clone();
+    graph.nodes[id.0 as usize].role = Some("stair_landing".into());
+    graph.nodes[id.0 as usize].tags.extend([
+        "building".into(),
+        "stair_landing".into(),
+    ]);
+    inherit_material_from_chain(id, graph);
+}
+
+/// Sloped solid-panel handrail along a flight's open (spine-facing) edge.
+/// The panel tilts to match the flight's slope so its bottom edge tracks
+/// the treads' top surface roughly one tread above. Without a railing
+/// here the user can walk straight off the inner edge of either flight
+/// into the open shaft.
+#[allow(clippy::too_many_arguments)]
+fn emit_flight_handrail(
+    node: &Node,
+    storey: i32,
+    x_pos: f32,
+    y_base: f32,
+    flight_z_min: f32,
+    flight_z_max: f32,
+    rise: f32,
+    dir: FlightDir,
+    parent: NodeId,
+    graph: &mut SceneGraph,
+) {
+    let origin = node.origin.clone();
+    let flight_d = flight_z_max - flight_z_min;
+    let z_centre = 0.5 * (flight_z_min + flight_z_max);
+    let slope = rise / flight_d;
+    let slope_angle = slope.atan();
+    // Panel authored along +Z, height up +Y, thickness across X. Tilt
+    // around the X axis to follow the flight's slope. The sign flips
+    // for north→south flights so the panel rises toward the user's
+    // direction of ascent.
+    let angle = match dir {
+        FlightDir::SouthToNorth => -slope_angle,
+        FlightDir::NorthToSouth => slope_angle,
+    };
+    // Centre y: place so the panel's bottom edge sits a small clearance
+    // above the flight's mid-slope height (the tread top at the centre
+    // of the flight). cos(angle) is positive in both directions.
+    let clearance = 0.02;
+    let mid_step_y = y_base + 0.5 * rise + clearance;
+    let centre_y = mid_step_y + 0.5 * RAILING_HEIGHT * angle.cos().abs();
+    let size = [RAILING_THICKNESS, RAILING_HEIGHT, flight_d];
+    let mesh = box_mesh(size, UvMode::Tile);
+    let id = graph.add_child(
+        parent,
+        format!("flight_handrail_{}_{}", storey_label(storey), match dir {
+            FlightDir::SouthToNorth => "lower",
+            FlightDir::NorthToSouth => "upper",
+        }),
+        "box",
+        Transform::from_trs(
+            Vec3::new(x_pos, centre_y, z_centre),
+            Quat::from_rotation_x(angle),
+            Vec3::ONE,
+        ),
+    );
+    graph.set_mesh(id, mesh);
+    graph.nodes[id.0 as usize].origin = origin.clone();
+    graph.nodes[id.0 as usize].role = Some("handrail".into());
+    graph.nodes[id.0 as usize].tags.extend([
+        "building".into(),
+        "handrail".into(),
+    ]);
+    inherit_material_from_chain(id, graph);
+}
+
+/// Mid-landing south-edge railing that fills the central spine gap. The
+/// lower flight's top step covers the east portion of the landing's
+/// south edge and the upper flight's bottom step covers the west
+/// portion, so a railing across the spine fills the only segment where
+/// someone could walk off the landing's south edge into the shaft.
+fn emit_landing_handrail(
+    node: &Node,
+    storey: i32,
+    flight_z_max: f32,
+    y_mid: f32,
+    spine: f32,
+    parent: NodeId,
+    graph: &mut SceneGraph,
+) {
+    let origin = node.origin.clone();
+    let length = spine.max(0.05);
+    let size = [length, RAILING_HEIGHT, RAILING_THICKNESS];
+    let mesh = box_mesh(size, UvMode::Tile);
+    // Top surface of landing at y_mid; rail sits on top of it.
+    let centre_y = y_mid + 0.5 * RAILING_HEIGHT;
+    let id = graph.add_child(
+        parent,
+        format!("landing_handrail_{}", storey_label(storey)),
+        "box",
+        Transform::from_trs(
+            Vec3::new(0.0, centre_y, flight_z_max + 0.5 * RAILING_THICKNESS),
+            Quat::IDENTITY,
+            Vec3::ONE,
+        ),
+    );
+    graph.set_mesh(id, mesh);
+    graph.nodes[id.0 as usize].origin = origin.clone();
+    graph.nodes[id.0 as usize].role = Some("handrail".into());
+    graph.nodes[id.0 as usize].tags.extend([
+        "building".into(),
+        "handrail".into(),
+    ]);
+    inherit_material_from_chain(id, graph);
+}
+
+/// Railing along the south edge of the slab cutout on every upper
+/// storey — the only edge facing intact slab where someone walking the
+/// entry platform could otherwise step off into a one-storey drop. The
+/// west half of that edge is the top step of the descending upper
+/// flight (no railing wanted), and the east half is the open drop.
+fn emit_cutout_edge_railing(
+    node: &Node,
+    storey: i32,
+    flight_z_min: f32,
+    cell_w: f32,
+    spine: f32,
+    y_floor: f32,
+    parent: NodeId,
+    graph: &mut SceneGraph,
+) {
+    let origin = node.origin.clone();
+    // East-half segment, from the spine's east edge out to the cell's
+    // east wall.
+    let x_start = 0.5 * spine;
+    let x_end = 0.5 * cell_w;
+    let length = (x_end - x_start).max(0.05);
+    let centre_x = 0.5 * (x_start + x_end);
+    let size = [length, RAILING_HEIGHT, RAILING_THICKNESS];
+    let mesh = box_mesh(size, UvMode::Tile);
+    let centre_y = y_floor + 0.5 * RAILING_HEIGHT;
+    let id = graph.add_child(
+        parent,
+        format!("cutout_handrail_{}", storey_label(storey)),
+        "box",
+        Transform::from_trs(
+            Vec3::new(centre_x, centre_y, flight_z_min - 0.5 * RAILING_THICKNESS),
+            Quat::IDENTITY,
+            Vec3::ONE,
+        ),
+    );
+    graph.set_mesh(id, mesh);
+    graph.nodes[id.0 as usize].origin = origin.clone();
+    graph.nodes[id.0 as usize].role = Some("handrail".into());
+    graph.nodes[id.0 as usize].tags.extend([
+        "building".into(),
+        "handrail".into(),
+    ]);
+    inherit_material_from_chain(id, graph);
 }
 
 fn emit_elevator(

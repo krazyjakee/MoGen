@@ -21,7 +21,13 @@ use super::config::BuildingCfg;
 use super::layout::Rect2;
 
 const STAIR_WIDTH: f32 = 2.0;
-const STAIR_DEPTH: f32 = 3.0;
+// Switchback stairs need depth for two half-flights plus an entry/exit
+// platform and a 180° mid-landing. 4 m breaks down (see
+// `emit::circulation`) into a 1 m south entry zone (the bottom/top
+// platform that connects to the floor slab), a 2 m flight zone, and a
+// 1 m north mid-landing — comfortable enough for two ~8-step flights
+// at ~0.18 m rise per step.
+const STAIR_DEPTH: f32 = 4.0;
 const ELEVATOR_WIDTH: f32 = 2.0;
 const ELEVATOR_DEPTH: f32 = 2.0;
 const COLUMN_INSET: f32 = 0.2;
