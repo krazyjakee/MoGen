@@ -81,6 +81,7 @@ pub(super) fn layout_with_target(
         rect: split.corridor,
         room_type_index: corridor_type_idx,
         kind: CellKind::Room,
+        door_slots: Vec::new(),
     });
     cells.extend(tile_along(split.half_a, types_a, along_x));
     cells.extend(tile_along(split.half_b, types_b, along_x));
@@ -107,6 +108,7 @@ fn tile_along(half: Rect2, types: &[usize], along_x: bool) -> Vec<RoomCell> {
                 },
                 room_type_index: t,
                 kind: CellKind::Room,
+                door_slots: Vec::new(),
             });
         }
     } else {
@@ -123,6 +125,7 @@ fn tile_along(half: Rect2, types: &[usize], along_x: bool) -> Vec<RoomCell> {
                 },
                 room_type_index: t,
                 kind: CellKind::Room,
+                door_slots: Vec::new(),
             });
         }
     }

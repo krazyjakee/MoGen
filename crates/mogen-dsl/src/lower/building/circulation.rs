@@ -30,6 +30,26 @@ const STAIR_WIDTH: f32 = 2.0;
 // 1 m north mid-landing — comfortable enough for two ~8-step flights
 // at ~0.18 m rise per step.
 const STAIR_DEPTH: f32 = 4.0;
+
+/// Depth (along Z) of the staircase's south entry/exit platform — the
+/// flat slab at every storey's floor height that a user steps onto when
+/// passing through a door into the stairwell. The stair flights begin
+/// `STAIR_ENTRY_DEPTH` north of `rect.z_min`; everything north of that
+/// is at half-storey height (mid-landing) or empty (flight cutout), so a
+/// door whose anchor falls outside the entry zone opens into mid-air.
+///
+/// Lives on the planner side (not in `emit/`) because `layout` builds
+/// `RoomCell::door_slots` from this value and `emit/openings.rs` clamps
+/// door anchors against it; the geometry emitter in `emit/circulation`
+/// merely realises the same slab the planner already promised.
+pub(super) const STAIR_ENTRY_DEPTH: f32 = 1.0;
+
+/// Depth (along Z) of the staircase's north mid-landing slab. Symmetric
+/// counterpart to `STAIR_ENTRY_DEPTH`: a half-storey-high platform that
+/// the two switchback flights meet at. Doors are never allowed onto this
+/// strip because at storey-floor height there is no walkable surface.
+pub(super) const STAIR_LANDING_DEPTH: f32 = 1.0;
+
 const ELEVATOR_WIDTH: f32 = 2.0;
 const ELEVATOR_DEPTH: f32 = 2.0;
 const COLUMN_INSET: f32 = 0.2;

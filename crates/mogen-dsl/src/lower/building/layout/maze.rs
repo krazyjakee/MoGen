@@ -106,6 +106,7 @@ pub(super) fn layout(
         rect: corridor_rect,
         room_type_index: type_at(0, assigned_types),
         kind: CellKind::Room,
+        door_slots: Vec::new(),
     });
 
     let mut emitted = 1usize;
@@ -117,6 +118,7 @@ pub(super) fn layout(
             rect: to_rect(idx),
             room_type_index: type_at(emitted, assigned_types),
             kind: CellKind::Room,
+            door_slots: Vec::new(),
         });
         emitted += 1;
     }

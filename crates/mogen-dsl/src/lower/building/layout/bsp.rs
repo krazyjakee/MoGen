@@ -34,6 +34,7 @@ pub(super) fn layout(
             rect,
             room_type_index: type_at(i, assigned_types),
             kind: CellKind::Room,
+            door_slots: Vec::new(),
         });
     }
     cells

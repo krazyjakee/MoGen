@@ -12,11 +12,10 @@ use mogen_geom::{box_mesh, clean_csg_output, difference_many, transform_mesh};
 
 use crate::ast::Node;
 
-use super::super::circulation::{CirculationKind, CirculationPlan};
+use super::super::circulation::{CirculationKind, CirculationPlan, STAIR_ENTRY_DEPTH};
 use super::super::config::BuildingCfg;
-use super::super::layout::{Floorplate, Rect2};
-use super::circulation::STAIR_ENTRY_DEPTH;
-use super::openings::{Opening, OpeningPlan, WallSide};
+use super::super::layout::{Floorplate, Rect2, WallSide};
+use super::openings::{Opening, OpeningPlan};
 use super::wall_build::wall_with_holes;
 use super::StoreyCtx;
 
