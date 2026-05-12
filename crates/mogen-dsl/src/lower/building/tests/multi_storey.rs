@@ -91,6 +91,31 @@ fn switchback_emits_a_mid_landing_per_pair() {
 }
 
 #[test]
+fn cutout_edge_railing_only_on_top_storey() {
+    // The south edge of the slab cutout faces intact entry-platform
+    // slab. On the top storey its east half is a real drop hazard
+    // (no flight ascends from the top) and gets a railing. On every
+    // other storey the east half is the FIRST STEP of the next pair's
+    // lower flight — a railing there walls off the base of the next
+    // ascent, leaving the staircase impossible to traverse upward.
+    // MULTI_FLOOR_SRC has bottom=-1 and top=1 with one staircase, so
+    // we expect exactly one cutout_handrail and it must belong to
+    // storey 1 (the top).
+    let g = lower_src(MULTI_FLOOR_SRC);
+    let cutout_rails: Vec<&str> = g
+        .nodes
+        .iter()
+        .filter(|n| n.name.starts_with("cutout_handrail_"))
+        .map(|n| n.name.as_str())
+        .collect();
+    assert_eq!(
+        cutout_rails,
+        vec!["cutout_handrail_1"],
+        "cutout-edge railing should only fire on the top storey"
+    );
+}
+
+#[test]
 fn elevator_emits_a_single_shaft_for_the_whole_building() {
     let g = lower_src(MULTI_FLOOR_SRC);
     let shafts = g
@@ -208,6 +233,58 @@ fn door_bfs_never_connects_stair_to_elevator() {
             );
         }
     }
+}
+
+#[test]
+fn elevator_doorways_are_one_and_a_half_times_door_width() {
+    // Doors that open onto an elevator cell are widened to 1.5 × the
+    // standard interior door (so 0.9 × 1.5 = 1.35 m at default
+    // `door_w`). We force the unknown-module fallback so each int_door
+    // panel mesh size === the opening width.
+    let src = r#"
+        material "concrete" (color=[0.8, 0.8, 0.8])
+        building "tower" (
+          seed=3, style="grid",
+          floor_area=80, rooms=8,
+          floors_above=2, floors_below=1,
+          staircases=1, elevators=1,
+          internal_door="no_such_module",
+          mat="concrete",
+        ) {
+          room_type "office" (kind=staff_only, density=1)
+        }
+    "#;
+    let g = lower_src(src);
+    let mut widths: Vec<f32> = Vec::new();
+    for (i, n) in g.nodes.iter().enumerate() {
+        if n.role.as_deref() != Some("int_door") {
+            continue;
+        }
+        for c in &g.nodes[i].children {
+            let panel = &g.nodes[c.0 as usize];
+            if panel.kind != "panel" {
+                continue;
+            }
+            let mesh = panel.mesh.as_ref().expect("panel mesh");
+            let (mut xmin, mut xmax) = (f32::INFINITY, f32::NEG_INFINITY);
+            for p in &mesh.positions {
+                xmin = xmin.min(p[0]);
+                xmax = xmax.max(p[0]);
+            }
+            widths.push(xmax - xmin);
+        }
+    }
+    assert!(!widths.is_empty(), "no int_door panels emitted");
+    let max_w = widths.iter().cloned().fold(0.0f32, f32::max);
+    let min_w = widths.iter().cloned().fold(f32::INFINITY, f32::min);
+    assert!(
+        (max_w - 1.35).abs() < 1e-3,
+        "expected an elevator doorway widened to 1.35 m, widest was {max_w}"
+    );
+    assert!(
+        (min_w - 0.9).abs() < 1e-3,
+        "expected non-elevator doorways at 0.9 m, narrowest was {min_w}"
+    );
 }
 
 #[test]
