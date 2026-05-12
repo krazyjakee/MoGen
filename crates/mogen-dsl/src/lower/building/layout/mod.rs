@@ -11,7 +11,6 @@
 mod common;
 mod grid;
 mod bsp;
-mod corridor;
 mod hotel;
 mod office;
 mod radial;
@@ -314,12 +313,7 @@ fn solve_storey(
         let assigned_types = assign_room_types(cfg, room_count, &mut state);
         let room_cells = match cfg.style {
             Style::Grid => grid::layout(layout_bounds, &assigned_types, &mut state),
-            Style::ApartmentBlock => match cfg.corridor_type_index() {
-                Some(idx) => {
-                    corridor::layout(layout_bounds, &assigned_types, idx, &mut state)
-                }
-                None => bsp::layout(layout_bounds, &assigned_types, &mut state),
-            },
+            Style::ApartmentBlock => bsp::layout(layout_bounds, &assigned_types, &mut state),
             Style::HotelCorridor => {
                 let idx = cfg
                     .corridor_type_index()

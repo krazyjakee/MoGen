@@ -1,6 +1,8 @@
 // A small single-storey apartment built from `building`. The BSP layout
-// splits the floorplate into rooms; soft adjacency rules keep the kitchen
-// near the living room and the bathrooms near the bedrooms.
+// splits the floorplate into adjacent rooms; soft adjacency rules keep
+// the kitchen near the living room and bathrooms near the bedrooms. A
+// real flat doesn't have a central corridor — interior doors thread
+// directly between neighbouring rooms.
 
 meta (mogen_version = "0.1.5")
 
@@ -25,8 +27,7 @@ building "apartment" (
   room_type "kitchen"  (kind=service, density=2, mat="tile")
   room_type "living"   (kind=public,  density=3, mat="oak")
   room_type "bathroom" (kind=service, density=2, mat="white_tile")
-  room_type "corridor" (kind=public,  density=1, mat="plaster")
 
   adjacency "kitchen"  (adjacent_to=["living"], away_from=["bedroom"])
-  adjacency "bathroom" (adjacent_to=["bedroom", "corridor"])
+  adjacency "bathroom" (adjacent_to=["bedroom"])
 }

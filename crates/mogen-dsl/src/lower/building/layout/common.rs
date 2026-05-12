@@ -85,9 +85,10 @@ pub(super) struct CorridorSplit {
 /// `corridor_width`; the two halves abut the corridor with no gap so the
 /// downstream door planner can find a full shared edge.
 ///
-/// `half_a` is the south/west half (smaller axis value) — the caller in
-/// [`super::corridor::layout`] biases the slight majority of side rooms
-/// to `half_a` to match the "rooms cluster near the entrance" reading.
+/// `half_a` is the south/west half (smaller axis value). Callers that
+/// emit asymmetric side counts (e.g. hotel/office) bias the slight
+/// majority to `half_a` to match the "rooms cluster near the entrance"
+/// reading.
 pub(super) fn split_with_corridor(bounds: Rect2, corridor_width: f32) -> CorridorSplit {
     let along_x = bounds.width() >= bounds.depth();
     let half_w = 0.5 * corridor_width;

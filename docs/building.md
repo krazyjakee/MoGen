@@ -49,10 +49,9 @@ building "house" (
   room_type "kitchen"  (kind=service, density=2, mat="tile")
   room_type "living"   (kind=public,  density=3, mat="oak")
   room_type "bathroom" (kind=service, density=2, mat="white tile")
-  room_type "corridor" (kind=public,  density=1, mat="plaster")
 
   adjacency "kitchen"  (adjacent_to=["living"], away_from=["bedroom"])
-  adjacency "bathroom" (adjacent_to=["bedroom","corridor"])
+  adjacency "bathroom" (adjacent_to=["bedroom"])
 }
 ```
 
@@ -489,7 +488,6 @@ crates/mogen-dsl/src/lower/building/
 Tranches 2-3 added (each ≤ 800 lines):
 
 ```
-  layout/corridor.rs     apartment-block with explicit central corridor (T2)
   layout/hotel.rs        hotel-corridor style (T3)
   layout/office.rs       office-core style (T3, thin wrapper over hotel core)
   emit/circulation.rs    stairs + elevators (T2)

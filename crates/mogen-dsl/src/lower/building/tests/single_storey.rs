@@ -600,6 +600,106 @@ fn single_entrance_stays_on_south_front() {
 }
 
 #[test]
+fn entrances_and_windows_never_overlap() {
+    // Every entrance occupies a `door_w`-wide span on its facade. The
+    // window placer must keep window centres clear of that span by at
+    // least `(door_w + cw) / 2` (geometric non-overlap) plus a half-pitch
+    // `cw / 2` pier (matching window-to-window spacing). Drive multiple
+    // entrances against many windows on a small floorplate so several
+    // facades carry both kinds of opening at once.
+    let src = r#"
+        material "p" (color=[0.9, 0.9, 0.88])
+        building "wide" (
+          seed=5, style="grid",
+          floor_area=120, rooms=6,
+          windows=12, entrances=4,
+          mat="p",
+        ) {
+          room_type "room" (kind=staff_only, density=1)
+        }
+    "#;
+    let g = lower_src(src);
+    // Collect entrance positions by side via the `facing` baked into each
+    // ext_door group's rotation.
+    use std::collections::BTreeMap;
+    let mut entrances_by_side: BTreeMap<&'static str, Vec<f32>> = BTreeMap::new();
+    for n in &g.nodes {
+        if n.role.as_deref() != Some("ext_door") {
+            continue;
+        }
+        let fwd = n.transform.rotation * glam::Vec3::Z;
+        let side: &'static str = if fwd.z < -0.7 {
+            "south"
+        } else if fwd.z > 0.7 {
+            "north"
+        } else if fwd.x > 0.7 {
+            "east"
+        } else if fwd.x < -0.7 {
+            "west"
+        } else {
+            continue;
+        };
+        let p = n.transform.translation;
+        let coord = if side == "east" || side == "west" { p.z } else { p.x };
+        entrances_by_side.entry(side).or_default().push(coord);
+    }
+    assert!(
+        !entrances_by_side.is_empty(),
+        "expected at least one entrance, found none"
+    );
+    // Same side-tagging trick as `windows_on_each_side_never_overlap`:
+    // sniff each window group's distance to the four perimeter walls.
+    let side_tag = |g: &SceneGraph, t: &str| -> f32 {
+        g.nodes
+            .iter()
+            .find(|n| n.tags.iter().any(|tt| tt == t))
+            .map(|n| n.transform.translation)
+            .map(|v| if t.ends_with("east") || t.ends_with("west") { v.x } else { v.z })
+            .unwrap_or_else(|| panic!("missing wall tagged {t}"))
+    };
+    let east_x = side_tag(&g, "side=east");
+    let west_x = side_tag(&g, "side=west");
+    let north_z = side_tag(&g, "side=north");
+    let south_z = side_tag(&g, "side=south");
+    const WALL_TOL: f32 = 0.2;
+    let mut windows_by_side: BTreeMap<&'static str, Vec<f32>> = BTreeMap::new();
+    for n in &g.nodes {
+        if !n.name.starts_with("window_") || n.kind != "group" {
+            continue;
+        }
+        let p = n.transform.translation;
+        if (p.x - east_x).abs() < WALL_TOL {
+            windows_by_side.entry("east").or_default().push(p.z);
+        } else if (p.x - west_x).abs() < WALL_TOL {
+            windows_by_side.entry("west").or_default().push(p.z);
+        } else if (p.z - north_z).abs() < WALL_TOL {
+            windows_by_side.entry("north").or_default().push(p.x);
+        } else if (p.z - south_z).abs() < WALL_TOL {
+            windows_by_side.entry("south").or_default().push(p.x);
+        }
+    }
+    // door_w default = 0.9, window_w default = 1.2.
+    const DOOR_W: f32 = 0.9;
+    const WINDOW_W: f32 = 1.2;
+    const MIN_CENTRE_TO_CENTRE: f32 = (DOOR_W + WINDOW_W) * 0.5;
+    for (side, ent_xs) in &entrances_by_side {
+        let win_xs = match windows_by_side.get(side) {
+            Some(v) => v,
+            None => continue,
+        };
+        for &e in ent_xs {
+            for &w in win_xs {
+                let d = (w - e).abs();
+                assert!(
+                    d + 1e-3 >= MIN_CENTRE_TO_CENTRE,
+                    "window at {w} on {side} overlaps entrance at {e} (centre gap {d} < {MIN_CENTRE_TO_CENTRE})"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn building_requires_room_type() {
     let src = r#"
         material "concrete" (color=[0.8, 0.8, 0.8])

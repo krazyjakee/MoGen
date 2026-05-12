@@ -320,9 +320,9 @@ impl BuildingCfg {
     }
 
     /// Index of the room_type whose name is `"corridor"`, if one is
-    /// declared. Used by the apartment-block layout to switch from plain
-    /// BSP to a corridor-and-side-rooms layout, and by the door planner to
-    /// root the spanning tree at the corridor so all rooms open onto it.
+    /// declared. Used by the hotel/office layouts to identify which type
+    /// to emit as the corridor cell, and by the door planner to root the
+    /// spanning tree at the corridor so all rooms open onto it.
     pub fn corridor_type_index(&self) -> Option<usize> {
         self.room_types
             .iter()
