@@ -1,0 +1,31 @@
+// Single-storey home with a gabled roof — exercises `roof="gabled"` from
+// building tranche 4. The two slope wedges meet at a ridge along the
+// long axis of the floorplate, and triangular gable end-walls close the
+// short ends flush with the perimeter walls. No skylights: T4 skips
+// skylight cutouts on non-flat roofs (the validator warns with W1114 if
+// you try).
+
+material "warm_wood" (color=[0.55, 0.38, 0.22], roughness=0.85)
+material "plaster"   (color=[0.94, 0.92, 0.88], roughness=0.85)
+material "tile"      (color=[0.90, 0.90, 0.88], roughness=0.40)
+material "slate"     (color=[0.35, 0.35, 0.38], roughness=0.75)
+
+building "gabled_house" (
+  seed=7,
+  style="apartment-block",
+  roof="gabled",
+  floor_area=85,
+  rooms=5,
+  entrances=1,
+  windows=6,
+  ceiling_height=2.6,
+  mat="plaster",
+) {
+  room_type "bedroom" (kind=private, density=2, mat="warm_wood")
+  room_type "living"  (kind=public,  density=2, mat="warm_wood")
+  room_type "kitchen" (kind=service, density=1, mat="tile")
+  room_type "bath"    (kind=service, density=1, mat="tile")
+
+  adjacency "kitchen" (adjacent_to=["living"])
+  adjacency "bath"    (away_from=["kitchen"])
+}

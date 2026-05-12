@@ -54,6 +54,14 @@ const STDLIB_FILES: &[(&str, &str)] = &[
     ("terrain_patch.mog",         include_str!("../stdlib/terrain_patch.mog")),
     ("blob.mog",                  include_str!("../stdlib/blob.mog")),
     ("water_patch.mog",           include_str!("../stdlib/water_patch.mog")),
+    // Building modules — referenced by `building` for door, window,
+    // skylight, staircase, and elevator stamping. Each takes parameters
+    // so the building generator can size them to the opening / shaft.
+    ("door_simple.mog",           include_str!("../stdlib/door_simple.mog")),
+    ("window_simple.mog",         include_str!("../stdlib/window_simple.mog")),
+    ("skylight_simple.mog",       include_str!("../stdlib/skylight_simple.mog")),
+    ("stair_simple.mog",          include_str!("../stdlib/stair_simple.mog")),
+    ("elevator_shaft_simple.mog", include_str!("../stdlib/elevator_shaft_simple.mog")),
 ];
 
 static STDLIB: OnceLock<ModuleRegistry> = OnceLock::new();
@@ -177,16 +185,21 @@ mod tests {
         // and ensure it builds a valid scene graph end-to-end.
         //
         // Some humanoid modules reference materials by well-known names
-        // (`skin`, `cloth`, `hair`, `eye`, `mouth`, `boot`). Declare a
-        // standard palette up front so they can lower without the caller
-        // having to redeclare materials per-test.
+        // (`skin`, `cloth`, `hair`, `eye`, `mouth`, `boot`); the building
+        // opening modules reference (`door_frame`, `window_frame`,
+        // `skylight_frame`). The building wrapper auto-declares the latter
+        // group, but instantiated in isolation here those defaults don't
+        // run, so we declare them in the preamble.
         let preamble = "\
-            material \"skin\"  (color=[0.85, 0.65, 0.55])\n\
-            material \"cloth\" (color=[0.30, 0.40, 0.60])\n\
-            material \"hair\"  (color=[0.20, 0.15, 0.10])\n\
-            material \"eye\"   (color=[0.08, 0.08, 0.10])\n\
-            material \"mouth\" (color=[0.50, 0.20, 0.20])\n\
-            material \"boot\"  (color=[0.15, 0.10, 0.05])\n";
+            material \"skin\"           (color=[0.85, 0.65, 0.55])\n\
+            material \"cloth\"          (color=[0.30, 0.40, 0.60])\n\
+            material \"hair\"           (color=[0.20, 0.15, 0.10])\n\
+            material \"eye\"            (color=[0.08, 0.08, 0.10])\n\
+            material \"mouth\"          (color=[0.50, 0.20, 0.20])\n\
+            material \"boot\"           (color=[0.15, 0.10, 0.05])\n\
+            material \"door_frame\"     (color=[0.92, 0.91, 0.88])\n\
+            material \"window_frame\"   (color=[0.95, 0.95, 0.95])\n\
+            material \"skylight_frame\" (color=[0.25, 0.25, 0.27])\n";
         let reg = stdlib_registry();
         for name in reg.names() {
             let def = reg.get(name).unwrap();

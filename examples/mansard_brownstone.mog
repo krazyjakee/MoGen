@@ -1,0 +1,42 @@
+// Three-storey townhouse with a finished cellar — exercises every axis
+// of building tranche 4 in one file. `roof="mansard"` builds a steep
+// lower tier and a shallow upper tier (the Second Empire profile),
+// `cellar_area=60` shrinks the basement footprint while east-aligning
+// it with the above-ground plate so the staircase still lines up
+// vertically across every storey. The cellar is smaller than the
+// ground floor by design: the front of the building (west edge) doesn't
+// reach down into the cellar level.
+
+material "stone"    (color=[0.62, 0.55, 0.50], roughness=0.75)
+material "oak"      (color=[0.50, 0.30, 0.18], roughness=0.85)
+material "warm_wood" (color=[0.55, 0.38, 0.22], roughness=0.85)
+material "tile"     (color=[0.90, 0.90, 0.88], roughness=0.40)
+material "concrete" (color=[0.72, 0.70, 0.68], roughness=0.85)
+material "slate"    (color=[0.35, 0.35, 0.38], roughness=0.70)
+
+building "brownstone" (
+  seed=21,
+  style="apartment-block",
+  roof="mansard",
+  floor_area=110,
+  cellar_area=60,
+  rooms=10,
+  floors_above=2,
+  floors_below=1,
+  staircases=1,
+  entrances=1,
+  windows=10,
+  ceiling_height=2.8,
+  mat="stone",
+) {
+  room_type "bedroom"  (kind=private,    density=3, mat="warm_wood")
+  room_type "living"   (kind=public,     density=2, mat="oak",  min_area=16)
+  room_type "kitchen"  (kind=service,    density=1, mat="tile", min_area=10)
+  room_type "bath"     (kind=service,    density=1, mat="tile")
+  room_type "office"   (kind=staff_only, density=2, mat="oak")
+  room_type "utility"  (kind=utility,    density=1, mat="concrete")
+
+  adjacency "kitchen" (adjacent_to=["living"])
+  adjacency "bath"    (away_from=["kitchen"])
+  adjacency "utility" (away_from=["bedroom","living"])
+}

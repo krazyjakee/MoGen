@@ -1,0 +1,9 @@
+// summary: Simple elevator shaft: four thin walls forming a vertical column with no top or bottom. Authored centred on origin spanning y in [-height/2, height/2], so the caller can place it at the shaft's Y centre. `width`/`depth` are the inner shaft footprint; `height` is the full vertical span across all storeys.
+module "elevator_shaft_simple" (width=2.0, depth=2.0, height=8.4) {
+  group "elevator_shaft_simple" {
+    box "wall_n" (pos=[0, 0, $depth *  0.5], size=[$width + 0.1, $height, 0.05])
+    box "wall_s" (pos=[0, 0, $depth * -0.5], size=[$width + 0.1, $height, 0.05])
+    box "wall_e" (pos=[$width *  0.5, 0, 0], size=[0.05, $height, $depth])
+    box "wall_w" (pos=[$width * -0.5, 0, 0], size=[0.05, $height, $depth])
+  }
+}

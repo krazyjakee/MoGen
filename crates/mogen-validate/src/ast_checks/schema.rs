@@ -16,6 +16,7 @@ pub const KNOWN_KINDS: &[&str] = &[
     "extrude", "sweep", "loft",
     "slab", "post", "panel", "wall",
     "branch",
+    "building", "room_type", "adjacency",
     "decal",
     "module", "use", "import",
     "union", "difference", "intersect",
@@ -106,6 +107,10 @@ pub fn common_attrs_for_kind(kind: &str) -> &'static [&'static str] {
         | "joint" | "clip" | "track"
         | "spin" | "open_close" | "wave" | "flap" | "idle"
         | "lod_scale" | "meta"
+        // `room_type` and `adjacency` are pure metadata children of `building`
+        // — they carry no transforms, materials, or placement helpers; the
+        // generator owns where their geometry lands.
+        | "room_type" | "adjacency"
         // Control-flow constructs are pre-expansion only — they don't
         // accept transforms or material binding, just their control attrs.
         | "if" | "else" | "for" => &[],
@@ -176,6 +181,18 @@ pub fn attrs_for_kind(kind: &str) -> &'static [&'static str] {
             "jitter", "leaves", "leaf_size", "leaf_cards", "leaf_aspect", "leaf_mat",
             "form", "leader_bias", "multi_stem",
         ],
+        "building" => &[
+            "seed", "style", "mat_style", "floor_area", "cellar_area", "rooms",
+            "floors_above", "floors_below", "windows", "skylights", "roof",
+            "ceiling_height", "door_w", "door_h", "window_w", "window_h",
+            "wall_thickness", "ceiling_thickness", "entrances",
+            "external_door", "internal_door",
+            "window_small", "window_medium", "window_large", "skylight",
+            "elevators", "staircases",
+            "debug_hide_roof", "debug_render_floor",
+        ],
+        "room_type" => &["kind", "density", "mat", "min_area", "max_area"],
+        "adjacency" => &["adjacent_to", "away_from"],
         "decal" => &[
             "size", "prompt", "image", "tint", "roughness", "offset",
             // Curved-surface shortcut: synthesizes a `conform` patch under
@@ -367,6 +384,40 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         | ("branch", "leader_bias")
         | ("branch", "multi_stem") => "number",
         ("branch", "leaf_mat") | ("branch", "form") => "string",
+        ("building", "floor_area")
+        | ("building", "cellar_area")
+        | ("building", "rooms")
+        | ("building", "floors_above")
+        | ("building", "floors_below")
+        | ("building", "windows")
+        | ("building", "skylights")
+        | ("building", "ceiling_height")
+        | ("building", "door_w")
+        | ("building", "door_h")
+        | ("building", "window_w")
+        | ("building", "window_h")
+        | ("building", "wall_thickness")
+        | ("building", "ceiling_thickness")
+        | ("building", "entrances")
+        | ("building", "elevators")
+        | ("building", "staircases")
+        | ("building", "debug_hide_roof")
+        | ("building", "debug_render_floor") => "number",
+        ("building", "style")
+        | ("building", "mat_style")
+        | ("building", "roof")
+        | ("building", "external_door")
+        | ("building", "internal_door")
+        | ("building", "window_small")
+        | ("building", "window_medium")
+        | ("building", "window_large")
+        | ("building", "skylight") => "string",
+        ("room_type", "kind") => "string",
+        ("room_type", "density")
+        | ("room_type", "min_area")
+        | ("room_type", "max_area") => "number",
+        ("room_type", "mat") => "string",
+        ("adjacency", "adjacent_to") | ("adjacency", "away_from") => "list of string",
         ("cylinder", "radius")
         | ("cylinder", "height")
         | ("cylinder", "segments")

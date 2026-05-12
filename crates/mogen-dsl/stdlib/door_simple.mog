@@ -1,0 +1,36 @@
+// summary: Simple flush door panel + frame. Authored bottom-anchored in the wall plane; +Z is the outside face. `width`/`height` should match the building opening (defaults 0.9 × 2.1 m). Frame parts bind to the `door_frame` material; the slab inherits from its parent group so the building can pick `ext_door` vs `int_door` per opening.
+module "door_simple" (width=0.9, height=2.1) {
+  group "door_simple" {
+    // Frame: thin rectangular border around the opening. Built from four
+    // strips so it reads as a frame and not a plain hole liner.
+    box "frame_top" (
+      pos=[0, $height - 0.05, 0],
+      size=[$width + 0.1, 0.1, 0.06],
+      mat="door_frame"
+    )
+    box "frame_left" (
+      pos=[$width * -0.5 + -0.025, $height * 0.5, 0],
+      size=[0.05, $height, 0.06],
+      mat="door_frame"
+    )
+    box "frame_right" (
+      pos=[$width * 0.5 + 0.025, $height * 0.5, 0],
+      size=[0.05, $height, 0.06],
+      mat="door_frame"
+    )
+    // Door slab: sits flush inside the frame, slightly thinner so it reads
+    // as a panel. Inherits material from the wrapping opening group so the
+    // building chooses ext_door / int_door per opening kind.
+    box "slab" (
+      pos=[0, $height * 0.5, 0],
+      size=[$width - 0.02, $height - 0.05, 0.04]
+    ) {
+      connector "handle" (
+        at=[$width * 0.5 - 0.08, $height * 0.5 - 0.05, 0.03],
+        dir=[0, 0, 1],
+        tag=door_handle
+      )
+    }
+    connector "hinge" (at=[$width * -0.5, $height * 0.5, 0], dir=[0, 1, 0], tag=door_hinge)
+  }
+}

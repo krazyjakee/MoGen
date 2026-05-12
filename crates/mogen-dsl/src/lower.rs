@@ -1,5 +1,6 @@
 mod anim;
 mod branch;
+mod building;
 pub(crate) mod connector;
 mod csg;
 mod deform;
@@ -25,7 +26,7 @@ use crate::attach::resolve_attaches;
 use crate::conform::resolve_conforms;
 use crate::module::{
     collect_modules, expand_modules, resolve_imports_with_loader,
-    resolve_registry_uses_with_loader, FsLoader, Loader,
+    resolve_registry_uses_with_loader, FsLoader, Loader, ModuleRegistry,
 };
 use crate::skin_lower::{bind_meshes, lower_skeleton};
 
@@ -47,6 +48,12 @@ thread_local! {
     // and drained by a post-pass in `lower_with_source` after attach/conform/
     // skin binding so the computed AABB reflects the *final* mesh state.
     pub(super) static COLLIDER_REQUESTS: RefCell<Vec<NodeId>> = const { RefCell::new(Vec::new()) };
+    // Combined module registry for the current `lower()` call. Set after
+    // imports/registry refs have merged, read by `expand_building` so it can
+    // instantiate the door/window/skylight modules referenced by a
+    // `building` node. None outside a `lower()` call.
+    pub(super) static MODULE_REGISTRY: RefCell<Option<ModuleRegistry>> =
+        const { RefCell::new(None) };
 }
 
 /// Returns the source directory currently set on the lowering thread, if any.
@@ -113,6 +120,27 @@ impl Drop for LodScaleGuard {
     }
 }
 
+/// RAII guard that publishes the combined module registry for the duration
+/// of one `lower()` call. `building` lowering reads it to expand the user-
+/// supplied door / window / skylight module references.
+struct ModuleRegistryGuard {
+    prev: Option<ModuleRegistry>,
+}
+
+impl ModuleRegistryGuard {
+    fn set(reg: ModuleRegistry) -> Self {
+        let prev = MODULE_REGISTRY.with(|s| s.replace(Some(reg)));
+        Self { prev }
+    }
+}
+
+impl Drop for ModuleRegistryGuard {
+    fn drop(&mut self) {
+        let prev = self.prev.take();
+        MODULE_REGISTRY.with(|s| s.replace(prev));
+    }
+}
+
 pub fn lower(ast: &[Node]) -> Result<SceneGraph> {
     lower_with_source(ast, None)
 }
@@ -173,6 +201,11 @@ pub fn lower_with_loader(
     reg.extend_overlay(imported_reg);
     let user = collect_modules(ast)?;
     reg.extend_overlay(user);
+    // Publish the combined registry for the rest of the lowering pass.
+    // `expand_building` reads it to instantiate door/window/skylight modules.
+    // Clone is unavoidable — `expand_modules` borrows `reg` for the duration
+    // of the call below, and the guard needs an owned value.
+    let _reg_guard = ModuleRegistryGuard::set(reg.clone());
     let (expanded, use_parents) = expand_modules(ast, &reg)?;
 
     let mut graph = SceneGraph::new();

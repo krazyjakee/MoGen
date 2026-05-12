@@ -460,6 +460,154 @@ mod common_attr_scope_tests {
             "expected E0901 on decal with mat=, got {diags:?}"
         );
     }
+}
+
+mod building_validator_tests {
+    use super::super::*;
+    use mogen_core::{Diagnostic, Severity};
+
+    fn diags_for(src: &str) -> Vec<Diagnostic> {
+        let ast = mogen_dsl::parse(src).expect("parse");
+        validate_ast(&ast)
+    }
+
+    const MIN_BUILDING: &str = r#"
+        material "concrete" (color=[0.8, 0.8, 0.8])
+        building "x" (
+          seed=1, style="grid", floor_area=40, rooms=2,
+          entrances=1, mat="concrete",
+        ) {
+          room_type "office" (kind=staff_only, density=1)
+        }
+    "#;
+
+    #[test]
+    fn minimum_building_is_valid() {
+        let diags = diags_for(MIN_BUILDING);
+        let errs: Vec<_> = diags
+            .iter()
+            .filter(|d| matches!(d.severity, Severity::Error))
+            .collect();
+        assert!(errs.is_empty(), "expected no errors, got: {errs:?}");
+    }
+
+    #[test]
+    fn rejects_unknown_room_type_kind() {
+        let src = r#"
+            material "c" (color=[0.5, 0.5, 0.5])
+            building "x" (seed=1, style="grid", floor_area=20, rooms=1, mat="c") {
+              room_type "office" (kind=bogus, density=1)
+            }
+        "#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "E1123"),
+            "expected E1123, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_adjacency_referencing_unknown_type() {
+        let src = r#"
+            material "c" (color=[0.5, 0.5, 0.5])
+            building "x" (seed=1, style="grid", floor_area=20, rooms=2, mat="c") {
+              room_type "office" (kind=staff_only, density=1)
+              adjacency "office" (adjacent_to=["lobby"])
+            }
+        "#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "E1108"),
+            "expected E1108, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn t2_multi_floor_without_stairs_warns() {
+        // Tranche 2 unlocks multi-storey but still expects the author to
+        // wire a staircase (otherwise the upper floor is visually
+        // disconnected). Tranche 4 implements all roof shapes — pairing a
+        // non-flat roof with skylights now produces W1114 (skylights are
+        // ignored under non-flat roofs) instead of the retired E1111.
+        let src = r#"
+            material "c" (color=[0.5, 0.5, 0.5])
+            building "x" (
+              seed=1, style="grid", floor_area=40, rooms=4,
+              floors_above=2, skylights=1, roof="gabled",
+              mat="c",
+            ) {
+              room_type "office" (kind=staff_only, density=1)
+            }
+        "#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "W1113"),
+            "expected W1113 for multi-floor without stairs, got: {diags:?}"
+        );
+        assert!(
+            diags.iter().any(|d| d.code == "W1114"),
+            "expected W1114 for skylights under non-flat roof, got: {diags:?}"
+        );
+        assert!(
+            !diags.iter().any(|d| d.code == "E1111"),
+            "E1111 was retired in T4; got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn t2_multi_floor_with_stair_is_clean() {
+        let src = r#"
+            material "c" (color=[0.5, 0.5, 0.5])
+            building "x" (
+              seed=1, style="grid", floor_area=60, rooms=6,
+              floors_above=2, staircases=1, skylights=1,
+              mat="c",
+            ) {
+              room_type "office" (kind=staff_only, density=1)
+            }
+        "#;
+        let diags = diags_for(src);
+        let errs: Vec<_> = diags
+            .iter()
+            .filter(|d| matches!(d.severity, Severity::Error))
+            .collect();
+        assert!(errs.is_empty(), "T2 multi-floor + stair should be clean, got errors: {errs:?}");
+        assert!(
+            !diags.iter().any(|d| d.code == "W1113"),
+            "W1113 should not fire when a stair is present: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_style() {
+        let src = r#"
+            material "c" (color=[0.5, 0.5, 0.5])
+            building "x" (seed=1, style="bogus", floor_area=20, rooms=1, mat="c") {
+              room_type "office" (kind=staff_only, density=1)
+            }
+        "#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "E1102"),
+            "expected E1102, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_geometry_child_in_building() {
+        let src = r#"
+            material "c" (color=[0.5, 0.5, 0.5])
+            building "x" (seed=1, style="grid", floor_area=20, rooms=1, mat="c") {
+              room_type "office" (kind=staff_only, density=1)
+              box "intruder" (size=[1,1,1])
+            }
+        "#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "E1101"),
+            "expected E1101 for non-room_type/adjacency child, got: {diags:?}"
+        );
+    }
 
     #[test]
     fn decal_warns_on_image_and_prompt_together() {
