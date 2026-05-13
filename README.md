@@ -59,7 +59,7 @@ The release binary is at `target/release/mogen`. The `./scripts/run-mogen.sh` wr
 ## Quick start
 
 ```sh
-./scripts/run-mogen.sh build examples/chair.mog --out chair.glb
+./scripts/run-mogen.sh build examples/furniture/chair.mog --out chair.glb
 ```
 
 Drop `chair.glb` into Godot, Blender, three.js, or anything else that reads glTF 2.0.

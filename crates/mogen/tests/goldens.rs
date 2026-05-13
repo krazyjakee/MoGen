@@ -66,8 +66,9 @@ fn compile_example(name: &str, src: Source) -> Vec<u8> {
     );
     let scene = mogen_dsl::lower(&ast).expect("lower failed");
 
+    let stem = name.rsplit('/').next().unwrap_or(name);
     let tmp = env::temp_dir().join(format!(
-        "mogen-goldens-{}-{name}.glb",
+        "mogen-goldens-{}-{stem}.glb",
         std::process::id()
     ));
     mogen_export::write_glb(&scene, &tmp).expect("write_glb failed");
@@ -95,7 +96,8 @@ fn check_golden(name: &str, src: Source) {
 
     if produced != expected {
         if let Err(detail) = check_glb_match(&expected, &produced) {
-            let diff_path = env::temp_dir().join(format!("mogen-goldens-{name}.actual.glb"));
+            let stem = name.rsplit('/').next().unwrap_or(name);
+            let diff_path = env::temp_dir().join(format!("mogen-goldens-{stem}.actual.glb"));
             let _ = fs::write(&diff_path, &produced);
             panic!(
                 "{name}: GLB does not match {} (got {} bytes, expected {}).\n{detail}\nActual output written to {}.\nRe-run with MOGEN_GOLDENS_UPDATE=1 once the change is intentional.",
@@ -302,22 +304,22 @@ macro_rules! golden_test {
 // User-facing demos: live in examples/, double as goldens. Demos that
 // reference external texture PNGs (e.g. `windmill`) are intentionally
 // excluded — without committed texture assets their bytes aren't stable.
-golden_test!(chair, "chair", Source::Example);
-golden_test!(chair_mat, "chair_mat", Source::Example);
-golden_test!(chair_array, "chair_array", Source::Example);
-golden_test!(chair_module, "chair_module", Source::Example);
-golden_test!(table, "table", Source::Example);
-golden_test!(sword, "sword", Source::Example);
-golden_test!(drone, "drone", Source::Example);
-golden_test!(simple_house, "simple_house", Source::Example);
+golden_test!(chair, "furniture/chair", Source::Example);
+golden_test!(chair_mat, "furniture/chair_mat", Source::Example);
+golden_test!(chair_array, "furniture/chair_array", Source::Example);
+golden_test!(chair_module, "furniture/chair_module", Source::Example);
+golden_test!(table, "furniture/table", Source::Example);
+golden_test!(sword, "weapons/sword", Source::Example);
+golden_test!(drone, "vehicles/drone", Source::Example);
+golden_test!(simple_house, "buildings/simple_house", Source::Example);
 // Organic-shape primitives showcase examples — locked as goldens so a
 // regression in `coil`/`wave`/`heightfield`/`bezier_patch`/`metaball`
 // surfaces immediately.
-golden_test!(coil_spring, "coil_spring", Source::Example);
-golden_test!(wave_water, "wave_water", Source::Example);
-golden_test!(heightfield_terrain, "heightfield_terrain", Source::Example);
-golden_test!(bezier_fender, "bezier_fender", Source::Example);
-golden_test!(metaball_blob, "metaball_blob", Source::Example);
+golden_test!(coil_spring, "features/coil_spring", Source::Example);
+golden_test!(wave_water, "nature/wave_water", Source::Example);
+golden_test!(heightfield_terrain, "nature/heightfield_terrain", Source::Example);
+golden_test!(bezier_fender, "features/bezier_fender", Source::Example);
+golden_test!(metaball_blob, "nature/metaball_blob", Source::Example);
 
 // Test-only fixtures: minimal scenes that lock specific compiler behaviours.
 golden_test!(hierarchy_test, "hierarchy_test", Source::Fixture);

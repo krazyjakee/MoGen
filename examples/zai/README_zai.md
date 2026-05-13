@@ -21,7 +21,7 @@ These were produced live against `https://api.z.ai/api/paas/v4` on
 ```
 target/release/mogen.exe generate --provider zai \
   --thinking low --max-repair-iters 1 \
-  --dsl-out examples/zai_text.mog --dry-run \
+  --dsl-out examples/zai/zai_text.mog --dry-run \
   "a small wooden stool with three legs"
 ```
 
@@ -34,7 +34,7 @@ the model ever sees the prompt).
 ```
 target/release/mogen.exe generate --provider zai \
   --thinking low --max-repair-iters 1 --plan \
-  --dsl-out examples/zai_plan.mog --dry-run \
+  --dsl-out examples/zai/zai_plan.mog --dry-run \
   "a moon-phase astrolabe with engraved rings"
 ```
 
@@ -58,8 +58,8 @@ unit + mock-server tests, the runtime failure is upstream.
 ```
 target/release/mogen.exe generate --provider zai \
   --thinking low --max-repair-iters 1 --auto-refine 1 \
-  --out examples/zai_refine.glb \
-  --dsl-out examples/zai_refine.mog \
+  --out examples/zai/zai_refine.glb \
+  --dsl-out examples/zai/zai_refine.mog \
   "a brass-fittinged steam locomotive lantern"
 ```
 
