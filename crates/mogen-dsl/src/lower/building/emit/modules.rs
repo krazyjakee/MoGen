@@ -25,6 +25,43 @@ use super::super::config::BuildingCfg;
 use super::super::materials::{EXT_DOOR_MAT, INT_DOOR_MAT, SKYLIGHT_GLASS_MAT, WINDOW_GLASS_MAT};
 use super::openings::{Opening, OpeningKind, OpeningPlan, WindowClass};
 
+/// Spawn a single interior-door slot at an explicit world pose. Used by the
+/// column-filler walls in `emit/circulation.rs`, which cut their own door
+/// holes outside the per-storey `OpeningPlan` and would otherwise leave a
+/// hole with no door panel and no slot metadata. The wrapper sits at
+/// `(x, sill, z)` in the parent's frame and faces along `facing`; everything
+/// else reuses the same plumbing as the openings emitter so the resulting
+/// node carries `role`, `tags`, the `Slot`, and the inherited interior-door
+/// material.
+pub(super) fn emit_interior_door_slot(
+    parent_node: &Node,
+    cfg: &BuildingCfg,
+    parent: NodeId,
+    graph: &mut SceneGraph,
+    x: f32,
+    z: f32,
+    sill: f32,
+    facing: [f32; 3],
+) -> Result<()> {
+    let reg = crate::lower::MODULE_REGISTRY
+        .with(|s| s.borrow().clone())
+        .unwrap_or_default();
+    let op = Opening {
+        kind: OpeningKind::InteriorDoor,
+        x,
+        z,
+        sill,
+        width: cfg.door_w,
+        height: cfg.door_h,
+        side: None,
+        facing,
+    };
+    emit_one(
+        parent_node, parent, graph, &reg, &op,
+        &cfg.internal_door, "int_door", "door", Some(INT_DOOR_MAT),
+    )
+}
+
 pub(super) fn emit_module_instances(
     parent_node: &Node,
     cfg: &BuildingCfg,

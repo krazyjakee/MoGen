@@ -21,7 +21,7 @@ building "apartment" (
   entrances=1,
   ceiling_height=2.6,
   debug_hide_roof=1,
-  mat="plaster",
+  mat="plaster"
 ) {
   room_type "bedroom"  (kind=private, density=4, mat="warm_wood")
   room_type "kitchen"  (kind=service, density=2, mat="tile")

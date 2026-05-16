@@ -37,6 +37,7 @@ use super::super::circulation::{
 };
 use super::super::config::BuildingCfg;
 use super::super::layout::{BuildingLayout, CellKind, Floorplate, Rect2, StoreyPlate};
+use super::modules::emit_interior_door_slot;
 use super::openings::elevator_door_z;
 use super::wall_build::wall_with_holes;
 
@@ -139,7 +140,7 @@ pub(in super::super) fn emit_circulation(
         }
     }
 
-    emit_column_fillers(cfg, layout, circ_group, graph, &origin);
+    emit_column_fillers(node, cfg, layout, circ_group, graph, &origin)?;
     Ok(())
 }
 
@@ -157,14 +158,15 @@ pub(in super::super) fn emit_circulation(
 /// slab can't carry per-floor doors at the same z midpoint because
 /// `wall_with_holes` merges x-overlapping cutouts into one giant hole.
 fn emit_column_fillers(
+    node: &Node,
     cfg: &BuildingCfg,
     layout: &BuildingLayout,
     parent: NodeId,
     graph: &mut SceneGraph,
     origin: &Option<std::path::PathBuf>,
-) {
+) -> Result<()> {
     if !layout.circulation.has_any() {
-        return;
+        return Ok(());
     }
     let column_x = layout.bounds.x_max - layout.circulation.column_width;
 
@@ -190,7 +192,7 @@ fn emit_column_fillers(
         gaps.push((cursor, layout.bounds.z_max));
     }
     if gaps.is_empty() {
-        return;
+        return Ok(());
     }
 
     let h = cfg.ceiling_height;
@@ -216,6 +218,7 @@ fn emit_column_fillers(
             let wall_centre_y = storey_floor + 0.5 * h;
 
             let mut local_holes: Vec<[f32; 4]> = Vec::new();
+            let mut carved_door = false;
             if allow_door
                 && storey_has_adjacent_room(&storey_plate.plate, column_x, *z0, *z1)
             {
@@ -225,6 +228,7 @@ fn emit_column_fillers(
                 // + door_h/2; local cy = (door_h - h)/2.
                 let cy = 0.5 * (cfg.door_h - h);
                 local_holes.push([0.0, cy, cfg.door_w, cfg.door_h]);
+                carved_door = true;
             }
 
             let mesh = wall_with_holes([length, h, thickness], &local_holes);
@@ -246,8 +250,27 @@ fn emit_column_fillers(
                 "service_wall".into(),
             ]);
             inherit_material_from_chain(id, graph);
+
+            // Drop a door panel + slot into the cutout we just carved. The
+            // BFS in `place_interior_doors` only sees `RoomCell`s, so the
+            // column-filler gap is invisible to it and would otherwise leave
+            // a hole in the wall with no door geometry and no slot metadata
+            // for engine importers to swap.
+            if carved_door {
+                emit_interior_door_slot(
+                    node,
+                    cfg,
+                    parent,
+                    graph,
+                    column_x,
+                    z_centre,
+                    storey_floor,
+                    [-1.0, 0.0, 0.0],
+                )?;
+            }
         }
     }
+    Ok(())
 }
 
 /// True when some `Room` cell on this storey shares its east edge with the
