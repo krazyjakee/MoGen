@@ -25,7 +25,7 @@ mod tests;
 use anyhow::Result;
 use glam::{Quat, Vec3};
 
-use mogen_core::{NodeId, SceneGraph, Transform};
+use mogen_core::{ColliderShape, NodeId, SceneGraph, Transform};
 
 use crate::ast::Node;
 use crate::lower::helpers::transform_from_attrs;
@@ -135,7 +135,45 @@ pub(super) fn expand_building(
         graph.nodes[i].editable = false;
     }
 
+    tag_building_colliders(graph, pre_expand_count);
+
     Ok(wrapper_id)
+}
+
+/// Walk every node the building emitter just produced and tag mesh-bearing
+/// nodes with [`ColliderShape::Trimesh`] so a game engine importer can drop
+/// the .glb into a level and have physics work without hand-authoring shapes.
+///
+/// We skip:
+/// - Slot wrappers and everything underneath them: doors / windows / skylights
+///   are placeholders the importer will replace with its own prefabs, and
+///   those prefabs ship their own colliders.
+/// - Nodes that already carry a collider (defensive — buildings don't set
+///   one anywhere else today, but the field is public).
+///
+/// AABB would be too coarse for buildings — interior walls, stair flights and
+/// roof slopes are not box-aligned. Trimesh re-uses the node's own mesh as
+/// the collision shape, which is exactly the geometry the wall builder
+/// already cleaned up for export.
+fn tag_building_colliders(graph: &mut SceneGraph, start: usize) {
+    let mut in_slot_subtree = vec![false; graph.nodes.len()];
+    for i in start..graph.nodes.len() {
+        let parent_in_slot = graph.nodes[i]
+            .parent
+            .map(|p| in_slot_subtree[p.0 as usize])
+            .unwrap_or(false);
+        let self_is_slot = graph.nodes[i].slot.is_some();
+        if parent_in_slot || self_is_slot {
+            in_slot_subtree[i] = true;
+            continue;
+        }
+        if graph.nodes[i].collider.is_some() {
+            continue;
+        }
+        if graph.nodes[i].mesh.is_some() {
+            graph.nodes[i].collider = Some(ColliderShape::Trimesh);
+        }
+    }
 }
 
 fn emit_storey(

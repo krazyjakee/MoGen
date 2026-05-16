@@ -184,7 +184,12 @@ pub(super) fn collect(
 ) -> Vec<ColliderInstance> {
     let mut out = Vec::new();
     for (i, node) in scene.nodes.iter().enumerate() {
-        let Some(aabb) = node.collider else { continue };
+        // The overlay only renders AABB colliders — Trimesh/Convex shapes
+        // re-use the node's mesh, which the regular preview already draws,
+        // so there's no separate wireframe to overlay.
+        let Some(aabb) = node.collider.as_ref().and_then(|c| c.as_aabb()) else {
+            continue;
+        };
         let world = worlds.get(i).copied().unwrap_or(Mat4::IDENTITY);
         let id = NodeId(i as u32);
         out.push(ColliderInstance {

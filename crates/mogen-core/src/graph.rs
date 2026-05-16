@@ -8,11 +8,73 @@ use glam::Mat4;
 use glam::{Quat, Vec3};
 
 use crate::{
-    Clip, Connector, Joint, Light, Material, MaterialId, Mesh, Meta, Skin, SkinId, Span, Transform,
+    Aabb, Clip, Connector, Joint, Light, Material, MaterialId, Mesh, Meta, Skin, SkinId, Span,
+    Transform,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct NodeId(pub u32);
+
+/// Collider shape stamped on a [`SceneNode`]. Exported into the glTF node's
+/// `extras.collider` as `{ "type": "<variant>", ... }` so a downstream
+/// importer can synthesize the matching engine-native collision shape.
+///
+/// Variants:
+/// - [`Aabb`] — axis-aligned box in node-local space. Cheapest. Used by the
+///   user-facing `collider="aabb"` DSL attribute.
+/// - [`Trimesh`] — use the node's own mesh as the collider. The importer
+///   reads positions + indices from `node.mesh` and builds a triangle-mesh
+///   shape. Set automatically on building walls / floors / ceilings / roof
+///   / stairs where a single AABB would be too coarse.
+/// - [`Convex`] — convex hull of the node's mesh. Cheaper to simulate than a
+///   Trimesh and safe for any closed solid; reserved for future use.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ColliderShape {
+    Aabb { aabb: Aabb },
+    Trimesh,
+    Convex,
+}
+
+impl ColliderShape {
+    /// Return the inner AABB when this is the [`Aabb`] variant. Used by the
+    /// viewport collider overlay (which only knows how to draw boxes) and by
+    /// the inspector's AABB extent readout.
+    pub fn as_aabb(&self) -> Option<Aabb> {
+        match self {
+            ColliderShape::Aabb { aabb } => Some(*aabb),
+            _ => None,
+        }
+    }
+}
+
+/// Marks a [`SceneNode`] as a placeholder location for a swappable element —
+/// typically a door or window slot the building expander emits around each
+/// wall opening. The node's TRS already gives position + outward-facing
+/// rotation; this struct carries the dimensional info (width / height /
+/// optional depth) that a game-engine importer needs to drop a prefab in.
+///
+/// Exported as `extras.slot = { "kind": "...", "width": w, "height": h }`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Slot {
+    /// What the placeholder represents — typically `"door"`, `"window"`, or
+    /// `"skylight"`. Importers match on this string; new kinds may be added
+    /// without changing the schema.
+    pub kind: String,
+    /// Opening width in metres (along the wall).
+    pub width: f32,
+    /// Opening height in metres (vertical).
+    pub height: f32,
+    /// Opening depth in metres (perpendicular to the wall). Zero when the
+    /// slot is a flat plane on the wall surface; non-zero when the slot has
+    /// a meaningful thickness (e.g. window inset).
+    #[serde(default, skip_serializing_if = "is_zero_f32")]
+    pub depth: f32,
+}
+
+fn is_zero_f32(v: &f32) -> bool {
+    *v == 0.0
+}
 
 /// Records that a node's local transform was set by an `attach` pass.
 /// `anchor` / `rotation` are what attach computed *before* composing the
@@ -95,13 +157,27 @@ pub struct SceneNode {
     pub children: Vec<NodeId>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub connectors: Vec<Connector>,
-    /// Optional axis-aligned collision box in node-local space, derived from
-    /// the node's subtree mesh extents at lower-time when the source carried
-    /// `collider="aabb"`. Exported to glTF as `node.extras.collider` so a
-    /// downstream importer (e.g. Godot) can synthesize a `CollisionShape3D`.
-    /// mogen does not run physics — this is metadata only.
+    /// Optional collider shape for this node. Exported to glTF as
+    /// `node.extras.collider` so a downstream importer (e.g. Godot) can
+    /// synthesize a `CollisionShape3D`. mogen does not run physics — this
+    /// is metadata only. Set by:
+    /// - the DSL `collider="aabb"` attribute (lowered to
+    ///   [`ColliderShape::Aabb`] in `lower::Pass 2.6`), and
+    /// - the `building` expander, which tags every wall / floor / ceiling /
+    ///   roof / stair mesh as [`ColliderShape::Trimesh`] so games can drop
+    ///   the .glb in and have physics work without hand-authoring shapes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub collider: Option<crate::Aabb>,
+    pub collider: Option<ColliderShape>,
+    /// Marks this node as a placeholder location for a swappable element
+    /// (door / window / skylight). Set on the wrapper group emitted around
+    /// each opening by the `building` expander, so a game engine importer
+    /// can locate every doorway/window and substitute its own prefab at
+    /// the wrapper's transform — the wrapper's TRS already encodes
+    /// position + outward-facing rotation, and the slot carries the
+    /// remaining dimensional info (width, height) that the transform
+    /// can't.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub slot: Option<Slot>,
     /// Whether this node's mesh contributes to the realtime shadow pre-pass and
     /// to the exported `extras.cast_shadow` hint downstream importers read.
     /// Defaults to `true`; set `cast_shadow=0` in the DSL to opt a node out
@@ -202,6 +278,7 @@ impl Default for SceneNode {
             children: Vec::new(),
             connectors: Vec::new(),
             collider: None,
+            slot: None,
             cast_shadow: true,
             tags: Vec::new(),
             role: None,

@@ -280,7 +280,8 @@ pub fn lower_with_loader(
         COLLIDER_REQUESTS.with(|r| std::mem::take(&mut *r.borrow_mut()));
     for id in pending {
         if let Some(aabb) = subtree_local_aabb(&graph, id) {
-            graph.nodes[id.0 as usize].collider = Some(aabb);
+            graph.nodes[id.0 as usize].collider =
+                Some(mogen_core::ColliderShape::Aabb { aabb });
         }
     }
 
