@@ -533,6 +533,58 @@ fn stair_entry_door_is_not_blocked_by_shaft_wall() {
 }
 
 #[test]
+fn shaft_wall_still_closes_faces_with_no_adjacent_room() {
+    // Counterpart to `stair_entry_door_is_not_blocked_by_shaft_wall`. The
+    // fix omits `shaft_wall_X` whenever a `Room` cell shares that face;
+    // it MUST still emit a wall when no room is there. Otherwise the
+    // shaft is open to the column gap (or beyond), which is what those
+    // walls existed to close.
+    //
+    // For seed=2 office-core / floor_area=500, slop-land's geometry:
+    //   - South face: corridor cell adjacent → shaft_wall_s skipped.
+    //   - North face: a column-filler gap, no adjacent room → must
+    //     still emit shaft_wall_n.
+    //   - East face: building exterior, no adjacent room → still emits
+    //     shaft_wall_e.
+    let src = r#"
+        material "concrete" (color=[0.78, 0.78, 0.75])
+        building "office" (
+          seed=2, style="office-core",
+          floor_area=500, floors_above=2, rooms=19,
+          windows=40, entrances=1, ceiling_height=2.8,
+          door_w=0.95, door_h=2.1, staircases=1,
+          mat="concrete",
+        ) {
+          room_type "office"   (kind=staff_only, density=4)
+          room_type "corridor" (kind=public,     density=1)
+        }
+    "#;
+    let g = lower_src(src);
+
+    let mut saw_n = false;
+    let mut saw_e = false;
+    let mut saw_s = false;
+    for n in &g.nodes {
+        if n.role.as_deref() != Some("shaft_wall") {
+            continue;
+        }
+        match n.name.as_str() {
+            "shaft_wall_n" => saw_n = true,
+            "shaft_wall_e" => saw_e = true,
+            "shaft_wall_s" => saw_s = true,
+            _ => {}
+        }
+    }
+    assert!(saw_n, "shaft_wall_n was omitted but no room is north of the stair");
+    assert!(saw_e, "shaft_wall_e was omitted but no room is east of the stair");
+    assert!(
+        !saw_s,
+        "shaft_wall_s was emitted but the corridor sits south of the stair; \
+         the room wall handles closure and would shadow the entry door"
+    );
+}
+
+#[test]
 fn elevator_doorways_are_one_and_a_half_times_door_width() {
     // Doors that open onto an elevator cell are widened to 1.5 × the
     // standard interior door (so 0.9 × 1.5 = 1.35 m at default
