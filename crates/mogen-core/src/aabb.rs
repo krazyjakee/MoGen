@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Mesh, NodeId, SceneGraph};
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Aabb {
     pub min: Vec3,
     pub max: Vec3,

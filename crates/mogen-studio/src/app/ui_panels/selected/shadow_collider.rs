@@ -51,7 +51,7 @@ pub(super) fn render(ui: &mut egui::Ui, node: &mogen_core::SceneNode) -> ToggleA
     // the node. Skipped for `light` nodes since the validator rejects
     // `collider=` there (lights have no AABB to enclose).
     let collider_present = node.collider.is_some();
-    let collider_aabb = node.collider;
+    let collider_aabb = node.collider.as_ref().and_then(|c| c.as_aabb());
     ui.add_space(8.0);
     ui.separator();
     ui.label(egui::RichText::new("Collider").strong());

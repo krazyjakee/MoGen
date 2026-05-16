@@ -6,7 +6,7 @@ use std::path::Path;
 use anyhow::Result;
 use serde_json::{json, Value};
 
-use mogen_core::{MaterialId, Mesh, NodeId, SceneGraph, SceneNode};
+use mogen_core::{ColliderShape, MaterialId, Mesh, NodeId, SceneGraph, SceneNode};
 
 use crate::accessor::{
     push_indices, push_joints, push_normals, push_positions, push_uvs, push_weights,
@@ -335,15 +335,31 @@ fn emit_node(n: &SceneNode, mesh: Option<usize>, light: Option<usize>) -> Value 
     if !n.tags.is_empty() {
         extras.insert("tags".into(), json!(n.tags));
     }
-    if let Some(aabb) = n.collider {
-        extras.insert(
-            "collider".into(),
-            json!({
+    if let Some(shape) = &n.collider {
+        let payload = match shape {
+            ColliderShape::Aabb { aabb } => json!({
                 "type": "aabb",
                 "min": [aabb.min.x, aabb.min.y, aabb.min.z],
                 "max": [aabb.max.x, aabb.max.y, aabb.max.z],
             }),
-        );
+            // Trimesh and Convex reference `node.mesh` implicitly — the
+            // importer reads positions + indices from the glTF primitive
+            // already attached to this node and builds the matching
+            // collision shape, so no extra geometry is serialised here.
+            ColliderShape::Trimesh => json!({ "type": "trimesh" }),
+            ColliderShape::Convex => json!({ "type": "convex" }),
+        };
+        extras.insert("collider".into(), payload);
+    }
+    if let Some(slot) = &n.slot {
+        let mut obj = serde_json::Map::new();
+        obj.insert("kind".into(), Value::String(slot.kind.clone()));
+        obj.insert("width".into(), json!(slot.width));
+        obj.insert("height".into(), json!(slot.height));
+        if slot.depth != 0.0 {
+            obj.insert("depth".into(), json!(slot.depth));
+        }
+        extras.insert("slot".into(), Value::Object(obj));
     }
     // Default is true; only stamp the hint when the author opted out so the
     // typical case keeps the JSON chunk lean. Importers that don't recognise

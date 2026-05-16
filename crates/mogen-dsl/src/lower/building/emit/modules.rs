@@ -15,7 +15,7 @@
 use anyhow::Result;
 use glam::{Quat, Vec3};
 
-use mogen_core::{NodeId, SceneGraph, Transform, UvMode};
+use mogen_core::{NodeId, SceneGraph, Slot, Transform, UvMode};
 use mogen_geom::box_mesh;
 
 use crate::ast::{Node, Value};
@@ -41,13 +41,13 @@ pub(super) fn emit_module_instances(
     for op in &plan.entrances {
         emit_one(
             parent_node, parent, graph, &reg, op,
-            &cfg.external_door, "ext_door", Some(EXT_DOOR_MAT),
+            &cfg.external_door, "ext_door", "door", Some(EXT_DOOR_MAT),
         )?;
     }
     for op in &plan.interior_doors {
         emit_one(
             parent_node, parent, graph, &reg, op,
-            &cfg.internal_door, "int_door", Some(INT_DOOR_MAT),
+            &cfg.internal_door, "int_door", "door", Some(INT_DOOR_MAT),
         )?;
     }
     for op in &plan.windows {
@@ -59,13 +59,13 @@ pub(super) fn emit_module_instances(
         };
         emit_one(
             parent_node, parent, graph, &reg, op,
-            module_name, "window", Some(WINDOW_GLASS_MAT),
+            module_name, "window", "window", Some(WINDOW_GLASS_MAT),
         )?;
     }
     for op in &plan.skylights {
         emit_one(
             parent_node, parent, graph, &reg, op,
-            &cfg.skylight_mod, "skylight", Some(SKYLIGHT_GLASS_MAT),
+            &cfg.skylight_mod, "skylight", "skylight", Some(SKYLIGHT_GLASS_MAT),
         )?;
     }
     Ok(())
@@ -79,6 +79,7 @@ fn emit_one(
     op: &Opening,
     module_name: &str,
     label: &str,
+    slot_kind: &str,
     inherit_mat: Option<&str>,
 ) -> Result<()> {
     // The opening group carries the pose; the instantiated module's body is
@@ -97,6 +98,17 @@ fn emit_one(
     graph.nodes[group_id.0 as usize]
         .tags
         .extend(["building".into(), label.into()]);
+    // Game-engine importers (Godot etc.) read this slot block out of
+    // `extras.slot` to find every doorway / window and substitute their own
+    // prefab at the wrapper's transform. The wrapper TRS already encodes
+    // position + outward-facing rotation; width / height live here because
+    // the transform alone can't carry size.
+    graph.nodes[group_id.0 as usize].slot = Some(Slot {
+        kind: slot_kind.into(),
+        width: op.width,
+        height: op.height,
+        depth: 0.0,
+    });
 
     // Bind the per-opening-kind material onto the wrapping group so any
     // child mesh without an explicit `mat=` (the stdlib door slab, the

@@ -241,6 +241,12 @@ fn is_mergeable(n: &SceneNode, id: NodeId, protected: &HashSet<NodeId>) -> bool 
     if n.collider.is_some() {
         return false;
     }
+    // Slot wrappers carry placeholder geometry the importer will replace at
+    // load time. Their TRS is the contract for where the door/window pivot
+    // sits — merging the placeholder into a sibling would destroy that.
+    if n.slot.is_some() {
+        return false;
+    }
     // Shadow opt-outs survive the merge unchanged: if we folded a
     // `cast_shadow=false` leaf into a casting sibling, the union mesh would
     // silently start throwing shadows again. Cheaper and clearer to keep
