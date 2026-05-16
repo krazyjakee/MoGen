@@ -345,6 +345,99 @@ fn door_bfs_never_connects_stair_to_elevator() {
 }
 
 #[test]
+fn stair_entry_zone_gets_an_interior_door() {
+    // Regression for the grid_office example
+    // (examples/buildings/grid_office.mog): when the layout solver only
+    // exposes the staircase's *west* entry slot to an adjacent RoomCell
+    // (i.e. no room touches the stair's south face), the BFS in
+    // `place_interior_doors` must still place a door at that slot.
+    //
+    // The bug was that the eligibility threshold
+    // `edge.span() >= cfg.door_w * 1.1` excluded the slot, because
+    // `STAIR_ENTRY_DEPTH = 1.0` m exactly equals the slot span and
+    // `door_w * 1.1` is above it for any reasonable door width. With
+    // no other edge available, the stair was unreachable.
+    let src = r#"
+        material "concrete" (color=[0.78, 0.78, 0.75])
+        building "office" (
+          seed=7, style="office-core",
+          floor_area=500, floors_above=2, rooms=19,
+          windows=40, entrances=1, ceiling_height=2.8,
+          door_w=0.95, door_h=2.1, staircases=1,
+          mat="concrete",
+        ) {
+          room_type "office"   (kind=staff_only, density=4)
+          room_type "corridor" (kind=public,     density=1)
+        }
+    "#;
+    let g = lower_src(src);
+
+    // Compute world position by accumulating translation up the parent
+    // chain. Everything along the way is axis-aligned in the building
+    // (floor groups offset on Y, openings groups at identity), so a
+    // plain sum suffices for the (x, z) check the assertion needs.
+    let world_pos = |idx: usize| -> (f32, f32, f32) {
+        let mut x = 0.0;
+        let mut y = 0.0;
+        let mut z = 0.0;
+        let mut cur = Some(mogen_core::NodeId(idx as u32));
+        while let Some(id) = cur {
+            let n = &g.nodes[id.0 as usize];
+            x += n.transform.translation.x;
+            y += n.transform.translation.y;
+            z += n.transform.translation.z;
+            cur = n.parent;
+        }
+        (x, y, z)
+    };
+
+    // Locate the floor-0 staircase landing — that node sits at the
+    // (x, y, z) centre of the south entry strip.
+    let landing_idx = g
+        .nodes
+        .iter()
+        .position(|n| n.role.as_deref() == Some("staircase_landing"))
+        .expect("staircase_landing node");
+    let (stair_x, _, stair_z) = world_pos(landing_idx);
+
+    // The entry zone is the 1m strip at the south end of the stair cell.
+    // The landing centre sits at the stair-cell centre, so the entry
+    // zone runs from z = stair_z - STAIR_DEPTH/2 northward by
+    // STAIR_ENTRY_DEPTH = 1m. We tolerate a generous box around it to
+    // allow doors on east / west / south faces of the entry zone.
+    let stair_depth = 4.0_f32; // STAIR_DEPTH constant in circulation.rs
+    let entry_depth = 1.0_f32; // STAIR_ENTRY_DEPTH constant
+    let column_width = 2.0_f32; // typical office-core column width; bound is generous
+    let entry_x_min = stair_x - column_width;
+    let entry_x_max = stair_x + column_width;
+    let entry_z_min = stair_z - 0.5 * stair_depth - 0.5; // south face plus wall slack
+    let entry_z_max = stair_z - 0.5 * stair_depth + entry_depth + 0.5;
+
+    let mut door_in_entry: Option<(String, f32, f32)> = None;
+    for (i, n) in g.nodes.iter().enumerate() {
+        if n.role.as_deref() != Some("int_door") {
+            continue;
+        }
+        let (dx, _, dz) = world_pos(i);
+        if dx >= entry_x_min
+            && dx <= entry_x_max
+            && dz >= entry_z_min
+            && dz <= entry_z_max
+        {
+            door_in_entry = Some((n.name.clone(), dx, dz));
+            break;
+        }
+    }
+
+    assert!(
+        door_in_entry.is_some(),
+        "no interior door reaches the staircase entry zone \
+         (x∈[{entry_x_min:.2},{entry_x_max:.2}], z∈[{entry_z_min:.2},{entry_z_max:.2}]); \
+         landing at ({stair_x:.2}, {stair_z:.2})"
+    );
+}
+
+#[test]
 fn elevator_doorways_are_one_and_a_half_times_door_width() {
     // Doors that open onto an elevator cell are widened to 1.5 × the
     // standard interior door (so 0.9 × 1.5 = 1.35 m at default

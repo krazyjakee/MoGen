@@ -304,7 +304,19 @@ fn place_interior_doors(
             // still reach an elevator whose neighbour is too narrow to
             // hold the wider 1.5× doorway — connectivity beats ideal
             // sizing. Width selection happens per-edge above.
-            if edge.span() >= cfg.door_w * 1.1 {
+            //
+            // Threshold is exactly `door_w` (no extra margin): the only
+            // edges that hit this lower bound are the staircase's east /
+            // west entry slots, which are clipped to `STAIR_ENTRY_DEPTH
+            // = 1.0 m` along Z. Insisting on a 10 % overrun there left
+            // stairs unreachable on layouts where no room shared the
+            // stair's south face (see grid_office regression).
+            // The corner-clamp at door placement already degrades to
+            // the slot midpoint when the slot is narrower than
+            // 2 × corner_margin, so a slot exactly `door_w` wide just
+            // produces a door that fills the slot — geometrically
+            // valid and exactly what a stair entry strip wants.
+            if edge.span() >= cfg.door_w {
                 edges.push((i, j, edge, door_w));
             }
         }
