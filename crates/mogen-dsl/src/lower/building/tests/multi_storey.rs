@@ -438,6 +438,101 @@ fn stair_entry_zone_gets_an_interior_door() {
 }
 
 #[test]
+fn stair_entry_door_is_not_blocked_by_shaft_wall() {
+    // Regression: `emit_shaft_enclosure` was emitting `shaft_wall_n/e/s` as
+    // solid 24-vert boxes that sat just outside each face of the stair cell.
+    // When the BFS placed a stair entry door on a face whose adjacent cell
+    // is a Room (the room's per-cell wall carries the door cutout, exactly
+    // like the always-exempted west face), the shaft_wall covering that
+    // face's z-range still had no hole — it shadowed the room wall's
+    // cutout, visually masking the door slab and blocking passage with its
+    // trimesh collider.
+    //
+    // Reproducer matches slop-land's seed=2 office-core layout: a corridor
+    // cell sits south of the stair, so the BFS places the entry door on the
+    // stair's south face. The fix omits shaft_wall_X whenever a Room shares
+    // that face — analogous to the existing west-face exemption.
+    let src = r#"
+        material "concrete" (color=[0.78, 0.78, 0.75])
+        building "office" (
+          seed=2, style="office-core",
+          floor_area=500, floors_above=2, rooms=19,
+          windows=40, entrances=1, ceiling_height=2.8,
+          door_w=0.95, door_h=2.1, staircases=1,
+          mat="concrete",
+        ) {
+          room_type "office"   (kind=staff_only, density=4)
+          room_type "corridor" (kind=public,     density=1)
+        }
+    "#;
+    let g = lower_src(src);
+
+    // Compute world translation by accumulating up the parent chain (every
+    // intermediate node is at identity rotation in this slice of the tree).
+    let world_pos = |idx: usize| -> (f32, f32, f32) {
+        let mut x = 0.0;
+        let mut y = 0.0;
+        let mut z = 0.0;
+        let mut cur = Some(mogen_core::NodeId(idx as u32));
+        while let Some(id) = cur {
+            let n = &g.nodes[id.0 as usize];
+            x += n.transform.translation.x;
+            y += n.transform.translation.y;
+            z += n.transform.translation.z;
+            cur = n.parent;
+        }
+        (x, y, z)
+    };
+
+    // Collect every interior/exterior door's xz position. A door wrapper
+    // carries no mesh, but its xz position is the door's centre.
+    let mut doors: Vec<(String, f32, f32)> = Vec::new();
+    for (i, n) in g.nodes.iter().enumerate() {
+        if n.role.as_deref() != Some("int_door") && n.role.as_deref() != Some("ext_door") {
+            continue;
+        }
+        let (x, _y, z) = world_pos(i);
+        doors.push((n.name.clone(), x, z));
+    }
+
+    // Every shaft_wall mesh: derive its world-space xz footprint from its
+    // mesh bounds + its world transform, then assert no door footprint
+    // overlaps it.
+    let door_w = 0.95;
+    let half_door = 0.5 * door_w;
+    for (i, n) in g.nodes.iter().enumerate() {
+        if n.role.as_deref() != Some("shaft_wall") {
+            continue;
+        }
+        let Some(mesh) = n.mesh.as_ref() else { continue };
+        let (mut mnx, mut mxx) = (f32::INFINITY, f32::NEG_INFINITY);
+        let (mut mnz, mut mxz) = (f32::INFINITY, f32::NEG_INFINITY);
+        for p in &mesh.positions {
+            mnx = mnx.min(p[0]); mxx = mxx.max(p[0]);
+            mnz = mnz.min(p[2]); mxz = mxz.max(p[2]);
+        }
+        let (wx, _, wz) = world_pos(i);
+        let (sw_xmin, sw_xmax) = (wx + mnx, wx + mxx);
+        let (sw_zmin, sw_zmax) = (wz + mnz, wz + mxz);
+
+        for (door_name, dx, dz) in &doors {
+            let (d_xmin, d_xmax) = (dx - half_door, dx + half_door);
+            // Door is thin along its facing axis (~4 cm slab + frame depth)
+            // but we don't know facing here; treat door as a 0.12 m strip
+            // centred on z (which matches the room wall thickness).
+            let (d_zmin, d_zmax) = (dz - 0.06, dz + 0.06);
+            let overlaps_x = sw_xmin < d_xmax - 0.005 && sw_xmax > d_xmin + 0.005;
+            let overlaps_z = sw_zmin < d_zmax - 0.005 && sw_zmax > d_zmin + 0.005;
+            assert!(
+                !(overlaps_x && overlaps_z),
+                "shaft_wall '{}' xz=[{:.2},{:.2}]→[{:.2},{:.2}] covers door '{}' at ({:.2},{:.2})",
+                n.name, sw_xmin, sw_zmin, sw_xmax, sw_zmax, door_name, dx, dz,
+            );
+        }
+    }
+}
+
+#[test]
 fn elevator_doorways_are_one_and_a_half_times_door_width() {
     // Doors that open onto an elevator cell are widened to 1.5 × the
     // standard interior door (so 0.9 × 1.5 = 1.35 m at default

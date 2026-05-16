@@ -120,6 +120,7 @@ pub(in super::super) fn emit_circulation(
                     i,
                     bottom_storey,
                     top_storey,
+                    &layout.storeys,
                     circ_group,
                     graph,
                 )?;
@@ -310,6 +311,7 @@ fn emit_staircase(
     idx: usize,
     bottom_storey: i32,
     top_storey: i32,
+    storeys: &[StoreyPlate],
     parent: NodeId,
     graph: &mut SceneGraph,
 ) -> Result<()> {
@@ -482,7 +484,10 @@ fn emit_staircase(
         ),
     );
     graph.nodes[enclosure.0 as usize].origin = origin.clone();
-    emit_shaft_enclosure(cell_w, cell_d, total_h, enclosure, graph, &origin);
+    let (adj_n, adj_e, adj_s) = shaft_face_adjacencies(&cell.rect, storeys);
+    emit_shaft_enclosure(
+        cell_w, cell_d, total_h, adj_n, adj_e, adj_s, enclosure, graph, &origin,
+    );
     Ok(())
 }
 
@@ -841,10 +846,14 @@ fn emit_elevator(
     // match its own room layout — a single full-height wall could only
     // hold one X column per door (wall_with_holes merges X-overlapping
     // spans), so the per-storey shifts would smear into one giant hole.
+    let (adj_n, adj_e, adj_s) = shaft_face_adjacencies(&cell.rect, storeys);
     emit_shaft_enclosure(
         cell.rect.width(),
         cell.rect.depth(),
         total_h,
+        adj_n,
+        adj_e,
+        adj_s,
         shaft_group,
         graph,
         &origin,
@@ -938,10 +947,19 @@ fn emit_elevator_west_walls(
 /// staircases let the per-storey cell-shared wall from `rooms.rs` carry
 /// the door cutout, while elevators emit per-storey west pieces via
 /// `emit_elevator_west_walls`.
+///
+/// `skip_n` / `skip_e` / `skip_s` extend that same exemption to the other
+/// faces whenever an adjacent `Room` cell already provides closure: the
+/// room's per-cell wall carries any door cutout the BFS placed there, and
+/// a solid shaft_wall on top would shadow the cutout (visually hiding
+/// the door slab and adding a trimesh collider that blocks passage).
 fn emit_shaft_enclosure(
     cell_w: f32,
     cell_d: f32,
     total_h: f32,
+    skip_n: bool,
+    skip_e: bool,
+    skip_s: bool,
     group: NodeId,
     graph: &mut SceneGraph,
     origin: &Option<std::path::PathBuf>,
@@ -953,24 +971,30 @@ fn emit_shaft_enclosure(
     // body's first/last step ends a few mm short of the cell boundary,
     // so this keeps the enclosure from z-fighting with the steps while
     // still presenting a flush wall to anyone inside the cell.
-    let walls: [(&str, [f32; 3], [f32; 3]); 3] = [
+    let walls: [(&str, bool, [f32; 3], [f32; 3]); 3] = [
         (
             "shaft_wall_n",
+            skip_n,
             [0.0, 0.0, 0.5 * cell_d + half],
             [cell_w + 0.1, total_h, thickness],
         ),
         (
             "shaft_wall_e",
+            skip_e,
             [0.5 * cell_w + half, 0.0, 0.0],
             [thickness, total_h, cell_d + 0.1],
         ),
         (
             "shaft_wall_s",
+            skip_s,
             [0.0, 0.0, -0.5 * cell_d - half],
             [cell_w + 0.1, total_h, thickness],
         ),
     ];
-    for (name, pos, size) in walls {
+    for (name, skip, pos, size) in walls {
+        if skip {
+            continue;
+        }
         let mesh = box_mesh(size, UvMode::Tile);
         let id = graph.add_child(
             group,
@@ -987,6 +1011,42 @@ fn emit_shaft_enclosure(
         graph.nodes[id.0 as usize].role = Some("shaft_wall".into());
         inherit_material_from_chain(id, graph);
     }
+}
+
+/// Compute which of the N/E/S faces of `cell_rect` are abutted by a
+/// `Room` cell on at least one storey. The west face is excluded —
+/// the caller handles it directly.
+fn shaft_face_adjacencies(
+    cell_rect: &Rect2,
+    storeys: &[StoreyPlate],
+) -> (bool, bool, bool) {
+    let mut adj_n = false;
+    let mut adj_e = false;
+    let mut adj_s = false;
+    for sp in storeys {
+        for r in &sp.plate.rooms {
+            if !matches!(r.kind, CellKind::Room) {
+                continue;
+            }
+            let rr = &r.rect;
+            // x ranges overlap (any positive intersection)?
+            let x_overlap = rr.x_min < cell_rect.x_max - 1e-3
+                && rr.x_max > cell_rect.x_min + 1e-3;
+            // z ranges overlap?
+            let z_overlap = rr.z_min < cell_rect.z_max - 1e-3
+                && rr.z_max > cell_rect.z_min + 1e-3;
+            if x_overlap && (rr.z_min - cell_rect.z_max).abs() < 1e-3 {
+                adj_n = true;
+            }
+            if x_overlap && (rr.z_max - cell_rect.z_min).abs() < 1e-3 {
+                adj_s = true;
+            }
+            if z_overlap && (rr.x_min - cell_rect.x_max).abs() < 1e-3 {
+                adj_e = true;
+            }
+        }
+    }
+    (adj_n, adj_e, adj_s)
 }
 
 fn synth_use(parent: &Node, name: &str, attrs: &[(&str, f32)]) -> Node {
