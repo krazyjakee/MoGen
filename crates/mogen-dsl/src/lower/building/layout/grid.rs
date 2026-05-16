@@ -16,7 +16,10 @@ pub(super) fn layout(
     assigned_types: &[usize],
     _state: &mut u32,
 ) -> Vec<RoomCell> {
-    let rooms = assigned_types.len().max(1);
+    let rooms = assigned_types.len();
+    if rooms == 0 {
+        return Vec::new();
+    }
     let (cols, _rows) = pick_aspect_grid(rooms);
 
     // Use only as many rows as the assigned room count actually needs.
