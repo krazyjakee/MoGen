@@ -721,9 +721,13 @@ fn split_segment_by_entrances(
 /// that's a feature, not a bug: stacking windows is the failure mode we
 /// want to prevent.
 fn allocate_windows(segments: &[ExtSeg], count: usize, pitch: f32) -> Vec<usize> {
+    // Correct cap: n windows placed at (j+1)/(n+1) fractions have
+    // centre-to-centre spacing L/(n+1). For that to be >= pitch we need
+    // n <= L/pitch - 1. Use floor(L/pitch) - 1 (segments that pass the
+    // length filter already have L >= pitch, so this is >= 0).
     let max_per: Vec<usize> = segments
         .iter()
-        .map(|s| ((s.hi - s.lo) / pitch).floor().max(0.0) as usize)
+        .map(|s| (((s.hi - s.lo) / pitch).floor() as i64 - 1).max(0) as usize)
         .collect();
     let total_capacity: usize = max_per.iter().sum();
     let target = count.min(total_capacity);
@@ -836,7 +840,8 @@ fn interior_facing(a: &Rect2, b: &Rect2) -> [f32; 3] {
 /// entrance — multi-side entrances each pull the BFS root toward whichever
 /// facade door is geometrically closest, so an entry-room-first chain
 /// still forms. Upper storeys have no entrances; for those we anchor on
-/// the south-midpoint baseline so the root stays deterministic.
+/// the floorplate's south-midpoint as a stable fallback so the root stays
+/// deterministic across seeds.
 fn pick_door_tree_root(cfg: &BuildingCfg, plate: &Floorplate, plan: &OpeningPlan) -> usize {
     if let Some(corridor_idx) = cfg.corridor_type_index() {
         for (i, cell) in plate.rooms.iter().enumerate() {
