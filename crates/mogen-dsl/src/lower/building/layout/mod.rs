@@ -24,7 +24,7 @@ use super::circulation::{
     CirculationKind, CirculationPlan, STAIR_ENTRY_DEPTH,
 };
 use super::config::{BuildingCfg, RoomType, Style};
-use super::rng::{attempt_seed, weighted_pick};
+use super::rng::{attempt_seed, rand_range, weighted_pick};
 
 /// 2D axis-aligned rectangle in floor-local space. `x`/`z` are the floor
 /// plane (matches the building's local frame after wrapper translation).
@@ -85,6 +85,29 @@ pub(super) enum WallSide {
     East,
     South,
     West,
+}
+
+/// Deterministic random ordering of the four wall sides, derived from the
+/// user-facing `cfg.seed`. Used by both opening placement (so the first
+/// entrance can land on any facade, not just south) and the layout scorer
+/// (so it predicts entrance anchors on the same faces).
+///
+/// Driven by a sub-seed independent of any storey/attempt state so the
+/// scorer (which runs pre-emit, with no `OpeningPlan` to read) and the
+/// emitter agree on the order without threading shared mutable state.
+pub(super) fn entrance_side_order(seed: u32) -> [WallSide; 4] {
+    let mut order = [
+        WallSide::South,
+        WallSide::North,
+        WallSide::East,
+        WallSide::West,
+    ];
+    let mut state = attempt_seed(seed, 0x0E11_7A11);
+    for i in (1..order.len()).rev() {
+        let j = rand_range(&mut state, (i as u32) + 1) as usize;
+        order.swap(i, j);
+    }
+    order
 }
 
 /// Kind discriminator for a `RoomCell`. Most cells are normal rooms; a
