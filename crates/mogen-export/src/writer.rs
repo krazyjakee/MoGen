@@ -12,7 +12,11 @@ use crate::accessor::{
     push_indices, push_joints, push_normals, push_positions, push_uvs, push_weights,
 };
 use crate::animation::emit_animation;
+#[cfg(feature = "imposter")]
+use crate::imposter;
 use crate::lights::collect_lights;
+#[cfg(feature = "lod")]
+use crate::lod;
 use crate::material::{collect_material_extensions, emit_material};
 #[cfg(feature = "merge")]
 use crate::merge;
@@ -126,11 +130,19 @@ pub fn build_glb_with_options_and_source<F: Fn(&str)>(
     };
 
     let mut mesh_index_for_node: Vec<Option<usize>> = vec![None; scene.nodes.len()];
+    // Per-source-node list of LOD mesh indices (LOD1, LOD2, LOD3 …). Only
+    // populated when `bundle_lods_and_imposter` is on and the source mesh
+    // qualified for simplification. Used after node emission to attach
+    // `MSFT_lod` to the owning source node.
+    #[cfg(feature = "lod")]
+    let mut lod_meshes_for_node: Vec<Vec<usize>> = vec![Vec::new(); scene.nodes.len()];
     // Dedupe identical (geometry, material) pairs so left/right-mirrored parts
     // like shoulders and elbows share one mesh entry + one copy of the buffer
     // data. Skinned meshes opt out: their joint indices are bound to a
     // particular Skin, and sharing would silently cross-wire deformations.
     let mut mesh_cache: HashMap<MeshKey, usize> = HashMap::new();
+    #[cfg(feature = "lod")]
+    let mut lod_cache: HashMap<MeshKey, Vec<usize>> = HashMap::new();
     for (i, n) in scene.nodes.iter().enumerate() {
         if let Some(mesh) = &n.mesh {
             let skinned = mesh.is_skinned() && mesh.joints.len() == mesh.positions.len();
@@ -139,6 +151,12 @@ pub fn build_glb_with_options_and_source<F: Fn(&str)>(
                 let key = MeshKey::from_mesh(mesh, n.material.map(|m| m.0));
                 if let Some(&mi) = mesh_cache.get(&key) {
                     mesh_index_for_node[i] = Some(mi);
+                    #[cfg(feature = "lod")]
+                    if opts.bundle_lods_and_imposter {
+                        if let Some(cached_lods) = lod_cache.get(&key) {
+                            lod_meshes_for_node[i] = cached_lods.clone();
+                        }
+                    }
                     continue;
                 }
 
@@ -146,13 +164,23 @@ pub fn build_glb_with_options_and_source<F: Fn(&str)>(
                 let nrm_acc = push_normals(&mut bin, &mut buffer_views, &mut accessors, mesh);
                 let idx_acc = push_indices(&mut bin, &mut buffer_views, &mut accessors, mesh);
 
+                let uv_acc_opt = if mesh.has_uvs() {
+                    let scale = uv_scale_for(scene, n.material);
+                    Some(push_uvs(
+                        &mut bin,
+                        &mut buffer_views,
+                        &mut accessors,
+                        mesh,
+                        scale,
+                    ))
+                } else {
+                    None
+                };
+
                 let mut attributes = serde_json::Map::new();
                 attributes.insert("POSITION".into(), json!(pos_acc));
                 attributes.insert("NORMAL".into(), json!(nrm_acc));
-                if mesh.has_uvs() {
-                    let scale = uv_scale_for(scene, n.material);
-                    let uv_acc =
-                        push_uvs(&mut bin, &mut buffer_views, &mut accessors, mesh, scale);
+                if let Some(uv_acc) = uv_acc_opt {
                     attributes.insert("TEXCOORD_0".into(), json!(uv_acc));
                 }
 
@@ -167,7 +195,47 @@ pub fn build_glb_with_options_and_source<F: Fn(&str)>(
                 let mi = meshes.len();
                 meshes.push(json!({ "name": n.name, "primitives": [primitive] }));
                 mesh_index_for_node[i] = Some(mi);
-                mesh_cache.insert(key, mi);
+                mesh_cache.insert(key.clone(), mi);
+
+                // LOD1..LODn share the original POSITION / NORMAL / TEXCOORD_0
+                // accessors — only the index buffer is regenerated, so the
+                // bin-chunk growth per LOD is just the smaller index list.
+                #[cfg(feature = "lod")]
+                if opts.bundle_lods_and_imposter {
+                    let lod_meshes = lod::build_lod_meshes(mesh);
+                    let mut lod_indices = Vec::with_capacity(lod_meshes.len());
+                    for (lod_idx, lod_mesh) in lod_meshes.iter().enumerate() {
+                        let lod_idx_acc = push_indices(
+                            &mut bin,
+                            &mut buffer_views,
+                            &mut accessors,
+                            lod_mesh,
+                        );
+                        let mut lod_attrs = serde_json::Map::new();
+                        lod_attrs.insert("POSITION".into(), json!(pos_acc));
+                        lod_attrs.insert("NORMAL".into(), json!(nrm_acc));
+                        if let Some(uv_acc) = uv_acc_opt {
+                            lod_attrs.insert("TEXCOORD_0".into(), json!(uv_acc));
+                        }
+                        let mut lod_prim = json!({
+                            "attributes": Value::Object(lod_attrs),
+                            "indices": lod_idx_acc,
+                        });
+                        if let Some(mat) = n.material {
+                            lod_prim["material"] = json!(mat.0);
+                        }
+                        let lod_mi = meshes.len();
+                        meshes.push(json!({
+                            "name": format!("{}__lod{}", n.name, lod_idx + 1),
+                            "primitives": [lod_prim],
+                        }));
+                        lod_indices.push(lod_mi);
+                    }
+                    if !lod_indices.is_empty() {
+                        lod_cache.insert(key, lod_indices.clone());
+                        lod_meshes_for_node[i] = lod_indices;
+                    }
+                }
             } else {
                 let pos_acc = push_positions(&mut bin, &mut buffer_views, &mut accessors, mesh);
                 let nrm_acc = push_normals(&mut bin, &mut buffer_views, &mut accessors, mesh);
@@ -214,7 +282,7 @@ pub fn build_glb_with_options_and_source<F: Fn(&str)>(
         nodes.push(emit_node(n, mesh_index_for_node[i], light_table.node_to_index[i]));
     }
 
-    let materials: Vec<Value> = scene
+    let mut materials: Vec<Value> = scene
         .materials
         .iter()
         .map(|m| emit_material(m, &texture_table))
@@ -234,7 +302,104 @@ pub fn build_glb_with_options_and_source<F: Fn(&str)>(
         Vec::new()
     };
 
-    let root_indices: Vec<u32> = scene.roots.iter().map(|NodeId(i)| *i).collect();
+    // Texture tables move out by-value here so the imposter pass can append
+    // its own image/texture/sampler entries before we serialise. Cheap
+    // (cloned later via `Value::Array` anyway) and lets us avoid double-
+    // cloning into the JSON.
+    let TextureTable {
+        mut images,
+        mut textures,
+        mut samplers,
+        ..
+    } = texture_table;
+
+    let mut root_indices: Vec<u32> = scene.roots.iter().map(|NodeId(i)| *i).collect();
+
+    // LOD post-processing. For each source node that produced LOD meshes
+    // during the mesh-emission loop, allocate orphan nodes pointing at
+    // those meshes and stamp `MSFT_lod` onto the source node's JSON. The
+    // orphans live outside `scene.roots` — `MSFT_lod.ids` is the only
+    // place that references them, so importers that don't recognise the
+    // extension see exactly the original scene.
+    #[cfg(feature = "lod")]
+    {
+        let mut any_lods = false;
+        for src_i in 0..scene.nodes.len() {
+            if lod_meshes_for_node[src_i].is_empty() {
+                continue;
+            }
+            any_lods = true;
+            let lod_meshes = std::mem::take(&mut lod_meshes_for_node[src_i]);
+            let mut lod_node_ids: Vec<u32> = Vec::with_capacity(lod_meshes.len());
+            for (stage_i, lod_mi) in lod_meshes.iter().enumerate() {
+                let node_idx = nodes.len() as u32;
+                nodes.push(json!({
+                    "name": format!("{}__lod{}", scene.nodes[src_i].name, stage_i + 1),
+                    "mesh": lod_mi,
+                }));
+                lod_node_ids.push(node_idx);
+            }
+            // `extras.MSFT_screencoverage` parallels [source, LOD1..N]: one
+            // gate per representation. We clamp the slice to lod_node_ids
+            // + 1 so a 1- or 2-LOD chain doesn't carry stale tail thresholds.
+            let coverage: Vec<f32> = lod::SCREEN_COVERAGE[..=lod_node_ids.len()].to_vec();
+
+            let obj = nodes[src_i].as_object_mut().expect("node JSON is an object");
+            let ext_map = obj
+                .entry("extensions")
+                .or_insert_with(|| Value::Object(Default::default()))
+                .as_object_mut()
+                .expect("extensions is an object");
+            ext_map.insert("MSFT_lod".into(), json!({ "ids": lod_node_ids }));
+
+            let extras_map = obj
+                .entry("extras")
+                .or_insert_with(|| Value::Object(Default::default()))
+                .as_object_mut()
+                .expect("extras is an object");
+            extras_map.insert("MSFT_screencoverage".into(), json!(coverage));
+        }
+        if any_lods && !extensions_used.iter().any(|e| *e == "MSFT_lod") {
+            extensions_used.push("MSFT_lod");
+        }
+    }
+
+    // Imposter emission. Runs after every other geometry / material pass so
+    // the bake captures the final post-merge scene, and so the new mesh /
+    // material indices land at the end of their respective tables.
+    #[cfg(feature = "imposter")]
+    if opts.bundle_lods_and_imposter {
+        let emission = imposter::emit_imposter(
+            scene,
+            &mut bin,
+            &mut buffer_views,
+            &mut accessors,
+            &mut meshes,
+            &mut materials,
+            &mut images,
+            &mut textures,
+            &mut samplers,
+            &|s| progress(s),
+        )?;
+        let node_idx = nodes.len() as u32;
+        nodes.push(json!({
+            "name": "imposter",
+            "mesh": emission.mesh_index,
+            "extras": {
+                "tags": ["imposter"],
+                "imposter": {
+                    "view_count": 8,
+                    "layout": "yaw_grid",
+                    "material": emission.material_index,
+                },
+            },
+        }));
+        root_indices.push(node_idx);
+        if !extensions_used.iter().any(|e| *e == "KHR_materials_unlit") {
+            extensions_used.push("KHR_materials_unlit");
+        }
+    }
+
     let buffer_len = bin.len();
 
     let mut gltf = json!({
@@ -256,10 +421,10 @@ pub fn build_glb_with_options_and_source<F: Fn(&str)>(
     if !skins_json.is_empty() {
         gltf["skins"] = Value::Array(skins_json);
     }
-    if !texture_table.images.is_empty() {
-        gltf["images"] = Value::Array(texture_table.images.clone());
-        gltf["textures"] = Value::Array(texture_table.textures.clone());
-        gltf["samplers"] = Value::Array(texture_table.samplers.clone());
+    if !images.is_empty() {
+        gltf["images"] = Value::Array(images);
+        gltf["textures"] = Value::Array(textures);
+        gltf["samplers"] = Value::Array(samplers);
     }
     if !extensions_used.is_empty() {
         gltf["extensionsUsed"] = json!(extensions_used);
@@ -383,7 +548,7 @@ fn uv_scale_for(scene: &SceneGraph, mat: Option<MaterialId>) -> [f32; 2] {
         .unwrap_or([1.0, 1.0])
 }
 
-#[derive(Hash, Eq, PartialEq)]
+#[derive(Hash, Eq, PartialEq, Clone)]
 struct MeshKey {
     // f32 bit patterns so the key is hashable; NaN/±0 are treated as distinct
     // bit-for-bit, which is fine for dedup.

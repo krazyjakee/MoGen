@@ -82,6 +82,19 @@ impl MogenStudioApp {
                          overlap. Slow on complex scenes. UVs are preserved through the merge \
                          when all operands in a group have them.",
                     );
+                    ui.checkbox(
+                        &mut opts.bundle_lods_and_imposter,
+                        "Bundle LODs (3 stages) + imposter",
+                    )
+                    .on_hover_text(
+                        "Generate three simplified LOD stages per non-skinned mesh (50% / 25% / 12% \
+                         triangles, attached via the MSFT_lod glTF extension) and bake a scene-wide \
+                         imposter billboard with an 8-view yaw-grid spritesheet. Skinned meshes \
+                         keep their original geometry. The imposter quad is tagged `\"imposter\"` \
+                         in extras so the companion godot-mog runtime can pick the correct cell — \
+                         plain glTF viewers render the full atlas mapped across the quad. Adds a \
+                         headless GL render pass; needs a real display server.",
+                    );
                 });
 
                 ui.add_space(12.0);

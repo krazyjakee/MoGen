@@ -667,7 +667,7 @@ impl Renderer {
         size: u32,
         viewproj: Mat4,
         eye: Vec3,
-        bg: [u8; 3],
+        bg: [u8; 4],
     ) -> anyhow::Result<Vec<u8>> {
         // Save what we need to restore. Viewport is the only state egui_glow
         // sets per-callback that our offscreen pass clobbers; the scissor
@@ -816,7 +816,7 @@ impl Renderer {
                 bg[0] as f32 / 255.0,
                 bg[1] as f32 / 255.0,
                 bg[2] as f32 / 255.0,
-                1.0,
+                bg[3] as f32 / 255.0,
             );
             gl.clear_depth_f32(1.0);
             gl.clear(glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT);

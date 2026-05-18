@@ -41,7 +41,9 @@ pub struct ThumbnailOptions {
     /// Studio.
     pub size: u32,
     /// Background fill (sRGB bytes). Defaults to a mid grey close to the
-    /// Studio's default viewer background.
+    /// Studio's default viewer background. Thumbnails are always rendered
+    /// opaque — the imposter baker uses its own `bake_yaw_atlas` path
+    /// instead so it can keep alpha = 0 for transparent backgrounds.
     pub bg: [u8; 3],
     /// Camera yaw in radians. Default is `π/4` — same 3/4 angle the Studio
     /// uses for its thumbnail.
@@ -88,7 +90,10 @@ pub fn render_thumbnail(scene: &SceneGraph, opts: &ThumbnailOptions) -> anyhow::
     let viewproj = cam.view_proj(1.0);
     let eye = cam.eye();
     let size = opts.size;
-    let bg = opts.bg;
+    // Thumbnail output is opaque, so always pack alpha = 255. The imposter
+    // baker passes its own [u8; 4] (with alpha=0) directly into
+    // `render_to_pixels`.
+    let bg = [opts.bg[0], opts.bg[1], opts.bg[2], 0xff];
 
     let mesh_for_closure = mesh;
     with_gl_context(move |gl| {
@@ -131,7 +136,7 @@ pub fn with_gl_context<F, R>(f: F) -> anyhow::Result<R>
 where
     F: FnOnce(&glow::Context) -> anyhow::Result<R>,
 {
-    let event_loop = EventLoop::new().map_err(|e| anyhow!("create event loop: {e}"))?;
+    let event_loop = build_event_loop()?;
     event_loop.set_control_flow(winit::event_loop::ControlFlow::Wait);
     let mut app: HeadlessApp<F, R> = HeadlessApp {
         f: Some(f),
@@ -143,6 +148,29 @@ where
         .map_err(|e| anyhow!("run event loop: {e}"))?;
     app.result
         .unwrap_or_else(|| Err(anyhow!("headless GL: render closure never ran")))
+}
+
+/// Build a winit event loop that's safe to construct on a worker thread.
+/// The Studio's build pipeline (and our integration tests via cargo test)
+/// run the export off the main thread; winit's Linux backends panic on a
+/// non-main-thread `EventLoop::new()` unless the builder opts in via
+/// `any_thread(true)`. We don't ever need synchronisation with the system
+/// event loop here — the hidden 8×8 window is render-only and we exit the
+/// loop as soon as the closure returns — so any-thread is the right
+/// trade-off everywhere.
+fn build_event_loop() -> anyhow::Result<EventLoop<()>> {
+    let mut builder = EventLoop::<()>::with_user_event();
+    #[cfg(all(unix, not(target_os = "macos"), not(target_os = "ios")))]
+    {
+        // X11 and Wayland each define their own `any_thread` extension
+        // trait — call both unconditionally so whichever backend winit
+        // picks at runtime gets the flag set.
+        use winit::platform::wayland::EventLoopBuilderExtWayland;
+        use winit::platform::x11::EventLoopBuilderExtX11;
+        EventLoopBuilderExtX11::with_any_thread(&mut builder, true);
+        EventLoopBuilderExtWayland::with_any_thread(&mut builder, true);
+    }
+    builder.build().map_err(|e| anyhow!("create event loop: {e}"))
 }
 
 /// GL handles we keep alive for the duration of the user's render closure.
