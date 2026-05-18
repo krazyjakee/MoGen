@@ -1,6 +1,10 @@
 mod accessor;
 mod animation;
+#[cfg(feature = "imposter")]
+mod imposter;
 mod lights;
+#[cfg(feature = "lod")]
+mod lod;
 mod material;
 #[cfg(feature = "merge")]
 pub mod merge;

@@ -32,6 +32,11 @@ serde_json = "1"
 glam = { version = "0.30", features = ["serde"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 oxipng = { version = "9", default-features = false, features = ["parallel"] }
+# meshoptimizer Rust bindings. Used by `mogen-export`'s LOD pass to generate
+# simplified index buffers via quadric edge collapse. Wraps a small C++ lib
+# behind `cc`; doesn't cross-compile to `wasm32-unknown-unknown`, so wasm
+# builds keep the `lod` feature disabled.
+meshopt = "0.6"
 # `import` is the simple high-level API for reading .glb/.gltf into typed
 # accessors. Default features pull in the `image` crate for embedded textures
 # (we strip materials/textures on import, but keeping defaults avoids one more

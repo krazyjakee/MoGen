@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-default = ["textures", "textures-optimize", "merge"]
+default = ["textures", "textures-optimize", "merge", "lod", "imposter"]
 # Texture packing. Splits cleanly across two layers so wasm builds can
 # embed images without pulling in `image`/`oxipng` (which depend on C libs
 # that don't cross-compile to wasm32):
@@ -32,6 +32,17 @@ merge = []
 # wasm crate doesn't enable. The desktop CLI turns this on so `mogen build`
 # can dispatch on output extension.
 fbx = ["dep:fbxcel"]
+# LOD mesh simplification. Pulls in `meshopt` which links a small C++ lib via
+# `cc`; doesn't cross-compile to wasm32-unknown-unknown, so wasm builds keep
+# this disabled. With this off, the `bundle_lods_and_imposter` option only
+# emits the imposter half (or no-ops entirely if `imposter` is also off).
+lod = ["dep:meshopt"]
+# Headless imposter atlas bake. Pulls in `mogen-render` (glow + glutin +
+# winit), which needs a real display server / GL stack at runtime and a
+# windowing toolkit at build time; wasm and CI-headless builds keep this
+# disabled. Also requires `textures` so the spritesheet PNG can be embedded
+# alongside the billboard material.
+imposter = ["textures", "dep:mogen-render", "dep:image"]
 
 [dependencies]
 mogen-core = { workspace = true }
@@ -43,6 +54,8 @@ glam = { workspace = true }
 image = { workspace = true, optional = true }
 oxipng = { workspace = true, optional = true }
 fbxcel = { version = "0.9", features = ["writer", "tree"], optional = true }
+meshopt = { workspace = true, optional = true }
+mogen-render = { workspace = true, optional = true }
 
 [dev-dependencies]
 mogen-dsl = { workspace = true, features = ["csg"] }
