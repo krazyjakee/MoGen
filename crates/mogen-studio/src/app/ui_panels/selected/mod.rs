@@ -5,6 +5,7 @@ use eframe::egui;
 use crate::app::types::UndoKey;
 use crate::app::MogenStudioApp;
 
+mod connections;
 mod deform_rows;
 mod geom_params;
 mod light_editor;
@@ -118,6 +119,15 @@ impl MogenStudioApp {
                 )
                 .on_hover_text(format!("Imported from {}", p.display()));
             });
+        }
+
+        // Read-only relationship navigator. Placed before the editability
+        // gates so it works for array/CSG/imported nodes too — navigating
+        // *away* from a non-editable node to its parent is exactly what the
+        // user wants there. A click only re-targets the selection; no source
+        // is touched, so this is safe for every node kind.
+        if let Some(target) = connections::render(ui, scene, sel, node) {
+            self.viewer.set_primary_selection(Some(target));
         }
 
         if !node.editable {
