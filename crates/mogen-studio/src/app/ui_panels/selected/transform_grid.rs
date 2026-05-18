@@ -1,8 +1,48 @@
 use eframe::egui;
 
 use crate::app::util::format_inspector_scalar;
+use crate::edit::get_attr;
 use crate::gizmo::GizmoMode;
 use crate::viewer::{PendingEdit, Viewer};
+
+/// First attribute in `attrs` whose source text is a parametric expression
+/// (a constant `expr` or a `$param`), with its raw text. The grid reads the
+/// *evaluated* `node.transform`, so it cannot see an expression at all —
+/// without this guard a single drag would re-emit the channel as a numeric
+/// literal and silently destroy `pos=[0, $h, 0]` / `rot=[0, 90/2, 0]`.
+fn expr_attr(
+    src: &str,
+    span: Option<mogen_core::Span>,
+    attrs: &[&str],
+) -> Option<String> {
+    let span = span?;
+    for a in attrs {
+        if let Some(raw) = get_attr(src, span, a) {
+            let inner = raw.trim().trim_start_matches('[').trim_end_matches(']');
+            let all_num = inner
+                .split(',')
+                .all(|p| p.trim().parse::<f32>().is_ok());
+            if !all_num {
+                return Some(format!("{a}={}", raw.trim()));
+            }
+        }
+    }
+    None
+}
+
+fn locked_transform_row(ui: &mut egui::Ui, label: &str, raw: &str) {
+    ui.label(label);
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(raw).monospace().weak())
+            .on_hover_text(
+                "Parametric transform (expression or $param). Edit it in the \
+                 code view — dragging here would overwrite it with a plain \
+                 number.",
+            );
+        ui.label("🔒");
+    });
+    ui.end_row();
+}
 
 /// Render the gizmo-mode toggle row and the translate/rotate/scale grid for
 /// the inspector. Changes are queued onto `edits` as
@@ -10,14 +50,23 @@ use crate::viewer::{PendingEdit, Viewer};
 /// updated through `scale_linked`. For attached nodes the grid shows the
 /// user-authored portion of the transform (live = attach + user) so writeback
 /// doesn't double-count the attach contribution.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn render(
     ui: &mut egui::Ui,
     viewer: &Viewer,
     node: &mogen_core::SceneNode,
     scale_linked: &mut bool,
     node_id: mogen_core::NodeId,
+    src: &str,
+    node_span: Option<mogen_core::Span>,
     edits: &mut Vec<PendingEdit>,
 ) {
+    // A parametric value on any attr that feeds a channel (including the
+    // `x=`/`from=`/`rx=` shorthands the commit path would strip) locks that
+    // channel to read-only so the drag can't clobber the expression.
+    let pos_expr = expr_attr(src, node_span, &["pos", "x", "y", "z", "from", "to"]);
+    let rot_expr = expr_attr(src, node_span, &["rot", "rx", "ry", "rz"]);
+    let scale_expr = expr_attr(src, node_span, &["scale"]);
     ui.add_space(6.0);
     ui.horizontal(|ui| {
         let cur = viewer.gizmo_mode();
@@ -67,61 +116,73 @@ pub(super) fn render(
         .num_columns(4)
         .spacing([6.0, 4.0])
         .show(ui, |ui| {
-            ui.label("Translate");
-            let mut emit_pos = false;
-            if ui.add(egui::DragValue::new(&mut tx).speed(0.02)).changed() {
-                emit_pos = true;
+            if let Some(raw) = &pos_expr {
+                locked_transform_row(ui, "Translate", raw);
+            } else {
+                ui.label("Translate");
+                let mut emit_pos = false;
+                if ui.add(egui::DragValue::new(&mut tx).speed(0.02)).changed() {
+                    emit_pos = true;
+                }
+                if ui.add(egui::DragValue::new(&mut ty).speed(0.02)).changed() {
+                    emit_pos = true;
+                }
+                if ui.add(egui::DragValue::new(&mut tz).speed(0.02)).changed() {
+                    emit_pos = true;
+                }
+                if emit_pos {
+                    // Emit the full `pos=[x,y,z]` vector and strip shadow attrs.
+                    // Per-axis `x=`/`y=`/`z=` writes left two attrs fighting in
+                    // the header; whichever won depended on resolution order.
+                    edits.push(PendingEdit::SetAttrCanonical {
+                        node: node_id,
+                        attr: "pos".into(),
+                        value: format!(
+                            "[{}, {}, {}]",
+                            format_inspector_scalar(tx),
+                            format_inspector_scalar(ty),
+                            format_inspector_scalar(tz),
+                        ),
+                        delete: pos_shadows.clone(),
+                    });
+                }
+                ui.end_row();
             }
-            if ui.add(egui::DragValue::new(&mut ty).speed(0.02)).changed() {
-                emit_pos = true;
-            }
-            if ui.add(egui::DragValue::new(&mut tz).speed(0.02)).changed() {
-                emit_pos = true;
-            }
-            if emit_pos {
-                // Emit the full `pos=[x,y,z]` vector and strip shadow attrs.
-                // Per-axis `x=`/`y=`/`z=` writes left two attrs fighting in
-                // the header; whichever won depended on resolution order.
-                edits.push(PendingEdit::SetAttrCanonical {
-                    node: node_id,
-                    attr: "pos".into(),
-                    value: format!(
-                        "[{}, {}, {}]",
-                        format_inspector_scalar(tx),
-                        format_inspector_scalar(ty),
-                        format_inspector_scalar(tz),
-                    ),
-                    delete: pos_shadows.clone(),
-                });
-            }
-            ui.end_row();
 
-            ui.label("Rotate°");
-            let mut emit_rot = false;
-            if ui.add(egui::DragValue::new(&mut rx).speed(0.5).suffix("°")).changed() {
-                emit_rot = true;
+            if let Some(raw) = &rot_expr {
+                locked_transform_row(ui, "Rotate°", raw);
+            } else {
+                ui.label("Rotate°");
+                let mut emit_rot = false;
+                if ui.add(egui::DragValue::new(&mut rx).speed(0.5).suffix("°")).changed() {
+                    emit_rot = true;
+                }
+                if ui.add(egui::DragValue::new(&mut ry).speed(0.5).suffix("°")).changed() {
+                    emit_rot = true;
+                }
+                if ui.add(egui::DragValue::new(&mut rz).speed(0.5).suffix("°")).changed() {
+                    emit_rot = true;
+                }
+                if emit_rot {
+                    edits.push(PendingEdit::SetAttrCanonical {
+                        node: node_id,
+                        attr: "rot".into(),
+                        value: format!(
+                            "[{}, {}, {}]",
+                            format_inspector_scalar(rx),
+                            format_inspector_scalar(ry),
+                            format_inspector_scalar(rz),
+                        ),
+                        delete: rot_shadows.clone(),
+                    });
+                }
+                ui.end_row();
             }
-            if ui.add(egui::DragValue::new(&mut ry).speed(0.5).suffix("°")).changed() {
-                emit_rot = true;
-            }
-            if ui.add(egui::DragValue::new(&mut rz).speed(0.5).suffix("°")).changed() {
-                emit_rot = true;
-            }
-            if emit_rot {
-                edits.push(PendingEdit::SetAttrCanonical {
-                    node: node_id,
-                    attr: "rot".into(),
-                    value: format!(
-                        "[{}, {}, {}]",
-                        format_inspector_scalar(rx),
-                        format_inspector_scalar(ry),
-                        format_inspector_scalar(rz),
-                    ),
-                    delete: rot_shadows.clone(),
-                });
-            }
-            ui.end_row();
 
+            if let Some(raw) = &scale_expr {
+                locked_transform_row(ui, "Scale", raw);
+                return;
+            }
             ui.label("Scale");
             let pre_sx = sx;
             let pre_sy = sy;

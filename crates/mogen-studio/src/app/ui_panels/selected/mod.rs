@@ -238,12 +238,15 @@ impl MogenStudioApp {
         let mut edits: Vec<PendingEdit> = Vec::new();
 
         // Gizmo-mode toggle + translate/rotate/scale grid.
+        let src_for_tg = self.files[i].source.clone();
         transform_grid::render(
             ui,
             &self.viewer,
             node,
             &mut self.inspector_scale_linked,
             node_id,
+            &src_for_tg,
+            node_span,
             &mut edits,
         );
 
