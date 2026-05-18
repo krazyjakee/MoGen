@@ -12,7 +12,9 @@
 
 use super::super::circulation::CirculationPlan;
 use super::super::config::BuildingCfg;
-use super::super::layout::{CellKind, Floorplate, Rect2, RoomCell, WallSide};
+use super::super::layout::{
+    entrance_side_order, CellKind, Floorplate, Rect2, RoomCell, WallSide,
+};
 use super::super::rng::{attempt_seed, rand_f01, rand_range};
 use super::StoreyCtx;
 
@@ -169,13 +171,14 @@ pub(super) fn elevator_door_z(
 
 /// Place exterior entrances across the building's perimeter.
 ///
-/// One entrance always lands on the south wall — that's the canonical
-/// "front" the layout solver scores rooms against, and the corridor /
-/// hotel styles pivot their long axis to match it. Additional entrances
-/// fan out round-robin to the other facades in N → E → W order so a
-/// multi-door building (corner shop, courtyard house, public building
-/// with street-facing entries on more than one side) reads with doors on
-/// every facade rather than a south-wall row.
+/// The wall order is randomised per-seed via `entrance_side_order` so the
+/// "front" door can land on any of the four facades. Additional entrances
+/// fan out round-robin through the remaining sides in that same shuffled
+/// order, so a multi-door building (corner shop, courtyard house, public
+/// building with street-facing entries on more than one side) reads with
+/// doors on every facade rather than a single-wall row. The layout
+/// scorer (`entrance_anchors`) uses the same helper so it predicts
+/// entrance positions on the same faces.
 fn place_entrances(
     cfg: &BuildingCfg,
     plate: &Floorplate,
@@ -183,17 +186,12 @@ fn place_entrances(
     state: &mut u32,
 ) {
     let count = cfg.entrances.max(1) as usize;
-    const ORDER: [WallSide; 4] = [
-        WallSide::South,
-        WallSide::North,
-        WallSide::East,
-        WallSide::West,
-    ];
+    let order = entrance_side_order(cfg.seed);
     let mut per_side: [usize; 4] = [0; 4];
     for i in 0..count {
         per_side[i % 4] += 1;
     }
-    for (side_idx, &side) in ORDER.iter().enumerate() {
+    for (side_idx, &side) in order.iter().enumerate() {
         let n = per_side[side_idx];
         if n == 0 {
             continue;
@@ -304,7 +302,19 @@ fn place_interior_doors(
             // still reach an elevator whose neighbour is too narrow to
             // hold the wider 1.5× doorway — connectivity beats ideal
             // sizing. Width selection happens per-edge above.
-            if edge.span() >= cfg.door_w * 1.1 {
+            //
+            // Threshold is exactly `door_w` (no extra margin): the only
+            // edges that hit this lower bound are the staircase's east /
+            // west entry slots, which are clipped to `STAIR_ENTRY_DEPTH
+            // = 1.0 m` along Z. Insisting on a 10 % overrun there left
+            // stairs unreachable on layouts where no room shared the
+            // stair's south face (see grid_office regression).
+            // The corner-clamp at door placement already degrades to
+            // the slot midpoint when the slot is narrower than
+            // 2 × corner_margin, so a slot exactly `door_w` wide just
+            // produces a door that fills the slot — geometrically
+            // valid and exactly what a stair entry strip wants.
+            if edge.span() >= cfg.door_w {
                 edges.push((i, j, edge, door_w));
             }
         }
@@ -711,9 +721,13 @@ fn split_segment_by_entrances(
 /// that's a feature, not a bug: stacking windows is the failure mode we
 /// want to prevent.
 fn allocate_windows(segments: &[ExtSeg], count: usize, pitch: f32) -> Vec<usize> {
+    // Correct cap: n windows placed at (j+1)/(n+1) fractions have
+    // centre-to-centre spacing L/(n+1). For that to be >= pitch we need
+    // n <= L/pitch - 1. Use floor(L/pitch) - 1 (segments that pass the
+    // length filter already have L >= pitch, so this is >= 0).
     let max_per: Vec<usize> = segments
         .iter()
-        .map(|s| ((s.hi - s.lo) / pitch).floor().max(0.0) as usize)
+        .map(|s| (((s.hi - s.lo) / pitch).floor() as i64 - 1).max(0) as usize)
         .collect();
     let total_capacity: usize = max_per.iter().sum();
     let target = count.min(total_capacity);
@@ -826,7 +840,8 @@ fn interior_facing(a: &Rect2, b: &Rect2) -> [f32; 3] {
 /// entrance — multi-side entrances each pull the BFS root toward whichever
 /// facade door is geometrically closest, so an entry-room-first chain
 /// still forms. Upper storeys have no entrances; for those we anchor on
-/// the south-midpoint baseline so the root stays deterministic.
+/// the floorplate's south-midpoint as a stable fallback so the root stays
+/// deterministic across seeds.
 fn pick_door_tree_root(cfg: &BuildingCfg, plate: &Floorplate, plan: &OpeningPlan) -> usize {
     if let Some(corridor_idx) = cfg.corridor_type_index() {
         for (i, cell) in plate.rooms.iter().enumerate() {

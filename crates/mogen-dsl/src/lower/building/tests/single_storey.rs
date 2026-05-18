@@ -523,9 +523,11 @@ fn window_positions_are_seed_independent() {
 
 #[test]
 fn multiple_entrances_fan_out_across_facades() {
-    // `entrances=1` keeps the canonical south-front behaviour. Bumping
-    // the count fans entrances round-robin across S → N → E → W so a
-    // four-door building has exactly one entrance on every facade.
+    // `entrances=1` randomises the wall side per seed (see
+    // `single_entrance_lands_on_one_facade`). Bumping the count fans
+    // entrances round-robin through a per-seed shuffle of the four sides,
+    // so a four-door building has exactly one entrance on every facade
+    // regardless of where the shuffle starts.
     let src = r#"
         material "p" (color=[0.9, 0.9, 0.88])
         building "courthouse" (
@@ -583,20 +585,40 @@ fn multiple_entrances_fan_out_across_facades() {
 }
 
 #[test]
-fn single_entrance_stays_on_south_front() {
-    // The single-entrance case is the canonical "front door" — scoring
-    // and corridor layouts pivot off it, so it must keep landing on the
-    // south face when no extra entrances are requested.
+fn single_entrance_lands_on_one_facade() {
+    // With a single entrance the wall side is randomised per-seed (see
+    // `entrance_side_order`), so we no longer pin to south — but the door
+    // must still land on exactly one of the four facades, oriented
+    // outward.
     let g = lower_src(MIN_GRID_SRC);
-    let south_only = g
-        .nodes
-        .iter()
-        .filter(|n| n.role.as_deref() == Some("ext_door"))
-        .all(|n| {
-            let fwd = n.transform.rotation * glam::Vec3::Z;
-            fwd.z < -0.7
-        });
-    assert!(south_only, "single entrance should sit on the south face");
+    let mut sides: std::collections::BTreeSet<&'static str> =
+        std::collections::BTreeSet::new();
+    let mut count = 0;
+    for n in &g.nodes {
+        if n.role.as_deref() != Some("ext_door") {
+            continue;
+        }
+        count += 1;
+        let fwd = n.transform.rotation * glam::Vec3::Z;
+        let side = if fwd.z < -0.7 {
+            "south"
+        } else if fwd.z > 0.7 {
+            "north"
+        } else if fwd.x > 0.7 {
+            "east"
+        } else if fwd.x < -0.7 {
+            "west"
+        } else {
+            panic!("entrance facing is not axis-aligned: {fwd:?}");
+        };
+        sides.insert(side);
+    }
+    assert!(count >= 1, "expected at least one external door");
+    assert_eq!(
+        sides.len(),
+        1,
+        "single entrance should sit on exactly one facade, saw {sides:?}"
+    );
 }
 
 #[test]

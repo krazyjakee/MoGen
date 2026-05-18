@@ -11,7 +11,7 @@
 //! collide.
 
 use super::super::config::{BuildingCfg, RoomKind};
-use super::{cell_type, CellKind, Floorplate};
+use super::{cell_type, entrance_side_order, CellKind, Floorplate, WallSide};
 
 pub(super) fn score(cfg: &BuildingCfg, plate: &Floorplate) -> f32 {
     let mut total = 0.0;
@@ -132,14 +132,15 @@ fn entrance_distance_score(cfg: &BuildingCfg, plate: &Floorplate) -> f32 {
 ///
 /// Layout solving runs before opening placement, so we can't read actual
 /// entrance positions out of an `OpeningPlan`. Instead we duplicate the
-/// round-robin side distribution from `emit::openings::place_entrances`
-/// (S → N → E → W) but skip the per-entrance jitter, anchoring each
-/// entrance at the midpoint of its share of the wall. That's the
-/// expected entrance location to within ~`door_w`; the scoring weights
-/// are soft enough that the small jitter doesn't change which layout
-/// wins.
+/// round-robin side distribution from `emit::openings::place_entrances`,
+/// sharing the same per-seed wall ordering via `entrance_side_order`, but
+/// skip the per-entrance jitter and anchor each entrance at the midpoint
+/// of its share of the wall. That's the expected entrance location to
+/// within ~`door_w`; the scoring weights are soft enough that the small
+/// jitter doesn't change which layout wins.
 fn entrance_anchors(cfg: &BuildingCfg, plate: &Floorplate) -> Vec<[f32; 2]> {
     let count = cfg.entrances.max(1) as usize;
+    let order = entrance_side_order(cfg.seed);
     let mut per_side: [usize; 4] = [0; 4];
     for i in 0..count {
         per_side[i % 4] += 1;
@@ -157,14 +158,46 @@ fn entrance_anchors(cfg: &BuildingCfg, plate: &Floorplate) -> Vec<[f32; 2]> {
             }
         }
     };
-    // South (index 0).
-    push(&mut anchors, bounds.x_min, bounds.x_max - bounds.x_min, per_side[0], true, bounds.z_min);
-    // North.
-    push(&mut anchors, bounds.x_min, bounds.x_max - bounds.x_min, per_side[1], true, bounds.z_max);
-    // East.
-    push(&mut anchors, bounds.z_min, bounds.z_max - bounds.z_min, per_side[2], false, bounds.x_max);
-    // West.
-    push(&mut anchors, bounds.z_min, bounds.z_max - bounds.z_min, per_side[3], false, bounds.x_min);
+    for (side_idx, side) in order.iter().enumerate() {
+        let n = per_side[side_idx];
+        if n == 0 {
+            continue;
+        }
+        match side {
+            WallSide::South => push(
+                &mut anchors,
+                bounds.x_min,
+                bounds.x_max - bounds.x_min,
+                n,
+                true,
+                bounds.z_min,
+            ),
+            WallSide::North => push(
+                &mut anchors,
+                bounds.x_min,
+                bounds.x_max - bounds.x_min,
+                n,
+                true,
+                bounds.z_max,
+            ),
+            WallSide::East => push(
+                &mut anchors,
+                bounds.z_min,
+                bounds.z_max - bounds.z_min,
+                n,
+                false,
+                bounds.x_max,
+            ),
+            WallSide::West => push(
+                &mut anchors,
+                bounds.z_min,
+                bounds.z_max - bounds.z_min,
+                n,
+                false,
+                bounds.x_min,
+            ),
+        }
+    }
     anchors
 }
 
