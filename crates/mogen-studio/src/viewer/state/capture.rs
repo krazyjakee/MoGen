@@ -7,6 +7,9 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
+use mogen_core::SceneGraph;
+use mogen_render::imposter::ImposterAtlas;
+
 /// What kind of capture the user requested. Carried alongside the per-frame
 /// rendering instructions so the app can route the result to the right
 /// completion handler (write a thumbnail PNG, kick off ffmpeg).
@@ -79,6 +82,64 @@ pub struct CaptureOutcome {
     pub kind: CaptureKind,
     pub frame_paths: Vec<PathBuf>,
     pub error: Option<String>,
+}
+
+/// Pending imposter atlas bake. The paint callback consumes this on its
+/// next firing, runs `mogen_render::imposter::bake_yaw_atlas_on_gl` against
+/// the live `glow::Context`, and writes the result into
+/// [`super::ViewerState::imposter_outcome`].
+///
+/// Separate from `CaptureRequest` because the bake renders an *arbitrary*
+/// `SceneGraph` (the active scene, or the post-merge scene the export
+/// pipeline computed) rather than the live viewer mesh, and the result is
+/// kept in memory rather than going through the on-disk PNG encoder.
+pub struct ImposterRequest {
+    pub scene: Arc<SceneGraph>,
+    pub cell_size: u32,
+    pub view_count: u32,
+    pub pitch: f32,
+    /// Directory of the source `.mog` file. Passed through to
+    /// `flatten` so relative material `*_texture` paths resolve
+    /// correctly — without it the bake falls back to PBR scalars and
+    /// every cell renders flat-coloured silhouettes.
+    pub base_dir: Option<std::path::PathBuf>,
+}
+
+/// Result of an imposter bake. `Ok` carries the atlas plus its yaw / cell
+/// dimensions; `Err` is a flattened error message so the receiver can
+/// surface it in a label without re-wrapping.
+pub type ImposterOutcome = Result<ImposterAtlas, String>;
+
+/// Cached GPU state for the viewport imposter preview mode. Built on the
+/// fly in the paint callback after a fresh bake, freed when the mode is
+/// left or the atlas is replaced. The CPU-side scene extent is captured
+/// here so the billboard can size itself without re-walking the scene
+/// every frame.
+pub struct ImposterViewOverlay {
+    /// GL texture for the baked atlas. Owned by the overlay — must be
+    /// freed via `Renderer::destroy_imposter_texture` when replaced.
+    pub texture: glow::Texture,
+    /// Atlas cell count along the horizontal axis. Drives the shader's
+    /// yaw → cell snap.
+    pub view_count: u32,
+    /// World-space centre of the source scene's AABB — the billboard
+    /// stands here. Matches the bake's framing target so the silhouette
+    /// in every cell sits at the right place on the quad.
+    pub center: [f32; 3],
+    /// Horizontal half-extent of the billboard (worst-yaw silhouette
+    /// radius). Used as the half-width of the camera-facing quad.
+    pub half_width: f32,
+    /// Vertical half-extent of the billboard — half the model's actual
+    /// AABB height, so the quad occupies the same volume as the
+    /// original mesh and the imposter doesn't float above where the
+    /// model lives.
+    pub half_height: f32,
+    /// V-coordinate range inside one cell that contains the silhouette.
+    /// The shader maps the quad's V from `[0, 1]` onto
+    /// `[uv_y_top, uv_y_bottom]` so the cell's transparent margins
+    /// crop out and the silhouette stretches across the full quad.
+    pub uv_y_top: f32,
+    pub uv_y_bottom: f32,
 }
 
 /// One PNG-encode-and-write job pushed onto [`EncodePool`]. Owns its pixel

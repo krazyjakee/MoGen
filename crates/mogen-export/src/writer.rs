@@ -13,7 +13,7 @@ use crate::accessor::{
 };
 use crate::animation::emit_animation;
 #[cfg(feature = "imposter")]
-use crate::imposter;
+use crate::imposter::{self, ImposterAtlas};
 use crate::lights::collect_lights;
 #[cfg(feature = "lod")]
 use crate::lod;
@@ -46,6 +46,29 @@ pub fn write_glb_with_options<F: Fn(&str)>(
     Ok(())
 }
 
+/// Write a GLB to disk using a caller-supplied pre-baked imposter atlas
+/// instead of running the headless bake inside the export pipeline. Used by
+/// Studio (eframe owns the only winit `EventLoop`, so the headless bake
+/// fails — Studio bakes via its live GL context first and hands the result
+/// in here).
+///
+/// `prebaked` is honoured only when `opts.bundle_lods_and_imposter` is on;
+/// passing `Some(_)` with the flag off silently ignores the atlas.
+#[cfg(feature = "imposter")]
+pub fn write_glb_with_prebaked_imposter<F: Fn(&str)>(
+    scene: &SceneGraph,
+    out: &Path,
+    opts: &ExportOptions,
+    prebaked: Option<ImposterAtlas>,
+    progress: F,
+) -> Result<()> {
+    let bytes =
+        build_glb_with_options_and_source_imp(scene, opts, &FsTextureSource, prebaked, progress)?;
+    let mut f = File::create(out)?;
+    f.write_all(&bytes)?;
+    Ok(())
+}
+
 /// Build a GLB into a `Vec<u8>` using the filesystem to load any textures
 /// referenced by the scene's materials. Convenience wrapper around
 /// [`build_glb_with_options_and_source`] for desktop callers — wasm callers
@@ -67,6 +90,40 @@ pub fn build_glb_with_options_and_source<F: Fn(&str)>(
     scene: &SceneGraph,
     opts: &ExportOptions,
     texture_source: &dyn TextureSource,
+    progress: F,
+) -> Result<Vec<u8>> {
+    #[cfg(feature = "imposter")]
+    {
+        build_glb_with_options_and_source_imp(scene, opts, texture_source, None, progress)
+    }
+    #[cfg(not(feature = "imposter"))]
+    {
+        build_glb_with_options_and_source_inner(scene, opts, texture_source, progress)
+    }
+}
+
+#[cfg(feature = "imposter")]
+fn build_glb_with_options_and_source_imp<F: Fn(&str)>(
+    scene: &SceneGraph,
+    opts: &ExportOptions,
+    texture_source: &dyn TextureSource,
+    prebaked_imposter: Option<ImposterAtlas>,
+    progress: F,
+) -> Result<Vec<u8>> {
+    build_glb_with_options_and_source_inner(
+        scene,
+        opts,
+        texture_source,
+        prebaked_imposter,
+        progress,
+    )
+}
+
+fn build_glb_with_options_and_source_inner<F: Fn(&str)>(
+    scene: &SceneGraph,
+    opts: &ExportOptions,
+    texture_source: &dyn TextureSource,
+    #[cfg(feature = "imposter")] prebaked_imposter: Option<ImposterAtlas>,
     progress: F,
 ) -> Result<Vec<u8>> {
     // Two-stage merge. First, the scoped `solid` pass runs whenever the scene
@@ -371,6 +428,7 @@ pub fn build_glb_with_options_and_source<F: Fn(&str)>(
     if opts.bundle_lods_and_imposter {
         let emission = imposter::emit_imposter(
             scene,
+            prebaked_imposter,
             &mut bin,
             &mut buffer_views,
             &mut accessors,

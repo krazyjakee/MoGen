@@ -10,7 +10,7 @@ impl MogenStudioApp {
         if !self.show_imposter {
             return;
         }
-        let in_flight = self.imposter_rx.is_some();
+        let in_flight = self.imposter_preview_pending;
         let mut open = true;
         let mut rebake = false;
 

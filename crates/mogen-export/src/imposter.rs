@@ -19,10 +19,13 @@ pub use mogen_render::imposter::ImposterAtlas;
 use crate::accessor::{push_indices, push_normals, push_positions, push_uvs};
 use crate::{align_up, Accessor, BufferView};
 
-/// Atlas dimensions baked by [`emit_imposter`]. Mirrors
-/// [`mogen_render::imposter::ImposterOptions`] defaults; kept here so the
-/// writer doesn't reach into the renderer crate to discover them.
-const CELL_SIZE: u32 = 256;
+/// Atlas dimensions baked by [`emit_imposter`]. 512² per cell × 8 yaws =
+/// 4 MB raw RGBA before PNG compression; the smaller 256² default looked
+/// noticeably pixelated on real props, especially with foliage / detailed
+/// silhouettes, so we bias toward sharpness here. Keep these in sync with
+/// [`crate::imposter::IMPOSTER_PREVIEW_CELL_SIZE`] in `mogen-studio` so
+/// the in-Studio preview shows the same artifact the export embeds.
+const CELL_SIZE: u32 = 512;
 const VIEW_COUNT: u32 = 8;
 const PITCH_RADIANS: f32 = 0.5;
 
@@ -64,6 +67,7 @@ pub fn bake_scene_imposter(scene: &SceneGraph) -> Result<ImposterAtlas> {
 
 pub(crate) fn emit_imposter(
     scene: &SceneGraph,
+    prebaked: Option<ImposterAtlas>,
     bin: &mut Vec<u8>,
     buffer_views: &mut Vec<BufferView>,
     accessors: &mut Vec<Accessor>,
@@ -74,17 +78,22 @@ pub(crate) fn emit_imposter(
     samplers: &mut Vec<Value>,
     progress: &dyn Fn(&str),
 ) -> Result<ImposterEmission> {
-    progress("baking imposter atlas");
-    let atlas = mogen_render::imposter::bake_yaw_atlas(
-        scene,
-        &mogen_render::imposter::ImposterOptions {
-            cell_size: CELL_SIZE,
-            view_count: VIEW_COUNT,
-            pitch: PITCH_RADIANS,
-            base_dir: None,
-        },
-    )
-    .context("baking imposter atlas")?;
+    let atlas = if let Some(atlas) = prebaked {
+        progress("embedding prebaked imposter atlas");
+        atlas
+    } else {
+        progress("baking imposter atlas");
+        mogen_render::imposter::bake_yaw_atlas(
+            scene,
+            &mogen_render::imposter::ImposterOptions {
+                cell_size: CELL_SIZE,
+                view_count: VIEW_COUNT,
+                pitch: PITCH_RADIANS,
+                base_dir: None,
+            },
+        )
+        .context("baking imposter atlas")?
+    };
 
     let mut png_bytes: Vec<u8> = Vec::new();
     image::codecs::png::PngEncoder::new(&mut png_bytes)
@@ -148,13 +157,16 @@ pub(crate) fn emit_imposter(
         "extensions": { "KHR_materials_unlit": {} },
     }));
 
-    // Sized to the scene's XZ extent so the quad frames the model when the
-    // godot-mog shader picks a cell. We use a flat mesh of mogen-core's
-    // existing `Mesh` so we can hand it straight to the existing accessor
-    // helpers — no parallel push paths.
-    let (center, radius) = scene_xy_extent(scene);
-    let half = radius.max(0.5);
-    let quad = billboard_quad(center, half);
+    // Build the billboard at the model's AABB extent (centred on its
+    // midpoint, half-width = worst-yaw silhouette radius, half-height =
+    // actual model height). The UV.y is mapped onto `[uv_y_top,
+    // uv_y_bottom]` from the bake so the cell's transparent margins
+    // get cropped out and the silhouette stretches across the full
+    // quad — no quad floating above the model just because the
+    // square cell happened to be padded.
+    let half_w = atlas.half_width.max(0.5);
+    let half_h = atlas.half_height.max(0.5);
+    let quad = billboard_quad(atlas.center, half_w, half_h, atlas.uv_y_top, atlas.uv_y_bottom);
 
     let pos_acc = push_positions(bin, buffer_views, accessors, &quad);
     let nrm_acc = push_normals(bin, buffer_views, accessors, &quad);
@@ -185,21 +197,38 @@ pub(crate) fn emit_imposter(
 }
 
 /// Build the camera-facing billboard quad as a [`Mesh`]. Centred on
-/// `center`, half-width/half-height = `half`. Faces +Z, with UVs spanning
-/// the full atlas (the godot-mog shader narrows to a single cell at
-/// runtime; plain viewers show the whole sheet).
-fn billboard_quad(center: [f32; 3], half: f32) -> Mesh {
+/// `center`, sized to the model's AABB (`half_w` × `half_h` half-extents).
+/// Faces +Z, with UV.x spanning the full atlas width (the godot-mog
+/// shader narrows to a single cell at runtime; plain viewers show the
+/// whole sheet across the quad) and UV.y mapped to `[uv_y_top,
+/// uv_y_bottom]` so the silhouette inside one cell stretches to fill
+/// the quad in world space — no transparent padding at top/bottom of
+/// the quad.
+fn billboard_quad(
+    center: [f32; 3],
+    half_w: f32,
+    half_h: f32,
+    uv_y_top: f32,
+    uv_y_bottom: f32,
+) -> Mesh {
     let [cx, cy, cz] = center;
     let positions = vec![
-        [cx - half, cy - half, cz],
-        [cx + half, cy - half, cz],
-        [cx + half, cy + half, cz],
-        [cx - half, cy + half, cz],
+        [cx - half_w, cy - half_h, cz],
+        [cx + half_w, cy - half_h, cz],
+        [cx + half_w, cy + half_h, cz],
+        [cx - half_w, cy + half_h, cz],
     ];
     let normals = vec![[0.0, 0.0, 1.0]; 4];
-    // V flipped so (0,0) UV maps to top-left of the atlas, matching the
-    // top-left-origin RGBA we baked.
-    let uvs = vec![[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]];
+    // UV.y bounds straight from the bake: the silhouette's apex sits
+    // at `uv_y_top` in atlas space, its base at `uv_y_bottom`. The
+    // bottom-vertex UV.y is `uv_y_bottom` so the quad's bottom edge
+    // shows the silhouette base; symmetric at the top.
+    let uvs = vec![
+        [0.0, uv_y_bottom],
+        [1.0, uv_y_bottom],
+        [1.0, uv_y_top],
+        [0.0, uv_y_top],
+    ];
     let indices = vec![0u32, 1, 2, 0, 2, 3];
     Mesh {
         positions,
@@ -211,43 +240,3 @@ fn billboard_quad(center: [f32; 3], half: f32) -> Mesh {
     }
 }
 
-/// Compute (centre, half-extent) of the scene's XY footprint by walking
-/// every node's mesh positions in world space. Used to size the billboard.
-/// Cheap because mesh positions are already local-space arrays; we just
-/// AABB-union them after applying each node's world transform.
-fn scene_xy_extent(scene: &SceneGraph) -> ([f32; 3], f32) {
-    let worlds = scene.world_transforms();
-    let mut min = [f32::INFINITY; 3];
-    let mut max = [f32::NEG_INFINITY; 3];
-    let mut any = false;
-    for (i, node) in scene.nodes.iter().enumerate() {
-        let Some(mesh) = &node.mesh else { continue };
-        if mesh.positions.is_empty() {
-            continue;
-        }
-        let mat = worlds[i];
-        for p in &mesh.positions {
-            let wp = mat.transform_point3(glam::Vec3::new(p[0], p[1], p[2]));
-            let arr = wp.to_array();
-            for c in 0..3 {
-                if arr[c] < min[c] {
-                    min[c] = arr[c];
-                }
-                if arr[c] > max[c] {
-                    max[c] = arr[c];
-                }
-            }
-            any = true;
-        }
-    }
-    if !any {
-        return ([0.0, 0.0, 0.0], 1.0);
-    }
-    let centre = [
-        (min[0] + max[0]) * 0.5,
-        (min[1] + max[1]) * 0.5,
-        (min[2] + max[2]) * 0.5,
-    ];
-    let half = ((max[0] - min[0]).max(max[1] - min[1])) * 0.5;
-    (centre, half.max(0.001))
-}

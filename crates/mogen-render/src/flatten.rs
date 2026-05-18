@@ -141,6 +141,13 @@ pub struct FlatMesh {
     pub palette_sources: Vec<PaletteSource>,
     pub center: Vec3,
     pub radius: f32,
+    /// Axis-aligned bounding box of every world-space vertex contributed
+    /// by the flattened scene. Used by the imposter bake to frame the
+    /// camera tight against the model (rather than against the looser
+    /// bounding-sphere `radius`, which leaves visible padding on every
+    /// cell and makes the billboard appear to float above the ground).
+    pub aabb_min: Vec3,
+    pub aabb_max: Vec3,
     /// One entry per triangle (parallel to `indices` chunked in 3s) giving the
     /// `SceneNode` id that contributed the triangle. CPU-side only — used by
     /// the viewport picker, never uploaded.
@@ -448,12 +455,12 @@ pub fn flatten_with_worlds(
 
     let palettes = compute_initial_palettes(scene, worlds, &palette_sources);
 
-    let (center, radius) = if vertices.is_empty() {
-        (Vec3::ZERO, 1.0)
+    let (center, radius, aabb_min, aabb_max) = if vertices.is_empty() {
+        (Vec3::ZERO, 1.0, Vec3::splat(-0.5), Vec3::splat(0.5))
     } else {
         let c = (min + max) * 0.5;
         let r = ((max - min).length() * 0.5).max(0.25);
-        (c, r)
+        (c, r, min, max)
     };
 
     FlatMesh {
@@ -464,6 +471,8 @@ pub fn flatten_with_worlds(
         palette_sources,
         center,
         radius,
+        aabb_min,
+        aabb_max,
         tri_node,
     }
 }

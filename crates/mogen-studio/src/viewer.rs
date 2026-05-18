@@ -7,6 +7,7 @@ pub(crate) mod flatten;
 mod gizmo_gl;
 mod gl_util;
 mod grid_gl;
+mod imposter_gl;
 mod lights;
 mod lights_gl;
 mod renderer;
@@ -28,8 +29,8 @@ pub use lights::ResolvedLight;
 #[allow(unused_imports)]
 pub use shadows::ShadowQuality;
 pub use state::{
-    is_import_wrapper, CaptureFrame, CaptureKind, CaptureOutcome, CaptureRequest, PendingEdit,
-    SelectionPath,
+    is_import_wrapper, CaptureFrame, CaptureKind, CaptureOutcome, CaptureRequest, ImposterOutcome,
+    ImposterRequest, PendingEdit, SelectionPath,
 };
 
 use crate::preview_shader::PreviewShader;
@@ -541,6 +542,57 @@ impl Viewer {
         self.state.lock().unwrap().capture_request.is_some()
     }
 
+    /// Queue an imposter atlas bake. The next paint callback runs the bake
+    /// on the live GL context and writes the result to `imposter_outcome`.
+    /// Replaces any prior queued request — Studio gates this at the app
+    /// level so two callers never collide.
+    pub fn submit_imposter_request(&self, request: ImposterRequest) {
+        let mut st = self.state.lock().unwrap();
+        st.imposter_request = Some(request);
+        st.imposter_outcome = None;
+    }
+
+    /// Drain the most recent completed imposter bake, if any.
+    pub fn take_imposter_outcome(&self) -> Option<ImposterOutcome> {
+        self.state.lock().unwrap().imposter_outcome.take()
+    }
+
+    /// Whether an imposter request is queued or in-flight.
+    pub fn imposter_in_flight(&self) -> bool {
+        let st = self.state.lock().unwrap();
+        st.imposter_request.is_some() && st.imposter_outcome.is_none()
+    }
+
+    /// Enter or leave the viewport imposter-preview mode. When `scene` is
+    /// `Some`, the paint callback bakes (or re-bakes) the yaw-grid atlas
+    /// off it and renders a billboard quad in its place. When `scene` is
+    /// `None` (or `active` is false), the cached overlay texture is freed
+    /// next paint and the normal scene draw resumes.
+    pub fn set_imposter_view(&self, active: bool, scene: Option<Arc<SceneGraph>>) {
+        let mut st = self.state.lock().unwrap();
+        st.imposter_view_active = active;
+        if active {
+            // A fresh scene Arc invalidates any cached atlas — flip dirty
+            // so the next paint re-bakes against the latest geometry.
+            // Identity-compare the Arc so unrelated repaints (camera
+            // orbit, etc.) don't trigger a needless re-bake.
+            let same = match (&st.imposter_view_scene, &scene) {
+                (Some(prev), Some(next)) => Arc::ptr_eq(prev, next),
+                _ => false,
+            };
+            if !same {
+                st.imposter_view_dirty = true;
+                st.imposter_view_scene = scene;
+            }
+        } else {
+            // Leaving the mode — drop the scene reference; the texture is
+            // freed in the paint callback (needs &gl).
+            st.imposter_view_scene = None;
+            st.imposter_view_dirty = true;
+        }
+    }
+
+
     /// Snapshot the in-flight capture's progress for the modal: the kind
     /// (so the dialog can title itself "thumbnail" vs "video"), how many
     /// frames have already been written, and the original frame count.
@@ -890,6 +942,21 @@ impl Viewer {
             if st.capture_request.is_some() {
                 process_capture_step(&mut rr, gl, &mut st);
             }
+            if st.imposter_request.is_some() {
+                process_imposter_step(gl, &mut st);
+            }
+            // Free any cached billboard atlas when the user leaves
+            // imposter view, and re-bake when entering / when the
+            // source scene has changed since the last bake.
+            if !st.imposter_view_active {
+                if let Some(overlay) = st.imposter_view_overlay.take() {
+                    renderer::Renderer::destroy_imposter_texture(gl, overlay.texture);
+                }
+                st.imposter_view_dirty = false;
+            } else if st.imposter_view_dirty {
+                process_imposter_view_bake(gl, &mut st);
+                st.imposter_view_dirty = false;
+            }
             let viewproj = st.camera.view_proj(aspect);
             let eye = st.camera.eye();
             rr.set_preview(
@@ -916,6 +983,44 @@ impl Viewer {
             // slice — the FS falls back to its built-in key/fill rig.
             let light_list = st.resolve_lights();
             rr.set_lights(&light_list);
+
+            // Imposter preview mode swaps the main scene draw for a single
+            // billboard quad sampled from the baked atlas. The grid still
+            // draws so the user has a ground reference while orbiting; all
+            // editor overlays (gizmos / lights / colliders) are skipped
+            // because they don't apply to a billboard preview.
+            if st.imposter_view_active {
+                unsafe {
+                    use glow::HasContext as _;
+                    gl.disable(glow::SCISSOR_TEST);
+                    gl.clear_depth_f32(1.0);
+                    gl.clear(glow::DEPTH_BUFFER_BIT);
+                }
+                if !st.cinema.active && st.show_grid {
+                    rr.draw_grid(gl, viewproj, eye);
+                }
+                if let Some(overlay) = st.imposter_view_overlay.as_ref() {
+                    let center = glam::Vec3::new(
+                        overlay.center[0],
+                        overlay.center[1],
+                        overlay.center[2],
+                    );
+                    rr.draw_imposter(
+                        gl,
+                        viewproj,
+                        eye,
+                        center,
+                        overlay.half_width,
+                        overlay.half_height,
+                        overlay.view_count,
+                        overlay.uv_y_top,
+                        overlay.uv_y_bottom,
+                        overlay.texture,
+                    );
+                }
+                return;
+            }
+
             rr.draw(gl, viewproj, eye);
             // Cinema mode hides the grid + gizmo handles so the framing
             // reads as a clean presentation rather than an editor view.
@@ -1139,6 +1244,95 @@ fn drain_encode_results(st: &mut state::ViewerState) {
             }
         }
     }
+}
+
+/// Re-bake the viewport imposter atlas and upload it as a GL texture.
+/// Called from the paint callback when `imposter_view_dirty` is set on
+/// entering imposter mode or after a scene recompile. Frees any prior
+/// texture before uploading the new one.
+///
+/// Bake parameters mirror the export's defaults (256² cells, 8 yaws,
+/// 0.5 rad pitch) so the in-Studio preview shows the same artifact the
+/// shipped GLB embeds.
+fn process_imposter_view_bake(gl: &glow::Context, st: &mut state::ViewerState) {
+    // Free the prior texture first so a bake failure still frees the GL
+    // resource instead of leaking it on every failed re-bake.
+    if let Some(prev) = st.imposter_view_overlay.take() {
+        renderer::Renderer::destroy_imposter_texture(gl, prev.texture);
+    }
+    let Some(scene) = st.imposter_view_scene.as_ref() else {
+        return;
+    };
+    // Match the export's bake parameters so what the user previews
+    // here is exactly what `bundle_lods_and_imposter` would ship —
+    // same cell size, view count, and pitch. The atlas returns the
+    // pitch-aware quad placement so we don't need to compute extents
+    // separately on this side.
+    //
+    // Pass through the viewer's `base_dir` so `flatten` can resolve
+    // relative material texture paths into absolute ones — without
+    // this the bake's per-cell render falls back to PBR scalars and
+    // every silhouette comes out flat-coloured (no baseColor /
+    // normal / roughness textures applied).
+    let opts = mogen_render::imposter::ImposterOptions {
+        cell_size: 512,
+        view_count: 8,
+        pitch: 0.5,
+        base_dir: st.base_dir.clone(),
+    };
+    let atlas = match mogen_render::imposter::bake_yaw_atlas_on_gl(gl, scene, &opts) {
+        Ok(a) => a,
+        Err(_e) => {
+            // Bake failures here are silent — the billboard simply
+            // doesn't draw and the user gets the grid + background.
+            // Surfacing the error in the viewport would need an overlay
+            // layer we don't have yet; the imposter preview modal
+            // already shows bake errors when the user opens it.
+            return;
+        }
+    };
+    let texture =
+        match renderer::Renderer::upload_imposter_atlas(gl, &atlas.rgba, atlas.width, atlas.height)
+        {
+            Ok(t) => t,
+            Err(_) => return,
+        };
+    st.imposter_view_overlay = Some(state::ImposterViewOverlay {
+        texture,
+        view_count: atlas.view_count,
+        center: atlas.center,
+        half_width: atlas.half_width,
+        half_height: atlas.half_height,
+        uv_y_top: atlas.uv_y_top,
+        uv_y_bottom: atlas.uv_y_bottom,
+    });
+}
+
+/// Service a queued imposter atlas bake on the live `glow::Context`. Runs
+/// inside the paint callback, alongside `process_capture_step`, because
+/// `mogen_render::imposter::bake_yaw_atlas_on_gl` allocates its own
+/// `Renderer` and FBOs on the GL context — eframe owns the only winit
+/// `EventLoop` in the process, so the CLI's `with_gl_context` path can't
+/// be used here.
+///
+/// The bake runs end-to-end in one paint (8 yaws × 256² each is well under
+/// a frame budget). Result lands in `imposter_outcome` for the app to poll.
+fn process_imposter_step(gl: &glow::Context, st: &mut state::ViewerState) {
+    let Some(request) = st.imposter_request.take() else {
+        return;
+    };
+    let outcome = mogen_render::imposter::bake_yaw_atlas_on_gl(
+        gl,
+        &request.scene,
+        &mogen_render::imposter::ImposterOptions {
+            cell_size: request.cell_size,
+            view_count: request.view_count,
+            pitch: request.pitch,
+            base_dir: request.base_dir.clone(),
+        },
+    )
+    .map_err(|e| format!("{e:#}"));
+    st.imposter_outcome = Some(outcome);
 }
 
 #[cfg(test)]

@@ -10,27 +10,45 @@
 //! [`ThumbnailOptions`], get back the encoded PNG bytes (top-left origin,
 //! ready to write to disk).
 
-use std::ffi::CString;
-use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, Context as _};
+use anyhow::Context as _;
 use glam::Vec3;
-use glutin::config::ConfigTemplateBuilder;
-use glutin::context::{ContextAttributesBuilder, NotCurrentGlContext};
-use glutin::display::{GetGlDisplay, GlDisplay};
-use glutin::surface::{Surface, SurfaceAttributesBuilder, WindowSurface};
-use glutin_winit::{DisplayBuilder, GlWindow};
 use mogen_core::SceneGraph;
-use raw_window_handle::HasWindowHandle;
-use winit::application::ApplicationHandler;
-use winit::event::WindowEvent;
-use winit::event_loop::{ActiveEventLoop, EventLoop};
-use winit::window::{Window, WindowId};
 
 use crate::camera::OrbitCamera;
 use crate::flatten::flatten;
 use crate::renderer::Renderer;
+
+// winit + glutin bring-up only compiles on platforms that still use the
+// hidden-window path (macOS / Windows). Linux uses surfaceless EGL via
+// `crate::headless_egl` and never touches any of these.
+#[cfg(not(target_os = "linux"))]
+use std::ffi::CString;
+#[cfg(not(target_os = "linux"))]
+use std::num::NonZeroU32;
+#[cfg(not(target_os = "linux"))]
+use anyhow::anyhow;
+#[cfg(not(target_os = "linux"))]
+use glutin::config::ConfigTemplateBuilder;
+#[cfg(not(target_os = "linux"))]
+use glutin::context::{ContextAttributesBuilder, NotCurrentGlContext};
+#[cfg(not(target_os = "linux"))]
+use glutin::display::{GetGlDisplay, GlDisplay};
+#[cfg(not(target_os = "linux"))]
+use glutin::surface::{Surface, SurfaceAttributesBuilder, WindowSurface};
+#[cfg(not(target_os = "linux"))]
+use glutin_winit::{DisplayBuilder, GlWindow};
+#[cfg(not(target_os = "linux"))]
+use raw_window_handle::HasWindowHandle;
+#[cfg(not(target_os = "linux"))]
+use winit::application::ApplicationHandler;
+#[cfg(not(target_os = "linux"))]
+use winit::event::WindowEvent;
+#[cfg(not(target_os = "linux"))]
+use winit::event_loop::{ActiveEventLoop, EventLoop};
+#[cfg(not(target_os = "linux"))]
+use winit::window::{Window, WindowId};
 
 /// Settings for [`render_thumbnail`]. Defaults match the Studio's
 /// `Generate Thumbnail` menu action so a CLI render and a GUI render of the
@@ -127,12 +145,41 @@ pub fn save_thumbnail_png(
     Ok(())
 }
 
-/// Run `f` with a live `glow::Context`. Internally spins up a winit event
-/// loop, builds a hidden 8×8 window so the platform GL driver has a surface
-/// to bind, makes the context current, and exits the loop as soon as `f`
-/// returns. The window is dropped on the way out, taking the GL context with
-/// it.
+/// Run `f` with a live `glow::Context`.
+///
+/// Linux: brings up a surfaceless EGL + GL 3.3 core context through
+/// [`crate::headless_egl`]. No winit, no event loop, no window — so this
+/// works the same way from a one-shot CLI, from headless Godot
+/// (`godot --headless --script …`), and from inside the Godot editor where
+/// the editor's own event loop already owns the process. Whatever GL
+/// context was current on entry (e.g. Godot's own when running with
+/// `--rendering-driver opengl3`) is preserved.
+///
+/// macOS / Windows: spins up a winit event loop, builds a hidden 8×8
+/// window so the platform GL driver has a surface to bind, makes the
+/// context current, and exits the loop as soon as `f` returns. The window
+/// is dropped on the way out, taking the GL context with it. This path
+/// stays winit-based because neither platform exposes a portable
+/// surfaceless GL bring-up.
 pub fn with_gl_context<F, R>(f: F) -> anyhow::Result<R>
+where
+    F: FnOnce(&glow::Context) -> anyhow::Result<R>,
+{
+    #[cfg(target_os = "linux")]
+    {
+        crate::headless_egl::with_gl_context(f)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        with_gl_context_winit(f)
+    }
+}
+
+/// winit + glutin GL bring-up. Used directly on macOS / Windows (and as a
+/// reference / fallback on Linux if the surfaceless EGL path is ever
+/// disabled). See [`with_gl_context`] for the dispatch.
+#[cfg(not(target_os = "linux"))]
+fn with_gl_context_winit<F, R>(f: F) -> anyhow::Result<R>
 where
     F: FnOnce(&glow::Context) -> anyhow::Result<R>,
 {
@@ -158,6 +205,7 @@ where
 /// event loop here — the hidden 8×8 window is render-only and we exit the
 /// loop as soon as the closure returns — so any-thread is the right
 /// trade-off everywhere.
+#[cfg(not(target_os = "linux"))]
 fn build_event_loop() -> anyhow::Result<EventLoop<()>> {
     let mut builder = EventLoop::<()>::with_user_event();
     #[cfg(all(unix, not(target_os = "macos"), not(target_os = "ios")))]
@@ -176,6 +224,7 @@ fn build_event_loop() -> anyhow::Result<EventLoop<()>> {
 /// GL handles we keep alive for the duration of the user's render closure.
 /// Dropped when `HeadlessApp` itself is dropped, which happens after
 /// `run_app` returns.
+#[cfg(not(target_os = "linux"))]
 struct GlState {
     /// Hold the window AFTER the surface so winit's drop order matches the
     /// platform expectation: the surface (which references the NSWindow's
@@ -189,6 +238,7 @@ struct GlState {
     _context: glutin::context::PossiblyCurrentContext,
 }
 
+#[cfg(not(target_os = "linux"))]
 struct HeadlessApp<F, R>
 where
     F: FnOnce(&glow::Context) -> anyhow::Result<R>,
@@ -198,6 +248,7 @@ where
     gl_state: Option<GlState>,
 }
 
+#[cfg(not(target_os = "linux"))]
 impl<F, R> ApplicationHandler for HeadlessApp<F, R>
 where
     F: FnOnce(&glow::Context) -> anyhow::Result<R>,

@@ -249,13 +249,28 @@ pub struct MogenStudioApp {
     /// `bundle_lods_and_imposter` build would ship. Transient (not persisted)
     /// — it's a preview, not a project setting.
     preview_lod: preview::PreviewLod,
-    /// Imposter-preview modal: open flag, in-flight bake channel, the loaded
+    /// Imposter-preview modal: open flag, in-flight bake marker, the loaded
     /// atlas texture, and the last bake error (mutually exclusive with a
-    /// loaded preview).
+    /// loaded preview). The actual bake runs on the viewer's GL context —
+    /// see `Viewer::submit_imposter_request` — so we only need a boolean
+    /// here to gate the modal's UI and the app's heartbeat repaints.
     show_imposter: bool,
-    imposter_rx: Option<Receiver<Result<preview::ImposterBake, String>>>,
+    imposter_preview_pending: bool,
+    /// Set on submit, cleared by the next `poll_imposter_preview` call.
+    /// Forces one full update() / paint cycle to render the in-flight
+    /// spinner state before the polling drains the outcome — otherwise
+    /// fast bakes complete between `submit` and the next poll, and the
+    /// modal flips straight from the old atlas to the new one with no
+    /// "baking…" feedback. Since the atlas is deterministic for an
+    /// unchanged scene, the user would see no visible change at all and
+    /// reasonably conclude the button does nothing.
+    imposter_preview_just_submitted: bool,
     imposter_preview: Option<preview::ImposterPreview>,
     imposter_err: Option<String>,
+    /// Pending export whose imposter bake is queued on the viewer. The
+    /// build worker is spawned once the bake completes (with the resulting
+    /// atlas pre-baked into the GLB). `None` outside a bundle-LODs build.
+    pub(in crate::app) imposter_export_pending: Option<build::PendingImposterExport>,
 
     viewer: Viewer,
 
@@ -558,9 +573,11 @@ impl MogenStudioApp {
             build_stage: Arc::new(Mutex::new(String::new())),
             preview_lod: preview::PreviewLod::default(),
             show_imposter: false,
-            imposter_rx: None,
+            imposter_preview_pending: false,
+            imposter_preview_just_submitted: false,
             imposter_preview: None,
             imposter_err: None,
+            imposter_export_pending: None,
             oauth_login_rx: None,
             oauth_login_provider: None,
             oauth_status_message: None,
@@ -869,6 +886,7 @@ impl eframe::App for MogenStudioApp {
         self.poll_prompt_enhance();
         self.poll_meta_generate();
         self.poll_ask();
+        self.poll_imposter_export();
         self.poll_build();
         self.poll_imposter_preview(ctx);
         self.poll_oauth_login();
@@ -1094,7 +1112,9 @@ impl eframe::App for MogenStudioApp {
             || self.any_ask_in_flight()
             || self.any_meta_generate_in_flight()
             || self.build_rx.is_some()
-            || self.imposter_rx.is_some()
+            || self.imposter_preview_pending
+            || self.imposter_export_pending.is_some()
+            || self.viewer.imposter_in_flight()
             || self.update_in_flight()
         {
             ctx.request_repaint_after(std::time::Duration::from_millis(120));

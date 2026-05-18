@@ -3,16 +3,19 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use mogen_core::SceneGraph;
-use mogen_export::ExportOptions;
+use mogen_export::{ExportOptions, ImposterAtlas};
 
 use crate::app::types::BuildOutcome;
-use crate::pipeline::write_glb_with_source_and_options;
+use crate::pipeline::{
+    write_glb_with_source_and_options, write_glb_with_source_options_and_imposter,
+};
 
 pub(in crate::app) fn run_build(
     scene: SceneGraph,
     out: PathBuf,
     source_dir: Option<PathBuf>,
     opts: ExportOptions,
+    prebaked_imposter: Option<ImposterAtlas>,
     stage: Arc<Mutex<String>>,
     file_index: usize,
 ) -> BuildOutcome {
@@ -45,13 +48,28 @@ pub(in crate::app) fn run_build(
         }
     };
 
-    let write_result = write_glb_with_source_and_options(
-        &effective_scene,
-        &out,
-        source_dir.as_deref(),
-        &post_merge_opts,
-        progress,
-    );
+    // When Studio pre-baked the imposter on the GUI thread (eframe owns
+    // the only winit `EventLoop`, so the writer's headless bake is
+    // unavailable), thread the atlas through to the writer so it can
+    // embed it without trying to bake again.
+    let write_result = if prebaked_imposter.is_some() {
+        write_glb_with_source_options_and_imposter(
+            &effective_scene,
+            &out,
+            source_dir.as_deref(),
+            &post_merge_opts,
+            prebaked_imposter,
+            progress,
+        )
+    } else {
+        write_glb_with_source_and_options(
+            &effective_scene,
+            &out,
+            source_dir.as_deref(),
+            &post_merge_opts,
+            progress,
+        )
+    };
 
     match write_result {
         Ok(()) => {

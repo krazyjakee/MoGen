@@ -20,6 +20,7 @@ use super::environment::{Environment, EnvironmentParams};
 use super::flatten::{DrawBatch, FlatMesh, SkinPalette};
 use super::colliders_gl::{ColliderInstance, CollidersGl};
 use super::gizmo_gl::GizmoGl;
+use super::imposter_gl::ImposterGl;
 use super::gl_util::{bytes_of_f32, bytes_of_u32, compile_program};
 use super::grid_gl::GridGl;
 use super::lights::{ResolvedLight, MAX_LIGHTS};
@@ -138,6 +139,10 @@ pub struct Renderer {
     /// Ground-plane reference grid. Drawn before the main scene so the
     /// scene's depth-test naturally occludes lines behind solid geometry.
     grid: GridGl,
+    /// Viewport imposter billboard pipeline. Idle for the normal scene
+    /// draw; used by the paint callback when `PreviewLod::Imposter` is
+    /// active to replace the mesh draw with a yaw-grid billboard.
+    imposter: ImposterGl,
     /// Wireframe overlay for `light` nodes (icon ring + direction arrow /
     /// cone). Always drawn after the main scene; depth-tests against geometry
     /// so a light tucked inside a wall reads as occluded.
@@ -315,6 +320,7 @@ impl Renderer {
 
             let gizmo = GizmoGl::new(gl)?;
             let grid = GridGl::new(gl)?;
+            let imposter = ImposterGl::new(gl)?;
             let lights_overlay = LightsGl::new(gl)?;
             let colliders_overlay = CollidersGl::new(gl)?;
             let shadows = ShadowSystem::new(gl)?;
@@ -326,6 +332,7 @@ impl Renderer {
                 ebo,
                 gizmo,
                 grid,
+                imposter,
                 lights_overlay,
                 colliders_overlay,
                 u_viewproj,
@@ -539,9 +546,59 @@ impl Renderer {
         }
         self.gizmo.destroy(gl);
         self.grid.destroy(gl);
+        self.imposter.destroy(gl);
         self.lights_overlay.destroy(gl);
         self.colliders_overlay.destroy(gl);
         self.shadows.destroy(gl);
+    }
+
+    /// Render the viewport imposter billboard. Driven by the paint
+    /// callback when `PreviewLod::Imposter` is active and an atlas texture
+    /// is bound. `center` is the AABB midpoint; `half_width` /
+    /// `half_height` come from the bake's framing so the quad occupies
+    /// the model's own AABB extent (no float-above-the-model artefacts).
+    /// `uv_y_top` / `uv_y_bottom` crop the cell's silhouette region.
+    pub fn draw_imposter(
+        &self,
+        gl: &glow::Context,
+        viewproj: glam::Mat4,
+        camera_pos: glam::Vec3,
+        center: glam::Vec3,
+        half_width: f32,
+        half_height: f32,
+        view_count: u32,
+        uv_y_top: f32,
+        uv_y_bottom: f32,
+        texture: glow::Texture,
+    ) {
+        self.imposter.draw(
+            gl,
+            viewproj,
+            camera_pos,
+            center,
+            half_width,
+            half_height,
+            view_count,
+            uv_y_top,
+            uv_y_bottom,
+            texture,
+        );
+    }
+
+    /// Upload a new atlas as a GL texture. Re-export of [`ImposterGl::upload_atlas`]
+    /// so the paint callback can hand the bake's RGBA bytes through the
+    /// renderer instead of reaching into the overlay module directly.
+    pub fn upload_imposter_atlas(
+        gl: &glow::Context,
+        rgba: &[u8],
+        width: u32,
+        height: u32,
+    ) -> anyhow::Result<glow::Texture> {
+        ImposterGl::upload_atlas(gl, rgba, width, height)
+    }
+
+    pub fn destroy_imposter_texture(gl: &glow::Context, texture: glow::Texture) {
+        ImposterGl::destroy_texture(gl, texture);
     }
 
     /// Draw the ground reference grid. Meant to be called immediately after

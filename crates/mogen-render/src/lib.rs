@@ -19,6 +19,8 @@ pub mod gizmo_gl;
 mod gl_util;
 pub mod grid_gl;
 pub mod headless;
+#[cfg(target_os = "linux")]
+mod headless_egl;
 pub mod imposter;
 pub mod renderer;
 pub mod shaders;

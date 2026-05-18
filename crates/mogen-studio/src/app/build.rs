@@ -1,12 +1,32 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use eframe::egui;
+use mogen_core::SceneGraph;
+use mogen_export::{ExportOptions, ImposterAtlas};
 
 use crate::pipeline::Stage;
 
+use super::preview::{
+    IMPOSTER_PREVIEW_CELL_SIZE, IMPOSTER_PREVIEW_PITCH, IMPOSTER_PREVIEW_VIEW_COUNT,
+};
 use super::types::BuildOutcome;
 use super::util::run_build;
 use super::MogenStudioApp;
+
+/// Build state held while the viewer pre-bakes the imposter atlas. Once
+/// the bake lands, [`MogenStudioApp::poll_imposter_export`] drains the
+/// outcome and spawns the build worker with the atlas in hand. We hold
+/// the full set of build args here so the spawn doesn't have to re-derive
+/// any of them from the (possibly mutated) app state.
+pub(in crate::app) struct PendingImposterExport {
+    pub scene: SceneGraph,
+    pub out: PathBuf,
+    pub source_dir: Option<PathBuf>,
+    pub opts: ExportOptions,
+    pub file_index: usize,
+    pub ctx: egui::Context,
+}
 
 impl MogenStudioApp {
     /// Open the Build GLB modal with the active file's last-used options. If
@@ -68,24 +88,94 @@ impl MogenStudioApp {
         let opts = self.export_opts_draft.clone();
         self.files[i].export_opts = opts.clone();
 
-        let (tx, rx) = std::sync::mpsc::channel();
-        self.build_rx = Some(rx);
-        *self.build_stage.lock().unwrap() = "starting".into();
-        self.files[i].status = "building glb…".into();
-        let stage = Arc::clone(&self.build_stage);
-        let file_index = i;
-
-        std::thread::spawn(move || {
-            let outcome = run_build(scene, out, source_dir, opts, stage, file_index);
-            let _ = tx.send(outcome);
+        // When the bundle-LODs option is on we must pre-bake the imposter
+        // atlas on the viewer's GL thread before launching the build
+        // worker: eframe owns the only winit `EventLoop` in this process,
+        // so the writer's own headless bake would fail with
+        // `EventLoopError::RecreationAttempt`. Stash the build args, queue
+        // the bake on the viewer, and let `poll_imposter_export` spawn
+        // the worker once the atlas lands.
+        if opts.bundle_lods_and_imposter {
+            *self.build_stage.lock().unwrap() = "baking imposter atlas".into();
+            self.files[i].status = "baking imposter atlas…".into();
+            let scene_arc = Arc::new(scene.clone());
+            self.viewer
+                .submit_imposter_request(crate::viewer::ImposterRequest {
+                    scene: scene_arc,
+                    cell_size: IMPOSTER_PREVIEW_CELL_SIZE,
+                    view_count: IMPOSTER_PREVIEW_VIEW_COUNT,
+                    pitch: IMPOSTER_PREVIEW_PITCH,
+                    base_dir: source_dir.clone(),
+                });
+            self.imposter_export_pending = Some(PendingImposterExport {
+                scene,
+                out,
+                source_dir,
+                opts,
+                file_index: i,
+                ctx: ctx.clone(),
+            });
             ctx.request_repaint();
-        });
+            return;
+        }
+
+        spawn_build_worker(self, ctx, scene, out, source_dir, opts, None, i);
+    }
+
+    /// Drain a finished imposter bake belonging to an in-flight export.
+    /// On success, spawns the build worker with the pre-baked atlas; on
+    /// failure, surfaces the bake error as the build outcome (no GLB is
+    /// written, the user sees the error in the status line and the build
+    /// dialog).
+    pub(super) fn poll_imposter_export(&mut self) {
+        if self.imposter_export_pending.is_none() {
+            return;
+        }
+        let Some(outcome) = self.viewer.take_imposter_outcome() else {
+            return;
+        };
+        let pending = self
+            .imposter_export_pending
+            .take()
+            .expect("checked above");
+        match outcome {
+            Ok(atlas) => {
+                let PendingImposterExport {
+                    scene,
+                    out,
+                    source_dir,
+                    opts,
+                    file_index,
+                    ctx,
+                } = pending;
+                spawn_build_worker(
+                    self,
+                    ctx,
+                    scene,
+                    out,
+                    source_dir,
+                    opts,
+                    Some(atlas),
+                    file_index,
+                );
+            }
+            Err(err) => {
+                *self.build_stage.lock().unwrap() = String::new();
+                if pending.file_index < self.files.len() {
+                    self.files[pending.file_index].status =
+                        format!("imposter bake failed: {err}");
+                }
+            }
+        }
     }
 
     /// Drop the receiver for the in-flight build. The worker keeps running
     /// but its result is discarded — same pattern as `cancel_active_llm`.
     pub(super) fn cancel_build(&mut self) {
-        if self.build_rx.is_none() {
+        // Clear a queued pre-bake too — otherwise a cancelled bundle-LODs
+        // build would still spawn a worker once the bake lands next paint.
+        let had_pending_bake = self.imposter_export_pending.take().is_some();
+        if self.build_rx.is_none() && !had_pending_bake {
             return;
         }
         self.build_rx = None;
@@ -135,6 +225,41 @@ impl MogenStudioApp {
         // Leave the modal open so the user sees the result; the ui code
         // shows a Close button once `build_rx` is None.
     }
+}
+
+/// Launch the GLB build worker. Used both by `spawn_build` (no imposter
+/// pre-bake required) and by `poll_imposter_export` (after the viewer has
+/// finished baking the atlas). Owning this in one place keeps the worker
+/// setup — channel + stage label + status string + repaint nudge —
+/// identical across the two call paths.
+fn spawn_build_worker(
+    app: &mut MogenStudioApp,
+    ctx: egui::Context,
+    scene: SceneGraph,
+    out: PathBuf,
+    source_dir: Option<PathBuf>,
+    opts: ExportOptions,
+    prebaked_imposter: Option<ImposterAtlas>,
+    file_index: usize,
+) {
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.build_rx = Some(rx);
+    *app.build_stage.lock().unwrap() = "starting".into();
+    app.files[file_index].status = "building glb…".into();
+    let stage = Arc::clone(&app.build_stage);
+    std::thread::spawn(move || {
+        let outcome = run_build(
+            scene,
+            out,
+            source_dir,
+            opts,
+            prebaked_imposter,
+            stage,
+            file_index,
+        );
+        let _ = tx.send(outcome);
+        ctx.request_repaint();
+    });
 }
 
 fn format_bytes(n: u64) -> String {

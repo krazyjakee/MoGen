@@ -159,6 +159,13 @@ impl MogenStudioApp {
                 if let Some(scene) = &r.scene {
                     let fit = self.files[i].first_render;
                     self.viewer.set_scene(scene.clone(), base_dir, fit);
+                    // Tab switch path: re-point the imposter view at the
+                    // newly-active scene (or clear it if we left imposter
+                    // mode). Without this, the cached billboard from the
+                    // previously-active tab survives the switch and the
+                    // user sees the old model's silhouette over the new
+                    // scene.
+                    self.sync_imposter_view(Some(scene));
                     self.files[i].first_render = false;
                     return;
                 }
@@ -166,6 +173,7 @@ impl MogenStudioApp {
             _ => {}
         }
         self.viewer.clear();
+        self.sync_imposter_view(None);
     }
 
     /// Entry point for every user-driven tab close (menu, Ctrl+W, tab-strip

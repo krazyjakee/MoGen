@@ -28,6 +28,9 @@ pub use writer::{
     build_glb_with_options, build_glb_with_options_and_source, write_glb, write_glb_with_options,
 };
 
+#[cfg(feature = "imposter")]
+pub use writer::write_glb_with_prebaked_imposter;
+
 #[cfg(feature = "fbx")]
 pub use fbx::{
     build_fbx_with_options, build_fbx_with_options_and_source, write_fbx, write_fbx_with_options,

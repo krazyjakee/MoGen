@@ -23,7 +23,10 @@ mod gizmo;
 mod path;
 mod selection;
 
-pub use capture::{CaptureFrame, CaptureKind, CaptureOutcome, CaptureRequest, EncodePool};
+pub use capture::{
+    CaptureFrame, CaptureKind, CaptureOutcome, CaptureRequest, EncodePool, ImposterOutcome,
+    ImposterRequest, ImposterViewOverlay,
+};
 #[allow(unused_imports)]
 pub use gizmo::{GizmoDrag, PendingEdit, TrackBinding};
 #[allow(unused_imports)]
@@ -166,6 +169,32 @@ pub struct ViewerState {
     /// Lazily created when a capture starts queueing pixels and torn down
     /// once all in-flight encodes have drained at finalisation.
     pub encode_pool: Option<EncodePool>,
+    /// Pending imposter atlas bake. The paint callback consumes this and
+    /// posts the result to `imposter_outcome`. Studio's preview modal and
+    /// the bundle-LODs export both submit through this slot so the bake
+    /// runs on the existing GL context instead of trying to spin up a
+    /// second winit event loop.
+    pub imposter_request: Option<ImposterRequest>,
+    /// Last completed imposter bake awaiting the app to drain. Polled each
+    /// frame by `poll_imposter_preview` / the export pipeline.
+    pub imposter_outcome: Option<ImposterOutcome>,
+    /// Whether the viewport is in imposter-preview mode. When set, the
+    /// paint callback skips the main scene draw and renders the cached
+    /// billboard instead.
+    pub imposter_view_active: bool,
+    /// Set when the cached overlay (if any) is stale and needs re-baking
+    /// next paint. Flipped by `set_imposter_view_scene` on every scene
+    /// recompile so live edits propagate without the user toggling the
+    /// mode off and back on.
+    pub imposter_view_dirty: bool,
+    /// Scene the next imposter view bake should run against. Cloned cheaply
+    /// (it's an `Arc`), kept on the state because the paint callback owns
+    /// no app references.
+    pub imposter_view_scene: Option<Arc<SceneGraph>>,
+    /// Cached atlas texture + extent for the active billboard preview.
+    /// Built in the paint callback the first time the mode is entered (or
+    /// after a re-bake); freed when the mode is left.
+    pub imposter_view_overlay: Option<ImposterViewOverlay>,
     /// Figma-style click drill-down. Records the cursor and raw leaf hit
     /// from the previous viewport click so a repeat click on the same
     /// target can advance the selection one ancestor closer to the leaf.
@@ -207,6 +236,12 @@ impl Default for ViewerState {
             capture_request: None,
             capture_outcome: None,
             encode_pool: None,
+            imposter_request: None,
+            imposter_outcome: None,
+            imposter_view_active: false,
+            imposter_view_dirty: false,
+            imposter_view_scene: None,
+            imposter_view_overlay: None,
             pick_cycle: None,
         }
     }

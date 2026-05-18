@@ -2,7 +2,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use mogen_core::{Diagnostic, SceneGraph, Severity, Span};
-use mogen_export::ExportOptions;
+use mogen_export::{ExportOptions, ImposterAtlas};
 
 pub struct CompileResult {
     /// Shared so the viewer and any other read-only consumers (autocomplete,
@@ -95,6 +95,42 @@ pub fn write_glb_with_source_and_options<F: Fn(&str)>(
         mogen_export::write_glb_with_options(&resolved, path, opts, progress)
     } else {
         mogen_export::write_glb_with_options(scene, path, opts, progress)
+    }
+}
+
+/// Variant of [`write_glb_with_source_and_options`] that hands a caller-
+/// supplied pre-baked imposter atlas to the exporter, sidestepping the
+/// writer's own headless bake. Studio uses this when
+/// `bundle_lods_and_imposter` is on — eframe owns the only winit
+/// `EventLoop`, so the writer-internal bake fails with
+/// `EventLoopError::RecreationAttempt`. Studio bakes via the live GL
+/// context on the viewer thread first and threads the atlas through here.
+pub fn write_glb_with_source_options_and_imposter<F: Fn(&str)>(
+    scene: &SceneGraph,
+    path: &Path,
+    source_dir: Option<&Path>,
+    opts: &ExportOptions,
+    prebaked_imposter: Option<ImposterAtlas>,
+    progress: F,
+) -> anyhow::Result<()> {
+    if let Some(dir) = source_dir {
+        let mut resolved = scene.clone();
+        resolved.resolve_texture_paths(dir);
+        mogen_export::write_glb_with_prebaked_imposter(
+            &resolved,
+            path,
+            opts,
+            prebaked_imposter,
+            progress,
+        )
+    } else {
+        mogen_export::write_glb_with_prebaked_imposter(
+            scene,
+            path,
+            opts,
+            prebaked_imposter,
+            progress,
+        )
     }
 }
 

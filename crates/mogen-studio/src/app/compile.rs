@@ -23,13 +23,38 @@ impl MogenStudioApp {
                     // active; `last_result` keeps the full-detail geometry.
                     let viewer_scene = self.viewer_scene(scene);
                     self.viewer.set_scene(viewer_scene, base_dir, fit);
+                    // Imposter view mode bakes against the full-detail
+                    // scene (not the LOD swap) so the billboard matches
+                    // what the export embeds. Push the scene here on every
+                    // successful recompile so live edits propagate to the
+                    // billboard's atlas naturally.
+                    self.sync_imposter_view(Some(scene));
                     self.files[i].first_render = false;
                 }
-                _ => self.viewer.clear(),
+                _ => {
+                    self.viewer.clear();
+                    // Compile failed — drop any cached billboard so the
+                    // viewport doesn't keep showing a stale imposter.
+                    self.sync_imposter_view(None);
+                }
             }
         }
         self.files[i].last_result = Some(r);
         self.files[i].needs_compile = false;
+    }
+
+    /// Push the current `preview_lod` selection through to the viewer's
+    /// imposter-view slot. Called by every code path that hands a new
+    /// scene to the viewer (compile success, tab switch, scene clear) so
+    /// the cached billboard atlas can't outlive its source scene.
+    pub(super) fn sync_imposter_view(&self, scene: Option<&std::sync::Arc<mogen_core::SceneGraph>>) {
+        if self.preview_lod.is_imposter() {
+            if let Some(s) = scene {
+                self.viewer.set_imposter_view(true, Some(s.clone()));
+                return;
+            }
+        }
+        self.viewer.set_imposter_view(false, None);
     }
 
     /// Trigger a compile if the active MOG file's debounce window has elapsed.

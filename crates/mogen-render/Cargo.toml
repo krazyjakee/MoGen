@@ -20,3 +20,15 @@ glutin = "0.32"
 glutin-winit = "0.5"
 winit = "0.30"
 raw-window-handle = "0.6"
+
+# Linux-only direct EGL bring-up. winit can only own one EventLoop per process
+# (its own restriction), which collides with anything that already runs an
+# event loop in-process — most notably the Godot editor calling into this
+# crate via the godot-mog GDExtension. EGL_KHR_surfaceless_context lets us
+# create a GL context without any window or event loop, so the bake runs the
+# same way whether it's the CLI, headless `godot --headless --script`, or
+# the editor itself. winit+glutin remain the path on macOS/Windows since
+# neither exposes a portable surfaceless GL story.
+[target.'cfg(target_os = "linux")'.dependencies]
+khronos-egl = { version = "6", features = ["dynamic"] }
+libloading = "0.8"
