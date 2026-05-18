@@ -18,6 +18,7 @@ impl MogenStudioApp {
         let mut do_build = false;
         let mut do_cancel = false;
         let mut do_close = false;
+        let mut do_preview_imposter = false;
         let mut save_then_export = false;
         let i = self.active;
         let file_has_path = self.files[i].path.is_some();
@@ -97,6 +98,26 @@ impl MogenStudioApp {
                     );
                 });
 
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui
+                        .button("Preview imposter…")
+                        .on_hover_text(
+                            "Bake and show the imposter spritesheet this option \
+                             embeds, without writing a GLB",
+                        )
+                        .clicked()
+                    {
+                        do_preview_imposter = true;
+                    }
+                    ui.label(
+                        egui::RichText::new(
+                            "LOD stages: use the ◇ picker on the viewport bar.",
+                        )
+                        .weak(),
+                    );
+                });
+
                 ui.add_space(12.0);
 
                 if in_flight {
@@ -158,6 +179,9 @@ impl MogenStudioApp {
         if do_cancel {
             self.cancel_build();
             return;
+        }
+        if do_preview_imposter {
+            self.start_imposter_preview(ctx);
         }
         if do_build {
             let ctx_clone = ctx.clone();

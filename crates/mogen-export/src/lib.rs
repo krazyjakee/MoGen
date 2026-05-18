@@ -17,6 +17,12 @@ mod writer;
 pub mod fbx;
 
 pub use options::ExportOptions;
+
+#[cfg(feature = "lod")]
+pub use lod::{scene_with_lod, LOD_STAGE_COUNT};
+
+#[cfg(feature = "imposter")]
+pub use imposter::{bake_scene_imposter, ImposterAtlas};
 pub use texture::{FsTextureSource, MapTextureSource, TextureSource};
 pub use writer::{
     build_glb_with_options, build_glb_with_options_and_source, write_glb, write_glb_with_options,
