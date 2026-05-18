@@ -5,9 +5,11 @@ use eframe::egui;
 use crate::app::types::UndoKey;
 use crate::app::MogenStudioApp;
 
+mod add_attr;
 mod connections;
 mod deform_rows;
 mod geom_params;
+mod node_problems;
 mod light_editor;
 mod modifiers;
 mod transform_grid;
@@ -129,6 +131,11 @@ impl MogenStudioApp {
         if let Some(target) = connections::render(ui, scene, sel, node) {
             self.viewer.set_primary_selection(Some(target));
         }
+
+        // Validator problems scoped to this node — shown for every kind
+        // (including non-editable array/CSG copies) so the user sees why a
+        // selection is flagged without scanning the global footer.
+        node_problems::render(ui, &result.diagnostics, node.source_span);
 
         if !node.editable {
             ui.add_space(6.0);
@@ -342,6 +349,13 @@ impl MogenStudioApp {
                     delete: Vec::new(),
                 });
             }
+
+            // Schema-driven picker for placement/metadata attrs that have no
+            // dedicated widget (anchor / from-to / relative placement / lod /
+            // role / tags). Emits through the same span-aware edit path.
+            let kind = node.kind.clone();
+            let add_src = self.files[i].source.clone();
+            add_attr::render(ui, &kind, &add_src, span, node_id, &mut edits);
         }
 
         // CSG op switch + array / mirror modifier rows.
