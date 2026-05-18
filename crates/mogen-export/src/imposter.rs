@@ -21,7 +21,7 @@ use crate::{align_up, Accessor, BufferView};
 /// [`mogen_render::imposter::ImposterOptions`] defaults; kept here so the
 /// writer doesn't reach into the renderer crate to discover them.
 const CELL_SIZE: u32 = 256;
-const VIEW_COUNT: u32 = 8;
+pub(crate) const VIEW_COUNT: u32 = 8;
 const PITCH_RADIANS: f32 = 0.5;
 
 /// Outcome of attaching the imposter to a glTF. `mesh_index` and
@@ -37,10 +37,9 @@ pub(crate) struct ImposterEmission {
 /// can append the new root node and update `scene.roots`.
 ///
 /// The PNG embed reuses the GLB texture-table conventions: one
-/// `bufferView` for the bytes, one `image` referencing it, one shared
-/// `sampler` (created here if the table didn't already have one), and one
-/// `texture` pairing them. Re-uses the table's sampler slot 0 when present
-/// so we don't double-emit the standard linear/repeat sampler.
+/// `bufferView` for the bytes, one `image` referencing it, one dedicated
+/// `sampler` (CLAMP_TO_EDGE — the shared PBR sampler uses REPEAT, which
+/// would smear adjacent cells), and one `texture` pairing them.
 pub(crate) fn emit_imposter(
     scene: &SceneGraph,
     bin: &mut Vec<u8>,
@@ -127,8 +126,8 @@ pub(crate) fn emit_imposter(
         "extensions": { "KHR_materials_unlit": {} },
     }));
 
-    // Sized to the scene's XZ extent so the quad frames the model when the
-    // godot-mog shader picks a cell. We use a flat mesh of mogen-core's
+    // Sized to the scene's XY footprint (width × height in world space) so
+    // the quad frames the model when the godot-mog shader picks a cell. Uses a flat mesh of mogen-core's
     // existing `Mesh` so we can hand it straight to the existing accessor
     // helpers — no parallel push paths.
     let (center, radius) = scene_xy_extent(scene);

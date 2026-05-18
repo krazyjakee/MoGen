@@ -9,7 +9,8 @@ use serde_json::{json, Value};
 use mogen_core::{ColliderShape, MaterialId, Mesh, NodeId, SceneGraph, SceneNode};
 
 use crate::accessor::{
-    push_indices, push_joints, push_normals, push_positions, push_uvs, push_weights,
+    push_indices, push_indices_raw, push_joints, push_normals, push_positions, push_uvs,
+    push_weights,
 };
 use crate::animation::emit_animation;
 #[cfg(feature = "imposter")]
@@ -135,6 +136,8 @@ pub fn build_glb_with_options_and_source<F: Fn(&str)>(
     // qualified for simplification. Used after node emission to attach
     // `MSFT_lod` to the owning source node.
     #[cfg(feature = "lod")]
+    let wants_lods = opts.bundle_lods || opts.bundle_lods_and_imposter;
+    #[cfg(feature = "lod")]
     let mut lod_meshes_for_node: Vec<Vec<usize>> = vec![Vec::new(); scene.nodes.len()];
     // Dedupe identical (geometry, material) pairs so left/right-mirrored parts
     // like shoulders and elbows share one mesh entry + one copy of the buffer
@@ -152,7 +155,7 @@ pub fn build_glb_with_options_and_source<F: Fn(&str)>(
                 if let Some(&mi) = mesh_cache.get(&key) {
                     mesh_index_for_node[i] = Some(mi);
                     #[cfg(feature = "lod")]
-                    if opts.bundle_lods_and_imposter {
+                    if wants_lods {
                         if let Some(cached_lods) = lod_cache.get(&key) {
                             lod_meshes_for_node[i] = cached_lods.clone();
                         }
@@ -201,15 +204,16 @@ pub fn build_glb_with_options_and_source<F: Fn(&str)>(
                 // accessors — only the index buffer is regenerated, so the
                 // bin-chunk growth per LOD is just the smaller index list.
                 #[cfg(feature = "lod")]
-                if opts.bundle_lods_and_imposter {
-                    let lod_meshes = lod::build_lod_meshes(mesh);
-                    let mut lod_indices = Vec::with_capacity(lod_meshes.len());
-                    for (lod_idx, lod_mesh) in lod_meshes.iter().enumerate() {
-                        let lod_idx_acc = push_indices(
+                if wants_lods {
+                    let lod_index_lists = lod::build_lod_meshes(mesh);
+                    let mut lod_mi_list = Vec::with_capacity(lod_index_lists.len());
+                    for (stage, lod_indices) in lod_index_lists.iter().enumerate() {
+                        let lod_idx_acc = push_indices_raw(
                             &mut bin,
                             &mut buffer_views,
                             &mut accessors,
-                            lod_mesh,
+                            lod_indices,
+                            mesh.positions.len(),
                         );
                         let mut lod_attrs = serde_json::Map::new();
                         lod_attrs.insert("POSITION".into(), json!(pos_acc));
@@ -226,14 +230,14 @@ pub fn build_glb_with_options_and_source<F: Fn(&str)>(
                         }
                         let lod_mi = meshes.len();
                         meshes.push(json!({
-                            "name": format!("{}__lod{}", n.name, lod_idx + 1),
+                            "name": format!("{}__lod{}", n.name, stage + 1),
                             "primitives": [lod_prim],
                         }));
-                        lod_indices.push(lod_mi);
+                        lod_mi_list.push(lod_mi);
                     }
-                    if !lod_indices.is_empty() {
-                        lod_cache.insert(key, lod_indices.clone());
-                        lod_meshes_for_node[i] = lod_indices;
+                    if !lod_mi_list.is_empty() {
+                        lod_cache.insert(key, lod_mi_list.clone());
+                        lod_meshes_for_node[i] = lod_mi_list;
                     }
                 }
             } else {
@@ -388,7 +392,7 @@ pub fn build_glb_with_options_and_source<F: Fn(&str)>(
             "extras": {
                 "tags": ["imposter"],
                 "imposter": {
-                    "view_count": 8,
+                    "view_count": imposter::VIEW_COUNT,
                     "layout": "yaw_grid",
                     "material": emission.material_index,
                 },

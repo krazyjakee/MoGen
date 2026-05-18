@@ -15,6 +15,11 @@
 
 use mogen_core::Mesh;
 
+/// Per-LOD index list. The positions / normals / UVs of the source mesh are
+/// reused as-is — the simplifier only produces a new index buffer, so
+/// returning just indices avoids cloning O(|V|) vertex data per stage.
+pub(crate) type LodIndices = Vec<u32>;
+
 /// Target triangle ratios for the three LOD stages, in descending detail.
 /// LOD0 (the original) is always emitted at 100%; these fractions drive
 /// LOD1, LOD2, and LOD3 respectively.
@@ -33,11 +38,12 @@ pub(crate) const SCREEN_COVERAGE: [f32; 4] = [0.5, 0.25, 0.1, 0.03];
 /// such meshes as "already small enough".
 const MIN_TRIS_FOR_LOD: usize = 64;
 
-/// Produce up to three progressively simpler copies of `source`. Returns an
-/// empty vector when LOD generation is skipped (skinned mesh, too small, or
-/// the simplifier couldn't reduce further); callers should fall back to
-/// the LOD0-only path in that case.
-pub(crate) fn build_lod_meshes(source: &Mesh) -> Vec<Mesh> {
+/// Produce up to three progressively simpler index lists for `source`.
+/// Returns an empty vector when LOD generation is skipped (skinned mesh,
+/// too small, or the simplifier couldn't reduce further); callers reuse the
+/// source mesh's position / normal / UV accessors and only swap the index
+/// buffer per LOD stage.
+pub(crate) fn build_lod_meshes(source: &Mesh) -> Vec<LodIndices> {
     if source.is_skinned() {
         return Vec::new();
     }
@@ -77,19 +83,7 @@ pub(crate) fn build_lod_meshes(source: &Mesh) -> Vec<Mesh> {
         }
         prev_index_count = new_indices.len();
 
-        // Reuse the original vertex buffer; meshopt's simplifier returns
-        // indices into the same position array. Unreferenced vertices stay
-        // in the buffer — wasted bytes are bounded and the alternative
-        // (`optimize_vertex_fetch`) would force a parallel remap of
-        // normals/UVs we don't otherwise need.
-        out.push(Mesh {
-            positions: source.positions.clone(),
-            normals: source.normals.clone(),
-            uvs: source.uvs.clone(),
-            joints: Vec::new(),
-            weights: Vec::new(),
-            indices: new_indices,
-        });
+        out.push(new_indices);
     }
 
     out
@@ -128,15 +122,15 @@ mod tests {
         let lods = build_lod_meshes(&m);
         assert!(!lods.is_empty(), "expected at least one LOD for a dense mesh");
         let mut prev = m.indices.len();
-        for lod in &lods {
+        for indices in &lods {
             assert!(
-                lod.indices.len() < prev,
+                indices.len() < prev,
                 "LOD {} did not reduce ({} >= {})",
-                lod.indices.len(),
-                lod.indices.len(),
+                indices.len(),
+                indices.len(),
                 prev
             );
-            prev = lod.indices.len();
+            prev = indices.len();
         }
     }
 
@@ -153,7 +147,9 @@ mod tests {
         m.joints = vec![[0, 0, 0, 0]; m.positions.len()];
         m.weights = vec![[1.0, 0.0, 0.0, 0.0]; m.positions.len()];
         assert!(m.is_skinned());
-        let lods = build_lod_meshes(&m);
-        assert!(lods.is_empty(), "skinned meshes should skip LOD generation");
+        assert!(
+            build_lod_meshes(&m).is_empty(),
+            "skinned meshes should skip LOD generation"
+        );
     }
 }

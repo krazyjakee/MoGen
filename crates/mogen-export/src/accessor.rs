@@ -110,6 +110,41 @@ pub(crate) fn push_indices(
     accessors.len() - 1
 }
 
+/// Emit a raw index list, choosing u16 vs u32 based on `vertex_count`.
+/// Used by the LOD pass, which reuses the source mesh's vertex buffer and
+/// only generates new index lists — not full `Mesh` structs.
+pub(crate) fn push_indices_raw(
+    bin: &mut Vec<u8>,
+    views: &mut Vec<BufferView>,
+    accessors: &mut Vec<Accessor>,
+    indices: &[u32],
+    vertex_count: usize,
+) -> usize {
+    let offset = align_up(bin, 4);
+    let use_u16 = vertex_count <= u16::MAX as usize;
+    let (byte_length, component_type) = if use_u16 {
+        for i in indices {
+            bin.extend_from_slice(&(*i as u16).to_le_bytes());
+        }
+        (indices.len() * 2, 5123u32) // UNSIGNED_SHORT
+    } else {
+        for i in indices {
+            bin.extend_from_slice(&i.to_le_bytes());
+        }
+        (indices.len() * 4, 5125u32) // UNSIGNED_INT
+    };
+    views.push(BufferView { buffer: 0, byte_offset: offset, byte_length, target: Some(34963) });
+    accessors.push(Accessor {
+        buffer_view: views.len() - 1,
+        component_type,
+        count: indices.len(),
+        ty: "SCALAR",
+        min: None,
+        max: None,
+    });
+    accessors.len() - 1
+}
+
 pub(crate) fn push_times(
     bin: &mut Vec<u8>,
     views: &mut Vec<BufferView>,

@@ -81,6 +81,53 @@ fn option_off_does_not_emit_lod_or_imposter() {
     assert!(!used, "MSFT_lod should not appear when the option is off");
 }
 
+/// Verify that MSFT_lod is attached to source nodes with three LOD stages.
+/// Uses `bundle_lods` (no imposter bake) so it runs on headless CI too.
+#[test]
+fn lod_only_emits_msft_lod_on_source_node() {
+    let scene = dense_scene(20);
+    let opts = ExportOptions {
+        bundle_lods: true,
+        ..ExportOptions::default()
+    };
+    let bytes = mogen_export::build_glb_with_options(&scene, &opts, |_| {})
+        .expect("export ok — bundle_lods needs no display");
+    let json = parse_glb_json(&bytes);
+    let nodes = json["nodes"].as_array().expect("nodes");
+    let meshes = json["meshes"].as_array().expect("meshes");
+
+    // 1 source mesh + 3 LOD meshes (no imposter with bundle_lods).
+    assert_eq!(
+        meshes.len(),
+        4,
+        "expected 4 meshes (1 source + 3 LODs), got {}",
+        meshes.len()
+    );
+
+    // Source node carries MSFT_lod with three child node ids.
+    let lod_ids = nodes[0]["extensions"]["MSFT_lod"]["ids"]
+        .as_array()
+        .expect("MSFT_lod.ids on source node");
+    assert_eq!(lod_ids.len(), 3, "expected three LOD stages");
+    let coverage = nodes[0]["extras"]["MSFT_screencoverage"]
+        .as_array()
+        .expect("MSFT_screencoverage on source node");
+    assert_eq!(coverage.len(), 4, "coverage has one entry per stage + source");
+
+    let used = json["extensionsUsed"].as_array().expect("extensionsUsed");
+    assert!(
+        used.iter().any(|v| v == "MSFT_lod"),
+        "extensionsUsed should advertise MSFT_lod"
+    );
+
+    // No imposter node should be present.
+    assert!(
+        !nodes.iter().any(|n| n["name"] == "imposter"),
+        "bundle_lods should not emit an imposter node"
+    );
+}
+
+/// Combined LOD + imposter path. Needs a real GL display for the bake.
 #[test]
 fn option_on_emits_msft_lod_on_source_node() {
     let scene = dense_scene(20);
@@ -88,21 +135,11 @@ fn option_on_emits_msft_lod_on_source_node() {
         bundle_lods_and_imposter: true,
         ..ExportOptions::default()
     };
-    let bytes = if cfg!(feature = "imposter") && !has_display() {
-        // No display available — exercise just the LOD half by tearing
-        // off imposter at the option level. The writer still walks the
-        // `#[cfg(feature = "imposter")]` block but skips work because
-        // the flag is off.
-        return;
-    } else {
-        match mogen_export::build_glb_with_options(&scene, &opts, |_| {}) {
-            Ok(b) => b,
-            Err(e) => {
-                eprintln!(
-                    "skipping LOD+imposter integration test: export failed ({e:#})"
-                );
-                return;
-            }
+    let bytes = match mogen_export::build_glb_with_options(&scene, &opts, |_| {}) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("skipping LOD+imposter integration test: export failed ({e:#})");
+            return;
         }
     };
     let json = parse_glb_json(&bytes);
