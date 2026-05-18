@@ -95,9 +95,9 @@ fn enum_row(
     out: &mut Vec<(&'static str, String)>,
 ) {
     ui.label(label);
-    let shown = current.clone().unwrap_or_else(|| fallback.to_string());
+    let shown = current.as_deref().unwrap_or(fallback);
     egui::ComboBox::from_id_salt(("geom_enum", attr))
-        .selected_text(&shown)
+        .selected_text(shown)
         .show_ui(ui, |ui| {
             for opt in options {
                 let selected = shown == *opt;
@@ -354,7 +354,7 @@ pub(in crate::app) fn geom_params_for_kind(
             int_row(ui, "Samples", "samples",
                 read(src, span, "samples").unwrap_or(4.0) as i32, 1, 16, out);
             int_row(ui, "Seed", "seed",
-                read(src, span, "seed").unwrap_or(1.0) as i32, 0, 1_000_000, out);
+                read(src, span, "seed").unwrap_or(1.0) as i32, 1, 1_000_000, out);
             scalar_row(ui, "Jitter", "jitter",
                 read(src, span, "jitter").unwrap_or(0.2), 0.02, out);
             int_row(ui, "Leaves", "leaves",
@@ -374,12 +374,13 @@ pub(in crate::app) fn geom_params_for_kind(
             // free-text style attrs are intentionally skipped — they need a
             // module/material picker, not a numeric grid.
             int_row(ui, "Seed", "seed",
-                read(src, span, "seed").unwrap_or(1.0) as i32, 0, 1_000_000, out);
+                read(src, span, "seed").unwrap_or(1.0) as i32, 1, 1_000_000, out);
             enum_row(ui, "Style", "style",
                 read_str(src, span, "style"), "grid",
-                &["grid", "apartment-block"], out);
+                &["grid", "apartment-block", "hotel-corridor", "office-core", "radial", "organic", "maze"], out);
             enum_row(ui, "Roof", "roof",
-                read_str(src, span, "roof"), "flat", &["flat"], out);
+                read_str(src, span, "roof"), "flat",
+                &["flat", "gabled", "pitched", "hipped", "mansard", "shed"], out);
             scalar_row(ui, "Floor area m²", "floor_area",
                 read(src, span, "floor_area").unwrap_or(120.0), 1.0, out);
             int_row(ui, "Rooms", "rooms",
@@ -407,7 +408,7 @@ pub(in crate::app) fn geom_params_for_kind(
             scalar_row(ui, "Ceiling thickness", "ceiling_thickness",
                 read(src, span, "ceiling_thickness").unwrap_or(0.2), 0.005, out);
             int_row(ui, "Entrances", "entrances",
-                read(src, span, "entrances").unwrap_or(1.0) as i32, 0, 64, out);
+                read(src, span, "entrances").unwrap_or(1.0) as i32, 1, 64, out);
             int_row(ui, "Elevators", "elevators",
                 read(src, span, "elevators").unwrap_or(0.0) as i32, 0, 32, out);
             int_row(ui, "Staircases", "staircases",
