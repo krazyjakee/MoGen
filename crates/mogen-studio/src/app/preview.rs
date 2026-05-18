@@ -166,7 +166,12 @@ impl MogenStudioApp {
         let msg = match self.imposter_rx.as_ref() {
             Some(rx) => match rx.try_recv() {
                 Ok(m) => m,
-                Err(_) => return,
+                Err(std::sync::mpsc::TryRecvError::Empty) => return,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.imposter_rx = None;
+                    self.imposter_err = Some("imposter bake thread died unexpectedly".into());
+                    return;
+                }
             },
             None => return,
         };

@@ -212,6 +212,22 @@ mod tests {
     }
 
     #[test]
+    fn scene_with_lod_out_of_range_returns_full_detail() {
+        use mogen_core::{SceneGraph, Transform};
+        let mut scene = SceneGraph::new();
+        let node = scene.add_root("big", "box", Transform::default());
+        scene.set_mesh(node, dense_grid(20));
+        let src_len = scene.nodes[node.0 as usize].mesh.as_ref().unwrap().indices.len();
+
+        let out = scene_with_lod(&scene, LOD_STAGE_COUNT + 1);
+        assert_eq!(
+            out.nodes[node.0 as usize].mesh.as_ref().unwrap().indices.len(),
+            src_len,
+            "out-of-range stage should return full-detail clone"
+        );
+    }
+
+    #[test]
     fn skinned_mesh_skips_lod_generation() {
         let mut m = dense_grid(20);
         m.joints = vec![[0, 0, 0, 0]; m.positions.len()];

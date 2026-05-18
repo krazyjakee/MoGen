@@ -34,15 +34,6 @@ pub(crate) struct ImposterEmission {
     pub(crate) material_index: usize,
 }
 
-/// Bake the imposter, embed the PNG, and emit the billboard mesh +
-/// material. Returns indices into the freshly-mutated tables so the writer
-/// can append the new root node and update `scene.roots`.
-///
-/// The PNG embed reuses the GLB texture-table conventions: one
-/// `bufferView` for the bytes, one `image` referencing it, one shared
-/// `sampler` (created here if the table didn't already have one), and one
-/// `texture` pairing them. Re-uses the table's sampler slot 0 when present
-/// so we don't double-emit the standard linear/repeat sampler.
 /// Bake the scene-wide imposter spritesheet exactly as
 /// `bundle_lods_and_imposter` would embed it — same cell size, view count,
 /// and pitch — without writing a GLB. Studio's imposter preview shows the
@@ -62,6 +53,15 @@ pub fn bake_scene_imposter(scene: &SceneGraph) -> Result<ImposterAtlas> {
     .context("baking imposter atlas")
 }
 
+/// Bake the imposter, embed the PNG, and emit the billboard mesh +
+/// material. Returns indices into the freshly-mutated tables so the writer
+/// can append the new root node and update `scene.roots`.
+///
+/// The PNG embed reuses the GLB texture-table conventions: one
+/// `bufferView` for the bytes, one `image` referencing it, one shared
+/// `sampler` (created here if the table didn't already have one), and one
+/// `texture` pairing them. Re-uses the table's sampler slot 0 when present
+/// so we don't double-emit the standard linear/repeat sampler.
 pub(crate) fn emit_imposter(
     scene: &SceneGraph,
     bin: &mut Vec<u8>,
