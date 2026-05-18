@@ -575,10 +575,14 @@ fn emit_synthetic_stair(
     let tread = flight_d / steps as f32;
     let actual_rise = rise / steps as f32;
     for i in 0..steps {
-        let step_height = actual_rise * (i as f32 + 1.0);
-        let step_centre_y = 0.5 * step_height;
+        // Single-rise block at the step's true elevation — matches
+        // stair_simple. The under-side traces a stepped diagonal so a
+        // half-flight stacked directly above (same x-half on the next
+        // storey) leaves clear headroom for the climber below instead
+        // of capping it at half-rise.
+        let step_centre_y = actual_rise * (i as f32 + 0.5);
         let step_centre_z = -0.5 * flight_d + (i as f32 + 0.5) * tread;
-        let mesh = box_mesh([flight_w - 0.1, step_height, tread], UvMode::Tile);
+        let mesh = box_mesh([flight_w - 0.1, actual_rise, tread], UvMode::Tile);
         let step_id = graph.add_child(
             parent,
             format!("step_{i}"),
