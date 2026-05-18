@@ -1,10 +1,10 @@
-// summary: Simple straight-flight staircase. Authored along +Z: bottom step at z=-depth/2 (y=0), top step at z=+depth/2 (y=$rise). `width`/`depth` are the floorplan footprint; `rise` is the vertical distance from one floor to the next; `steps` is the tread count (default 14 gives ~0.2 m per step for a 2.8 m rise). Each tread is a right-triangle approximation: a box rising from y=0 to its top surface, so the underside of the flight is closed. Tread depth fills `$depth / $steps` exactly so adjacent treads butt flush — any z gap would leak the floor below through the riser face.
+// summary: Simple straight-flight staircase. Authored along +Z: bottom step at z=-depth/2 (y=0), top step at z=+depth/2 (y=$rise). `width`/`depth` are the floorplan footprint; `rise` is the vertical distance from one floor to the next; `steps` is the tread count (default 14 gives ~0.2 m per step for a 2.8 m rise). Each tread is a single-rise box stacked at its true elevation, so the underside follows the stair as a stepped diagonal — when another flight is stacked directly above (switchback half-flights between storeys), the climber below keeps `rise − rise/steps` of headroom along the entire ascent instead of losing it at the top. Tread depth fills `$depth / $steps` exactly so adjacent treads butt flush — any z gap would leak the floor below through the riser face.
 module "stair_simple" (width=2.0, depth=3.0, rise=2.8, steps=14) {
   group "stair_simple" {
     for (var="i", from=0, to=$steps) {
       box "step_$i" (
-        pos=[0, $rise * ($i + 1) / $steps * 0.5, $depth * -0.5 + ($i + 0.5) * $depth / $steps],
-        size=[$width - 0.1, $rise * ($i + 1) / $steps, $depth / $steps]
+        pos=[0, $rise * ($i + 0.5) / $steps, $depth * -0.5 + ($i + 0.5) * $depth / $steps],
+        size=[$width - 0.1, $rise / $steps, $depth / $steps]
       )
     }
   }
