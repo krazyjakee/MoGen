@@ -144,6 +144,26 @@ impl MogenStudioApp {
             ui.label(format!("joints: {joints}"));
         }
 
+        // LOD-preview note. The counts above are always full-detail (they
+        // come from `last_result`, which the LOD preview never touches), so
+        // flag when the viewport is showing simplified geometry instead.
+        if self.preview_lod != crate::app::preview::PreviewLod::Full {
+            ui.add_space(4.0);
+            ui.colored_label(
+                egui::Color32::from_rgb(240, 200, 140),
+                format!(
+                    "previewing {} — viewport geometry is simplified; \
+                     counts above are full-detail",
+                    self.preview_lod.short()
+                ),
+            )
+            .on_hover_text(
+                "The LOD preview renders the geometry a \
+                 `bundle_lods_and_imposter` build would ship at this stage. \
+                 Switch back to Full on the viewport ◇ picker.",
+            );
+        }
+
         // Polygon count slider — multiplies primitive default segment/ring
         // counts at lower-time. Reads the live value out of source so it
         // stays in sync if the user edits the directive in the text editor.

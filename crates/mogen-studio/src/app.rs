@@ -31,6 +31,7 @@ mod moghub_open;
 mod multi_caret;
 mod oauth_ui;
 mod onboarding;
+mod preview;
 mod pricing;
 mod publish_textures;
 mod spotlight;
@@ -242,6 +243,19 @@ pub struct MogenStudioApp {
     /// "writing glb", …). Read every frame to drive the modal status line.
     /// Shared because the worker thread updates it mid-build.
     build_stage: Arc<Mutex<String>>,
+
+    /// Viewport LOD-detail preview. `Full` shows compiled geometry untouched;
+    /// the LOD stages render the simplified geometry a
+    /// `bundle_lods_and_imposter` build would ship. Transient (not persisted)
+    /// — it's a preview, not a project setting.
+    preview_lod: preview::PreviewLod,
+    /// Imposter-preview modal: open flag, in-flight bake channel, the loaded
+    /// atlas texture, and the last bake error (mutually exclusive with a
+    /// loaded preview).
+    show_imposter: bool,
+    imposter_rx: Option<Receiver<Result<preview::ImposterBake, String>>>,
+    imposter_preview: Option<preview::ImposterPreview>,
+    imposter_err: Option<String>,
 
     viewer: Viewer,
 
@@ -542,6 +556,11 @@ impl MogenStudioApp {
             export_opts_draft: ExportOptions::default(),
             build_rx: None,
             build_stage: Arc::new(Mutex::new(String::new())),
+            preview_lod: preview::PreviewLod::default(),
+            show_imposter: false,
+            imposter_rx: None,
+            imposter_preview: None,
+            imposter_err: None,
             oauth_login_rx: None,
             oauth_login_provider: None,
             oauth_status_message: None,
@@ -851,6 +870,7 @@ impl eframe::App for MogenStudioApp {
         self.poll_meta_generate();
         self.poll_ask();
         self.poll_build();
+        self.poll_imposter_preview(ctx);
         self.poll_oauth_login();
         self.poll_update();
         self.poll_generate(ctx);
@@ -1044,6 +1064,7 @@ impl eframe::App for MogenStudioApp {
         self.ui_quit_confirm(ctx);
         self.ui_close_confirm(ctx);
         self.ui_export_dialog(ctx);
+        self.ui_imposter_preview(ctx);
         self.ui_external_conflict(ctx);
         self.ui_about(ctx);
         self.community_window(ctx);
@@ -1073,6 +1094,7 @@ impl eframe::App for MogenStudioApp {
             || self.any_ask_in_flight()
             || self.any_meta_generate_in_flight()
             || self.build_rx.is_some()
+            || self.imposter_rx.is_some()
             || self.update_in_flight()
         {
             ctx.request_repaint_after(std::time::Duration::from_millis(120));

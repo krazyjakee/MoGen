@@ -348,6 +348,8 @@ impl MogenStudioApp {
             });
 
             let mut chosen_theme: Option<Theme> = None;
+            let mut chosen_lod: Option<crate::app::preview::PreviewLod> = None;
+            let mut do_imposter_preview = false;
             ui.menu_button("View", |ui| {
                 if shortcut_menu_item(
                     ui,
@@ -407,6 +409,38 @@ impl MogenStudioApp {
                     let _ = self.settings.save();
                 }
                 ui.separator();
+                ui.menu_button("LOD Preview", |ui| {
+                    use crate::app::preview::PREVIEW_LODS;
+                    let cur = self.preview_lod;
+                    for l in PREVIEW_LODS {
+                        let selected = l == cur;
+                        if ui
+                            .selectable_label(selected, l.label())
+                            .clicked()
+                            && !selected
+                        {
+                            chosen_lod = Some(l);
+                            ui.close_menu();
+                        }
+                    }
+                    ui.separator();
+                    if ui
+                        .button("Imposter atlas…")
+                        .on_hover_text(
+                            "Bake and show the scene-wide imposter spritesheet the \
+                             `bundle_lods_and_imposter` export embeds",
+                        )
+                        .clicked()
+                    {
+                        do_imposter_preview = true;
+                        ui.close_menu();
+                    }
+                })
+                .response
+                .on_hover_text(
+                    "Render the simplified LOD geometry / imposter the export bundles",
+                );
+                ui.separator();
                 ui.menu_button("Theme", |ui| {
                     let current = self.settings.theme();
                     for t in THEMES {
@@ -453,6 +487,13 @@ impl MogenStudioApp {
                 self.settings.set_theme(t);
                 apply_theme(ui.ctx(), t);
                 let _ = self.settings.save();
+            }
+            if let Some(l) = chosen_lod {
+                self.set_preview_lod(l);
+            }
+            if do_imposter_preview {
+                let ctx = ui.ctx().clone();
+                self.start_imposter_preview(&ctx);
             }
 
             ui.menu_button("Community", |ui| {

@@ -14,6 +14,8 @@ use serde_json::{json, Value};
 
 use mogen_core::{Mesh, SceneGraph};
 
+pub use mogen_render::imposter::ImposterAtlas;
+
 use crate::accessor::{push_indices, push_normals, push_positions, push_uvs};
 use crate::{align_up, Accessor, BufferView};
 
@@ -41,6 +43,25 @@ pub(crate) struct ImposterEmission {
 /// `sampler` (created here if the table didn't already have one), and one
 /// `texture` pairing them. Re-uses the table's sampler slot 0 when present
 /// so we don't double-emit the standard linear/repeat sampler.
+/// Bake the scene-wide imposter spritesheet exactly as
+/// `bundle_lods_and_imposter` would embed it — same cell size, view count,
+/// and pitch — without writing a GLB. Studio's imposter preview shows the
+/// returned atlas so the user sees the precise artifact the export bundles.
+/// Requires a working display server (headless GL bake), same as the export
+/// path.
+pub fn bake_scene_imposter(scene: &SceneGraph) -> Result<ImposterAtlas> {
+    mogen_render::imposter::bake_yaw_atlas(
+        scene,
+        &mogen_render::imposter::ImposterOptions {
+            cell_size: CELL_SIZE,
+            view_count: VIEW_COUNT,
+            pitch: PITCH_RADIANS,
+            base_dir: None,
+        },
+    )
+    .context("baking imposter atlas")
+}
+
 pub(crate) fn emit_imposter(
     scene: &SceneGraph,
     bin: &mut Vec<u8>,

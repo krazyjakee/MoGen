@@ -13,12 +13,17 @@
 //! common case anyway — the building / furniture pipelines we ship target
 //! exactly that population.
 
-use mogen_core::Mesh;
+use mogen_core::{Mesh, SceneGraph};
 
 /// Target triangle ratios for the three LOD stages, in descending detail.
 /// LOD0 (the original) is always emitted at 100%; these fractions drive
 /// LOD1, LOD2, and LOD3 respectively.
 pub(crate) const LOD_RATIOS: [f32; 3] = [0.5, 0.25, 0.12];
+
+/// Number of simplified LOD stages the `bundle_lods_and_imposter` export
+/// attaches per mesh (LOD1..LOD3 — LOD0 is the untouched original). Exposed
+/// so Studio's LOD preview can offer exactly the stages the export bundles.
+pub const LOD_STAGE_COUNT: usize = LOD_RATIOS.len();
 
 /// Screen-coverage thresholds stamped into `extras.MSFT_screencoverage`.
 /// Per the spec this is parallel to `[source, LOD1, LOD2, LOD3]` — index 0
@@ -95,6 +100,32 @@ pub(crate) fn build_lod_meshes(source: &Mesh) -> Vec<Mesh> {
     out
 }
 
+/// Clone `scene`, swapping every mesh for its `stage`-th simplified LOD so
+/// the result is exactly the geometry a `bundle_lods_and_imposter` export
+/// would ship at that detail level. `stage` is 1-based: `1` → LOD1 (≈50%
+/// tris), `2` → LOD2 (≈25%), `3` → LOD3 (≈12%). A node whose mesh is
+/// skinned, too small, or can't be simplified that far keeps its original
+/// geometry — the same per-mesh fallback the GLB writer applies, so the
+/// preview never shows geometry the export wouldn't.
+///
+/// `stage == 0` (or out of range) returns a plain clone (full detail). Used
+/// by Studio's viewport LOD preview; the export path itself attaches all
+/// stages via `MSFT_lod` rather than collapsing to one.
+pub fn scene_with_lod(scene: &SceneGraph, stage: usize) -> SceneGraph {
+    let mut out = scene.clone();
+    if stage == 0 || stage > LOD_STAGE_COUNT {
+        return out;
+    }
+    for node in &mut out.nodes {
+        let Some(mesh) = &node.mesh else { continue };
+        let lods = build_lod_meshes(mesh);
+        if let Some(reduced) = lods.into_iter().nth(stage - 1) {
+            node.mesh = Some(reduced);
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -145,6 +176,39 @@ mod tests {
         let m = dense_grid(4); // 16 verts, 18 tris — under MIN_TRIS_FOR_LOD.
         let lods = build_lod_meshes(&m);
         assert!(lods.is_empty(), "small meshes should skip LOD generation");
+    }
+
+    #[test]
+    fn scene_with_lod_swaps_dense_meshes_and_keeps_small_ones() {
+        use mogen_core::{SceneGraph, Transform};
+        let mut scene = SceneGraph::new();
+        let big = scene.add_root("big", "box", Transform::default());
+        scene.set_mesh(big, dense_grid(20));
+        let small = scene.add_root("small", "box", Transform::default());
+        scene.set_mesh(small, dense_grid(4));
+
+        let src_big = scene.nodes[big.0 as usize].mesh.clone().unwrap();
+        let src_small = scene.nodes[small.0 as usize].mesh.clone().unwrap();
+
+        let lod1 = scene_with_lod(&scene, 1);
+        let out_big = lod1.nodes[big.0 as usize].mesh.as_ref().unwrap();
+        let out_small = lod1.nodes[small.0 as usize].mesh.as_ref().unwrap();
+        assert!(
+            out_big.indices.len() < src_big.indices.len(),
+            "dense mesh should be simplified at LOD1"
+        );
+        assert_eq!(
+            out_small.indices.len(),
+            src_small.indices.len(),
+            "sub-threshold mesh should keep its original geometry"
+        );
+
+        // Stage 0 / out of range = untouched full-detail clone.
+        let full = scene_with_lod(&scene, 0);
+        assert_eq!(
+            full.nodes[big.0 as usize].mesh.as_ref().unwrap().indices.len(),
+            src_big.indices.len()
+        );
     }
 
     #[test]

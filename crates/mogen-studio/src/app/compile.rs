@@ -19,7 +19,10 @@ impl MogenStudioApp {
             match &r.scene {
                 Some(scene) if matches!(r.stage, Stage::Ok) => {
                     let fit = self.files[i].first_render;
-                    self.viewer.set_scene(scene.clone(), base_dir, fit);
+                    // Hand the viewer the LOD-preview scene when one is
+                    // active; `last_result` keeps the full-detail geometry.
+                    let viewer_scene = self.viewer_scene(scene);
+                    self.viewer.set_scene(viewer_scene, base_dir, fit);
                     self.files[i].first_render = false;
                 }
                 _ => self.viewer.clear(),

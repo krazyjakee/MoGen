@@ -157,6 +157,59 @@ impl MogenStudioApp {
                                 }
                             });
                             ui.separator();
+                            // LOD-detail preview picker. Renders exactly the
+                            // simplified geometry a `bundle_lods_and_imposter`
+                            // build would ship at each stage; "Imposter…"
+                            // bakes the spritesheet the export embeds. Not
+                            // persisted — it's a transient preview, and
+                            // disabled in cinema mode like the other editor
+                            // controls.
+                            ui.add_enabled_ui(!cinema_on, |ui| {
+                                use crate::app::preview::{PreviewLod, PREVIEW_LODS};
+                                let cur_lod = self.preview_lod;
+                                let mut chosen_lod: Option<PreviewLod> = None;
+                                let mut bake_imposter = false;
+                                let label = format!("◇ {}", cur_lod.short());
+                                ui.menu_button(label, |ui| {
+                                    ui.label(egui::RichText::new("LOD preview").strong());
+                                    ui.separator();
+                                    for l in PREVIEW_LODS {
+                                        let selected = l == cur_lod;
+                                        if ui
+                                            .selectable_label(selected, l.label())
+                                            .clicked()
+                                            && !selected
+                                        {
+                                            chosen_lod = Some(l);
+                                            ui.close_menu();
+                                        }
+                                    }
+                                    ui.separator();
+                                    if ui
+                                        .button("Imposter…")
+                                        .on_hover_text(
+                                            "Bake and show the scene-wide imposter \
+                                             billboard spritesheet the export embeds",
+                                        )
+                                        .clicked()
+                                    {
+                                        bake_imposter = true;
+                                        ui.close_menu();
+                                    }
+                                })
+                                .response
+                                .on_hover_text(
+                                    "Preview the LOD stages / imposter the \
+                                     `bundle_lods_and_imposter` export bundles",
+                                );
+                                if let Some(l) = chosen_lod {
+                                    self.set_preview_lod(l);
+                                }
+                                if bake_imposter {
+                                    self.start_imposter_preview(ctx);
+                                }
+                            });
+                            ui.separator();
                             // Environment-lighting preset picker. Drives the
                             // analytic sky probe and the fallback key/fill
                             // rig the shader uses when the scene declares no
