@@ -91,6 +91,63 @@ fn switchback_emits_a_mid_landing_per_pair() {
 }
 
 #[test]
+fn stair_steps_have_constant_rise_not_growing_boxes() {
+    // Stair treads must be single-rise blocks at their true elevation,
+    // not growing boxes that span y=0..tread_top. The growing-box layout
+    // makes the under-side a flat plane at the flight base, so the
+    // half-flight stacked directly above (same x-half on the next
+    // storey) capped headroom at half_rise (= 1.4 m for a 2.8 m step).
+    // Constant-rise blocks keep the under-side parallel to the treads
+    // so the climber below has room to stand the whole way up.
+    let g = lower_src(MULTI_FLOOR_SRC);
+    // Walk every stair_flight subtree and grab the per-step box meshes.
+    // The stair_simple module emits them as `box "step_$i"` children
+    // (no role) so we match by name rather than role.
+    let mut heights: Vec<f32> = Vec::new();
+    let mut frontier: Vec<usize> = g
+        .nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, n)| n.role.as_deref() == Some("stair_flight"))
+        .map(|(i, _)| i)
+        .collect();
+    while let Some(i) = frontier.pop() {
+        for c in &g.nodes[i].children {
+            let idx = c.0 as usize;
+            let n = &g.nodes[idx];
+            if n.name.starts_with("step_") {
+                if let Some(mesh) = &n.mesh {
+                    let (mut ymin, mut ymax) = (f32::INFINITY, f32::NEG_INFINITY);
+                    for p in &mesh.positions {
+                        ymin = ymin.min(p[1]);
+                        ymax = ymax.max(p[1]);
+                    }
+                    heights.push(ymax - ymin);
+                }
+            }
+            frontier.push(idx);
+        }
+    }
+    assert!(!heights.is_empty(), "no stair step meshes emitted");
+    let max_h = heights.iter().cloned().fold(0.0f32, f32::max);
+    let min_h = heights.iter().cloned().fold(f32::INFINITY, f32::min);
+    assert!(
+        (max_h - min_h).abs() < 1e-3,
+        "stair step heights should be constant (single-rise blocks), \
+         saw min={min_h} max={max_h} — a growing spread means the under-stair \
+         is flat and steals headroom from the flight below"
+    );
+    // Sanity: with half_rise = 1.4 m and target ~0.18 m per step, the
+    // half-flight gets 8 steps so actual_rise ≈ 0.175 m. Each block
+    // should hover near that, not the full half_rise.
+    assert!(
+        max_h < 0.5,
+        "step height {max_h} is suspiciously tall — looks like the old \
+         growing-box layout (top step ≈ half_rise) is back"
+    );
+}
+
+#[test]
 fn flight_handrails_sit_on_each_flights_own_spine_edge() {
     // The lower (east) flight's spine-facing edge is at +spine/2; its
     // rail centre belongs at +(spine/2 + thickness/2), with the rail's

@@ -240,6 +240,10 @@ fn compile_with_cache(
         include_animations: true,
         include_textures: true,
         merge_sibling_meshes: true,
+        // wasm builds disable both the `lod` and `imposter` features, so
+        // this flag is a no-op even if some path through the bridge ever
+        // sets it.
+        bundle_lods_and_imposter: false,
     };
     let texture_source = MapTextureSource::new(textures);
     match build_glb_with_options_and_source(&scene, &opts, &texture_source, |_| {}) {
