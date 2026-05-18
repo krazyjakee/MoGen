@@ -1,0 +1,151 @@
+//! Elevator shaft emission for multi-storey buildings.
+
+use anyhow::Result;
+use glam::{Quat, Vec3};
+
+use mogen_core::{NodeId, SceneGraph, Transform};
+
+use crate::ast::Node;
+use crate::lower::building::circulation::CirculationCell;
+use crate::lower::building::config::BuildingCfg;
+use crate::lower::building::layout::{CellKind, StoreyPlate};
+
+use super::{
+    emit_shaft_enclosure, inherit_material_from_chain, shaft_face_adjacencies, storey_label,
+};
+use super::super::openings::elevator_door_z;
+use super::super::wall_build::wall_with_holes;
+
+pub(super) fn emit_elevator(
+    node: &Node,
+    cfg: &BuildingCfg,
+    cell: &CirculationCell,
+    idx: usize,
+    bottom_storey: i32,
+    top_storey: i32,
+    storeys: &[StoreyPlate],
+    parent: NodeId,
+    graph: &mut SceneGraph,
+) -> Result<()> {
+    let origin = node.origin.clone();
+    let centre = cell.rect.centre();
+    let step = cfg.ceiling_height + cfg.ceiling_thickness;
+    let storeys_spanned = (top_storey - bottom_storey + 1).max(1) as f32;
+    let total_h = storeys_spanned * step;
+    let y_centre = bottom_storey as f32 * step + 0.5 * total_h - 0.5 * cfg.ceiling_thickness;
+
+    let shaft_group = graph.add_child(
+        parent,
+        format!("elevator_{idx}"),
+        "group",
+        Transform::from_trs(
+            Vec3::new(centre[0], y_centre, centre[1]),
+            Quat::IDENTITY,
+            Vec3::ONE,
+        ),
+    );
+    graph.nodes[shaft_group.0 as usize].origin = origin.clone();
+    graph.nodes[shaft_group.0 as usize].role = Some("elevator".into());
+    graph.nodes[shaft_group.0 as usize]
+        .tags
+        .extend(["building".into(), "elevator".into()]);
+
+    // N/E/S solid walls, full-height. The W face is split into one piece
+    // per storey below so each storey's door cutout can shift along Z to
+    // match its own room layout — a single full-height wall could only
+    // hold one X column per door (wall_with_holes merges X-overlapping
+    // spans), so the per-storey shifts would smear into one giant hole.
+    let (adj_n, adj_e, adj_s) = shaft_face_adjacencies(&cell.rect, storeys);
+    emit_shaft_enclosure(
+        cell.rect.width(),
+        cell.rect.depth(),
+        total_h,
+        adj_n,
+        adj_e,
+        adj_s,
+        shaft_group,
+        graph,
+        &origin,
+    );
+    emit_elevator_west_walls(
+        cfg,
+        cell,
+        storeys,
+        bottom_storey,
+        top_storey,
+        y_centre,
+        shaft_group,
+        graph,
+        &origin,
+    );
+    Ok(())
+}
+
+/// Per-storey west wall pieces for the elevator. Each piece is one
+/// `step` (ceiling + slab) tall, stacks flush against its neighbours, and
+/// carries this storey's door cutout at the Z chosen by
+/// `openings::elevator_door_z` — shifted off-centre when a room-room
+/// interior wall would T-junction the elevator's west face inside the
+/// cutout volume.
+#[allow(clippy::too_many_arguments)]
+fn emit_elevator_west_walls(
+    cfg: &BuildingCfg,
+    cell: &CirculationCell,
+    storeys: &[StoreyPlate],
+    bottom_storey: i32,
+    top_storey: i32,
+    y_centre: f32,
+    group: NodeId,
+    graph: &mut SceneGraph,
+    origin: &Option<std::path::PathBuf>,
+) {
+    let cell_w = cell.rect.width();
+    let cell_d = cell.rect.depth();
+    let step = cfg.ceiling_height + cfg.ceiling_thickness;
+    let thickness = 0.05;
+    let half = 0.5 * thickness;
+    let elev_centre_z = 0.5 * (cell.rect.z_min + cell.rect.z_max);
+    let door_w_default = cfg.door_w * 1.5;
+    let door_h = cfg.door_h;
+    let w_length = cell_d + 0.1;
+
+    for sp in storeys {
+        let s = sp.storey;
+        if s < bottom_storey || s > top_storey {
+            continue;
+        }
+        let elev_cell = sp.plate.rooms.iter().find(|c| {
+            matches!(c.kind, CellKind::Elevator)
+                && (c.rect.x_min - cell.rect.x_min).abs() < 1e-3
+                && (c.rect.z_min - cell.rect.z_min).abs() < 1e-3
+        });
+        let z_world = match elev_cell {
+            Some(ec) => elevator_door_z(cfg, &sp.plate, ec),
+            None => elev_centre_z,
+        };
+        // Wall rotation = +π/2 about Y, so wall local +X maps to parent
+        // local -Z. Door at parent (elevator-group) local Z =
+        // z_world - elev_centre_z ⇒ wall local x = elev_centre_z - z_world.
+        let along = elev_centre_z - z_world;
+
+        let storey_y = s as f32 * step;
+        let piece_centre_y = storey_y + 0.5 * cfg.ceiling_height - y_centre;
+        let piece_height = step;
+        // Door bottom flush with the storey floor (= piece bottom + ct/2).
+        let cy_local = -0.5 * piece_height + 0.5 * door_h + 0.5 * cfg.ceiling_thickness;
+        let hole = [along, cy_local, door_w_default, door_h];
+        let mesh = wall_with_holes([w_length, piece_height, thickness], &[hole]);
+        let pos = Vec3::new(-0.5 * cell_w - half, piece_centre_y, 0.0);
+        let rot = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
+        let id = graph.add_child(
+            group,
+            format!("shaft_wall_w_{}", storey_label(s)),
+            "wall",
+            Transform::from_trs(pos, rot, Vec3::ONE),
+        );
+        graph.set_mesh(id, mesh);
+        graph.nodes[id.0 as usize].origin = origin.clone();
+        graph.nodes[id.0 as usize].role = Some("shaft_wall".into());
+        inherit_material_from_chain(id, graph);
+    }
+}

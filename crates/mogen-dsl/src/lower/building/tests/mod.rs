@@ -29,6 +29,23 @@ pub(super) fn count_role(g: &SceneGraph, role: &str) -> usize {
         .count()
 }
 
+/// Accumulate translations up the parent chain to get a node's world position.
+/// Works for axis-aligned building hierarchies (no rotation along the path).
+pub(super) fn world_translation(g: &SceneGraph, idx: usize) -> (f32, f32, f32) {
+    let mut x = 0.0_f32;
+    let mut y = 0.0_f32;
+    let mut z = 0.0_f32;
+    let mut cur = Some(mogen_core::NodeId(idx as u32));
+    while let Some(id) = cur {
+        let n = &g.nodes[id.0 as usize];
+        x += n.transform.translation.x;
+        y += n.transform.translation.y;
+        z += n.transform.translation.z;
+        cur = n.parent;
+    }
+    (x, y, z)
+}
+
 pub(super) fn slab_ceiling_count(g: &SceneGraph) -> usize {
     g.nodes
         .iter()

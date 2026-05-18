@@ -1,4 +1,4 @@
-use super::{count_kind, lower_src, MIN_GRID_SRC, MULTI_FLOOR_SRC};
+use super::{count_kind, lower_src, world_translation, MIN_GRID_SRC, MULTI_FLOOR_SRC};
 use mogen_core::SceneGraph;
 
 #[test]
@@ -429,25 +429,6 @@ fn stair_entry_zone_gets_an_interior_door() {
     "#;
     let g = lower_src(src);
 
-    // Compute world position by accumulating translation up the parent
-    // chain. Everything along the way is axis-aligned in the building
-    // (floor groups offset on Y, openings groups at identity), so a
-    // plain sum suffices for the (x, z) check the assertion needs.
-    let world_pos = |idx: usize| -> (f32, f32, f32) {
-        let mut x = 0.0;
-        let mut y = 0.0;
-        let mut z = 0.0;
-        let mut cur = Some(mogen_core::NodeId(idx as u32));
-        while let Some(id) = cur {
-            let n = &g.nodes[id.0 as usize];
-            x += n.transform.translation.x;
-            y += n.transform.translation.y;
-            z += n.transform.translation.z;
-            cur = n.parent;
-        }
-        (x, y, z)
-    };
-
     // Locate the floor-0 staircase landing — that node sits at the
     // (x, y, z) centre of the south entry strip.
     let landing_idx = g
@@ -455,7 +436,7 @@ fn stair_entry_zone_gets_an_interior_door() {
         .iter()
         .position(|n| n.role.as_deref() == Some("staircase_landing"))
         .expect("staircase_landing node");
-    let (stair_x, _, stair_z) = world_pos(landing_idx);
+    let (stair_x, _, stair_z) = world_translation(&g, landing_idx);
 
     // The entry zone is the 1m strip at the south end of the stair cell.
     // The landing centre sits at the stair-cell centre, so the entry
@@ -475,7 +456,7 @@ fn stair_entry_zone_gets_an_interior_door() {
         if n.role.as_deref() != Some("int_door") {
             continue;
         }
-        let (dx, _, dz) = world_pos(i);
+        let (dx, _, dz) = world_translation(&g, i);
         if dx >= entry_x_min
             && dx <= entry_x_max
             && dz >= entry_z_min
@@ -524,23 +505,6 @@ fn stair_entry_door_is_not_blocked_by_shaft_wall() {
     "#;
     let g = lower_src(src);
 
-    // Compute world translation by accumulating up the parent chain (every
-    // intermediate node is at identity rotation in this slice of the tree).
-    let world_pos = |idx: usize| -> (f32, f32, f32) {
-        let mut x = 0.0;
-        let mut y = 0.0;
-        let mut z = 0.0;
-        let mut cur = Some(mogen_core::NodeId(idx as u32));
-        while let Some(id) = cur {
-            let n = &g.nodes[id.0 as usize];
-            x += n.transform.translation.x;
-            y += n.transform.translation.y;
-            z += n.transform.translation.z;
-            cur = n.parent;
-        }
-        (x, y, z)
-    };
-
     // Collect every interior/exterior door's xz position. A door wrapper
     // carries no mesh, but its xz position is the door's centre.
     let mut doors: Vec<(String, f32, f32)> = Vec::new();
@@ -548,7 +512,7 @@ fn stair_entry_door_is_not_blocked_by_shaft_wall() {
         if n.role.as_deref() != Some("int_door") && n.role.as_deref() != Some("ext_door") {
             continue;
         }
-        let (x, _y, z) = world_pos(i);
+        let (x, _y, z) = world_translation(&g, i);
         doors.push((n.name.clone(), x, z));
     }
 
@@ -568,7 +532,7 @@ fn stair_entry_door_is_not_blocked_by_shaft_wall() {
             mnx = mnx.min(p[0]); mxx = mxx.max(p[0]);
             mnz = mnz.min(p[2]); mxz = mxz.max(p[2]);
         }
-        let (wx, _, wz) = world_pos(i);
+        let (wx, _, wz) = world_translation(&g, i);
         let (sw_xmin, sw_xmax) = (wx + mnx, wx + mxx);
         let (sw_zmin, sw_zmax) = (wz + mnz, wz + mxz);
 
