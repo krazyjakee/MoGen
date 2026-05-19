@@ -269,7 +269,7 @@ pub(in crate::app) fn geom_params_for_kind(
                 read(src, span, "major").unwrap_or(0.5), 0.02, out);
             scalar_row(ui, "Minor", "minor",
                 read(src, span, "minor").unwrap_or(0.15), 0.02, out);
-            scalar_row(ui, "Arc°", "arc",
+            scalar_row(ui, "Arc\u{00b0}", "arc",
                 read(src, span, "arc").unwrap_or(90.0), 1.0, out);
             shown = true;
         }
@@ -337,13 +337,13 @@ pub(in crate::app) fn geom_params_for_kind(
                 read(src, span, "length_falloff").unwrap_or(0.7), 0.01, out);
             scalar_row(ui, "Radius falloff", "radius_falloff",
                 read(src, span, "radius_falloff").unwrap_or(0.6), 0.01, out);
-            scalar_row(ui, "Branch angle°", "branch_angle",
+            scalar_row(ui, "Branch angle\u{00b0}", "branch_angle",
                 read(src, span, "branch_angle").unwrap_or(35.0), 1.0, out);
-            scalar_row(ui, "Roll°", "roll",
+            scalar_row(ui, "Roll\u{00b0}", "roll",
                 read(src, span, "roll").unwrap_or(137.5), 1.0, out);
             scalar_row(ui, "Tropism", "tropism",
                 read(src, span, "tropism").unwrap_or(0.0), 0.02, out);
-            scalar_row(ui, "Bend°", "bend",
+            scalar_row(ui, "Bend\u{00b0}", "bend",
                 read(src, span, "bend").unwrap_or(10.0), 0.5, out);
             scalar_row(ui, "Leader bias", "leader_bias",
                 read(src, span, "leader_bias").unwrap_or(0.0), 0.02, out);
@@ -354,7 +354,7 @@ pub(in crate::app) fn geom_params_for_kind(
             int_row(ui, "Samples", "samples",
                 read(src, span, "samples").unwrap_or(4.0) as i32, 1, 16, out);
             int_row(ui, "Seed", "seed",
-                read(src, span, "seed").unwrap_or(1.0) as i32, 0, 1_000_000, out);
+                read(src, span, "seed").unwrap_or(1.0) as i32, 1, 1_000_000, out);
             scalar_row(ui, "Jitter", "jitter",
                 read(src, span, "jitter").unwrap_or(0.2), 0.02, out);
             int_row(ui, "Leaves", "leaves",
@@ -374,13 +374,15 @@ pub(in crate::app) fn geom_params_for_kind(
             // free-text style attrs are intentionally skipped — they need a
             // module/material picker, not a numeric grid.
             int_row(ui, "Seed", "seed",
-                read(src, span, "seed").unwrap_or(1.0) as i32, 0, 1_000_000, out);
+                read(src, span, "seed").unwrap_or(1.0) as i32, 1, 1_000_000, out);
             enum_row(ui, "Style", "style",
                 read_str(src, span, "style"), "grid",
-                &["grid", "apartment-block"], out);
+                &["grid", "apartment-block", "hotel-corridor", "office-core",
+                  "radial", "organic", "maze"], out);
             enum_row(ui, "Roof", "roof",
-                read_str(src, span, "roof"), "flat", &["flat"], out);
-            scalar_row(ui, "Floor area m²", "floor_area",
+                read_str(src, span, "roof"), "flat",
+                &["flat", "gabled", "pitched", "hipped", "mansard", "shed"], out);
+            scalar_row(ui, "Floor area m\u{00b2}", "floor_area",
                 read(src, span, "floor_area").unwrap_or(120.0), 1.0, out);
             int_row(ui, "Rooms", "rooms",
                 read(src, span, "rooms").unwrap_or(4.0) as i32, 1, 256, out);
@@ -407,7 +409,7 @@ pub(in crate::app) fn geom_params_for_kind(
             scalar_row(ui, "Ceiling thickness", "ceiling_thickness",
                 read(src, span, "ceiling_thickness").unwrap_or(0.2), 0.005, out);
             int_row(ui, "Entrances", "entrances",
-                read(src, span, "entrances").unwrap_or(1.0) as i32, 0, 64, out);
+                read(src, span, "entrances").unwrap_or(1.0) as i32, 1, 64, out);
             int_row(ui, "Elevators", "elevators",
                 read(src, span, "elevators").unwrap_or(0.0) as i32, 0, 32, out);
             int_row(ui, "Staircases", "staircases",
