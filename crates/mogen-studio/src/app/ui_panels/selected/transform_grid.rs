@@ -31,6 +31,9 @@ fn expr_attr(
 }
 
 fn locked_transform_row(ui: &mut egui::Ui, label: &str, raw: &str) {
+    // The transform grid has num_columns(4): label + X + Y + Z (or link).
+    // Span the value across all three value columns so the lock row aligns
+    // with the draggable rows rather than being cramped into column 2.
     ui.label(label);
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new(raw).monospace().weak())
@@ -39,8 +42,12 @@ fn locked_transform_row(ui: &mut egui::Ui, label: &str, raw: &str) {
                  code view — dragging here would overwrite it with a plain \
                  number.",
             );
-        ui.label("🔒");
+        ui.label("\u{1F512}");
     });
+    // Pad the remaining columns so this row occupies the same logical width
+    // as the three-DragValue rows (label + X + Y + Z).
+    ui.label("");
+    ui.label("");
     ui.end_row();
 }
 
@@ -150,17 +157,17 @@ pub(super) fn render(
             }
 
             if let Some(raw) = &rot_expr {
-                locked_transform_row(ui, "Rotate°", raw);
+                locked_transform_row(ui, "Rotate\u{00B0}", raw);
             } else {
-                ui.label("Rotate°");
+                ui.label("Rotate\u{00B0}");
                 let mut emit_rot = false;
-                if ui.add(egui::DragValue::new(&mut rx).speed(0.5).suffix("°")).changed() {
+                if ui.add(egui::DragValue::new(&mut rx).speed(0.5).suffix("\u{00B0}")).changed() {
                     emit_rot = true;
                 }
-                if ui.add(egui::DragValue::new(&mut ry).speed(0.5).suffix("°")).changed() {
+                if ui.add(egui::DragValue::new(&mut ry).speed(0.5).suffix("\u{00B0}")).changed() {
                     emit_rot = true;
                 }
-                if ui.add(egui::DragValue::new(&mut rz).speed(0.5).suffix("°")).changed() {
+                if ui.add(egui::DragValue::new(&mut rz).speed(0.5).suffix("\u{00B0}")).changed() {
                     emit_rot = true;
                 }
                 if emit_rot {
@@ -232,9 +239,9 @@ pub(super) fn render(
                     ),
                 });
             }
-            let link_label = if linked { "🔗" } else { "🔓" };
+            let link_label = if linked { "\u{1F517}" } else { "\u{1F513}" };
             let link_tip = if linked {
-                "Scale axes linked — drag any axis to scale all three (click to unlink)"
+                "Scale axes linked \u{2014} drag any axis to scale all three (click to unlink)"
             } else {
                 "Scale axes independent (click to link)"
             };

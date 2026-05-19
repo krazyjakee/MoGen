@@ -32,7 +32,14 @@ pub(super) fn render(
     // motivating pain) without leaving the inspector.
     let mut chain: Vec<NodeId> = Vec::new();
     let mut cur = node.parent;
+    // Guard against malformed graphs with parent cycles: stop if we revisit a
+    // node or if the chain grows implausibly long (more than the total node
+    // count). A valid tree can never exceed `scene.nodes.len()` ancestors.
+    let max_depth = scene.nodes.len();
     while let Some(p) = cur {
+        if chain.len() >= max_depth || chain.contains(&p) {
+            break;
+        }
         chain.push(p);
         cur = scene.nodes.get(p.0 as usize).and_then(|n| n.parent);
     }
@@ -169,7 +176,7 @@ pub(super) fn render(
                     {
                         nav = Some(*parent);
                     }
-                    ui.label(egui::RichText::new(format!("· socket “{socket}”")).weak());
+                    ui.label(egui::RichText::new(format!("· socket \u{201c}{socket}\u{201d}")).weak());
                 });
             }
 
@@ -220,7 +227,7 @@ pub(super) fn render(
             for j in &joints_driving {
                 ui.label(
                     egui::RichText::new(format!(
-                        "🦴 driven by joint “{}” ({:?})",
+                        "\u{1F9B4} driven by joint \u{201c}{}\u{201d} ({:?})",
                         j.name, j.kind
                     ))
                     .weak(),
@@ -228,18 +235,18 @@ pub(super) fn render(
             }
             for (clip, n) in &clips_targeting {
                 ui.label(
-                    egui::RichText::new(format!("▶ animated by clip “{clip}” ({n} tracks)"))
+                    egui::RichText::new(format!("\u{25B6} animated by clip \u{201c}{clip}\u{201d} ({n} tracks)"))
                         .weak(),
                 );
             }
             if let Some(s) = &skin_name {
-                ui.label(egui::RichText::new(format!("skinned to “{s}”")).weak());
+                ui.label(egui::RichText::new(format!("skinned to \u{201c}{s}\u{201d}")).weak());
             }
             for s in &bone_of {
-                ui.label(egui::RichText::new(format!("bone in skin “{s}”")).weak());
+                ui.label(egui::RichText::new(format!("bone in skin \u{201c}{s}\u{201d}")).weak());
             }
             for s in &skeleton_root_of {
-                ui.label(egui::RichText::new(format!("skeleton root of “{s}”")).weak());
+                ui.label(egui::RichText::new(format!("skeleton root of \u{201c}{s}\u{201d}")).weak());
             }
         });
 
