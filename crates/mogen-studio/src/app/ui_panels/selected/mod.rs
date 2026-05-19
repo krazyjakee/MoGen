@@ -9,9 +9,9 @@ mod add_attr;
 mod connections;
 mod deform_rows;
 mod geom_params;
-mod node_problems;
 mod light_editor;
 mod modifiers;
+mod node_problems;
 mod transform_grid;
 mod use_wrap;
 

@@ -23,6 +23,12 @@ use crate::viewer::PendingEdit;
 /// inserted line builds (the user then edits the value). Relative-placement
 /// attrs take a sibling *name* we can't know, so they seed an empty string
 /// and the validator/Problems section guides the user from there.
+// NOTE: `from`/`to` here are path-coordinate attrs (`from=[0,0,0] to=[0,1,0]`
+// for sweeps/extrudes). They share their name with the positional shadow attrs
+// listed in transform_grid's `pos_shadows`. That means the first transform-grid
+// drag after adding one of these will delete it (by design — the drag emits a
+// canonical `pos=` and strips the shadow). Users who need path semantics should
+// edit the source directly if they also want a non-zero position.
 const CANDIDATES: &[(&str, &str)] = &[
     ("anchor", "center"),
     ("from", "[0, 0, 0]"),

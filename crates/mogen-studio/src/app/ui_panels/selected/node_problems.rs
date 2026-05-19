@@ -13,6 +13,46 @@ fn intersects(a: Span, b: Span) -> bool {
     a.start < b.end && b.start < a.end
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sp(start: usize, end: usize) -> Span {
+        Span { start, end }
+    }
+
+    #[test]
+    fn overlapping_spans_intersect() {
+        assert!(intersects(sp(0, 10), sp(5, 15)));
+        assert!(intersects(sp(5, 15), sp(0, 10)));
+    }
+
+    #[test]
+    fn nested_span_intersects() {
+        assert!(intersects(sp(0, 20), sp(5, 10)));
+        assert!(intersects(sp(5, 10), sp(0, 20)));
+    }
+
+    #[test]
+    fn adjacent_spans_do_not_intersect() {
+        // End is exclusive: [0,5) and [5,10) share no byte.
+        assert!(!intersects(sp(0, 5), sp(5, 10)));
+        assert!(!intersects(sp(5, 10), sp(0, 5)));
+    }
+
+    #[test]
+    fn disjoint_spans_do_not_intersect() {
+        assert!(!intersects(sp(0, 5), sp(6, 10)));
+        assert!(!intersects(sp(6, 10), sp(0, 5)));
+    }
+
+    #[test]
+    fn single_byte_span_intersects_containing_span() {
+        assert!(intersects(sp(3, 4), sp(0, 10)));
+        assert!(intersects(sp(0, 10), sp(3, 4)));
+    }
+}
+
 pub(super) fn render(
     ui: &mut egui::Ui,
     diagnostics: &[Diagnostic],

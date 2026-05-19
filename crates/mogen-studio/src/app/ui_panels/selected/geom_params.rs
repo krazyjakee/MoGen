@@ -172,7 +172,12 @@ fn vec_row(
         VecField::Absent => vec![default; arity],
         VecField::Nums(n) if n.len() == 1 => vec![n[0]; arity],
         VecField::Nums(n) if n.len() == arity => n,
-        VecField::Nums(_) => vec![default; arity],
+        // Wrong-arity: preserve the authored values (padded/truncated to
+        // arity) so a drag doesn't silently overwrite them with defaults.
+        VecField::Nums(mut n) => {
+            n.resize(arity, default);
+            n
+        }
     };
     ui.label(label);
     ui.horizontal(|ui| {
@@ -402,4 +407,91 @@ pub(in crate::app) fn geom_params_for_kind(
         _ => {}
     }
     shown
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mogen_core::Span;
+
+    fn sp(src: &str) -> Span {
+        Span { start: 0, end: src.len() }
+    }
+
+    // ---- field ---------------------------------------------------------------
+
+    #[test]
+    fn field_absent_when_attr_missing() {
+        let src = r#"sphere "s" ()"#;
+        assert!(matches!(field(src, sp(src), "radius"), Field::Absent));
+    }
+
+    #[test]
+    fn field_num_when_plain_literal() {
+        let src = r#"sphere "s" (radius=0.5)"#;
+        assert!(matches!(field(src, sp(src), "radius"), Field::Num(v) if (v - 0.5).abs() < 1e-6));
+    }
+
+    #[test]
+    fn field_locked_for_param_ref() {
+        let src = r#"sphere "s" (radius=$r)"#;
+        assert!(matches!(field(src, sp(src), "radius"), Field::Locked(_)));
+    }
+
+    #[test]
+    fn field_locked_for_arithmetic_expr() {
+        let src = r#"sphere "s" (radius=(1+0.5))"#;
+        assert!(matches!(field(src, sp(src), "radius"), Field::Locked(_)));
+    }
+
+    // ---- vec_field -----------------------------------------------------------
+
+    #[test]
+    fn vec_field_absent_when_missing() {
+        let src = r#"box "b" ()"#;
+        assert!(matches!(vec_field(src, sp(src), "size"), VecField::Absent));
+    }
+
+    #[test]
+    fn vec_field_nums_for_3_component_literal() {
+        let src = r#"box "b" (size=[1.0, 2.0, 3.0])"#;
+        assert!(matches!(vec_field(src, sp(src), "size"), VecField::Nums(n) if n == [1.0f32, 2.0, 3.0]));
+    }
+
+    #[test]
+    fn vec_field_nums_for_scalar_shorthand() {
+        let src = r#"box "b" (size=2.0)"#;
+        assert!(matches!(vec_field(src, sp(src), "size"), VecField::Nums(n) if n == [2.0f32]));
+    }
+
+    #[test]
+    fn vec_field_locked_when_any_component_is_expr() {
+        let src = r#"box "b" (size=[1.0, $h, 3.0])"#;
+        assert!(matches!(vec_field(src, sp(src), "size"), VecField::Locked(_)));
+    }
+
+    // ---- wrong-arity padding -------------------------------------------------
+
+    #[test]
+    fn vec_row_wrong_arity_pads_with_default() {
+        // Simulates what vec_row does internally via vec_field + resize.
+        // A 2-component size value for a 3-component row should be padded,
+        // not replaced with all-defaults.
+        let raw_nums = vec![1.0f32, 2.0];
+        let arity = 3;
+        let default = 99.0f32;
+        let mut n = raw_nums;
+        n.resize(arity, default);
+        assert_eq!(n, [1.0f32, 2.0, 99.0]);
+    }
+
+    #[test]
+    fn vec_row_wrong_arity_truncates_long_vec() {
+        let raw_nums = vec![1.0f32, 2.0, 3.0, 4.0];
+        let arity = 2;
+        let default = 99.0f32;
+        let mut n = raw_nums;
+        n.resize(arity, default);
+        assert_eq!(n, [1.0f32, 2.0]);
+    }
 }

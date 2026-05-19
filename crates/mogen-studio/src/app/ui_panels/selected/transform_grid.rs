@@ -248,3 +248,54 @@ pub(super) fn render(
             ui.end_row();
         });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mogen_core::Span;
+
+    fn sp(src: &str) -> Option<Span> {
+        Some(Span { start: 0, end: src.len() })
+    }
+
+    #[test]
+    fn expr_attr_none_when_all_literals() {
+        let src = r#"box "b" (pos=[1.0, 2.0, 3.0])"#;
+        assert_eq!(expr_attr(src, sp(src), &["pos"]), None);
+    }
+
+    #[test]
+    fn expr_attr_detects_param_ref_in_pos() {
+        let src = r#"box "b" (pos=[0, $h, 0])"#;
+        assert!(expr_attr(src, sp(src), &["pos", "x"]).is_some());
+    }
+
+    #[test]
+    fn expr_attr_detects_arithmetic_expr_in_rot() {
+        let src = r#"box "b" (rot=[0, 90/2, 0])"#;
+        assert!(expr_attr(src, sp(src), &["rot", "rx"]).is_some());
+    }
+
+    #[test]
+    fn expr_attr_none_when_span_absent() {
+        // Without a span, no source text can be read.
+        let src = r#"box "b" (pos=[$x, 0, 0])"#;
+        assert_eq!(expr_attr(src, None, &["pos"]), None);
+    }
+
+    #[test]
+    fn expr_attr_skips_literal_attr_and_finds_later_param() {
+        // pos=[1,2,3] is literal — skip. x=$v is a param ref — lock.
+        let src = r#"box "b" (pos=[1, 2, 3], x=$v)"#;
+        let result = expr_attr(src, sp(src), &["pos", "x"]);
+        assert!(result.is_some());
+        let raw = result.unwrap();
+        assert!(raw.starts_with("x="), "expected x= prefix, got {raw}");
+    }
+
+    #[test]
+    fn expr_attr_scalar_pos_with_param_is_locked() {
+        let src = r#"post "p" (y=$shelf_h)"#;
+        assert!(expr_attr(src, sp(src), &["pos", "x", "y", "z"]).is_some());
+    }
+}
