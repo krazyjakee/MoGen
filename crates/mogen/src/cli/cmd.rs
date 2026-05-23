@@ -382,9 +382,9 @@ pub(crate) enum Cmd {
         #[arg(long, default_value = "photorealistic")]
         style: String,
         /// Gemini image model name. When omitted, defaults to
-        /// `gemini-3-pro-image-preview` if you're signed in via
-        /// `mogen auth login` (paid Cloud Code Assist surface) and
-        /// `gemini-2.5-flash-image` otherwise (public API key).
+        /// `gemini-3.1-flash-image` if you're signed in via
+        /// `mogen auth antigravity login` (Cloud Code Assist image surface)
+        /// and `gemini-2.5-flash-image` otherwise (public API key).
         #[arg(long)]
         model: Option<String>,
         /// Regenerate slots whose attr is already declared in the .mog or

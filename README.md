@@ -147,13 +147,18 @@ every node kind, and worked examples live in [`docs/dsl.md`](docs/dsl.md) and
 ## CLI
 
 ```
-mogen build    <file.mog> --out <file.glb>         # compile DSL to GLB
-mogen generate "a wooden stool" --out out.glb      # generate DSL via Gemini, then compile
-mogen modify   <file.mog> "make the legs taller"   # LLM edit of an existing .mog, then recompile
-mogen animate  <file.mog> "spin the rotor at 120 rpm"  # LLM edit limited to animations
-mogen check    <file.mog>                          # validate a DSL file
-mogen inspect  <file.glb>                          # summarize a GLB
-mogen moghub   discover --query chair              # browse / download / publish to MoGHub
+mogen build      <file.mog> --out <file.glb>           # compile DSL to GLB
+mogen generate   "a wooden stool" --out out.glb        # generate DSL via Gemini, then compile
+mogen modify     <file.mog> "make the legs taller"     # LLM edit of an existing .mog, then recompile
+mogen animate    <file.mog> "spin the rotor at 120 rpm"  # LLM edit limited to animations
+mogen repair     <file.mog>                            # LLM-driven fix for validation errors
+mogen textures   <file.mog>                            # generate albedo + derived PBR maps
+mogen thumbnail  <file.mog> --out preview.png          # headless PNG render of a .mog
+mogen check      <file.mog>                            # validate a DSL file
+mogen inspect    <file.glb>                            # summarize a GLB
+mogen moghub     discover --query chair                # browse / download / publish to MoGHub
+mogen auth       gemini-cli login                      # sign in / out for each credential target
+mogen update                                           # self-update from the latest GitHub release
 ```
 
 `generate`, `modify`, and `animate` need an API key for the chosen provider. By
@@ -290,12 +295,15 @@ Three image backends are supported:
 - **Antigravity OAuth (default for paid Google accounts).** Routes through
   `daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent` with
   endpoint failover, model catalog probe, and capacity-error backoff retries
-  (3s / 6s / 12s). The plain `gemini-cli` bundle is *not* accepted by the
+  (3s / 6s / 12s). Default model is `gemini-3.1-flash-image` — the only ID
+  observed to route reliably for Antigravity-issued bundles (the `-preview`
+  variants 404 here). The plain `gemini-cli` bundle is *not* accepted by the
   image surface — run `mogen auth antigravity login` once.
 - **Gemini API key.** When `GEMINI_API_KEY` is set, image gen goes through the
   public `generativelanguage.googleapis.com` surface. Default model is
-  `gemini-3-pro-image-preview`; pass `--model gemini-3.1-flash-image-preview`
-  (or any other image model) to override.
+  `gemini-2.5-flash-image` ("Nano Banana") — the cheapest tier that honors
+  `responseModalities: ["IMAGE"]` and produces usable PBR albedo. Pass
+  `--model <id>` to override.
 - **Z.ai `glm-image`.** Selected via Studio's provider dropdown (or the same
   `ZAI_API_KEY` if you wire it up by hand). Useful when you'd rather not burn
   Antigravity quota on bulk texture runs.
