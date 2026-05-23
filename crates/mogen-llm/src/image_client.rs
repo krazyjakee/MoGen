@@ -38,16 +38,67 @@ impl ImageClient {
     /// Issue an image generation request through whichever provider this
     /// client wraps. `model` is forwarded to the provider verbatim — pass
     /// the empty string to let the provider pick its default.
+    ///
+    /// Untagged variant — does not record to the spend DB. Used by call
+    /// sites that don't care about attribution (the bench harness, ad-hoc
+    /// CLI smoke tests). Production texture / image paths should use
+    /// [`Self::generate_image_with_context`] instead so the call lands in
+    /// the Spending panel.
     pub fn generate_image(
         &self,
         model: &str,
         prompt: &str,
         seed: Option<u64>,
     ) -> Result<GeneratedImage, ImageError> {
-        match self {
-            Self::Gemini(c) => Ok(c.generate_image(model, prompt, seed)?),
-            Self::Zai(c) => Ok(c.generate_image(model, prompt, seed)?),
+        self.generate_image_with_context(
+            model,
+            prompt,
+            seed,
+            &crate::spend::CallContext::default(),
+        )
+    }
+
+    /// Issue an image generation request and record the result to the
+    /// installed [`crate::spend::SpendRecorder`]. `ctx` is the same
+    /// attribution carried on [`crate::types::GenerateConfig`] for text
+    /// calls — operation tag, scene path, session id.
+    pub fn generate_image_with_context(
+        &self,
+        model: &str,
+        prompt: &str,
+        seed: Option<u64>,
+        ctx: &crate::spend::CallContext,
+    ) -> Result<GeneratedImage, ImageError> {
+        let result = match self {
+            Self::Gemini(c) => c.generate_image(model, prompt, seed).map_err(ImageError::from),
+            Self::Zai(c) => c.generate_image(model, prompt, seed).map_err(ImageError::from),
+        };
+
+        if !ctx.is_empty() {
+            let provider = self.provider_name();
+            match &result {
+                Ok(_) => {
+                    crate::spend::record(crate::spend::CallRecord::from_image(
+                        provider, model, 1, ctx, true, None,
+                    ));
+                }
+                Err(e) => {
+                    // Image API doesn't return a usage struct on failure,
+                    // but the recording is still useful for the panel's
+                    // failure-count line. Bill zero.
+                    crate::spend::record(crate::spend::CallRecord::from_image(
+                        provider,
+                        model,
+                        0,
+                        ctx,
+                        false,
+                        Some(format!("{e}")),
+                    ));
+                }
+            }
         }
+
+        result
     }
 
     /// Stable, lowercase tag for the active provider. Used by the CLI/Studio

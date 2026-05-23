@@ -365,6 +365,8 @@ pub(super) enum MenuAction {
     /// indentation and trailing-whitespace strip. No-op when the source is
     /// already clean.
     TidyCode,
+    /// View → Spending. Opens the persistent spend tracker panel (issue 60).
+    OpenSpending,
 }
 
 /// The subset of `MenuAction` variants that are bound to a global keyboard

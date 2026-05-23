@@ -49,6 +49,16 @@ pub(in crate::app) struct LlmRunConfig {
     /// ignore it). Set from `Settings::zai_base_url()` in
     /// `build_run_config`.
     pub zai_base_url: String,
+    /// Absolute path of the `.mog` this run is attributed to. Carried
+    /// through to the spend tracker (issue 60) so the Spending panel
+    /// can show "this scene cost $X to date". `None` for untitled
+    /// buffers — the call still records, just without a scene attribution.
+    pub scene_path: Option<String>,
+    /// Process-wide session id (UUID-shaped string). Lets the spend
+    /// panel split today's session from lifetime totals. Empty when
+    /// the caller didn't allocate one; the panel falls back to "all
+    /// time" in that case.
+    pub session_id: String,
 }
 
 /// Pin the system instruction onto `cfg`. For Gemini, upload `cacheable_block`
@@ -165,6 +175,19 @@ pub(in crate::app) fn build_provider_client(
             LlmClient::with_base_url(provider, cred.api_key_or_empty(), zai_base_url)
         }
         (provider, cred) => LlmClient::new(provider, cred.api_key_or_empty()),
+    }
+}
+
+/// Map a Studio-side [`LlmKind`] to the spend-tracker operation tag. Used
+/// to attribute calls in `~/.mogen/spend.db` so the Spending panel can
+/// answer "how much went to texture generation?" / "how much to repair?".
+pub(in crate::app) fn kind_to_operation(kind: LlmKind) -> mogen_llm::Operation {
+    match kind {
+        LlmKind::Generate => mogen_llm::Operation::Generate,
+        LlmKind::Modify => mogen_llm::Operation::Modify,
+        LlmKind::Animate => mogen_llm::Operation::Animate,
+        LlmKind::Repair => mogen_llm::Operation::Repair,
+        LlmKind::Textures => mogen_llm::Operation::Textures,
     }
 }
 
@@ -409,6 +432,15 @@ pub(in crate::app) fn run_llm(
     cfg.seed = Some(seed);
     cfg.thinking_level = Some(run_cfg.thinking);
     cfg.temperature = Some(run_cfg.temperature);
+    cfg.spend_context = mogen_llm::CallContext {
+        operation: kind_to_operation(kind).as_str().to_string(),
+        scene_path: run_cfg.scene_path.clone(),
+        session_id: if run_cfg.session_id.is_empty() {
+            None
+        } else {
+            Some(run_cfg.session_id.clone())
+        },
+    };
     attach_system_instruction(&mut cfg, &client, &sys_instr, &send_progress);
     if let Some(img) = image {
         // Carried through every repair iteration: `repair.rs` rewrites

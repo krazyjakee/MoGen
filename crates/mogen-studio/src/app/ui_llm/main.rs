@@ -23,6 +23,12 @@ fn disabled_reason(reasons: &[(&str, bool)]) -> Option<String> {
 
 impl MogenStudioApp {
     pub(in crate::app) fn ui_llm(&mut self, ui: &mut egui::Ui) {
+        // Per-file spending pill — shows total spend on this scene to
+        // date plus a per-model breakdown tooltip. Clicking opens the
+        // Spending panel filtered to this scene. No-op when the spend
+        // tracker isn't installed (e.g. read-only DB).
+        self.ui_scene_spend_pill(ui);
+
         // Inline provider switcher + global LLM toggles. Mirrors the
         // Preferences pane so the user can flip provider / planning mode /
         // seed without leaving the inspector. Persisted via Settings::save().

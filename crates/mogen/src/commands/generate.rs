@@ -100,6 +100,18 @@ pub(crate) fn generate(args: GenerateArgs) -> Result<()> {
         cfg.temperature = Some(t);
     }
     cfg.seed = Some(seed);
+    // Spend-tracker attribution (issue 60). The scene path is the DSL
+    // output if known, else the GLB — `dump-scene` / dry-run leave both
+    // unset and the call records without a scene grouping.
+    let scene_path = resolved_dsl_out
+        .as_ref()
+        .or(resolved_out.as_ref())
+        .map(|p| p.display().to_string());
+    cfg.spend_context = mogen_llm::CallContext {
+        operation: mogen_llm::Operation::Generate.as_str().to_string(),
+        scene_path: scene_path.clone(),
+        session_id: None,
+    };
     // Generate has no prior file to read a header from; use CLI or library default.
     let effective_thinking = args.thinking.unwrap_or(ThinkingLevel::High);
     cfg.thinking_level = Some(effective_thinking);

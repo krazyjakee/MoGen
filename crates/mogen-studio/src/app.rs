@@ -34,6 +34,7 @@ mod onboarding;
 mod preview;
 mod pricing;
 mod publish_textures;
+mod spend_panel;
 mod spotlight;
 mod style;
 mod text_menu;
@@ -451,6 +452,19 @@ pub struct MogenStudioApp {
     /// the same clip commits the delete. Cleared on tab switch, on any
     /// non-trash interaction in the panel, or after the commit fires.
     clip_delete_pending: Option<String>,
+
+    /// Session id stamped on every LLM/image call recorded to
+    /// `~/.mogen/spend.db`. Generated once at app start so the Spending
+    /// panel can split today's session from lifetime totals; never
+    /// persisted across launches.
+    pub(in crate::app) spend_session_id: String,
+
+    /// Spending panel modal visibility. Opened from View → Spending or
+    /// from the inspector's per-scene cost pill.
+    pub(in crate::app) show_spending: bool,
+    /// Spending panel state — filters, last refresh, cached rows.
+    /// Refreshed each time the panel opens or the user clicks Refresh.
+    pub(in crate::app) spending: crate::app::spend_panel::SpendingState,
 }
 
 impl MogenStudioApp {
@@ -622,6 +636,9 @@ impl MogenStudioApp {
             picker_prev_camera: None,
             moghub_protocol: None,
             clip_delete_pending: None,
+            spend_session_id: gen_session_id(),
+            show_spending: false,
+            spending: crate::app::spend_panel::SpendingState::default(),
         }
     }
 
@@ -1086,6 +1103,7 @@ impl eframe::App for MogenStudioApp {
         self.ui_imposter_preview(ctx);
         self.ui_external_conflict(ctx);
         self.ui_about(ctx);
+        self.ui_spending_window(ctx);
         self.community_window(ctx);
         self.publish_dialog(ctx);
         self.module_palette_dialog(ctx);
@@ -1145,6 +1163,26 @@ impl eframe::App for MogenStudioApp {
             self.viewer.destroy(gl);
         }
     }
+}
+
+/// Generate a short, opaque session id stamped on every LLM/image call
+/// recorded to `~/.mogen/spend.db`. Not a true UUID — just nine hex chars
+/// of system entropy via the rand crate so the Spending panel can split
+/// today's session from lifetime totals without depending on a heavy
+/// crate.
+fn gen_session_id() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    // Mix in the process id so multiple processes started in the same
+    // nanosecond (rare but possible on cold boot) still get distinct ids.
+    let pid = std::process::id() as u128;
+    format!("{:x}{:x}", now ^ (pid << 64), pid)
+        .chars()
+        .take(12)
+        .collect()
 }
 
 /// Extend the default proportional font family with a chain of icon-coverage
