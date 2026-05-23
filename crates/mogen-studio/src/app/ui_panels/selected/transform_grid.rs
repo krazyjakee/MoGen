@@ -1,8 +1,55 @@
 use eframe::egui;
 
 use crate::app::util::format_inspector_scalar;
+use crate::edit::get_attr;
 use crate::gizmo::GizmoMode;
 use crate::viewer::{PendingEdit, Viewer};
+
+/// First attribute in `attrs` whose source text is a parametric expression
+/// (a constant `expr` or a `$param`), with its raw text. The grid reads the
+/// *evaluated* `node.transform`, so it cannot see an expression at all —
+/// without this guard a single drag would re-emit the channel as a numeric
+/// literal and silently destroy `pos=[0, $h, 0]` / `rot=[0, 90/2, 0]`.
+fn expr_attr(
+    src: &str,
+    span: Option<mogen_core::Span>,
+    attrs: &[&str],
+) -> Option<String> {
+    let span = span?;
+    for a in attrs {
+        if let Some(raw) = get_attr(src, span, a) {
+            let inner = raw.trim().trim_start_matches('[').trim_end_matches(']');
+            let all_num = inner
+                .split(',')
+                .all(|p| p.trim().parse::<f32>().is_ok());
+            if !all_num {
+                return Some(format!("{a}={}", raw.trim()));
+            }
+        }
+    }
+    None
+}
+
+fn locked_transform_row(ui: &mut egui::Ui, label: &str, raw: &str) {
+    // The transform grid has num_columns(4): label + X + Y + Z (or link).
+    // Span the value across all three value columns so the lock row aligns
+    // with the draggable rows rather than being cramped into column 2.
+    ui.label(label);
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(raw).monospace().weak())
+            .on_hover_text(
+                "Parametric transform (expression or $param). Edit it in the \
+                 code view — dragging here would overwrite it with a plain \
+                 number.",
+            );
+        ui.label("\u{1F512}");
+    });
+    // Pad the remaining columns so this row occupies the same logical width
+    // as the three-DragValue rows (label + X + Y + Z).
+    ui.label("");
+    ui.label("");
+    ui.end_row();
+}
 
 /// Render the gizmo-mode toggle row and the translate/rotate/scale grid for
 /// the inspector. Changes are queued onto `edits` as
@@ -10,14 +57,23 @@ use crate::viewer::{PendingEdit, Viewer};
 /// updated through `scale_linked`. For attached nodes the grid shows the
 /// user-authored portion of the transform (live = attach + user) so writeback
 /// doesn't double-count the attach contribution.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn render(
     ui: &mut egui::Ui,
     viewer: &Viewer,
     node: &mogen_core::SceneNode,
     scale_linked: &mut bool,
     node_id: mogen_core::NodeId,
+    src: &str,
+    node_span: Option<mogen_core::Span>,
     edits: &mut Vec<PendingEdit>,
 ) {
+    // A parametric value on any attr that feeds a channel (including the
+    // `x=`/`from=`/`rx=` shorthands the commit path would strip) locks that
+    // channel to read-only so the drag can't clobber the expression.
+    let pos_expr = expr_attr(src, node_span, &["pos", "x", "y", "z", "from", "to"]);
+    let rot_expr = expr_attr(src, node_span, &["rot", "rx", "ry", "rz"]);
+    let scale_expr = expr_attr(src, node_span, &["scale"]);
     ui.add_space(6.0);
     ui.horizontal(|ui| {
         let cur = viewer.gizmo_mode();
@@ -67,61 +123,73 @@ pub(super) fn render(
         .num_columns(4)
         .spacing([6.0, 4.0])
         .show(ui, |ui| {
-            ui.label("Translate");
-            let mut emit_pos = false;
-            if ui.add(egui::DragValue::new(&mut tx).speed(0.02)).changed() {
-                emit_pos = true;
+            if let Some(raw) = &pos_expr {
+                locked_transform_row(ui, "Translate", raw);
+            } else {
+                ui.label("Translate");
+                let mut emit_pos = false;
+                if ui.add(egui::DragValue::new(&mut tx).speed(0.02)).changed() {
+                    emit_pos = true;
+                }
+                if ui.add(egui::DragValue::new(&mut ty).speed(0.02)).changed() {
+                    emit_pos = true;
+                }
+                if ui.add(egui::DragValue::new(&mut tz).speed(0.02)).changed() {
+                    emit_pos = true;
+                }
+                if emit_pos {
+                    // Emit the full `pos=[x,y,z]` vector and strip shadow attrs.
+                    // Per-axis `x=`/`y=`/`z=` writes left two attrs fighting in
+                    // the header; whichever won depended on resolution order.
+                    edits.push(PendingEdit::SetAttrCanonical {
+                        node: node_id,
+                        attr: "pos".into(),
+                        value: format!(
+                            "[{}, {}, {}]",
+                            format_inspector_scalar(tx),
+                            format_inspector_scalar(ty),
+                            format_inspector_scalar(tz),
+                        ),
+                        delete: pos_shadows.clone(),
+                    });
+                }
+                ui.end_row();
             }
-            if ui.add(egui::DragValue::new(&mut ty).speed(0.02)).changed() {
-                emit_pos = true;
-            }
-            if ui.add(egui::DragValue::new(&mut tz).speed(0.02)).changed() {
-                emit_pos = true;
-            }
-            if emit_pos {
-                // Emit the full `pos=[x,y,z]` vector and strip shadow attrs.
-                // Per-axis `x=`/`y=`/`z=` writes left two attrs fighting in
-                // the header; whichever won depended on resolution order.
-                edits.push(PendingEdit::SetAttrCanonical {
-                    node: node_id,
-                    attr: "pos".into(),
-                    value: format!(
-                        "[{}, {}, {}]",
-                        format_inspector_scalar(tx),
-                        format_inspector_scalar(ty),
-                        format_inspector_scalar(tz),
-                    ),
-                    delete: pos_shadows.clone(),
-                });
-            }
-            ui.end_row();
 
-            ui.label("Rotate°");
-            let mut emit_rot = false;
-            if ui.add(egui::DragValue::new(&mut rx).speed(0.5).suffix("°")).changed() {
-                emit_rot = true;
+            if let Some(raw) = &rot_expr {
+                locked_transform_row(ui, "Rotate\u{00B0}", raw);
+            } else {
+                ui.label("Rotate\u{00B0}");
+                let mut emit_rot = false;
+                if ui.add(egui::DragValue::new(&mut rx).speed(0.5).suffix("\u{00B0}")).changed() {
+                    emit_rot = true;
+                }
+                if ui.add(egui::DragValue::new(&mut ry).speed(0.5).suffix("\u{00B0}")).changed() {
+                    emit_rot = true;
+                }
+                if ui.add(egui::DragValue::new(&mut rz).speed(0.5).suffix("\u{00B0}")).changed() {
+                    emit_rot = true;
+                }
+                if emit_rot {
+                    edits.push(PendingEdit::SetAttrCanonical {
+                        node: node_id,
+                        attr: "rot".into(),
+                        value: format!(
+                            "[{}, {}, {}]",
+                            format_inspector_scalar(rx),
+                            format_inspector_scalar(ry),
+                            format_inspector_scalar(rz),
+                        ),
+                        delete: rot_shadows.clone(),
+                    });
+                }
+                ui.end_row();
             }
-            if ui.add(egui::DragValue::new(&mut ry).speed(0.5).suffix("°")).changed() {
-                emit_rot = true;
-            }
-            if ui.add(egui::DragValue::new(&mut rz).speed(0.5).suffix("°")).changed() {
-                emit_rot = true;
-            }
-            if emit_rot {
-                edits.push(PendingEdit::SetAttrCanonical {
-                    node: node_id,
-                    attr: "rot".into(),
-                    value: format!(
-                        "[{}, {}, {}]",
-                        format_inspector_scalar(rx),
-                        format_inspector_scalar(ry),
-                        format_inspector_scalar(rz),
-                    ),
-                    delete: rot_shadows.clone(),
-                });
-            }
-            ui.end_row();
 
+            if let Some(raw) = &scale_expr {
+                locked_transform_row(ui, "Scale", raw);
+                return;
+            }
             ui.label("Scale");
             let pre_sx = sx;
             let pre_sy = sy;
@@ -171,9 +239,9 @@ pub(super) fn render(
                     ),
                 });
             }
-            let link_label = if linked { "🔗" } else { "🔓" };
+            let link_label = if linked { "\u{1F517}" } else { "\u{1F513}" };
             let link_tip = if linked {
-                "Scale axes linked — drag any axis to scale all three (click to unlink)"
+                "Scale axes linked \u{2014} drag any axis to scale all three (click to unlink)"
             } else {
                 "Scale axes independent (click to link)"
             };
@@ -186,4 +254,55 @@ pub(super) fn render(
             }
             ui.end_row();
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mogen_core::Span;
+
+    fn sp(src: &str) -> Option<Span> {
+        Some(Span { start: 0, end: src.len() })
+    }
+
+    #[test]
+    fn expr_attr_none_when_all_literals() {
+        let src = r#"box "b" (pos=[1.0, 2.0, 3.0])"#;
+        assert_eq!(expr_attr(src, sp(src), &["pos"]), None);
+    }
+
+    #[test]
+    fn expr_attr_detects_param_ref_in_pos() {
+        let src = r#"box "b" (pos=[0, $h, 0])"#;
+        assert!(expr_attr(src, sp(src), &["pos", "x"]).is_some());
+    }
+
+    #[test]
+    fn expr_attr_detects_arithmetic_expr_in_rot() {
+        let src = r#"box "b" (rot=[0, 90/2, 0])"#;
+        assert!(expr_attr(src, sp(src), &["rot", "rx"]).is_some());
+    }
+
+    #[test]
+    fn expr_attr_none_when_span_absent() {
+        // Without a span, no source text can be read.
+        let src = r#"box "b" (pos=[$x, 0, 0])"#;
+        assert_eq!(expr_attr(src, None, &["pos"]), None);
+    }
+
+    #[test]
+    fn expr_attr_skips_literal_attr_and_finds_later_param() {
+        // pos=[1,2,3] is literal — skip. x=$v is a param ref — lock.
+        let src = r#"box "b" (pos=[1, 2, 3], x=$v)"#;
+        let result = expr_attr(src, sp(src), &["pos", "x"]);
+        assert!(result.is_some());
+        let raw = result.unwrap();
+        assert!(raw.starts_with("x="), "expected x= prefix, got {raw}");
+    }
+
+    #[test]
+    fn expr_attr_scalar_pos_with_param_is_locked() {
+        let src = r#"post "p" (y=$shelf_h)"#;
+        assert!(expr_attr(src, sp(src), &["pos", "x", "y", "z"]).is_some());
+    }
 }
