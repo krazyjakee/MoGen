@@ -80,6 +80,10 @@ pub(super) fn text_pricing(model: &str) -> TextPricing {
             (4.00, 18.00, 1.00),
         );
     }
+    if m.contains("3.5-flash") {
+        // Gemini 3.5 Flash (GA May 2026): $1.50 in / $9 out per million.
+        return TextPricing::flat(1.50, 9.00, 0.15);
+    }
     if m.contains("3.1-flash-lite") || m.contains("3-flash-lite") {
         return TextPricing::flat(0.25, 1.50, 0.025);
     }
@@ -226,6 +230,15 @@ mod tests {
         let p = text_pricing("gemini-3-flash-preview");
         assert!((p.input_per_million_usd - 0.50).abs() < 1e-9);
         assert!((p.output_per_million_usd - 3.00).abs() < 1e-9);
+    }
+
+    #[test]
+    fn gemini_3_5_flash_pricing() {
+        let p = text_pricing("gemini-3.5-flash");
+        assert!((p.input_per_million_usd - 1.50).abs() < 1e-9);
+        assert!((p.output_per_million_usd - 9.00).abs() < 1e-9);
+        assert!((p.cached_input_per_million_usd - 0.15).abs() < 1e-9);
+        assert!(!p.is_tiered());
     }
 
     #[test]
