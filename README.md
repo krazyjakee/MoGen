@@ -157,6 +157,7 @@ mogen thumbnail  <file.mog> --out preview.png          # headless PNG render of 
 mogen check      <file.mog>                            # validate a DSL file
 mogen inspect    <file.glb>                            # summarize a GLB
 mogen moghub     discover --query chair                # browse / download / publish to MoGHub
+mogen mcp                                              # run as a stdio MCP server exposing every subcommand as a tool
 mogen auth       gemini-cli login                      # sign in / out for each credential target
 mogen update                                           # self-update from the latest GitHub release
 ```
