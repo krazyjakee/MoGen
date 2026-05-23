@@ -11,6 +11,7 @@ use crate::app::util::{
 };
 use crate::app::MogenStudioApp;
 
+mod gradient;
 mod manage;
 mod pbr;
 mod textures;
@@ -134,6 +135,11 @@ impl MogenStudioApp {
         // Per-slot manual texture path: (material_name, slot_attr, new_value | None).
         // None means "clear the slot" (delete attr).
         let mut pending_tex_path: Option<(String, &'static str, Option<String>)> = None;
+        // Material name whose `gradient=` attr should be stripped this frame
+        // (the gradient editor's "Remove gradient" button). Goes through
+        // `delete_attr` rather than the `pending` channel because `set_attr`
+        // can't express "drop this attribute entirely".
+        let mut pending_gradient_delete: Option<String> = None;
         let mut wants_add_material = false;
 
         // Add-material affordance — appends a `material "name" { color = … }`
@@ -179,6 +185,13 @@ impl MogenStudioApp {
                 .default_open(false)
                 .show(ui, |ui| {
                     pbr::render(ui, *idx, mat, &mut pending);
+                    gradient::render(
+                        ui,
+                        *idx,
+                        mat,
+                        &mut pending,
+                        &mut pending_gradient_delete,
+                    );
 
                     let mat_slots: Vec<(String, &'static str, PathBuf)> = texture_slots
                         .iter()
@@ -289,6 +302,32 @@ impl MogenStudioApp {
                         UndoKey {
                             surface: "material",
                             attr: Some("__rename".into()),
+                            node_path: Vec::new(),
+                        },
+                    );
+                }
+            }
+        }
+
+        if let Some(mat_name) = pending_gradient_delete {
+            if let Some(span) = find_material_source_span(&self.files[i].source, &mat_name) {
+                let before = self.files[i].source.clone();
+                let new_src = crate::edit::delete_attr(&before, span, "gradient");
+                if new_src != before {
+                    {
+                        let f = &mut self.files[i];
+                        f.source = new_src;
+                        f.dirty = f.source != f.last_saved_source;
+                        f.needs_compile = true;
+                        f.last_edit_at = Some(Instant::now());
+                    }
+                    self.break_undo_chain(i);
+                    self.push_undo(
+                        i,
+                        before,
+                        UndoKey {
+                            surface: "material",
+                            attr: Some("gradient:__delete".into()),
                             node_path: Vec::new(),
                         },
                     );
