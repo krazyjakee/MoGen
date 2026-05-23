@@ -16,6 +16,7 @@ use commands::bench::bench;
 use commands::build::build;
 use commands::generate::{generate, GenerateArgs};
 use commands::inspect::{check, dump_scene, inspect, parse_cmd};
+use commands::mcp::run as run_mcp_server;
 use commands::modify::{modify, ModifyArgs};
 use commands::repair::{repair, RepairArgs};
 use commands::textures::textures_cmd;
@@ -260,6 +261,7 @@ fn main() -> ExitCode {
             force,
         }),
         Cmd::ApplyUpdate { plan } => apply_update(plan),
+        Cmd::Mcp => run_mcp_server(),
         Cmd::Bench {
             prompts,
             provider,

@@ -24,3 +24,12 @@ clap = { workspace = true }
 image = { workspace = true }
 serde_json = { workspace = true }
 indicatif = "0.17"
+# MCP server (`mogen mcp` subcommand). `default` pulls in macros + the
+# stdio-capable server scaffolding; `transport-io` adds the actual stdio
+# transport. Tokio is only used by the MCP path — every other subcommand
+# stays sync.
+rmcp = { version = "1", features = ["transport-io"] }
+schemars = "0.8"
+serde = { workspace = true }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "process", "sync"] }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["env-filter", "fmt"] }
