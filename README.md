@@ -9,7 +9,7 @@ high-level structured scenes, `mogen` expands them into real geometry.
 Written in Rust. No runtime, no graph editor, no dependencies on a game engine — just a
 small parser, a scene graph, a mesh library, and a glTF exporter.
 
-[▶ Watch the demo](assets/demo.mp4)
+<video src="https://github.com/krazyjakee/MoGen/raw/refs/heads/master/assets/demo.mp4" controls></video>
 
 ## Why
 
