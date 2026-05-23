@@ -4,7 +4,6 @@
 //! recorder integration is exercised in the same shape `mogen generate`
 //! drives.
 
-use std::io::Read as _;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
