@@ -31,5 +31,5 @@ indicatif = "0.17"
 rmcp = { version = "1", features = ["transport-io"] }
 schemars = "0.8"
 serde = { workspace = true }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "process", "sync"] }
+tokio = { version = "1", features = ["rt", "macros", "io-std", "process", "sync"] }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["env-filter", "fmt"] }

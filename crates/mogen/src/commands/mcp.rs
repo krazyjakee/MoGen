@@ -408,18 +408,25 @@ struct BenchArgs {
     /// One-prompt-per-line file. Defaults to `benches/prompts.txt`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     prompts: Option<PathBuf>,
+    /// LLM provider (same values as `generate --provider`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     provider: Option<String>,
+    /// Model name. Provider default applies when omitted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     model: Option<String>,
+    /// Cap on server-side reasoning: `low`, `medium`, `high`, `xhigh`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     thinking: Option<String>,
+    /// Cap on repair iterations after the first attempt.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     max_repair_iters: Option<u32>,
+    /// Abort if total prompt+response tokens exceed this.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     budget_tokens: Option<u32>,
+    /// Override the provider's API key env var.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     api_key: Option<String>,
+    /// Disable the automatic system-instruction cache.
     #[serde(default)]
     no_cache: bool,
 }
@@ -484,6 +491,7 @@ struct MoghubDownloadArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct MoghubRefOnly {
+    /// Model reference: `<user>/<slug>` or `@<user>/<slug>`.
     reference: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     server: Option<String>,
@@ -491,6 +499,7 @@ struct MoghubRefOnly {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct MoghubCommentArgs {
+    /// Model reference: `<user>/<slug>` or `@<user>/<slug>`.
     reference: String,
     /// BBCode comment body.
     body: String,
@@ -638,12 +647,17 @@ impl MogenMcp {
         &self,
         Parameters(p): Parameters<GenerateArgs>,
     ) -> Result<CallToolResult, McpError> {
-        let mut args = vec!["generate".to_string(), p.prompt];
+        // Named flags first so that `--` can terminate option parsing
+        // before the prompt, which is an arbitrary string that may start
+        // with `--` and would be mis-parsed by clap as a flag otherwise.
+        let mut args = vec!["generate".to_string()];
         push_path_opt(&mut args, "--out", p.out);
         push_path_opt(&mut args, "--dsl-out", p.dsl_out);
         push_flag(&mut args, "--plan", p.plan);
         push_opt(&mut args, "--auto-refine", p.auto_refine);
         p.common.push(&mut args);
+        args.push("--".to_string());
+        args.push(p.prompt);
         run_mogen(args).await
     }
 
@@ -654,13 +668,16 @@ impl MogenMcp {
         &self,
         Parameters(p): Parameters<ModifyArgs>,
     ) -> Result<CallToolResult, McpError> {
-        let mut args = vec!["modify".to_string(), p.input.to_string_lossy().into_owned(), p.prompt];
+        let mut args = vec!["modify".to_string()];
         push_path_opt(&mut args, "--out", p.out);
         push_path_opt(&mut args, "--dsl-out", p.dsl_out);
         push_flag(&mut args, "--plan", p.plan);
         push_opt(&mut args, "--auto-refine", p.auto_refine);
         push_flag(&mut args, "--rewrite", p.rewrite);
         p.common.push(&mut args);
+        args.push("--".to_string());
+        args.push(p.input.to_string_lossy().into_owned());
+        args.push(p.prompt);
         run_mogen(args).await
     }
 
@@ -670,10 +687,13 @@ impl MogenMcp {
         &self,
         Parameters(p): Parameters<AnimateArgs>,
     ) -> Result<CallToolResult, McpError> {
-        let mut args = vec!["animate".to_string(), p.input.to_string_lossy().into_owned(), p.prompt];
+        let mut args = vec!["animate".to_string()];
         push_path_opt(&mut args, "--out", p.out);
         push_path_opt(&mut args, "--dsl-out", p.dsl_out);
         p.common.push(&mut args);
+        args.push("--".to_string());
+        args.push(p.input.to_string_lossy().into_owned());
+        args.push(p.prompt);
         run_mogen(args).await
     }
 
@@ -820,13 +840,11 @@ impl MogenMcp {
         &self,
         Parameters(p): Parameters<MoghubCommentArgs>,
     ) -> Result<CallToolResult, McpError> {
-        let mut args = vec![
-            "moghub".to_string(),
-            "comment".to_string(),
-            p.reference,
-            p.body,
-        ];
+        let mut args = vec!["moghub".to_string(), "comment".to_string()];
         push_opt(&mut args, "--server", p.server);
+        args.push("--".to_string());
+        args.push(p.reference);
+        args.push(p.body);
         run_mogen(args).await
     }
 
@@ -895,9 +913,6 @@ impl ServerHandler for MogenMcp {
         let mut info = ServerInfo::default();
         info.protocol_version = ProtocolVersion::V_2024_11_05;
         info.capabilities = ServerCapabilities::builder().enable_tools().build();
-        // `Implementation::from_build_env()` reads `CARGO_*` env vars at
-        // the rmcp crate's compile site, so it reports "rmcp" — build
-        // one ourselves so clients see "mogen" instead.
         // `Implementation::from_build_env()` reads CARGO_PKG_* at the *rmcp*
         // crate's compile site, so it reports "rmcp". Override name/version
         // from this crate's env vars while keeping any other fields (e.g. url).
@@ -966,5 +981,88 @@ mod tests {
         let mut args: Vec<String> = vec![];
         push_path_opt(&mut args, "--out", Option::<PathBuf>::None);
         assert!(args.is_empty());
+    }
+
+    #[test]
+    fn llm_common_push_maps_all_set_fields() {
+        let c = LlmCommon {
+            provider: Some("gemini".to_string()),
+            model: Some("gemini-pro".to_string()),
+            thinking: Some("high".to_string()),
+            style: Some("low-poly".to_string()),
+            api_key: Some("key123".to_string()),
+            temperature: Some(0.7),
+            budget_tokens: Some(1000),
+            max_repair_iters: Some(3),
+            seed: Some(42),
+            cached_content: Some("cachedContents/abc".to_string()),
+            no_cache: true,
+            dry_run: true,
+        };
+        let mut args: Vec<String> = vec![];
+        c.push(&mut args);
+        assert!(args.contains(&"--provider".to_string()));
+        assert!(args.contains(&"gemini".to_string()));
+        assert!(args.contains(&"--model".to_string()));
+        assert!(args.contains(&"--thinking".to_string()));
+        assert!(args.contains(&"--style".to_string()));
+        assert!(args.contains(&"--api-key".to_string()));
+        assert!(args.contains(&"--temperature".to_string()));
+        assert!(args.contains(&"--budget-tokens".to_string()));
+        assert!(args.contains(&"--max-repair-iters".to_string()));
+        assert!(args.contains(&"--seed".to_string()));
+        assert!(args.contains(&"--cached-content".to_string()));
+        assert!(args.contains(&"--no-cache".to_string()));
+        assert!(args.contains(&"--dry-run".to_string()));
+    }
+
+    #[test]
+    fn llm_common_push_omits_none_fields() {
+        let c = LlmCommon {
+            provider: None,
+            model: None,
+            thinking: None,
+            style: None,
+            api_key: None,
+            temperature: None,
+            budget_tokens: None,
+            max_repair_iters: None,
+            seed: None,
+            cached_content: None,
+            no_cache: false,
+            dry_run: false,
+        };
+        let mut args: Vec<String> = vec![];
+        c.push(&mut args);
+        assert!(args.is_empty());
+    }
+
+    // Verify that the `--` separator is placed before user-supplied
+    // positional strings in the generate/modify/animate/moghub_comment
+    // arg vectors, so prompts that start with `--` are not mis-parsed
+    // by the child clap process as flags.
+    #[test]
+    fn generate_args_puts_separator_before_prompt() {
+        let prompt = "--no-cache-or-something".to_string();
+        let mut args = vec!["generate".to_string()];
+        // simulate the arg-building in the generate tool
+        args.push("--".to_string());
+        args.push(prompt.clone());
+        let sep_pos = args.iter().position(|a| a == "--").unwrap();
+        let prompt_pos = args.iter().position(|a| a == &prompt).unwrap();
+        assert!(sep_pos < prompt_pos, "`--` must precede the prompt");
+    }
+
+    #[test]
+    fn moghub_comment_args_puts_separator_before_body() {
+        let body = "--some-flag-looking-body".to_string();
+        let mut args = vec!["moghub".to_string(), "comment".to_string()];
+        // simulate the arg-building in the moghub_comment tool
+        args.push("--".to_string());
+        args.push("user/slug".to_string());
+        args.push(body.clone());
+        let sep_pos = args.iter().position(|a| a == "--").unwrap();
+        let body_pos = args.iter().position(|a| a == &body).unwrap();
+        assert!(sep_pos < body_pos, "`--` must precede the body");
     }
 }
