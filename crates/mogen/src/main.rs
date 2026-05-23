@@ -32,6 +32,15 @@ struct Cli {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+
+    // Spend tracker (issue 60). Best-effort — failures are silent so
+    // running `mogen build` on a read-only filesystem still works. Writes
+    // are queued on a background thread, so installation has no effect on
+    // call latency even when nothing is recorded.
+    if let Ok(rec) = mogen_llm::SqliteRecorder::open_default() {
+        let _ = mogen_llm::spend::install_global(std::sync::Arc::new(rec));
+    }
+
     let result = match cli.cmd {
         Cmd::Auth { cmd } => auth_dispatch(cmd.into()),
         Cmd::Moghub { cmd } => dispatch_moghub(cmd),

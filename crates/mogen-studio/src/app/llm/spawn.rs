@@ -42,6 +42,11 @@ impl MogenStudioApp {
             style: None,
             plan: self.settings.plan_first(),
             zai_base_url: self.settings.zai_base_url().to_string(),
+            // Per-call: scene path comes from the active file, session id
+            // from the app-wide UUID. `spawn_llm` populates these from the
+            // file it's about to call against.
+            scene_path: None,
+            session_id: self.spend_session_id.clone(),
         }
     }
 
@@ -106,6 +111,15 @@ impl MogenStudioApp {
             .active()
             .gen_style
             .or_else(|| self.settings.style());
+        // Spend-tracker attribution: stamp the active file path so the
+        // Spending panel can answer "how much has this scene cost?".
+        // Untitled buffers leave the field `None` and the call still
+        // records, just without scene grouping.
+        run_cfg.scene_path = self
+            .active()
+            .path
+            .as_ref()
+            .map(|p| p.display().to_string());
         let sys_instr = self.cached_system_instruction();
 
         let provider_label = provider.label();

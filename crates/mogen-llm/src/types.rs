@@ -141,6 +141,12 @@ pub struct GenerateConfig {
     /// [`ThinkingLevel::High`] — a middle ground that bounds latency while
     /// still leaving room for the model to plan complex scenes.
     pub thinking_level: Option<ThinkingLevel>,
+    /// Attribution carried through to the spend tracker (operation tag,
+    /// scene path, session id). Defaults to an empty context (no
+    /// recording) — caller fills it in if it wants this call to land in
+    /// the per-file Spending panel breakdown. See
+    /// [`crate::spend::CallContext`].
+    pub spend_context: crate::spend::CallContext,
 }
 
 impl GenerateConfig {
@@ -156,7 +162,16 @@ impl GenerateConfig {
             temperature: Some(DEFAULT_TEMPERATURE),
             seed: None,
             thinking_level: Some(ThinkingLevel::High),
+            spend_context: crate::spend::CallContext::default(),
         }
+    }
+
+    /// Tag this call so the spend tracker can attribute it. Equivalent to
+    /// assigning [`Self::spend_context`] directly but keeps the chained
+    /// builder pattern in place. See [`crate::spend::Operation`].
+    pub fn with_spend_context(mut self, ctx: crate::spend::CallContext) -> Self {
+        self.spend_context = ctx;
+        self
     }
 }
 

@@ -557,8 +557,17 @@ impl LlmClient {
 
     /// Issue a single text-completion call. Mapping is provider-specific;
     /// see each module for the wire shape.
+    ///
+    /// This is the single recording point in `mogen-llm`: after the call
+    /// resolves, the response is shipped to the installed
+    /// [`crate::spend::SpendRecorder`] (if any) so the Studio's Spending
+    /// panel can attribute the spend back to `cfg.spend_context`. With no
+    /// recorder installed the call is a no-op — `mogen build` runs that
+    /// don't care about persistent tracking pay nothing.
     pub fn generate(&self, cfg: &GenerateConfig) -> Result<GenerateResponse, ProviderError> {
-        match self {
+        let provider_key = self.provider().key();
+        let model_used = resolved_model(self, cfg);
+        let result: Result<GenerateResponse, ProviderError> = match self {
             LlmClient::Gemini(c) => c.generate(cfg).map_err(Into::into),
             LlmClient::OpenAI(c) => c.generate(cfg).map_err(Into::into),
             LlmClient::Anthropic(c) => c.generate(cfg).map_err(Into::into),
@@ -566,8 +575,67 @@ impl LlmClient {
             LlmClient::ClaudeCode(c) => c.generate(cfg).map_err(Into::into),
             LlmClient::Fireworks(c) => c.generate(cfg).map_err(Into::into),
             LlmClient::Zai(c) => c.generate(cfg).map_err(Into::into),
+        };
+
+        // Recording happens after the call, never inside the provider — the
+        // wire-side `gemini.rs`/`openai.rs` modules stay focused on their
+        // protocol and don't know about persistence. Skip when the caller
+        // didn't tag the call (`CallContext::default()`) so leaf utilities
+        // can call `generate` without polluting the DB.
+        if !cfg.spend_context.is_empty() {
+            match &result {
+                Ok(resp) => {
+                    let rec = crate::spend::CallRecord::from_text(
+                        provider_key,
+                        &model_used,
+                        &resp.usage,
+                        &cfg.spend_context,
+                        true,
+                        None,
+                    );
+                    crate::spend::record(rec);
+                }
+                Err(err) => {
+                    // Budget-exceeded carries reported token counts; record
+                    // it so the meter doesn't undercount a billed-but-rejected
+                    // call. Other error variants don't have a usable Usage
+                    // and are skipped.
+                    if let ProviderError::BudgetExceeded { used, budget } = err {
+                        let usage = crate::types::Usage {
+                            prompt_tokens: *used,
+                            response_tokens: 0,
+                            total_tokens: *used,
+                            cached_tokens: 0,
+                        };
+                        let rec = crate::spend::CallRecord::from_text(
+                            provider_key,
+                            &model_used,
+                            &usage,
+                            &cfg.spend_context,
+                            false,
+                            Some(format!(
+                                "budget exceeded: {used} > {budget}"
+                            )),
+                        );
+                        crate::spend::record(rec);
+                    }
+                }
+            }
         }
+
+        result
     }
+}
+
+/// Resolve which model id the provider actually sent the request as. Mirrors
+/// the per-provider fallback when `cfg.model` is empty — providers default
+/// to their own `DEFAULT_MODEL` so the spend record carries the real model
+/// id rather than an empty string.
+fn resolved_model(client: &LlmClient, cfg: &GenerateConfig) -> String {
+    if !cfg.model.is_empty() {
+        return cfg.model.clone();
+    }
+    client.provider().default_model().to_string()
 }
 
 #[cfg(test)]

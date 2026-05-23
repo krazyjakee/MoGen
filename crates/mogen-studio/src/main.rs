@@ -45,6 +45,19 @@ fn main() -> eframe::Result<()> {
     // doesn't share this instance.
     let startup_settings = settings::Settings::load();
     let _sentry = crash::init(startup_settings.crash_reports_enabled);
+
+    // Install the persistent spend recorder. Best-effort — failure is
+    // logged to stderr and the app continues without tracking. The
+    // recorder writes to `~/.mogen/spend.db`; the location can be
+    // overridden via `MOGEN_SPEND_DB`.
+    match mogen_llm::SqliteRecorder::open_default() {
+        Ok(rec) => {
+            let _ = mogen_llm::spend::install_global(std::sync::Arc::new(rec));
+        }
+        Err(e) => {
+            eprintln!("spend tracker disabled: {e}");
+        }
+    }
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("MoGen Studio")

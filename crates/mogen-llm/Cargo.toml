@@ -22,6 +22,11 @@ webbrowser = "1"
 sha2 = "0.10"
 rand = "0.8"
 tempfile = "3"
+# Bundled SQLite — used by the `spend` module to persist per-call LLM/image
+# spend records to `~/.mogen/spend.db`. The `bundled` feature compiles
+# libsqlite3 statically so we don't pick up whatever the host system has
+# installed (or doesn't).
+rusqlite = { version = "0.31", features = ["bundled"] }
 
 [dev-dependencies]
 base64 = "0.22"

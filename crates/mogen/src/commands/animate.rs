@@ -121,6 +121,11 @@ Existing file:\n\n{existing}",
     }
     cfg.seed = Some(seed);
     cfg.thinking_level = Some(effective_thinking);
+    cfg.spend_context = mogen_llm::CallContext {
+        operation: mogen_llm::Operation::Animate.as_str().to_string(),
+        scene_path: Some(args.input.display().to_string()),
+        session_id: None,
+    };
     attach_system_instruction(&mut cfg, &client, args.cached_content, args.no_cache, "animate");
 
     let total_attempts = args.max_repair_iters + 1;

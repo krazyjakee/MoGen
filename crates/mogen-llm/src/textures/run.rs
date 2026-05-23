@@ -246,6 +246,8 @@ fn process_material(
                     model,
                     p,
                     args.texture_size,
+                    &crate::spend::CallContext::new(crate::spend::Operation::Textures)
+                        .with_scene(args.input.display().to_string()),
                 )?;
                 // Mask-mode materials want a foliage cutout: chroma-key
                 // the pure-black backdrop into alpha=0 so the leaf
@@ -379,6 +381,7 @@ fn resolve_albedo_bytes(
     model: &str,
     plan: &Plan,
     max_side: u32,
+    ctx: &crate::spend::CallContext,
 ) -> Result<Vec<u8>> {
     let client = client.ok_or_else(|| {
         anyhow!("no image client available for material {}", plan.material)
@@ -386,12 +389,13 @@ fn resolve_albedo_bytes(
     // Fresh per-material random seed so repeated runs over the same prompt
     // don't keep landing on the same model sample.
     let seed = Some(random_seed());
-    let img = generate_with_recitation_retry(
+    let img = generate_with_recitation_retry_ctx(
         client,
         model,
         &plan.prompt,
         RECITATION_RETRIES,
         seed,
+        ctx,
     )
     .map_err(|e: ImageError| anyhow!("{} image: {e}", client.provider_name()))?;
     resize_and_recompress_albedo(&img.png_bytes, max_side)
@@ -522,10 +526,32 @@ pub fn generate_with_recitation_retry(
     max_retries: u32,
     seed: Option<u64>,
 ) -> Result<GeneratedImage, ImageError> {
+    generate_with_recitation_retry_ctx(
+        client,
+        model,
+        base_prompt,
+        max_retries,
+        seed,
+        &crate::spend::CallContext::default(),
+    )
+}
+
+/// Spend-tracking variant of [`generate_with_recitation_retry`]. Each
+/// successful or failed attempt lands a row in the spend DB tagged with
+/// `ctx.operation` / `ctx.scene_path` so the Spending panel can show
+/// per-material costs for a texture run.
+pub fn generate_with_recitation_retry_ctx(
+    client: &ImageClient,
+    model: &str,
+    base_prompt: &str,
+    max_retries: u32,
+    seed: Option<u64>,
+    ctx: &crate::spend::CallContext,
+) -> Result<GeneratedImage, ImageError> {
     let mut attempt: u32 = 0;
     loop {
         let prompt = build_attempt_prompt(base_prompt, attempt);
-        match client.generate_image(model, &prompt, seed) {
+        match client.generate_image_with_context(model, &prompt, seed, ctx) {
             Ok(img) => return Ok(img),
             // Gemini-specific recitation rejection: the safety filter latched
             // onto literal phrasing in the subject. Rephrase + retry. Other

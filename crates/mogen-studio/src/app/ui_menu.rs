@@ -495,6 +495,18 @@ impl MogenStudioApp {
                         ui.close_menu();
                     }
                 });
+                ui.separator();
+                if ui
+                    .button("Spending…")
+                    .on_hover_text(
+                        "Show LLM / image generation spend over time, with filters \
+                         for scene, model, operation, and a CSV export",
+                    )
+                    .clicked()
+                {
+                    action = MenuAction::OpenSpending;
+                    ui.close_menu();
+                }
             });
             if let Some(t) = chosen_theme {
                 self.settings.set_theme(t);
@@ -684,6 +696,9 @@ impl MogenStudioApp {
             }
             MenuAction::OpenCommunity => {
                 self.community.open = true;
+            }
+            MenuAction::OpenSpending => {
+                self.open_spending_panel();
             }
             MenuAction::OpenPublish => {
                 self.open_publish_dialog();

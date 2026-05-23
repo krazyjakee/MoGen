@@ -37,6 +37,7 @@ pub mod provider;
 pub mod refine;
 pub mod repair;
 pub mod settings_store;
+pub mod spend;
 pub mod textures;
 pub mod style;
 pub mod types;
@@ -82,6 +83,10 @@ pub use zai_chat::{
 pub use types::{
     GenerateConfig, GenerateResponse, ImageInput, Role, ThinkingLevel, Turn, Usage,
     DEFAULT_TEMPERATURE,
+};
+pub use spend::{
+    CallContext, CallFilter, CallRecord, CallRow, ModelSummary, NoopRecorder, Operation,
+    SpendRecorder, SqliteRecorder, SummaryRow,
 };
 
 /// Default heavy text model — kept as the legacy alias so existing callers
