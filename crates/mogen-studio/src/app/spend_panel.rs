@@ -12,12 +12,11 @@
 
 use std::fs::File;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::Path;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use eframe::egui;
-use mogen_llm::spend::{self, CallFilter, CallRow, ModelSummary, SpendRecorder, SummaryRow};
-use mogen_llm::spend::recorder::Distinct;
+use mogen_llm::spend::{self, CallFilter, CallRow, Distinct, ModelSummary, SpendRecorder, SummaryRow};
 
 use crate::app::MogenStudioApp;
 
@@ -225,9 +224,7 @@ impl MogenStudioApp {
     /// active file's total spend + a small per-model breakdown tooltip;
     /// clicking opens the full Spending panel filtered to this scene.
     pub(in crate::app) fn ui_scene_spend_pill(&mut self, ui: &mut egui::Ui) {
-        if spend::global().is_none() {
-            return;
-        }
+        let Some(rec) = spend::global() else { return };
         let scene_path = match self
             .active()
             .path
@@ -243,7 +240,6 @@ impl MogenStudioApp {
             limit: 0,
             ..Default::default()
         };
-        let Some(rec) = spend::global() else { return };
         let summary = rec.summary(&filter);
         let by_model = rec.by_model(&filter);
         if summary.total_calls == 0 {
@@ -796,7 +792,7 @@ fn compute_time_series(
 /// Dump `rows` to `path` as CSV. The header column order matches the
 /// SQLite schema so a downstream `sqlite3 .import` round-trips without
 /// a manual mapping step.
-fn export_csv(path: &PathBuf, rows: &[CallRow]) -> std::io::Result<()> {
+fn export_csv(path: &Path, rows: &[CallRow]) -> std::io::Result<()> {
     let mut f = File::create(path)?;
     writeln!(
         f,

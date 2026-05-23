@@ -151,16 +151,13 @@ fn run_repair_loop(
     let mut asked_for_edits = asked_for_edits_init;
     let mut prev_dsl: Option<String> = prev_dsl_init;
 
-    // Original operation tag for the spend recorder — the first call carries
-    // it (e.g. "generate" / "modify"); every subsequent repair iteration is
-    // re-tagged "repair" so the Spending panel can split the original turn
-    // from the auto-fix overhead.
+    // Repair iterations after the first are re-tagged "repair" in the spend
+    // tracker so the Spending panel can split the original turn from the
+    // auto-fix overhead cost.
     let original_op = cfg.spend_context.operation.clone();
 
     for iter in 0..=repair.max_iters {
-        if iter == 0 {
-            cfg.spend_context.operation = original_op.clone();
-        } else if !original_op.is_empty() {
+        if iter > 0 && !original_op.is_empty() {
             cfg.spend_context.operation = crate::spend::Operation::Repair.as_str().to_string();
         }
 

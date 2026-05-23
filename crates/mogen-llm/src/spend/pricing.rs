@@ -237,36 +237,6 @@ pub fn image_price_for_model(model: &str) -> ImagePricing {
     ImagePricing { per_image_usd: 0.0 }
 }
 
-/// Wrapper that returns both text and image rates in one call — used by
-/// the SQLite backend when costing a record before insert.
-pub fn default_pricing_for_model(provider: &str, model: &str) -> PricingSeed {
-    PricingSeed {
-        provider: provider_key_static(provider),
-        model: model_key_static(model),
-        text: Some(text_price_for_model(model)),
-        image: Some(image_price_for_model(model)),
-    }
-}
-
-fn provider_key_static(p: &str) -> &'static str {
-    match p.to_ascii_lowercase().as_str() {
-        "gemini" => "gemini",
-        "openai" => "openai",
-        "anthropic" => "anthropic",
-        "ollama" => "ollama",
-        "claude-code" => "claude-code",
-        "fireworks" => "fireworks",
-        "zai" => "zai",
-        _ => "other",
-    }
-}
-
-fn model_key_static(_m: &str) -> &'static str {
-    // The model string isn't `'static` from the caller, so this helper just
-    // returns a placeholder — used only by the seed-row builder where the
-    // string is already a literal. The DB row stores the real model name.
-    ""
-}
 
 /// Baseline pricing seeded into the `pricing` table on first run. Each row
 /// captures the public list price for a model `mogen-llm` talks to today.

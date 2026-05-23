@@ -32,7 +32,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use rusqlite::{params, Connection, OptionalExtension};
 
@@ -541,7 +541,6 @@ pub fn list_pricing(conn: &Connection) -> rusqlite::Result<Vec<PricingRow>> {
 ///
 /// Used by Settings → AI Pricing. Wrap in a transaction so a crash mid-
 /// update can't leave both rows simultaneously effective.
-#[allow(clippy::too_many_arguments)]
 pub fn upsert_pricing(
     conn: &mut Connection,
     provider: &str,
@@ -816,10 +815,7 @@ fn read_distinct(conn: &Connection) -> rusqlite::Result<Distinct> {
 }
 
 fn now_unix() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
+    super::now_unix()
 }
 
 /// Build a [`PricingSeed`] from a database row. Exposed for tests that

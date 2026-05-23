@@ -35,8 +35,8 @@ use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub use pricing::{
-    compute_cost, default_pricing_for_model, image_price_for_model, text_price_for_model,
-    ImagePricing, PriceTier, TextPricing,
+    compute_cost, image_price_for_model, text_price_for_model, ImagePricing, PriceTier,
+    TextPricing,
 };
 pub use recorder::{Distinct, NoopRecorder, SpendRecorder};
 pub use sqlite::{
@@ -304,7 +304,7 @@ pub fn default_db_path() -> Option<PathBuf> {
     )
 }
 
-fn now_unix() -> i64 {
+pub(super) fn now_unix() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
