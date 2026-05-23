@@ -93,6 +93,7 @@ pub(crate) fn build_lod_meshes(source: &Mesh) -> Vec<Mesh> {
             uvs: source.uvs.clone(),
             joints: Vec::new(),
             weights: Vec::new(),
+            colors: source.colors.clone(),
             indices: new_indices,
         });
     }

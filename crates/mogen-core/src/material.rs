@@ -2,6 +2,8 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::gradient::Gradient;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct MaterialId(pub u32);
 
@@ -149,6 +151,13 @@ pub struct Material {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub emissive_texture: Option<TextureRef>,
 
+    /// Optional per-vertex colour ramp baked into `COLOR_0` at export. The
+    /// baked colour multiplies `base_color` per the glTF spec, so a gradient
+    /// paired with `color=[1, 1, 1]` produces pure gradient pixels, and a
+    /// gradient paired with a tinted `base_color` produces a tinted ramp.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gradient: Option<Gradient>,
+
     /// Canonical path of the imported `.mog` file this material was hoisted
     /// from. `None` when the material was authored in the file currently
     /// being lowered. Used by tooling (e.g. MoGen Studio's inspector) to
@@ -193,6 +202,7 @@ impl Material {
             normal_texture: None,
             occlusion_texture: None,
             emissive_texture: None,
+            gradient: None,
             origin: None,
         }
     }

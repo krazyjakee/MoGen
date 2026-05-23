@@ -1,0 +1,36 @@
+// Showcase of the four material gradient surface forms. Each primitive
+// pairs `color=[1, 1, 1]` with a `gradient=` so the baked vertex colour
+// lands directly on the surface — `COLOR_0` multiplies `baseColorFactor`
+// per the glTF spec, so a white base lets the gradient show through unaltered.
+//
+// Tessellation matters: vertex colours interpolate between vertices, so the
+// `sphere` / `cylinder` segment counts here are higher than the default to
+// keep the ramps smooth. A 6-vert default box wouldn't have enough vertices
+// to read as a gradient at all.
+
+material "sky"      (color=[1, 1, 1], roughness=0.9,
+                     gradient=vertical(from=[0.95, 0.55, 0.25], to=[0.18, 0.45, 0.85]))
+
+material "sunset"   (color=[1, 1, 1], roughness=0.8,
+                     gradient=linear(from=[1.0, 0.85, 0.4], to=[0.45, 0.1, 0.5], axis=x))
+
+material "ember"    (color=[1, 1, 1], roughness=0.6,
+                     gradient=radial(center=[1.0, 0.9, 0.4], edge=[0.45, 0.05, 0.02]))
+
+material "rainbow"  (color=[1, 1, 1], roughness=0.7,
+                     gradient=stops(colors=[[1, 0, 0], [1, 0.6, 0], [0.95, 0.95, 0],
+                                            [0, 0.7, 0.1], [0.1, 0.35, 0.95], [0.45, 0.15, 0.55]],
+                                    axis=y))
+
+scene {
+  group "gradient_demo" {
+    box      "sky_box"    (size=[1.2, 1.8, 0.1], pos=[-2.0, 0.9, 0],
+                           mat="sky",     tags="floating")
+    box      "sunset_box" (size=[1.6, 1.0, 0.1], pos=[ 0.0, 0.9, 0],
+                           mat="sunset",  tags="floating")
+    sphere   "ember"      (radius=0.55, rings=24, segments=32,
+                           pos=[ 2.2, 0.9, 0], mat="ember",   tags="floating")
+    cylinder "rainbow"    (radius=0.35, height=1.8, segments=48,
+                           pos=[ 4.0, 0.9, 0], mat="rainbow", tags="floating")
+  }
+}

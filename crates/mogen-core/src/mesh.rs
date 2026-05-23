@@ -18,6 +18,13 @@ pub struct Mesh {
     /// Per-vertex weights matching `joints`. Each row must sum to ~1.0.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub weights: Vec<[f32; 4]>,
+    /// Per-vertex RGBA colours (`COLOR_0` in glTF). Populated by the
+    /// gradient-bake pass when a mesh's material carries a gradient ramp.
+    /// Multiplies `baseColorFactor` at render time per the glTF spec, so an
+    /// authoring convention of `color=[1, 1, 1]` plus a gradient yields the
+    /// raw ramp colours. Must be empty or the same length as `positions`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub colors: Vec<[f32; 4]>,
 }
 
 impl Mesh {
@@ -29,6 +36,7 @@ impl Mesh {
             uvs: Vec::new(),
             joints: Vec::new(),
             weights: Vec::new(),
+            colors: Vec::new(),
         }
     }
 
@@ -38,5 +46,9 @@ impl Mesh {
 
     pub fn has_uvs(&self) -> bool {
         !self.uvs.is_empty() && self.uvs.len() == self.positions.len()
+    }
+
+    pub fn has_colors(&self) -> bool {
+        !self.colors.is_empty() && self.colors.len() == self.positions.len()
     }
 }

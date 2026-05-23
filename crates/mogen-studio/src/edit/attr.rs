@@ -38,12 +38,19 @@ pub fn set_attr(src: &str, span: Span, name: &str, value: &str) -> String {
     }
 
     // Append before closing `)`. Preserve leading spacing: if the header
-    // already has trailing content immediately before `)`, prepend ", ";
-    // otherwise just the attr.
+    // already has trailing content immediately before `)`, prepend ", " —
+    // unless that trailing content is itself a `,` (the multi-line idiom
+    // `last_attr,\n)`), in which case prepend just a space so we don't
+    // produce `,,`.
     let body = &src[hdr_open + 1..hdr_close];
     let trimmed = body.trim_end();
-    let has_content = !trimmed.is_empty();
-    let prefix = if has_content { ", " } else { "" };
+    let prefix = if trimmed.is_empty() {
+        ""
+    } else if trimmed.ends_with(',') {
+        " "
+    } else {
+        ", "
+    };
     // Insert just after the last non-whitespace byte (skips trailing commas
     // and newlines inside multiline headers so the new attr stays flush with
     // the existing last attr rather than getting pushed past a `\n    )`
@@ -370,6 +377,24 @@ mod tests {
         let out = set_attr(src, span, "x", "5");
         assert!(out.contains("box \"a\" (x=0)"), "first node untouched: {out}");
         assert!(out.contains("box \"b\" (x=5)"), "second node updated: {out}");
+    }
+
+    #[test]
+    fn set_attr_appends_after_multiline_trailing_comma() {
+        // Regression: the multi-line idiom `last_attr,\n)` ends the body
+        // with a trailing comma after `trim_end()`. The append path used
+        // to prepend `, ` unconditionally, producing `last_attr,, new=…`
+        // — invalid DSL. The fix is to detect the trailing `,` and prepend
+        // just a space so the comma already there serves as the separator.
+        let src = "building \"h\" (\n  rooms=14,\n  mat=\"plaster\",\n)";
+        let span = span_of(src, "building \"h\" (\n  rooms=14,\n  mat=\"plaster\",\n)");
+        let out = set_attr(src, span, "door_w", "1");
+        assert!(
+            !out.contains(",,"),
+            "must not produce a double comma: {out}"
+        );
+        assert!(out.contains("door_w=1"), "door_w appended: {out}");
+        assert!(out.contains("mat=\"plaster\""), "mat preserved: {out}");
     }
 
     #[test]

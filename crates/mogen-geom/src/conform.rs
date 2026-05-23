@@ -559,7 +559,7 @@ fn cut_mesh_at_plane(mesh: &Mesh, axis_idx: usize, plane: f32) -> Mesh {
         indices.extend_from_slice(&[new_a, tri[pair_b_i], new_b]);
     }
 
-    Mesh { positions, normals, uvs, indices, joints, weights }
+    Mesh { positions, normals, uvs, indices, joints, weights, colors: Vec::new() }
 }
 
 fn sign_of(d: f32, eps: f32) -> i32 {

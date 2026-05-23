@@ -323,7 +323,11 @@ fn substitute_value(value: &Value, scope: &Scope) -> Result<Value> {
         | Value::List(_)
         | Value::ListVec3(_)
         | Value::ListPair(_)
-        | Value::ListQuad(_) => Ok(value.clone()),
+        | Value::ListQuad(_)
+        // Gradient attrs have no `$param` substitution surface — colour stops
+        // are constant vec3s and axes are bare idents — so they round-trip
+        // through module expansion unchanged.
+        | Value::Gradient(_) => Ok(value.clone()),
         // Strings and idents (and lists of strings) get scope-aware
         // `$ident` / `${ident}` interpolation so authors can write
         // `name "leg_$i"` inside a `for` body.

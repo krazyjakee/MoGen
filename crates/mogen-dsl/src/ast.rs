@@ -51,6 +51,23 @@ pub enum Value {
     /// top-level `meta(...)` block; mixing strings and numbers in one list
     /// is rejected at parse time.
     ListString(Vec<String>),
+    /// `gradient=linear(from=[…], to=[…], axis=y)` and friends. The parser
+    /// recognises the surface shape; lowering interprets per kind so the
+    /// validator can attach a span to whichever attribute is wrong.
+    Gradient(GradientDef),
+}
+
+/// Surface representation of a gradient value. `kind` is one of
+/// `"linear" | "vertical" | "radial" | "stops"`; the inner `attrs` mirror an
+/// `attr_list` payload — anything from `from=[1,0,0]` to
+/// `colors=[[1,0,0], [0,1,0]]` to `axis=y` flows through unchanged. The span
+/// covers the whole `kind(...)` form so a bad inner attribute can still be
+/// reported against the gradient as a whole when no inner span is recorded.
+#[derive(Debug, Clone)]
+pub struct GradientDef {
+    pub kind: String,
+    pub attrs: Vec<(String, Value)>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
@@ -215,6 +232,13 @@ impl Node {
         match self.attr(key)? {
             Value::Number(n) => Some(Vec3::splat(*n)),
             Value::Vec3(v) => Some(Vec3::from_array(*v)),
+            _ => None,
+        }
+    }
+
+    pub fn attr_gradient(&self, key: &str) -> Option<&GradientDef> {
+        match self.attr(key)? {
+            Value::Gradient(g) => Some(g),
             _ => None,
         }
     }

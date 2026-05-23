@@ -66,17 +66,7 @@ impl MogenStudioApp {
 
         let font_id = egui::TextStyle::Monospace.resolve(ui.style());
         let palette = crate::highlight::Palette::for_visuals(&ui.style().visuals);
-
-        // Layouter closure — runs on every repaint for the visible text. Kept
-        // cheap by the single-pass tokeniser in `highlight`; caching on hash
-        // would be nice but isn't needed yet at typical .mog sizes.
-        let hl_font = font_id.clone();
-        let mut layouter = move |ui: &egui::Ui, text: &str, _wrap_width: f32| {
-            // Wrap is disabled in `highlight` — long lines scroll horizontally
-            // so the gutter's one-number-per-source-line stays aligned.
-            let job = crate::highlight::highlight(text, hl_font.clone(), palette);
-            ui.fonts(|f| f.layout_job(job))
-        };
+        let word_wrap = self.settings.word_wrap();
 
         // Compute how many text rows fit in the visible panel so the editor
         // and the gutter column always fill the full available height —
@@ -89,9 +79,84 @@ impl MogenStudioApp {
         let available_height = (ui.available_height() - 4.0).max(row_height);
         let visible_rows = ((available_height / row_height).floor() as usize).max(1);
 
+        // When word wrap is on we pre-compute a fixed wrap width and use it
+        // both to (a) lay the source out ourselves once to discover how many
+        // visual rows each source line spans (so the gutter can blank
+        // continuation rows) and (b) pin the editor's layouter so its row
+        // breaks match the gutter's. Chrome budget walks the horizontal
+        // chain: outer ScrollArea vertical scrollbar reservation, gutter
+        // Frame inner_margin (4+4), gutter text glyphs, horizontal_top
+        // item_spacing, TextEdit's default symmetric(4, 2) margin, and a
+        // small fudge so a single-pixel rounding error doesn't kick the
+        // editor's actual wrap below ours.
+        let line_count = crate::highlight::line_count_for(&self.files[i].source);
+        let digits = line_count.max(1).to_string().len().max(3);
+        let char_width = ui.fonts(|f| f.glyph_width(&font_id, '0')).max(6.0);
+        let panel_width = ui.available_width();
+        let computed_wrap_width: f32 = if word_wrap {
+            let gutter_text_w = char_width * digits as f32;
+            let chrome = 12.0 + 8.0 + 6.0 + 8.0 + 4.0;
+            (panel_width - gutter_text_w - chrome).max(80.0)
+        } else {
+            f32::INFINITY
+        };
+
+        // Visual-row count per source line. `None` when word wrap is off — the
+        // gutter falls back to its historical one-row-per-line layout. With
+        // wrap on, lay the source out at `computed_wrap_width` once and walk
+        // the resulting galley: each row that ends with a newline closes out
+        // a source line, all earlier rows in that line are continuation.
+        // Epaint's contract guarantees the final row never ends with a
+        // newline, so the post-loop flush always runs.
+        let visual_rows_per_line: Option<Vec<usize>> = if word_wrap {
+            let preview_job = crate::highlight::highlight(
+                &self.files[i].source,
+                font_id.clone(),
+                palette,
+                computed_wrap_width,
+            );
+            let galley = ui.fonts(|f| f.layout_job(preview_job));
+            let mut rows = Vec::with_capacity(line_count);
+            let mut current = 0usize;
+            for row in &galley.rows {
+                current += 1;
+                if row.ends_with_newline {
+                    rows.push(current);
+                    current = 0;
+                }
+            }
+            rows.push(current.max(1));
+            Some(rows)
+        } else {
+            None
+        };
+
+        // Layouter closure — runs on every repaint for the visible text. Kept
+        // cheap by the single-pass tokeniser in `highlight`; caching on hash
+        // would be nice but isn't needed yet at typical .mog sizes.
+        // `captured_wrap` pins the layout width so the editor's row breaks
+        // line up with the gutter we just computed. We deliberately ignore
+        // the `_available_wrap` egui passes — with `desired_width(INFINITY)`
+        // that would be the inner ui width and silently re-enable wrapping
+        // when the user has it off.
+        let hl_font = font_id.clone();
+        let captured_wrap = computed_wrap_width;
+        let mut layouter = move |ui: &egui::Ui, text: &str, _available_wrap: f32| {
+            let job = crate::highlight::highlight(text, hl_font.clone(), palette, captured_wrap);
+            ui.fonts(|f| f.layout_job(job))
+        };
+
         let mut textedit_output: Option<egui::widgets::text_edit::TextEditOutput> = None;
 
-        egui::ScrollArea::both()
+        // Word wrap removes the need for horizontal scrolling — switching to
+        // vertical-only keeps long wrapped lines from also producing a
+        // dangling horizontal bar.
+        let scroll_area = if word_wrap {
+            egui::ScrollArea::vertical()
+        } else {
+            egui::ScrollArea::both()
+        };
+        scroll_area
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.horizontal_top(|ui| {
@@ -99,13 +164,16 @@ impl MogenStudioApp {
 
                     // Gutter: one right-aligned line number per source row,
                     // padded with blank cells so the column visually extends
-                    // to match the editor even when content is short.
-                    // Wrapped in a Frame with the same vertical padding
-                    // egui's TextEdit uses so the first row of the gutter
-                    // sits on the first row of the editor.
+                    // to match the editor even when content is short. When
+                    // word wrap is on, continuation rows render as blanks so
+                    // line numbers stay anchored to the first visual row of
+                    // each source line. Wrapped in a Frame with the same
+                    // vertical padding egui's TextEdit uses so the first row
+                    // of the gutter sits on the first row of the editor.
                     let (gutter, _digits) = crate::highlight::gutter_job_padded(
                         &self.files[i].source,
                         visible_rows,
+                        visual_rows_per_line.as_deref(),
                         font_id.clone(),
                         palette,
                     );
@@ -128,13 +196,24 @@ impl MogenStudioApp {
                     let prior = egui::TextEdit::load_state(ui.ctx(), editor_id)
                         .and_then(|s| s.cursor.char_range());
 
+                    // With word wrap on, `desired_width` doubles as the
+                    // editor's allocated width — egui passes `min(desired,
+                    // available)` to the layouter, so matching the captured
+                    // wrap width keeps the editor's row breaks identical to
+                    // the gutter pre-layout. With wrap off, INFINITY keeps
+                    // the historical horizontal-scroll behaviour.
+                    let desired_width = if word_wrap {
+                        computed_wrap_width
+                    } else {
+                        f32::INFINITY
+                    };
                     let mut editor = egui::TextEdit::multiline(&mut self.files[i].source)
                         // code_editor() implies lock_focus(true), so Tab inserts
                         // a tab character instead of moving focus out of the
                         // editor — the right behavior for a code surface.
                         .code_editor()
                         .desired_rows(visible_rows)
-                        .desired_width(f32::INFINITY)
+                        .desired_width(desired_width)
                         .font(egui::TextStyle::Monospace)
                         .layouter(&mut layouter)
                         .id(editor_id);

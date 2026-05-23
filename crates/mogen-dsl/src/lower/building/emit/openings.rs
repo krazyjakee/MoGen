@@ -721,13 +721,17 @@ fn split_segment_by_entrances(
 /// that's a feature, not a bug: stacking windows is the failure mode we
 /// want to prevent.
 fn allocate_windows(segments: &[ExtSeg], count: usize, pitch: f32) -> Vec<usize> {
-    // Correct cap: n windows placed at (j+1)/(n+1) fractions have
-    // centre-to-centre spacing L/(n+1). For that to be >= pitch we need
-    // n <= L/pitch - 1. Use floor(L/pitch) - 1 (segments that pass the
-    // length filter already have L >= pitch, so this is >= 0).
+    // Correct cap: for n >= 2 windows placed at (j+1)/(n+1) fractions, the
+    // centre-to-centre spacing is L/(n+1); requiring that >= pitch gives
+    // n <= L/pitch - 1. For n = 1 there is no adjacent window to space
+    // against, so the only constraint is that the segment can hold one
+    // window with margin — which is exactly what the L >= pitch filter
+    // upstream already guarantees. Floor the bound but never drop below 1
+    // for a segment that survived the filter, otherwise rooms whose
+    // exterior runs sit in [pitch, 2*pitch) silently lose their window.
     let max_per: Vec<usize> = segments
         .iter()
-        .map(|s| (((s.hi - s.lo) / pitch).floor() as i64 - 1).max(0) as usize)
+        .map(|s| (((s.hi - s.lo) / pitch).floor() as i64 - 1).max(1) as usize)
         .collect();
     let total_capacity: usize = max_per.iter().sum();
     let target = count.min(total_capacity);

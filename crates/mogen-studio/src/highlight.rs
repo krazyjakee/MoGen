@@ -82,13 +82,14 @@ impl Palette {
 }
 
 /// Build a styled `LayoutJob` for `src` using the monospace font at `font_id`.
-/// Wrapping is intentionally disabled so one source line is one visual row —
-/// the gutter renders one number per source line, and a wrapped editor would
-/// drift the numbers out of alignment. Long lines scroll horizontally in the
-/// surrounding `ScrollArea` instead.
-pub fn highlight(src: &str, font_id: FontId, palette: Palette) -> LayoutJob {
+/// Pass `f32::INFINITY` for `wrap_width` to disable wrapping (long lines scroll
+/// horizontally in the surrounding `ScrollArea`) or a finite value to enable
+/// soft-wrap at word boundaries — the gutter must then be built with
+/// `visual_rows_per_line` so continuation rows render as blanks instead of
+/// pulling line numbers out of alignment.
+pub fn highlight(src: &str, font_id: FontId, palette: Palette, wrap_width: f32) -> LayoutJob {
     let mut job = LayoutJob::default();
-    job.wrap.max_width = f32::INFINITY;
+    job.wrap.max_width = wrap_width;
 
     let bytes = src.as_bytes();
     let mut i = 0;
@@ -191,18 +192,28 @@ pub fn highlight(src: &str, font_id: FontId, palette: Palette) -> LayoutJob {
     job
 }
 
-/// Build a right-aligned gutter `LayoutJob` with one row per source line,
-/// padded to at least `min_rows`. Rows beyond the source's line count are
-/// rendered as blank cells so the gutter column visually extends alongside a
-/// TextEdit whose `desired_rows` exceeds the content length.
+/// Build a right-aligned gutter `LayoutJob`, padded to at least `min_rows`.
+///
+/// When `visual_rows_per_line` is `None`, emits one row per source line
+/// (the no-word-wrap default). When `Some`, each entry is the count of
+/// visual rows that source line occupies in the wrapped editor — the line
+/// number is rendered on the first visual row and continuation rows are
+/// blank cells so the gutter and editor stay aligned. Rows beyond the
+/// content's total visual rows pad with blanks so the column extends
+/// alongside a TextEdit whose `desired_rows` exceeds the content length.
 pub fn gutter_job_padded(
     src: &str,
     min_rows: usize,
+    visual_rows_per_line: Option<&[usize]>,
     font_id: FontId,
     palette: Palette,
 ) -> (LayoutJob, usize) {
     let line_count = line_count_for(src);
-    let total_rows = line_count.max(min_rows).max(1);
+    let content_visual_rows: usize = match visual_rows_per_line {
+        Some(per) => per.iter().map(|n| (*n).max(1)).sum(),
+        None => line_count,
+    };
+    let total_rows = content_visual_rows.max(min_rows).max(1);
     let digits = line_count.max(1).to_string().len().max(3);
     let fmt = TextFormat {
         font_id,
@@ -210,16 +221,41 @@ pub fn gutter_job_padded(
         ..Default::default()
     };
     let mut job = LayoutJob::default();
-    for n in 1..=total_rows {
-        if n > 1 {
+    let blank_cell = " ".repeat(digits);
+    let mut first = true;
+    let push = |job: &mut LayoutJob, cell: &str, first: &mut bool| {
+        if !*first {
             job.append("\n", 0.0, fmt.clone());
         }
-        let cell = if n <= line_count {
-            format!("{:>width$}", n, width = digits)
-        } else {
-            " ".repeat(digits)
-        };
-        job.append(&cell, 0.0, fmt.clone());
+        *first = false;
+        job.append(cell, 0.0, fmt.clone());
+    };
+
+    let mut emitted = 0usize;
+    match visual_rows_per_line {
+        Some(per) => {
+            for (idx, &vrows) in per.iter().enumerate() {
+                let line_no = idx + 1;
+                let label = format!("{:>width$}", line_no, width = digits);
+                let vrows = vrows.max(1);
+                for r in 0..vrows {
+                    let cell: &str = if r == 0 { label.as_str() } else { blank_cell.as_str() };
+                    push(&mut job, cell, &mut first);
+                    emitted += 1;
+                }
+            }
+        }
+        None => {
+            for n in 1..=line_count {
+                let label = format!("{:>width$}", n, width = digits);
+                push(&mut job, &label, &mut first);
+                emitted += 1;
+            }
+        }
+    }
+    while emitted < total_rows {
+        push(&mut job, &blank_cell, &mut first);
+        emitted += 1;
     }
     (job, digits)
 }
@@ -280,7 +316,7 @@ mod tests {
 
     #[test]
     fn highlights_keyword_over_identifier() {
-        let job = highlight("box foo", font(), palette());
+        let job = highlight("box foo", font(), palette(), f32::INFINITY);
         let secs = sections_text(&job);
         assert_eq!(secs[0].0, "box");
         assert_eq!(secs[0].1, palette().keyword);
@@ -291,7 +327,7 @@ mod tests {
 
     #[test]
     fn highlights_comment_to_end_of_line() {
-        let job = highlight("// hi\nbox", font(), palette());
+        let job = highlight("// hi\nbox", font(), palette(), f32::INFINITY);
         let secs = sections_text(&job);
         assert_eq!(secs[0].0, "// hi");
         assert_eq!(secs[0].1, palette().comment);
@@ -299,7 +335,7 @@ mod tests {
 
     #[test]
     fn highlights_string_literal() {
-        let job = highlight("box \"hello\"", font(), palette());
+        let job = highlight("box \"hello\"", font(), palette(), f32::INFINITY);
         let secs = sections_text(&job);
         let s = secs.iter().find(|(t, _)| t == "\"hello\"").expect("string section");
         assert_eq!(s.1, palette().string);
@@ -307,7 +343,7 @@ mod tests {
 
     #[test]
     fn highlights_numbers() {
-        let job = highlight("x=1.5", font(), palette());
+        let job = highlight("x=1.5", font(), palette(), f32::INFINITY);
         let secs = sections_text(&job);
         let n = secs.iter().find(|(t, _)| t == "1.5").expect("number section");
         assert_eq!(n.1, palette().number);
@@ -315,7 +351,7 @@ mod tests {
 
     #[test]
     fn highlights_param_ref() {
-        let job = highlight("$size", font(), palette());
+        let job = highlight("$size", font(), palette(), f32::INFINITY);
         let secs = sections_text(&job);
         assert_eq!(secs[0].0, "$size");
         assert_eq!(secs[0].1, palette().param_ref);
@@ -324,7 +360,7 @@ mod tests {
     #[test]
     fn tolerates_unclosed_string() {
         // Unterminated strings mid-edit must not consume the rest of the buffer.
-        let job = highlight("\"oops\nbox", font(), palette());
+        let job = highlight("\"oops\nbox", font(), palette(), f32::INFINITY);
         let secs = sections_text(&job);
         assert_eq!(secs[0].0, "\"oops");
         assert_eq!(secs[0].1, palette().string);
@@ -333,7 +369,7 @@ mod tests {
 
     #[test]
     fn gutter_line_count_matches_newlines() {
-        let (_, _) = gutter_job_padded("a\nb\nc", 0, font(), palette());
+        let (_, _) = gutter_job_padded("a\nb\nc", 0, None, font(), palette());
         assert_eq!(line_count_for("a\nb\nc"), 3);
         assert_eq!(line_count_for("a\nb\n"), 3);
         assert_eq!(line_count_for(""), 1);
@@ -343,7 +379,7 @@ mod tests {
     fn gutter_pads_to_min_rows() {
         // With 2 source lines but min_rows=5, the gutter should render 5
         // rows: "1".."2" for the content and blank cells for rows 3..=5.
-        let (job, digits) = gutter_job_padded("a\nb", 5, font(), palette());
+        let (job, digits) = gutter_job_padded("a\nb", 5, None, font(), palette());
         let newline_count = job.text.chars().filter(|c| *c == '\n').count();
         assert_eq!(newline_count, 4, "5 rows means 4 newlines between them");
         // Rows beyond the content should be all-whitespace.
@@ -360,16 +396,51 @@ mod tests {
     #[test]
     fn gutter_padding_does_not_shrink_content() {
         // min_rows smaller than the content's line count must not truncate.
-        let (job, _) = gutter_job_padded("a\nb\nc\nd", 2, font(), palette());
+        let (job, _) = gutter_job_padded("a\nb\nc\nd", 2, None, font(), palette());
         let rows: Vec<&str> = job.text.split('\n').collect();
         assert_eq!(rows.len(), 4);
         assert_eq!(rows[3].trim(), "4");
     }
 
     #[test]
+    fn gutter_wrapped_inserts_blank_continuation_rows() {
+        // 3 source lines where line 2 occupies 3 visual rows in the wrapped
+        // editor → gutter must read "1", "2", " ", " ", "3".
+        let (job, digits) =
+            gutter_job_padded("a\nlong\nc", 0, Some(&[1, 3, 1]), font(), palette());
+        let rows: Vec<&str> = job.text.split('\n').collect();
+        assert_eq!(rows.len(), 5);
+        assert_eq!(rows[0].trim(), "1");
+        assert_eq!(rows[1].trim(), "2");
+        assert!(rows[2].chars().all(|c| c == ' '));
+        assert_eq!(rows[2].len(), digits);
+        assert!(rows[3].chars().all(|c| c == ' '));
+        assert_eq!(rows[3].len(), digits);
+        assert_eq!(rows[4].trim(), "3");
+    }
+
+    #[test]
+    fn gutter_wrapped_pads_visual_rows_to_min() {
+        // 2 source lines, line 1 wraps to 2 visual rows → 3 content rows.
+        // min_rows=6 must add 3 trailing blank rows on top of the content.
+        let (job, digits) =
+            gutter_job_padded("ab\nc", 6, Some(&[2, 1]), font(), palette());
+        let rows: Vec<&str> = job.text.split('\n').collect();
+        assert_eq!(rows.len(), 6);
+        assert_eq!(rows[0].trim(), "1");
+        assert!(rows[1].chars().all(|c| c == ' '));
+        assert_eq!(rows[1].len(), digits);
+        assert_eq!(rows[2].trim(), "2");
+        for row in &rows[3..] {
+            assert!(row.chars().all(|c| c == ' '), "tail row must be blank: {row:?}");
+            assert_eq!(row.len(), digits);
+        }
+    }
+
+    #[test]
     fn handles_utf8_punctuation() {
         // A smart quote used to panic the byte-at-a-time punctuation branch.
-        let job = highlight("box \u{201C}x\u{201D}", font(), palette());
+        let job = highlight("box \u{201C}x\u{201D}", font(), palette(), f32::INFINITY);
         // Should produce sections without panicking and recover `box` as a keyword.
         let secs = sections_text(&job);
         assert_eq!(secs[0].0, "box");

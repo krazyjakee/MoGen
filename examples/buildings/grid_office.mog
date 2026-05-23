@@ -1,6 +1,8 @@
 // A grid-style office floorplan: 9 equal rooms in a 3×3 grid, lots of
 // windows, soft "private offices away from the entrance" preference.
 
+meta (name = "grid_style_office_floorplan", description = "A grid-style office building floorplan with nine rooms, windows, and private offices", tags = ["office", "floorplan", "grid", "interior", "commercial"], mogen_version = "0.1.5")
+
 material "concrete" (color=[0.78, 0.78, 0.75], roughness=0.85)
 material "carpet"   (color=[0.42, 0.40, 0.45], roughness=0.95)
 material "glass_partition" (color=[0.85, 0.92, 0.95], roughness=0.2)
@@ -17,6 +19,7 @@ building "office" (
   door_h=2.1,
   mat="concrete",
 ) {
+
   room_type "office"      (kind=staff_only, density=4, mat="carpet")
   room_type "meeting"     (kind=public,     density=2, mat="carpet")
   room_type "kitchenette" (kind=service,    density=1, mat="concrete")
@@ -26,3 +29,4 @@ building "office" (
   adjacency "reception"   (adjacent_to=["corridor"])
   adjacency "kitchenette" (away_from=["meeting"])
 }
+

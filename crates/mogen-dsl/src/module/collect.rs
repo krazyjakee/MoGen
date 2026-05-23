@@ -56,6 +56,12 @@ pub fn collect_modules(ast: &[Node]) -> Result<ModuleRegistry> {
                         k
                     );
                 }
+                Value::Gradient(_) => {
+                    bail!(
+                        "module parameter `{}` default cannot be a gradient — gradients can only appear directly on `material` attributes",
+                        k
+                    );
+                }
             };
             params.push(Param { name: k.clone(), default });
         }

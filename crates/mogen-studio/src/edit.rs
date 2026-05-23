@@ -20,9 +20,11 @@ mod insert;
 mod internals;
 mod lod;
 mod node;
+mod tidy;
 
 pub use attr::{delete_attr, get_attr, set_attr};
 pub use imports::insert_imports;
 pub use insert::{append_to_scene, list_imports, suggest_primitive_name};
 pub use lod::{get_lod_scale, set_lod_scale};
 pub use node::{dedup_contained_spans, delete_node, duplicate_node, wrap_node_in_group};
+pub use tidy::tidy;

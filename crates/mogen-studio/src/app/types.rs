@@ -361,6 +361,10 @@ pub(super) enum MenuAction {
     GenerateThumbnail,
     GenerateVideo,
     OpenDocs,
+    /// Tools → Tidy Code. Reformat the active tab's source with brace-aware
+    /// indentation and trailing-whitespace strip. No-op when the source is
+    /// already clean.
+    TidyCode,
 }
 
 /// The subset of `MenuAction` variants that are bound to a global keyboard

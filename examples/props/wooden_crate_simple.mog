@@ -1,17 +1,16 @@
 
 meta (
   seed = "1776953281316799934",
-  prompt = "wooden storage crate",
-)
+  prompt = "wooden storage crate", thinking = "high", mogen_version = "0.1.5")
 
 material "wood" (color=[0.45, 0.32, 0.22], roughness=0.9)
 material "wood_dark" (color=[0.35, 0.25, 0.15], roughness=0.8)
 
 scene {
-  difference "crate_shell" {
-    box "outer" (size=[0.8, 0.6, 0.8], mat="wood")
-    box "inner" (size=[0.72, 0.55, 0.72], pos=[0, 0.05, 0])
-  }
+difference "crate_shell" {
+  inset_box "outer" (size=[0.8, 0.6, 0.8], face="top", amount=0.06, depth=0.02, mat="wood")
+  box "inner" (size=[0.74, 0.57, 0.74], pos=[0, 0.02, 0])
+}
 
   // Corner reinforcements
   array "corners" (count=4, around=y) {

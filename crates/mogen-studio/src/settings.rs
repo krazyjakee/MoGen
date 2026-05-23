@@ -338,6 +338,15 @@ pub struct Settings {
     #[serde(default)]
     pub plan_first: bool,
 
+    /// Word-wrap soft-breaks long source lines in the code editor so the
+    /// horizontal scrollbar disappears. The gutter pads continuation rows
+    /// with blanks so line numbers stay aligned. `None` falls back to
+    /// `false` — existing users keep the historical no-wrap, horizontal-
+    /// scroll behaviour after upgrade. Persisted because it's a per-user
+    /// preference users tend to want sticky across sessions.
+    #[serde(default)]
+    pub word_wrap: Option<bool>,
+
     /// When `Some(true)` (or absent — defaults to `true`), Z.ai chat
     /// calls (Generate / Modify / Animate / Ask) route through the
     /// dedicated GLM Coding Plan endpoint
@@ -623,6 +632,16 @@ impl Settings {
 
     pub fn set_zai_use_coding_plan(&mut self, on: bool) {
         self.zai_use_coding_plan = Some(on);
+    }
+
+    /// Whether the code editor soft-wraps long lines. Defaults to `false`
+    /// when unset so existing installs keep the no-wrap behaviour.
+    pub fn word_wrap(&self) -> bool {
+        self.word_wrap.unwrap_or(false)
+    }
+
+    pub fn set_word_wrap(&mut self, on: bool) {
+        self.word_wrap = Some(on);
     }
 
     /// Resolve the Z.ai chat-completions base URL for this profile.

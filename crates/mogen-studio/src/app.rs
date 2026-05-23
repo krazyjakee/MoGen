@@ -38,6 +38,7 @@ mod spotlight;
 mod style;
 mod text_menu;
 mod thumbnail;
+mod tools;
 mod types;
 mod ui_dialogs;
 mod ui_docs;

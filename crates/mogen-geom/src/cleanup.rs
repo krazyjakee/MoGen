@@ -265,6 +265,7 @@ pub fn cull_coplanar_opposites(mesh: &Mesh) -> Mesh {
         indices,
         joints: mesh.joints.clone(),
         weights: mesh.weights.clone(),
+        colors: mesh.colors.clone(),
     }
 }
 
@@ -317,6 +318,7 @@ pub fn assign_triplanar_uvs(mesh: &Mesh) -> Mesh {
         indices: mesh.indices.clone(),
         joints: mesh.joints.clone(),
         weights: mesh.weights.clone(),
+        colors: mesh.colors.clone(),
     }
 }
 

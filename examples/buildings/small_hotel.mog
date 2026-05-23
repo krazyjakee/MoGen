@@ -12,8 +12,9 @@ material "warm_carpet" (color=[0.55, 0.32, 0.22], roughness=0.95)
 material "tile"        (color=[0.90, 0.90, 0.88], roughness=0.40)
 material "white_tile"  (color=[0.96, 0.96, 0.96], roughness=0.30)
 
+
 building "small_hotel" (
-  seed=13,
+  seed=1,
   style="hotel-corridor",
   floor_area=160,
   rooms=14,
@@ -21,10 +22,10 @@ building "small_hotel" (
   staircases=1,
   elevators=1,
   debug_hide_roof=1,
-  windows=18,
+  windows=12,
   entrances=1,
   ceiling_height=2.7,
-  mat="plaster",
+  mat="plaster", door_w=1
 ) {
   room_type "guest"    (kind=private, density=6, mat="warm_carpet", min_area=14, max_area=22)
   room_type "lobby"    (kind=public,  density=1, mat="tile",        min_area=18)

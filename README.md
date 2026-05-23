@@ -1,11 +1,15 @@
 # MoGen — procedural 3D model generator
 
+![MoGen Studio](assets/screenshot.png)
+
 `mogen` turns a compact, declarative DSL into `.glb` assets. It is designed to be the
 deterministic backend of an LLM-driven 3D generation pipeline: the language model writes
 high-level structured scenes, `mogen` expands them into real geometry.
 
 Written in Rust. No runtime, no graph editor, no dependencies on a game engine — just a
 small parser, a scene graph, a mesh library, and a glTF exporter.
+
+[▶ Watch the demo](assets/demo.mp4)
 
 ## Why
 

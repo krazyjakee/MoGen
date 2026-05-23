@@ -408,6 +408,19 @@ impl MogenStudioApp {
                     self.viewer.set_show_colliders(show_colliders);
                     let _ = self.settings.save();
                 }
+                let mut word_wrap = self.settings.word_wrap();
+                if ui
+                    .checkbox(&mut word_wrap, "Word Wrap")
+                    .on_hover_text(
+                        "Soft-wrap long lines in the code editor; the gutter \
+                         blanks continuation rows so line numbers stay \
+                         anchored to the start of each source line",
+                    )
+                    .changed()
+                {
+                    self.settings.set_word_wrap(word_wrap);
+                    let _ = self.settings.save();
+                }
                 ui.separator();
                 ui.menu_button("LOD Preview", |ui| {
                     use crate::app::preview::PREVIEW_LODS;
@@ -495,6 +508,21 @@ impl MogenStudioApp {
                 let ctx = ui.ctx().clone();
                 self.start_imposter_preview(&ctx);
             }
+
+            ui.menu_button("Tools", |ui| {
+                if ui
+                    .button("Tidy Code")
+                    .on_hover_text(
+                        "Reformat the active file with consistent 2-space \
+                         indentation, trailing-whitespace strip, and one \
+                         statement per line — like a JavaScript beautifier",
+                    )
+                    .clicked()
+                {
+                    action = MenuAction::TidyCode;
+                    ui.close_menu();
+                }
+            });
 
             ui.menu_button("Community", |ui| {
                 if ui
@@ -679,6 +707,7 @@ impl MogenStudioApp {
             MenuAction::OpenDocs => {
                 self.open_docs_home();
             }
+            MenuAction::TidyCode => self.tidy_active(),
         }
     }
 

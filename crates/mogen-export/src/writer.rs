@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 use mogen_core::{ColliderShape, MaterialId, Mesh, NodeId, SceneGraph, SceneNode};
 
 use crate::accessor::{
-    push_indices, push_joints, push_normals, push_positions, push_uvs, push_weights,
+    push_colors, push_indices, push_joints, push_normals, push_positions, push_uvs, push_weights,
 };
 use crate::animation::emit_animation;
 #[cfg(feature = "imposter")]
@@ -233,12 +233,20 @@ fn build_glb_with_options_and_source_inner<F: Fn(&str)>(
                 } else {
                     None
                 };
+                let color_acc_opt = if mesh.has_colors() {
+                    Some(push_colors(&mut bin, &mut buffer_views, &mut accessors, mesh))
+                } else {
+                    None
+                };
 
                 let mut attributes = serde_json::Map::new();
                 attributes.insert("POSITION".into(), json!(pos_acc));
                 attributes.insert("NORMAL".into(), json!(nrm_acc));
                 if let Some(uv_acc) = uv_acc_opt {
                     attributes.insert("TEXCOORD_0".into(), json!(uv_acc));
+                }
+                if let Some(c_acc) = color_acc_opt {
+                    attributes.insert("COLOR_0".into(), json!(c_acc));
                 }
 
                 let mut primitive = json!({
@@ -274,6 +282,9 @@ fn build_glb_with_options_and_source_inner<F: Fn(&str)>(
                         if let Some(uv_acc) = uv_acc_opt {
                             lod_attrs.insert("TEXCOORD_0".into(), json!(uv_acc));
                         }
+                        if let Some(c_acc) = color_acc_opt {
+                            lod_attrs.insert("COLOR_0".into(), json!(c_acc));
+                        }
                         let mut lod_prim = json!({
                             "attributes": Value::Object(lod_attrs),
                             "indices": lod_idx_acc,
@@ -306,6 +317,10 @@ fn build_glb_with_options_and_source_inner<F: Fn(&str)>(
                     let uv_acc =
                         push_uvs(&mut bin, &mut buffer_views, &mut accessors, mesh, scale);
                     attributes.insert("TEXCOORD_0".into(), json!(uv_acc));
+                }
+                if mesh.has_colors() {
+                    let c_acc = push_colors(&mut bin, &mut buffer_views, &mut accessors, mesh);
+                    attributes.insert("COLOR_0".into(), json!(c_acc));
                 }
                 let j_acc = push_joints(&mut bin, &mut buffer_views, &mut accessors, mesh);
                 let w_acc = push_weights(&mut bin, &mut buffer_views, &mut accessors, mesh);
@@ -613,6 +628,7 @@ struct MeshKey {
     positions: Vec<[u32; 3]>,
     normals: Vec<[u32; 3]>,
     uvs: Vec<[u32; 2]>,
+    colors: Vec<[u32; 4]>,
     indices: Vec<u32>,
     material: Option<u32>,
 }
@@ -634,10 +650,16 @@ impl MeshKey {
             .iter()
             .map(|v| [v[0].to_bits(), v[1].to_bits()])
             .collect();
+        let colors = mesh
+            .colors
+            .iter()
+            .map(|c| [c[0].to_bits(), c[1].to_bits(), c[2].to_bits(), c[3].to_bits()])
+            .collect();
         MeshKey {
             positions,
             normals,
             uvs,
+            colors,
             indices: mesh.indices.clone(),
             material,
         }

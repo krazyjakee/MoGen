@@ -4,6 +4,7 @@ mod building;
 pub(crate) mod connector;
 mod csg;
 mod deform;
+mod gradient_bake;
 mod helpers;
 mod layout;
 mod light;
@@ -303,6 +304,13 @@ pub fn lower_with_loader(
     // arrive through `use` expansion and are already present in `expanded` —
     // no separate walk needed.
     lower_animations(&expanded, &mut graph)?;
+
+    // Pass 4: bake material gradients into per-vertex `Mesh.colors`. Runs
+    // last so every geometry-shaping pass above (CSG, conform, attach, skin
+    // binding) has settled — the AABB the bake samples against matches what
+    // the exporter will write.
+    gradient_bake::bake_gradients(&mut graph);
+
     Ok(graph)
 }
 

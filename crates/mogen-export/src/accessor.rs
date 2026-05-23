@@ -78,6 +78,31 @@ pub(crate) fn push_uvs(
     accessors.len() - 1
 }
 
+pub(crate) fn push_colors(
+    bin: &mut Vec<u8>,
+    views: &mut Vec<BufferView>,
+    accessors: &mut Vec<Accessor>,
+    mesh: &Mesh,
+) -> usize {
+    let offset = align_up(bin, 4);
+    for c in &mesh.colors {
+        for ch in c {
+            bin.extend_from_slice(&ch.to_le_bytes());
+        }
+    }
+    let byte_length = mesh.colors.len() * 16;
+    views.push(BufferView { buffer: 0, byte_offset: offset, byte_length, target: Some(34962) });
+    accessors.push(Accessor {
+        buffer_view: views.len() - 1,
+        component_type: 5126, // FLOAT
+        count: mesh.colors.len(),
+        ty: "VEC4",
+        min: None,
+        max: None,
+    });
+    accessors.len() - 1
+}
+
 pub(crate) fn push_indices(
     bin: &mut Vec<u8>,
     views: &mut Vec<BufferView>,

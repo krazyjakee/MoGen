@@ -4,7 +4,7 @@ use pest::iterators::Pair;
 use pest::Parser;
 use pest_derive::Parser;
 
-use crate::ast::{BinOp, Expr, Node, Value};
+use crate::ast::{BinOp, Expr, GradientDef, Node, Value};
 
 fn span_of(p: &Pair<Rule>) -> Span {
     let s = p.as_span();
@@ -99,9 +99,30 @@ fn build_attr(pair: Pair<Rule>) -> Result<(String, Value)> {
         Rule::list => build_list(val_pair)?,
         Rule::string => Value::String(unquote(val_pair.as_str())),
         Rule::ident => Value::Ident(val_pair.as_str().to_string()),
+        Rule::gradient => Value::Gradient(build_gradient(val_pair)?),
         r => return Err(anyhow!("unexpected value rule {:?}", r)),
     };
     Ok((key, value))
+}
+
+fn build_gradient(pair: Pair<Rule>) -> Result<GradientDef> {
+    let span = span_of(&pair);
+    let mut kind = String::new();
+    let mut attrs: Vec<(String, Value)> = Vec::new();
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::gradient_kind => kind = inner.as_str().to_string(),
+            Rule::attr_list => {
+                for a in inner.into_inner() {
+                    if a.as_rule() == Rule::attr {
+                        attrs.push(build_attr(a)?);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(GradientDef { kind, attrs, span })
 }
 
 /// Collapse a deferred expression to a Value::Number if it is fully constant.

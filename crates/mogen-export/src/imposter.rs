@@ -237,6 +237,7 @@ fn billboard_quad(
         uvs,
         joints: Vec::new(),
         weights: Vec::new(),
+        colors: Vec::new(),
     }
 }
 

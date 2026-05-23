@@ -12,7 +12,13 @@ block = { "{" ~ node* ~ "}" }
 attr_list = { "(" ~ (attr ~ ("," ~ attr)*)? ~ ","? ~ ")" }
 attr      = { ident ~ "=" ~ value }
 
-value = { vec3 | list | expr | string | ident }
+value = { gradient | vec3 | list | expr | string | ident }
+
+// Surface gradient syntax: `linear(from=[1,0,0], to=[0,0,1], axis=y)`. The
+// argument list reuses `attr_list` so the parser machinery for `(k=v, …)`
+// drops in unchanged; lowering interprets the keys per gradient kind.
+gradient      = { gradient_kind ~ attr_list }
+gradient_kind = { "linear" | "vertical" | "radial" | "stops" }
 
 vec3      = { "[" ~ expr ~ "," ~ expr ~ "," ~ expr ~ "]" }
 list      = { "[" ~ (list_item ~ ("," ~ list_item)*)? ~ ","? ~ "]" }

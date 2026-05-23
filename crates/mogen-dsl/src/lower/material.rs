@@ -1,8 +1,11 @@
 use anyhow::{anyhow, bail, Result};
 
-use mogen_core::{AlphaMode, Material, MaterialShader, SceneGraph, TextureRef, UvMode};
+use mogen_core::{
+    AlphaMode, Gradient, GradientAxis, GradientKind, GradientStop, Material, MaterialShader,
+    SceneGraph, TextureRef, UvMode,
+};
 
-use crate::ast::{Node, Value};
+use crate::ast::{GradientDef, Node, Value};
 
 pub(super) fn collect_materials(ast: &[Node], graph: &mut SceneGraph) -> Result<()> {
     for n in ast {
@@ -105,6 +108,10 @@ fn register_material(node: &Node, graph: &mut SceneGraph) -> Result<()> {
     mat.occlusion_texture = texture_ref_attr(node, "occlusion_texture");
     mat.emissive_texture = texture_ref_attr(node, "emissive_texture");
 
+    if let Some(g) = node.attr_gradient("gradient") {
+        mat.gradient = Some(build_gradient(g)?);
+    }
+
     let uv_mode_attr = node
         .attr("uv_mode")
         .and_then(|v| match v {
@@ -150,4 +157,128 @@ fn texture_ref_attr(node: &Node, key: &str) -> Option<TextureRef> {
         _ => return None,
     };
     Some(TextureRef::new(path))
+}
+
+/// Lower a parsed `GradientDef` surface form into the `Gradient` carried on
+/// `Material`. Validates per-kind required attributes, normalises `vertical`
+/// and `stops` down to either `Linear { axis }` or `Radial`, and rejects
+/// malformed stop lists with a useful message.
+fn build_gradient(g: &GradientDef) -> Result<Gradient> {
+    match g.kind.as_str() {
+        "linear" | "vertical" => {
+            let axis = if g.kind == "vertical" {
+                // `vertical` is sugar — an explicit `axis=` on it is ambiguous,
+                // so reject it rather than silently ignoring or honouring one.
+                if node_attr(&g.attrs, "axis").is_some() {
+                    bail!(
+                        "gradient `vertical(...)` does not accept `axis=` — use `linear(..., axis=…)` for non-Y axes"
+                    );
+                }
+                GradientAxis::Y
+            } else {
+                attr_axis(g, "axis")?.unwrap_or(GradientAxis::Y)
+            };
+            let from = require_color(g, "from")?;
+            let to = require_color(g, "to")?;
+            Ok(Gradient {
+                kind: GradientKind::Linear { axis },
+                stops: vec![
+                    GradientStop { t: 0.0, color: from },
+                    GradientStop { t: 1.0, color: to },
+                ],
+            })
+        }
+        "radial" => {
+            // Radial doesn't take an axis — sampling is distance from centre.
+            if node_attr(&g.attrs, "axis").is_some() {
+                bail!("gradient `radial(...)` does not accept `axis=` — radial sweeps are isotropic");
+            }
+            let center = require_color(g, "center")?;
+            let edge = require_color(g, "edge")?;
+            Ok(Gradient {
+                kind: GradientKind::Radial,
+                stops: vec![
+                    GradientStop { t: 0.0, color: center },
+                    GradientStop { t: 1.0, color: edge },
+                ],
+            })
+        }
+        "stops" => {
+            let colors = node_attr(&g.attrs, "colors")
+                .ok_or_else(|| anyhow!("gradient `stops(...)` requires `colors=[[…], …]`"))?;
+            let color_list = match colors {
+                Value::ListVec3(v) => v.clone(),
+                _ => bail!("gradient `stops(...)` `colors=` must be a list of 3-component colours (e.g. `[[1,0,0], [0,1,0]]`)"),
+            };
+            if color_list.len() < 2 {
+                bail!("gradient `stops(...)` needs at least two colours");
+            }
+            let positions: Vec<f32> = match node_attr(&g.attrs, "positions") {
+                Some(Value::List(v)) => v.clone(),
+                Some(_) => {
+                    bail!("gradient `stops(...)` `positions=` must be a flat list of numbers in [0, 1]");
+                }
+                None => {
+                    // Even spacing default keeps the common case ergonomic —
+                    // `stops(colors=[a, b, c])` lands stops at 0, 0.5, 1.
+                    let n = color_list.len();
+                    (0..n).map(|i| i as f32 / (n - 1) as f32).collect()
+                }
+            };
+            if positions.len() != color_list.len() {
+                bail!(
+                    "gradient `stops(...)` has {} colours but {} positions — they must match",
+                    color_list.len(),
+                    positions.len()
+                );
+            }
+            let mut stops: Vec<GradientStop> = positions
+                .iter()
+                .zip(color_list.iter())
+                .map(|(t, c)| GradientStop { t: *t, color: [c[0], c[1], c[2], 1.0] })
+                .collect();
+            stops.sort_by(|a, b| a.t.partial_cmp(&b.t).unwrap_or(std::cmp::Ordering::Equal));
+            let kind = match node_attr(&g.attrs, "kind") {
+                None => GradientKind::Linear { axis: attr_axis(g, "axis")?.unwrap_or(GradientAxis::Y) },
+                Some(Value::Ident(s)) | Some(Value::String(s)) => match s.as_str() {
+                    "linear" => GradientKind::Linear { axis: attr_axis(g, "axis")?.unwrap_or(GradientAxis::Y) },
+                    "radial" => {
+                        if node_attr(&g.attrs, "axis").is_some() {
+                            bail!("gradient `stops(kind=radial, …)` does not accept `axis=`");
+                        }
+                        GradientKind::Radial
+                    }
+                    other => bail!("gradient `stops(...)` kind must be `linear` or `radial`, got `{other}`"),
+                },
+                Some(_) => bail!("gradient `stops(...)` `kind=` must be `linear` or `radial`"),
+            };
+            Ok(Gradient { kind, stops })
+        }
+        other => bail!("unknown gradient kind `{other}` — expected `linear`, `vertical`, `radial`, or `stops`"),
+    }
+}
+
+fn node_attr<'a>(attrs: &'a [(String, Value)], key: &str) -> Option<&'a Value> {
+    attrs.iter().find(|(k, _)| k == key).map(|(_, v)| v)
+}
+
+fn attr_axis(g: &GradientDef, key: &str) -> Result<Option<GradientAxis>> {
+    match node_attr(&g.attrs, key) {
+        None => Ok(None),
+        Some(Value::Ident(s)) | Some(Value::String(s)) => match s.as_str() {
+            "x" | "X" => Ok(Some(GradientAxis::X)),
+            "y" | "Y" => Ok(Some(GradientAxis::Y)),
+            "z" | "Z" => Ok(Some(GradientAxis::Z)),
+            other => bail!("gradient `axis=` must be `x`, `y`, or `z`, got `{other}`"),
+        },
+        Some(_) => bail!("gradient `axis=` must be an axis identifier (x/y/z)"),
+    }
+}
+
+fn require_color(g: &GradientDef, key: &str) -> Result<[f32; 4]> {
+    match node_attr(&g.attrs, key) {
+        Some(Value::Vec3(v)) => Ok([v[0], v[1], v[2], 1.0]),
+        Some(_) => bail!("gradient `{key}=` must be a vec3 colour like `[1, 0.5, 0]`"),
+        None => bail!("gradient `{}(...)` requires `{key}=[r, g, b]`", g.kind),
+    }
 }

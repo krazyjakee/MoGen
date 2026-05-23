@@ -211,6 +211,7 @@ pub fn attrs_for_kind(kind: &str) -> &'static [&'static str] {
             "shader",
             "base_color_texture", "metallic_roughness_texture",
             "normal_texture", "occlusion_texture", "emissive_texture",
+            "gradient",
             "prompt",
         ],
         "connector" => &["at", "dir", "tag", "radius"],
@@ -518,6 +519,7 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         | ("material", "occlusion_texture")
         | ("material", "emissive_texture")
         | ("material", "prompt") => "string",
+        ("material", "gradient") => "gradient",
         ("connector", "at") | ("connector", "dir") => "vec3",
         ("connector", "tag") => "string",
         ("connector", "radius") => "number",
@@ -612,6 +614,7 @@ pub(super) fn value_matches(v: &Value, expected: &str) -> bool {
         (Value::Expr(_), "number or vec2") => true,
         (Value::Vec3Expr(_), "vec3") => true,
         (Value::Vec3Expr(_), "number or vec3") => true,
+        (Value::Gradient(_), "gradient") => true,
         _ => false,
     }
 }
@@ -630,6 +633,7 @@ pub(super) fn value_kind(v: &Value) -> &'static str {
         Value::ListPair(_) => "list of pair",
         Value::ListQuad(_) => "list of quad",
         Value::ListString(_) => "list of string",
+        Value::Gradient(_) => "gradient",
     }
 }
 

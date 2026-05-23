@@ -42,6 +42,12 @@ impl MogenStudioApp {
 
     pub(super) fn open_path(&mut self, path: &Path) {
         if let Some(i) = self.file_index_by_path(path) {
+            // An explicit re-open (Recent, picker, drag-drop, spotlight)
+            // should reframe like the Frame button rather than restore the
+            // stale per-tab camera snapshot. Clearing both fields routes
+            // activate() through the auto-fit path on the next compile.
+            self.files[i].camera = None;
+            self.files[i].first_render = true;
             self.activate(i);
             return;
         }

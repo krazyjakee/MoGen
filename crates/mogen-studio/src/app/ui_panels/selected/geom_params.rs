@@ -147,6 +147,36 @@ fn int_row(
     }
 }
 
+/// Checkbox row for a boolean-shaped numeric attr (`0` / `1`). The DSL
+/// has no native bool — the building lowering reads `n.abs() > 0.5`, so we
+/// round-trip through a 0/1 literal. `default` is the value shown when the
+/// attr is absent so the checkbox never renders indeterminate.
+fn bool_row(
+    ui: &mut egui::Ui,
+    label: &str,
+    attr: &'static str,
+    src: &str,
+    span: mogen_core::Span,
+    default: bool,
+    out: &mut Vec<(&'static str, String)>,
+) {
+    match field(src, span, attr) {
+        Field::Locked(raw) => locked_row(ui, label, &raw),
+        f => {
+            let cur = match f {
+                Field::Num(n) => n.abs() > 0.5,
+                _ => default,
+            };
+            ui.label(label);
+            let mut v = cur;
+            if ui.checkbox(&mut v, "").changed() {
+                out.push((attr, if v { "1".into() } else { "0".into() }));
+            }
+            ui.end_row();
+        }
+    }
+}
+
 /// Editable/locked multi-component row (`size`). `arity` is how many
 /// DragValues to show; `default` fills missing/Absent components.
 fn vec_row(
@@ -402,6 +432,29 @@ pub(in crate::app) fn geom_params_for_kind(
             int_row(ui, "Entrances", "entrances", src, span, 1, 1, 64, out);
             int_row(ui, "Elevators", "elevators", src, span, 0, 0, 32, out);
             int_row(ui, "Staircases", "staircases", src, span, 0, 0, 32, out);
+
+            // Debug-only inspection toggles. Match the lowering's `debug_*`
+            // attrs in `mogen_dsl::lower::building::config` — `debug_hide_roof`
+            // drops the top-storey ceiling slab (and skylights) so the
+            // interior is visible from above; `debug_render_floor` isolates a
+            // single signed storey index, skipping vertical circulation, so
+            // one floor can be inspected without surrounding storeys. Both are
+            // intentionally surfaced in the inspector for ad-hoc debugging.
+            ui.label("");
+            ui.label(egui::RichText::new("Debug").strong().weak());
+            ui.end_row();
+            bool_row(ui, "Hide roof", "debug_hide_roof", src, span, false, out);
+            int_row(
+                ui,
+                "Isolate storey",
+                "debug_render_floor",
+                src,
+                span,
+                0,
+                -32,
+                64,
+                out,
+            );
             shown = true;
         }
         _ => {}

@@ -546,6 +546,23 @@ Declared at the top of the file or inside `scene { ... }`. Attributes:
   glassy → `1.0` whitecaps), `metallic` lerps toward liquid-metal Fresnel,
   `transmission` + `alpha_mode="blend"` lets the floor show through, and
   `normal_texture`/`base_color_texture` blend into the procedural waves.
+- `gradient` — optional ramp baked into per-vertex `COLOR_0` at export
+  time. Four surface forms, all colours are vec3 in sRGB `[0..1]`:
+  - `linear(from=[…], to=[…], axis=x|y|z)` — interpolates between two
+    colours along the named local axis (default `y`).
+  - `vertical(from=[…], to=[…])` — sugar for `linear(axis=y)`. No `axis=`.
+  - `radial(center=[…], edge=[…])` — centre-to-corner falloff in the
+    mesh's local AABB. No `axis=`.
+  - `stops(colors=[[…], …], positions=[…], axis=…, kind=linear|radial)` —
+    multi-stop ramp. `positions` defaults to even spacing across `[0, 1]`
+    if omitted; `kind` defaults to `linear`.
+
+  `COLOR_0` multiplies `baseColorFactor` per the glTF spec, so pair the
+  gradient with `color=[1, 1, 1]` to get the ramp unaltered, or with a
+  tinted `color=` to tint the whole ramp. Vertex colours need vertices to
+  interpolate between — bump primitive `segments`/`rings`/`segments_u/v`
+  for smoother ramps; a default 6-vert box reads as a hard step, not a
+  gradient.
 
 Example:
 
