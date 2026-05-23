@@ -452,6 +452,16 @@ pub(crate) enum Cmd {
         #[arg(long)]
         plan: PathBuf,
     },
+    /// Run `mogen` as an MCP (Model Context Protocol) server over stdio.
+    /// Every other CLI subcommand — `build`, `check`, `generate`,
+    /// `moghub publish`, etc. — is exposed as a tool the connected LLM
+    /// client can invoke. Each tool call spawns the same binary in
+    /// normal CLI mode and captures stdout/stderr, so behaviour is
+    /// identical to invoking the command from a terminal. Designed to
+    /// be launched by an MCP client (e.g. Claude Desktop / a custom
+    /// client) — it speaks JSON-RPC on stdin/stdout, so don't run it
+    /// interactively.
+    Mcp,
     /// Run a suite of prompts through `generate` and report success rate and
     /// mean token cost. Does not write GLBs.
     Bench {

@@ -4,6 +4,7 @@ pub(crate) mod bench;
 pub(crate) mod build;
 pub(crate) mod generate;
 pub(crate) mod inspect;
+pub(crate) mod mcp;
 pub(crate) mod modify;
 pub(crate) mod moghub;
 pub(crate) mod moghub_publish;
