@@ -898,16 +898,16 @@ impl ServerHandler for MogenMcp {
         // `Implementation::from_build_env()` reads `CARGO_*` env vars at
         // the rmcp crate's compile site, so it reports "rmcp" — build
         // one ourselves so clients see "mogen" instead.
-        info.server_info = Implementation::from_build_env();
-        info.server_info.name = env!("CARGO_PKG_NAME").to_string();
-        info.server_info.version = env!("CARGO_PKG_VERSION").to_string();
-        info.server_info = info
-            .server_info
-            .with_title("MoGen")
-            .with_description(
-                "Procedural 3D model generator. Compiles `.mog` DSL to glTF/FBX and \
-                drives an LLM-backed generation pipeline.",
-            );
+        // `Implementation::from_build_env()` reads CARGO_PKG_* at the *rmcp*
+        // crate's compile site, so it reports "rmcp". Override name/version
+        // from this crate's env vars while keeping any other fields (e.g. url).
+        let mut si = Implementation::from_build_env();
+        si.name = env!("CARGO_PKG_NAME").to_string();
+        si.version = env!("CARGO_PKG_VERSION").to_string();
+        info.server_info = si.with_title("MoGen").with_description(
+            "Procedural 3D model generator. Compiles `.mog` DSL to glTF/FBX and \
+            drives an LLM-backed generation pipeline.",
+        );
         info.instructions = Some(
             "MoGen MCP server. Exposes every `mogen` CLI subcommand as a tool. \
             Use `build` / `check` / `parse` / `dump_scene` / `inspect` / `thumbnail` for \
@@ -919,5 +919,52 @@ impl ServerHandler for MogenMcp {
                 .to_string(),
         );
         info
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn push_opt_some_appends_flag_and_value() {
+        let mut args: Vec<String> = vec![];
+        push_opt(&mut args, "--out", Some("foo.glb"));
+        assert_eq!(args, ["--out", "foo.glb"]);
+    }
+
+    #[test]
+    fn push_opt_none_is_noop() {
+        let mut args: Vec<String> = vec![];
+        push_opt(&mut args, "--out", Option::<String>::None);
+        assert!(args.is_empty());
+    }
+
+    #[test]
+    fn push_flag_true_appends_flag() {
+        let mut args: Vec<String> = vec![];
+        push_flag(&mut args, "--json", true);
+        assert_eq!(args, ["--json"]);
+    }
+
+    #[test]
+    fn push_flag_false_is_noop() {
+        let mut args: Vec<String> = vec![];
+        push_flag(&mut args, "--json", false);
+        assert!(args.is_empty());
+    }
+
+    #[test]
+    fn push_path_opt_some_appends_flag_and_path() {
+        let mut args: Vec<String> = vec![];
+        push_path_opt(&mut args, "--out", Some(PathBuf::from("a/b.glb")));
+        assert_eq!(args, ["--out", "a/b.glb"]);
+    }
+
+    #[test]
+    fn push_path_opt_none_is_noop() {
+        let mut args: Vec<String> = vec![];
+        push_path_opt(&mut args, "--out", Option::<PathBuf>::None);
+        assert!(args.is_empty());
     }
 }
