@@ -12,6 +12,10 @@ fn read(src: &str, span: mogen_core::Span, attr: &str) -> Option<f32> {
     get_attr(src, span, attr).and_then(|s| s.parse::<f32>().ok())
 }
 
+fn read_str(src: &str, span: mogen_core::Span, attr: &str) -> Option<String> {
+    get_attr(src, span, attr).map(|s| s.trim().trim_matches('"').to_string())
+}
+
 fn read_vec3(src: &str, span: mogen_core::Span, attr: &str) -> Option<[f32; 3]> {
     let raw = get_attr(src, span, attr)?;
     let trimmed = raw.trim().trim_start_matches('[').trim_end_matches(']');
@@ -73,6 +77,35 @@ fn int_row(
     {
         out.push((attr, v.to_string()));
     }
+    ui.end_row();
+}
+
+/// Enum row backed by a combo box. Emits the picked value quoted so the
+/// caller's `SetAttrCanonical` writes a DSL string literal (e.g.
+/// `style="apartment-block"`). `current` is the source value with quotes
+/// already stripped; `fallback` is the lowering default shown when the attr
+/// is absent so the combo never renders blank.
+fn enum_row(
+    ui: &mut egui::Ui,
+    label: &str,
+    attr: &'static str,
+    current: Option<String>,
+    fallback: &str,
+    options: &[&str],
+    out: &mut Vec<(&'static str, String)>,
+) {
+    ui.label(label);
+    let shown = current.clone().unwrap_or_else(|| fallback.to_string());
+    egui::ComboBox::from_id_salt(("geom_enum", attr))
+        .selected_text(&shown)
+        .show_ui(ui, |ui| {
+            for opt in options {
+                let selected = shown == *opt;
+                if ui.selectable_label(selected, *opt).clicked() && !selected {
+                    out.push((attr, format!("\"{opt}\"")));
+                }
+            }
+        });
     ui.end_row();
 }
 
@@ -236,7 +269,7 @@ pub(in crate::app) fn geom_params_for_kind(
                 read(src, span, "major").unwrap_or(0.5), 0.02, out);
             scalar_row(ui, "Minor", "minor",
                 read(src, span, "minor").unwrap_or(0.15), 0.02, out);
-            scalar_row(ui, "Arc°", "arc",
+            scalar_row(ui, "Arc\u{00b0}", "arc",
                 read(src, span, "arc").unwrap_or(90.0), 1.0, out);
             shown = true;
         }
@@ -281,6 +314,106 @@ pub(in crate::app) fn geom_params_for_kind(
         "frustum" => {
             scalar_row(ui, "Height", "height",
                 read(src, span, "height").unwrap_or(1.0), 0.02, out);
+            shown = true;
+        }
+        "branch" => {
+            // Procedural tree builder. The inner segments are non-editable;
+            // these are the wrapper attrs the lowering pass reads (see
+            // `mogen_dsl::lower::branch`). `form` seeds per-habit defaults,
+            // so the numeric rows fall back to the generic lowering default
+            // rather than the form-specific one when the attr is absent.
+            enum_row(ui, "Form", "form",
+                read_str(src, span, "form"), "decurrent",
+                &["decurrent", "excurrent", "weeping", "shrub", "palm"], out);
+            scalar_row(ui, "Length", "length",
+                read(src, span, "length").unwrap_or(1.0), 0.02, out);
+            scalar_row(ui, "Radius", "radius",
+                read(src, span, "radius").unwrap_or(0.05), 0.005, out);
+            int_row(ui, "Depth", "depth",
+                read(src, span, "depth").unwrap_or(4.0) as i32, 1, 8, out);
+            int_row(ui, "Splits", "splits",
+                read(src, span, "splits").unwrap_or(2.0) as i32, 1, 8, out);
+            scalar_row(ui, "Length falloff", "length_falloff",
+                read(src, span, "length_falloff").unwrap_or(0.7), 0.01, out);
+            scalar_row(ui, "Radius falloff", "radius_falloff",
+                read(src, span, "radius_falloff").unwrap_or(0.6), 0.01, out);
+            scalar_row(ui, "Branch angle\u{00b0}", "branch_angle",
+                read(src, span, "branch_angle").unwrap_or(35.0), 1.0, out);
+            scalar_row(ui, "Roll\u{00b0}", "roll",
+                read(src, span, "roll").unwrap_or(137.5), 1.0, out);
+            scalar_row(ui, "Tropism", "tropism",
+                read(src, span, "tropism").unwrap_or(0.0), 0.02, out);
+            scalar_row(ui, "Bend\u{00b0}", "bend",
+                read(src, span, "bend").unwrap_or(10.0), 0.5, out);
+            scalar_row(ui, "Leader bias", "leader_bias",
+                read(src, span, "leader_bias").unwrap_or(0.0), 0.02, out);
+            int_row(ui, "Multi-stem", "multi_stem",
+                read(src, span, "multi_stem").unwrap_or(1.0) as i32, 1, 8, out);
+            int_row(ui, "Segments", "segments",
+                read(src, span, "segments").unwrap_or(8.0) as i32, 3, 64, out);
+            int_row(ui, "Samples", "samples",
+                read(src, span, "samples").unwrap_or(4.0) as i32, 1, 16, out);
+            int_row(ui, "Seed", "seed",
+                read(src, span, "seed").unwrap_or(1.0) as i32, 1, 1_000_000, out);
+            scalar_row(ui, "Jitter", "jitter",
+                read(src, span, "jitter").unwrap_or(0.2), 0.02, out);
+            int_row(ui, "Leaves", "leaves",
+                read(src, span, "leaves").unwrap_or(1.0) as i32, 0, 1, out);
+            scalar_row(ui, "Leaf size", "leaf_size",
+                read(src, span, "leaf_size").unwrap_or(0.35), 0.01, out);
+            scalar_row(ui, "Leaf aspect", "leaf_aspect",
+                read(src, span, "leaf_aspect").unwrap_or(1.0), 0.05, out);
+            int_row(ui, "Leaf cards", "leaf_cards",
+                read(src, span, "leaf_cards").unwrap_or(2.0) as i32, 1, 8, out);
+            shown = true;
+        }
+        "building" => {
+            // Procedural building-interior generator. The whole subtree is
+            // stamped non-editable; these are the wrapper attrs the lowering
+            // pass reads (see `mogen_dsl::lower::building`). Module-ref and
+            // free-text style attrs are intentionally skipped — they need a
+            // module/material picker, not a numeric grid.
+            int_row(ui, "Seed", "seed",
+                read(src, span, "seed").unwrap_or(1.0) as i32, 1, 1_000_000, out);
+            enum_row(ui, "Style", "style",
+                read_str(src, span, "style"), "grid",
+                &["grid", "apartment-block", "hotel-corridor", "office-core",
+                  "radial", "organic", "maze"], out);
+            enum_row(ui, "Roof", "roof",
+                read_str(src, span, "roof"), "flat",
+                &["flat", "gabled", "pitched", "hipped", "mansard", "shed"], out);
+            scalar_row(ui, "Floor area m\u{00b2}", "floor_area",
+                read(src, span, "floor_area").unwrap_or(120.0), 1.0, out);
+            int_row(ui, "Rooms", "rooms",
+                read(src, span, "rooms").unwrap_or(4.0) as i32, 1, 256, out);
+            int_row(ui, "Floors above", "floors_above",
+                read(src, span, "floors_above").unwrap_or(1.0) as i32, 1, 64, out);
+            int_row(ui, "Floors below", "floors_below",
+                read(src, span, "floors_below").unwrap_or(0.0) as i32, 0, 32, out);
+            int_row(ui, "Windows", "windows",
+                read(src, span, "windows").unwrap_or(0.0) as i32, 0, 1024, out);
+            int_row(ui, "Skylights", "skylights",
+                read(src, span, "skylights").unwrap_or(0.0) as i32, 0, 256, out);
+            scalar_row(ui, "Ceiling height", "ceiling_height",
+                read(src, span, "ceiling_height").unwrap_or(2.6), 0.05, out);
+            scalar_row(ui, "Door W", "door_w",
+                read(src, span, "door_w").unwrap_or(0.9), 0.02, out);
+            scalar_row(ui, "Door H", "door_h",
+                read(src, span, "door_h").unwrap_or(2.1), 0.02, out);
+            scalar_row(ui, "Window W", "window_w",
+                read(src, span, "window_w").unwrap_or(1.2), 0.02, out);
+            scalar_row(ui, "Window H", "window_h",
+                read(src, span, "window_h").unwrap_or(1.4), 0.02, out);
+            scalar_row(ui, "Wall thickness", "wall_thickness",
+                read(src, span, "wall_thickness").unwrap_or(0.12), 0.005, out);
+            scalar_row(ui, "Ceiling thickness", "ceiling_thickness",
+                read(src, span, "ceiling_thickness").unwrap_or(0.2), 0.005, out);
+            int_row(ui, "Entrances", "entrances",
+                read(src, span, "entrances").unwrap_or(1.0) as i32, 1, 64, out);
+            int_row(ui, "Elevators", "elevators",
+                read(src, span, "elevators").unwrap_or(0.0) as i32, 0, 32, out);
+            int_row(ui, "Staircases", "staircases",
+                read(src, span, "staircases").unwrap_or(0.0) as i32, 0, 32, out);
             shown = true;
         }
         _ => {}
