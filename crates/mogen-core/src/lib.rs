@@ -16,7 +16,7 @@ pub use anim::{Clip, Easing, Interpolation, Joint, JointKind, Track, TrackProper
 pub use connector::Connector;
 pub use diagnostic::{has_errors, Diagnostic, Severity, Span};
 pub use graph::{AttachBinding, ColliderShape, ConformBinding, NodeId, SceneGraph, SceneNode, Slot};
-pub use gradient::{Gradient, GradientAxis, GradientKind, GradientStop};
+pub use gradient::{sample_stops, Gradient, GradientAxis, GradientKind, GradientStop};
 pub use meta::Meta;
 pub use light::{Light, LightKind};
 pub use material::{AlphaMode, Material, MaterialId, MaterialShader, TextureRef, UvMode};

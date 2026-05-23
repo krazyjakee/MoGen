@@ -49,38 +49,43 @@ pub struct Gradient {
 }
 
 impl Gradient {
-    /// Sample the ramp at parameter `t`. Clamps to the first/last stop outside
-    /// the `[0, 1]` range. Empty ramps return opaque white — the caller is
-    /// expected to validate non-empty stops before baking, so this branch only
-    /// fires for malformed in-memory graphs.
+    /// Sample the ramp at parameter `t`. Delegates to [`sample_stops`].
     pub fn sample(&self, t: f32) -> [f32; 4] {
-        if self.stops.is_empty() {
-            return [1.0, 1.0, 1.0, 1.0];
-        }
-        if t <= self.stops[0].t {
-            return self.stops[0].color;
-        }
-        if t >= self.stops[self.stops.len() - 1].t {
-            return self.stops[self.stops.len() - 1].color;
-        }
-        // Find the bracketing pair. `stops` is short (typically 2..4), so
-        // linear scan beats a binary search and keeps the code simple.
-        for w in self.stops.windows(2) {
-            let a = &w[0];
-            let b = &w[1];
-            if t >= a.t && t <= b.t {
-                let span = b.t - a.t;
-                let u = if span <= f32::EPSILON { 0.0 } else { (t - a.t) / span };
-                return [
-                    a.color[0] + (b.color[0] - a.color[0]) * u,
-                    a.color[1] + (b.color[1] - a.color[1]) * u,
-                    a.color[2] + (b.color[2] - a.color[2]) * u,
-                    a.color[3] + (b.color[3] - a.color[3]) * u,
-                ];
-            }
-        }
-        self.stops[self.stops.len() - 1].color
+        sample_stops(&self.stops, t)
     }
+}
+
+/// Sample a sorted `stops` slice at parameter `t`. Clamps to the first/last
+/// stop outside `[0, 1]`. Empty slices return opaque white. Exposed as a free
+/// function so callers with an already-sorted `&[GradientStop]` can sample
+/// without constructing a temporary `Gradient`.
+pub fn sample_stops(stops: &[GradientStop], t: f32) -> [f32; 4] {
+    if stops.is_empty() {
+        return [1.0, 1.0, 1.0, 1.0];
+    }
+    if t <= stops[0].t {
+        return stops[0].color;
+    }
+    if t >= stops[stops.len() - 1].t {
+        return stops[stops.len() - 1].color;
+    }
+    // Find the bracketing pair. `stops` is short (typically 2..4), so
+    // linear scan beats a binary search and keeps the code simple.
+    for w in stops.windows(2) {
+        let a = &w[0];
+        let b = &w[1];
+        if t >= a.t && t <= b.t {
+            let span = b.t - a.t;
+            let u = if span <= f32::EPSILON { 0.0 } else { (t - a.t) / span };
+            return [
+                a.color[0] + (b.color[0] - a.color[0]) * u,
+                a.color[1] + (b.color[1] - a.color[1]) * u,
+                a.color[2] + (b.color[2] - a.color[2]) * u,
+                a.color[3] + (b.color[3] - a.color[3]) * u,
+            ];
+        }
+    }
+    stops[stops.len() - 1].color
 }
 
 #[cfg(test)]

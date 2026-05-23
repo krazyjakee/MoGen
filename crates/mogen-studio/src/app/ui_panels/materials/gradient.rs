@@ -12,7 +12,7 @@
 //! 2-stop layouts fall through to `stops(…)`.
 
 use eframe::egui;
-use mogen_core::{Gradient, GradientAxis, GradientKind, GradientStop};
+use mogen_core::{sample_stops, Gradient, GradientAxis, GradientKind, GradientStop};
 
 use crate::app::util::format_inspector_scalar;
 
@@ -230,8 +230,8 @@ fn ramp_strip(
         }
     }
 
-    // Sample-strip overlay. Sorted snapshot only for sampling — we don't
-    // mutate `stops` here (drag handling does that further down).
+    // Sorted snapshot for sampling the overlay and for click-to-add colour
+    // interpolation. Drag handling operates on `stops` directly.
     let mut sorted = stops.clone();
     sort_stops(&mut sorted);
     const STRIPS: usize = 128;
@@ -240,7 +240,7 @@ fn ramp_strip(
     let bar_h = rect.height() - 12.0;
     for s in 0..STRIPS {
         let t = (s as f32 + 0.5) / STRIPS as f32;
-        let c = sample(&sorted, t);
+        let c = sample_stops(&sorted, t);
         let r = egui::Rect::from_min_size(
             egui::pos2(rect.left() + strip_w * s as f32, bar_top),
             egui::vec2(strip_w + 1.0, bar_h),
@@ -281,7 +281,16 @@ fn ramp_strip(
             ui.ctx().memory(|m| m.data.get_temp::<usize>(drag_id));
         if let (Some(i), Some(pos)) = (dragged_idx, response.interact_pointer_pos()) {
             if i < stops.len() {
-                let t = pixel_x_to_t(pos.x);
+                let t_raw = pixel_x_to_t(pos.x);
+                // Clamp within neighboring stops so the dragged stop never
+                // crosses a sibling. The stops slice is always sorted at frame
+                // start (fresh clone from the compiled scene), so index `i`
+                // remains valid as long as ordering is preserved. Without this
+                // clamp a cross would resort the slice next frame, making `i`
+                // point to the wrong stop for the rest of the drag.
+                let lo = if i > 0 { stops[i - 1].t } else { 0.0 };
+                let hi = if i + 1 < stops.len() { stops[i + 1].t } else { 1.0 };
+                let t = t_raw.clamp(lo, hi);
                 if (stops[i].t - t).abs() > 1e-5 {
                     stops[i].t = t;
                     changed = true;
@@ -300,7 +309,7 @@ fn ramp_strip(
         if let Some(pos) = response.interact_pointer_pos() {
             let t = pixel_x_to_t(pos.x);
             if nearest_stop_within(stops, t, rect.width(), 10.0).is_none() {
-                let c = sample(&sorted, t);
+                let c = sample_stops(&sorted, t);
                 stops.push(GradientStop { t, color: c });
                 changed = true;
             }
@@ -379,34 +388,6 @@ fn color32_from_f4(c: [f32; 4]) -> egui::Color32 {
     egui::Color32::from_rgba_unmultiplied(to_byte(c[0]), to_byte(c[1]), to_byte(c[2]), to_byte(c[3]))
 }
 
-/// Linear-interpolate the gradient at `t` using the sorted stops. Inlined
-/// here instead of going via `Gradient::sample` so the ramp strip doesn't
-/// need to construct a temporary `Gradient` per pixel.
-fn sample(stops: &[GradientStop], t: f32) -> [f32; 4] {
-    if stops.is_empty() {
-        return [1.0, 1.0, 1.0, 1.0];
-    }
-    if t <= stops[0].t {
-        return stops[0].color;
-    }
-    if t >= stops[stops.len() - 1].t {
-        return stops[stops.len() - 1].color;
-    }
-    for w in stops.windows(2) {
-        if t >= w[0].t && t <= w[1].t {
-            let span = w[1].t - w[0].t;
-            let u = if span <= f32::EPSILON { 0.0 } else { (t - w[0].t) / span };
-            return [
-                w[0].color[0] + (w[1].color[0] - w[0].color[0]) * u,
-                w[0].color[1] + (w[1].color[1] - w[0].color[1]) * u,
-                w[0].color[2] + (w[1].color[2] - w[0].color[2]) * u,
-                w[0].color[3] + (w[1].color[3] - w[0].color[3]) * u,
-            ];
-        }
-    }
-    stops[stops.len() - 1].color
-}
-
 fn sort_stops(stops: &mut [GradientStop]) {
     stops.sort_by(|a, b| {
         a.t.partial_cmp(&b.t).unwrap_or(std::cmp::Ordering::Equal)
@@ -428,7 +409,7 @@ fn stop_at_largest_gap(stops: &[GradientStop]) -> GradientStop {
             best_t = (w[0].t + w[1].t) * 0.5;
         }
     }
-    let c = sample(&sorted, best_t);
+    let c = sample_stops(&sorted, best_t);
     GradientStop { t: best_t, color: c }
 }
 
@@ -717,5 +698,59 @@ mod tests {
             result.stage,
             result.diagnostics
         );
+    }
+
+    #[test]
+    fn stop_at_largest_gap_targets_midpoint_of_biggest_gap() {
+        // Two stops at [0, 1]: midpoint of the only gap is 0.5.
+        let stops = vec![stop(0.0, [1.0, 0.0, 0.0]), stop(1.0, [0.0, 0.0, 1.0])];
+        let s = stop_at_largest_gap(&stops);
+        assert!((s.t - 0.5).abs() < 1e-5, "expected t≈0.5, got {}", s.t);
+        // Colour at t=0.5 between red and blue is mid-purple.
+        assert!((s.color[0] - 0.5).abs() < 1e-5);
+        assert!((s.color[2] - 0.5).abs() < 1e-5);
+    }
+
+    #[test]
+    fn stop_at_largest_gap_picks_wider_gap_with_three_stops() {
+        // Stops at 0.0, 0.1, 1.0: gap [0.1, 1.0] is larger, midpoint ≈ 0.55.
+        let stops = vec![
+            stop(0.0, [1.0, 0.0, 0.0]),
+            stop(0.1, [0.9, 0.1, 0.0]),
+            stop(1.0, [0.0, 0.0, 1.0]),
+        ];
+        let s = stop_at_largest_gap(&stops);
+        assert!((s.t - 0.55).abs() < 1e-5, "expected t≈0.55, got {}", s.t);
+    }
+
+    #[test]
+    fn nearest_stop_within_returns_none_outside_threshold() {
+        let stops = vec![stop(0.0, [1.0, 0.0, 0.0]), stop(1.0, [0.0, 0.0, 1.0])];
+        // At t=0.5 with strip 200px and threshold 10px: nearest stop is at 0
+        // or 1 → distance 100px, which is > 10px threshold.
+        assert!(nearest_stop_within(&stops, 0.5, 200.0, 10.0).is_none());
+    }
+
+    #[test]
+    fn nearest_stop_within_returns_closest_within_threshold() {
+        let stops = vec![
+            stop(0.0, [1.0, 0.0, 0.0]),
+            stop(0.5, [0.0, 1.0, 0.0]),
+            stop(1.0, [0.0, 0.0, 1.0]),
+        ];
+        // t=0.51 on a 200px strip: stop at 0.5 is 2px away, stop at 1.0 is
+        // 98px away — should find index 1.
+        let idx = nearest_stop_within(&stops, 0.51, 200.0, 10.0);
+        assert_eq!(idx, Some(1));
+    }
+
+    #[test]
+    fn nearest_stop_within_breaks_tie_by_nearest() {
+        // Two stops equidistant: returns the one at lower index.
+        let stops = vec![stop(0.4, [1.0, 0.0, 0.0]), stop(0.6, [0.0, 0.0, 1.0])];
+        // t=0.5 on 100px strip: both stops are 10px away. `best` is updated
+        // only when dist < current best, so first match wins → index 0.
+        let idx = nearest_stop_within(&stops, 0.5, 100.0, 10.0);
+        assert_eq!(idx, Some(0));
     }
 }
