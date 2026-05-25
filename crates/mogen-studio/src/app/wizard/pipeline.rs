@@ -9,7 +9,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use mogen_core::subtree_local_aabb;
-use mogen_dsl::ast::Node;
 use mogen_llm::{
     apply_style_to_prompt, generate_with_repair, embed_seed_header, GenerateConfig, LlmClient,
     RepairConfig, Style, ThinkingLevel,
@@ -24,10 +23,6 @@ use super::state::{
 
 /// Runtime knobs shared by every wizard worker. Built once in `ui_wizard`
 /// from the live Settings + resolved credential and cloned per call.
-///
-/// `claude_code_path` and `zai_base_url` round-trip through
-/// [`build_text_client`] but aren't read here — they go straight into the
-/// provider-client constructor.
 #[derive(Clone)]
 pub struct WizardRunConfig {
     pub model: String,
@@ -36,10 +31,6 @@ pub struct WizardRunConfig {
     pub max_repair_iters: u32,
     pub seed: u64,
     pub style: Option<Style>,
-    #[allow(dead_code)]
-    pub claude_code_path: String,
-    #[allow(dead_code)]
-    pub zai_base_url: String,
     pub session_id: String,
 }
 
@@ -539,15 +530,6 @@ pub(crate) fn strip_markdown_fences(text: &str) -> String {
         }
     }
     trimmed.to_string()
-}
-
-/// Walk an AST and return whether any node is a `module` with the given name.
-/// Used in tests + the wizard's lowering sanity check.
-#[allow(dead_code)]
-pub(crate) fn ast_has_module(nodes: &[Node], name: &str) -> bool {
-    nodes
-        .iter()
-        .any(|n| n.kind == "module" && n.name.as_deref() == Some(name))
 }
 
 #[cfg(test)]

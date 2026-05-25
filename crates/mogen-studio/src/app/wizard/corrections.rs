@@ -7,7 +7,6 @@ use mogen_dsl::ast::Node;
 
 use crate::edit;
 
-use super::assemble::sanitize_group_name;
 use super::state::{ObjectEntry, PositionCorrection};
 
 /// Apply each correction in `corrections` to the assembly `src`. Unknown
@@ -82,26 +81,12 @@ fn find_group_span_for_object(nodes: &[Node], object_id: &str) -> Option<Span> {
 
 /// True when `group` is the wizard's placement wrapper for `object_id` —
 /// i.e. its body contains a `use "<object_id>" (...)`. Matching by the inner
-/// `use` (not the group name) means a user-renamed group still resolves.
+/// `use` (not the group name) means a user-renamed group still resolves and
+/// a coincidentally-named group without the matching `use` is not rewritten.
 fn group_targets_object(group: &Node, object_id: &str) -> bool {
-    // Name-prefix fast path: matches the assembler's `<sanitized>_<i>` shape.
-    if let Some(name) = group.name.as_deref() {
-        let prefix = sanitize_group_name(object_id);
-        if name.starts_with(&format!("{prefix}_")) || name == prefix {
-            // Still confirm via `use`, so a coincidentally-named group from
-            // user edits doesn't get rewritten.
-        }
-    }
-    for child in &group.children {
-        if child.kind == "use" {
-            if let Some(target) = child.name.as_deref() {
-                if target == object_id {
-                    return true;
-                }
-            }
-        }
-    }
-    false
+    group.children.iter().any(|child| {
+        child.kind == "use" && child.name.as_deref() == Some(object_id)
+    })
 }
 
 #[cfg(test)]
@@ -170,5 +155,35 @@ mod tests {
         let (out, n) = apply_corrections(src, &manifest, &corrections);
         assert_eq!(n, 0);
         assert!(out.contains("pos=[0, 0, 0]"));
+    }
+
+    #[test]
+    fn group_with_matching_prefix_but_different_use_is_not_rewritten() {
+        // "chair_extra" group has a name that starts with "chair_" but its inner
+        // `use` targets "chair_extra", not "chair". The correction for "chair"
+        // must leave it untouched.
+        let src = concat!(
+            "scene {\n",
+            "  group \"chair_extra_0\" (pos=[0, 0, 0]) { use \"chair_extra\" () }\n",
+            "  group \"chair_0\" (pos=[0, 0, 0]) { use \"chair\" () }\n",
+            "}\n"
+        );
+        let manifest = vec![make_entry("chair"), make_entry("chair_extra")];
+        let corrections = vec![PositionCorrection {
+            object_id: "chair".into(),
+            new_position: Some([3.0, 0.0, 0.0]),
+            new_rotation_y_deg: None,
+            rationale: "moved".into(),
+        }];
+        let (out, n) = apply_corrections(src, &manifest, &corrections);
+        assert_eq!(n, 1);
+        assert!(
+            out.contains("use \"chair_extra\" ()"),
+            "chair_extra group should be untouched: {out}"
+        );
+        assert!(
+            out.contains("pos=[3.000, 0.000, 0.000]"),
+            "chair group pos should be updated: {out}"
+        );
     }
 }
