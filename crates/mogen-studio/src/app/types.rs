@@ -367,6 +367,9 @@ pub(super) enum MenuAction {
     TidyCode,
     /// View → Spending. Opens the persistent spend tracker panel (issue 60).
     OpenSpending,
+    /// File → Scene Wizard. Opens the multi-stage AI Scene Wizard window
+    /// (issue 59).
+    OpenSceneWizard,
 }
 
 /// The subset of `MenuAction` variants that are bound to a global keyboard

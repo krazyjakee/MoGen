@@ -46,11 +46,13 @@ mod ui_docs;
 mod ui_llm;
 mod ui_menu;
 mod ui_panels;
+mod ui_wizard;
 mod undo;
 mod update;
 mod util;
 mod viewport_menu;
 mod watcher;
+mod wizard;
 
 use self::types::{
     viewer_bg_color, AskInFlight, AutocompleteState, BuildOutcome, DocsState, EnhanceInFlight,
@@ -465,6 +467,14 @@ pub struct MogenStudioApp {
     /// Spending panel state — filters, last refresh, cached rows.
     /// Refreshed each time the panel opens or the user clicks Refresh.
     pub(in crate::app) spending: crate::app::spend_panel::SpendingState,
+
+    /// Scene Wizard window visibility. The wizard owns its own state in
+    /// `wizard`; this flag just gates the window.
+    pub(in crate::app) show_wizard: bool,
+    /// Live wizard session, if any. `None` until the user opens the wizard
+    /// for the first time this app session; persistent on-disk state is
+    /// reloaded into a fresh `WizardSession` from `<project>/wizard/`.
+    pub(in crate::app) wizard: Option<ui_wizard::WizardSession>,
 }
 
 impl MogenStudioApp {
@@ -639,6 +649,8 @@ impl MogenStudioApp {
             spend_session_id: gen_session_id(),
             show_spending: false,
             spending: crate::app::spend_panel::SpendingState::default(),
+            show_wizard: false,
+            wizard: None,
         }
     }
 
@@ -905,6 +917,7 @@ impl eframe::App for MogenStudioApp {
         self.poll_meta_generate();
         self.poll_ask();
         self.poll_imposter_export();
+        self.poll_wizard(ctx);
         self.poll_build();
         self.poll_imposter_preview(ctx);
         self.poll_oauth_login();
@@ -1114,6 +1127,7 @@ impl eframe::App for MogenStudioApp {
         self.ui_video_options(ctx);
         self.ui_capture_progress(ctx);
         self.ui_file_picker(ctx);
+        self.ui_wizard(ctx);
 
         // Paint the autocomplete popup last so it floats above every panel.
         // The editor panel updated state earlier in the frame; here we just

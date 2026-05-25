@@ -78,6 +78,17 @@ impl MogenStudioApp {
                     action = MenuAction::OpenNewPromptModal;
                     ui.close_menu();
                 }
+                if ui
+                    .button("Scene Wizard…")
+                    .on_hover_text(
+                        "Multi-stage wizard: prompt → manifest → per-object \
+                         image+model gen → isometric assembly → visual review",
+                    )
+                    .clicked()
+                {
+                    action = MenuAction::OpenSceneWizard;
+                    ui.close_menu();
+                }
                 ui.separator();
                 if shortcut_menu_item(
                     ui,
@@ -723,6 +734,7 @@ impl MogenStudioApp {
                 self.open_docs_home();
             }
             MenuAction::TidyCode => self.tidy_active(),
+            MenuAction::OpenSceneWizard => self.open_scene_wizard(),
         }
     }
 
