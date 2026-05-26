@@ -2,6 +2,56 @@ use mogen_core::{Mesh, Track, TrackProperty};
 
 use crate::{align_up, bounds, Accessor, BufferView};
 
+/// glTF buffer-view `target` constants ([spec][1]).
+///
+/// [1]: https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#reference-bufferview
+const TARGET_ARRAY_BUFFER: u32 = 34962;
+const TARGET_ELEMENT_ARRAY_BUFFER: u32 = 34963;
+
+/// glTF accessor `componentType` constants.
+const COMPONENT_F32: u32 = 5126;
+const COMPONENT_U16: u32 = 5123;
+const COMPONENT_U32: u32 = 5125;
+
+/// One buffer-view + accessor record paired with the byte range it covers
+/// in `bin`. `min_max` is `Some` only for accessors required by the glTF spec
+/// to declare bounds (POSITION and animation-input keyframes).
+struct ViewAccessor {
+    byte_offset: usize,
+    byte_length: usize,
+    target: Option<u32>,
+    component_type: u32,
+    count: usize,
+    ty: &'static str,
+    min_max: Option<(Vec<f32>, Vec<f32>)>,
+}
+
+fn push_view_and_accessor(
+    views: &mut Vec<BufferView>,
+    accessors: &mut Vec<Accessor>,
+    desc: ViewAccessor,
+) -> usize {
+    views.push(BufferView {
+        buffer: 0,
+        byte_offset: desc.byte_offset,
+        byte_length: desc.byte_length,
+        target: desc.target,
+    });
+    let (min, max) = match desc.min_max {
+        Some((mn, mx)) => (Some(mn), Some(mx)),
+        None => (None, None),
+    };
+    accessors.push(Accessor {
+        buffer_view: views.len() - 1,
+        component_type: desc.component_type,
+        count: desc.count,
+        ty: desc.ty,
+        min,
+        max,
+    });
+    accessors.len() - 1
+}
+
 pub(crate) fn push_positions(
     bin: &mut Vec<u8>,
     views: &mut Vec<BufferView>,
@@ -14,18 +64,16 @@ pub(crate) fn push_positions(
             bin.extend_from_slice(&c.to_le_bytes());
         }
     }
-    let byte_length = mesh.positions.len() * 12;
-    views.push(BufferView { buffer: 0, byte_offset: offset, byte_length, target: Some(34962) });
     let (min, max) = bounds(&mesh.positions);
-    accessors.push(Accessor {
-        buffer_view: views.len() - 1,
-        component_type: 5126,
+    push_view_and_accessor(views, accessors, ViewAccessor {
+        byte_offset: offset,
+        byte_length: mesh.positions.len() * 12,
+        target: Some(TARGET_ARRAY_BUFFER),
+        component_type: COMPONENT_F32,
         count: mesh.positions.len(),
         ty: "VEC3",
-        min: Some(min.to_vec()),
-        max: Some(max.to_vec()),
-    });
-    accessors.len() - 1
+        min_max: Some((min.to_vec(), max.to_vec())),
+    })
 }
 
 pub(crate) fn push_normals(
@@ -40,17 +88,15 @@ pub(crate) fn push_normals(
             bin.extend_from_slice(&c.to_le_bytes());
         }
     }
-    let byte_length = mesh.normals.len() * 12;
-    views.push(BufferView { buffer: 0, byte_offset: offset, byte_length, target: Some(34962) });
-    accessors.push(Accessor {
-        buffer_view: views.len() - 1,
-        component_type: 5126,
+    push_view_and_accessor(views, accessors, ViewAccessor {
+        byte_offset: offset,
+        byte_length: mesh.normals.len() * 12,
+        target: Some(TARGET_ARRAY_BUFFER),
+        component_type: COMPONENT_F32,
         count: mesh.normals.len(),
         ty: "VEC3",
-        min: None,
-        max: None,
-    });
-    accessors.len() - 1
+        min_max: None,
+    })
 }
 
 pub(crate) fn push_uvs(
@@ -65,17 +111,15 @@ pub(crate) fn push_uvs(
         bin.extend_from_slice(&(uv[0] * scale[0]).to_le_bytes());
         bin.extend_from_slice(&(uv[1] * scale[1]).to_le_bytes());
     }
-    let byte_length = mesh.uvs.len() * 8;
-    views.push(BufferView { buffer: 0, byte_offset: offset, byte_length, target: Some(34962) });
-    accessors.push(Accessor {
-        buffer_view: views.len() - 1,
-        component_type: 5126,
+    push_view_and_accessor(views, accessors, ViewAccessor {
+        byte_offset: offset,
+        byte_length: mesh.uvs.len() * 8,
+        target: Some(TARGET_ARRAY_BUFFER),
+        component_type: COMPONENT_F32,
         count: mesh.uvs.len(),
         ty: "VEC2",
-        min: None,
-        max: None,
-    });
-    accessors.len() - 1
+        min_max: None,
+    })
 }
 
 pub(crate) fn push_colors(
@@ -90,17 +134,15 @@ pub(crate) fn push_colors(
             bin.extend_from_slice(&ch.to_le_bytes());
         }
     }
-    let byte_length = mesh.colors.len() * 16;
-    views.push(BufferView { buffer: 0, byte_offset: offset, byte_length, target: Some(34962) });
-    accessors.push(Accessor {
-        buffer_view: views.len() - 1,
-        component_type: 5126, // FLOAT
+    push_view_and_accessor(views, accessors, ViewAccessor {
+        byte_offset: offset,
+        byte_length: mesh.colors.len() * 16,
+        target: Some(TARGET_ARRAY_BUFFER),
+        component_type: COMPONENT_F32,
         count: mesh.colors.len(),
         ty: "VEC4",
-        min: None,
-        max: None,
-    });
-    accessors.len() - 1
+        min_max: None,
+    })
 }
 
 pub(crate) fn push_indices(
@@ -116,23 +158,22 @@ pub(crate) fn push_indices(
         for i in &mesh.indices {
             bin.extend_from_slice(&(*i as u16).to_le_bytes());
         }
-        (mesh.indices.len() * 2, 5123u32) // UNSIGNED_SHORT
+        (mesh.indices.len() * 2, COMPONENT_U16)
     } else {
         for i in &mesh.indices {
             bin.extend_from_slice(&i.to_le_bytes());
         }
-        (mesh.indices.len() * 4, 5125u32) // UNSIGNED_INT
+        (mesh.indices.len() * 4, COMPONENT_U32)
     };
-    views.push(BufferView { buffer: 0, byte_offset: offset, byte_length, target: Some(34963) });
-    accessors.push(Accessor {
-        buffer_view: views.len() - 1,
+    push_view_and_accessor(views, accessors, ViewAccessor {
+        byte_offset: offset,
+        byte_length,
+        target: Some(TARGET_ELEMENT_ARRAY_BUFFER),
         component_type,
         count: mesh.indices.len(),
         ty: "SCALAR",
-        min: None,
-        max: None,
-    });
-    accessors.len() - 1
+        min_max: None,
+    })
 }
 
 pub(crate) fn push_times(
@@ -145,23 +186,21 @@ pub(crate) fn push_times(
     for t in times {
         bin.extend_from_slice(&t.to_le_bytes());
     }
-    let byte_length = times.len() * 4;
-    views.push(BufferView { buffer: 0, byte_offset: offset, byte_length, target: None });
     // Animation input accessors must declare min/max per the glTF spec.
     let (mut min_t, mut max_t) = (f32::INFINITY, f32::NEG_INFINITY);
     for t in times {
         if *t < min_t { min_t = *t; }
         if *t > max_t { max_t = *t; }
     }
-    accessors.push(Accessor {
-        buffer_view: views.len() - 1,
-        component_type: 5126,
+    push_view_and_accessor(views, accessors, ViewAccessor {
+        byte_offset: offset,
+        byte_length: times.len() * 4,
+        target: None,
+        component_type: COMPONENT_F32,
         count: times.len(),
         ty: "SCALAR",
-        min: Some(vec![min_t]),
-        max: Some(vec![max_t]),
-    });
-    accessors.len() - 1
+        min_max: Some((vec![min_t], vec![max_t])),
+    })
 }
 
 pub(crate) fn push_inverse_bind_matrices(
@@ -181,17 +220,15 @@ pub(crate) fn push_inverse_bind_matrices(
             }
         }
     }
-    let byte_length = ibms.len() * 64;
-    views.push(BufferView { buffer: 0, byte_offset: offset, byte_length, target: None });
-    accessors.push(Accessor {
-        buffer_view: views.len() - 1,
-        component_type: 5126,
+    push_view_and_accessor(views, accessors, ViewAccessor {
+        byte_offset: offset,
+        byte_length: ibms.len() * 64,
+        target: None,
+        component_type: COMPONENT_F32,
         count: ibms.len(),
         ty: "MAT4",
-        min: None,
-        max: None,
-    });
-    accessors.len() - 1
+        min_max: None,
+    })
 }
 
 pub(crate) fn push_joints(
@@ -206,17 +243,15 @@ pub(crate) fn push_joints(
             bin.extend_from_slice(&j.to_le_bytes());
         }
     }
-    let byte_length = mesh.joints.len() * 8;
-    views.push(BufferView { buffer: 0, byte_offset: offset, byte_length, target: Some(34962) });
-    accessors.push(Accessor {
-        buffer_view: views.len() - 1,
-        component_type: 5123, // UNSIGNED_SHORT
+    push_view_and_accessor(views, accessors, ViewAccessor {
+        byte_offset: offset,
+        byte_length: mesh.joints.len() * 8,
+        target: Some(TARGET_ARRAY_BUFFER),
+        component_type: COMPONENT_U16,
         count: mesh.joints.len(),
         ty: "VEC4",
-        min: None,
-        max: None,
-    });
-    accessors.len() - 1
+        min_max: None,
+    })
 }
 
 pub(crate) fn push_weights(
@@ -231,17 +266,15 @@ pub(crate) fn push_weights(
             bin.extend_from_slice(&w.to_le_bytes());
         }
     }
-    let byte_length = mesh.weights.len() * 16;
-    views.push(BufferView { buffer: 0, byte_offset: offset, byte_length, target: Some(34962) });
-    accessors.push(Accessor {
-        buffer_view: views.len() - 1,
-        component_type: 5126, // FLOAT
+    push_view_and_accessor(views, accessors, ViewAccessor {
+        byte_offset: offset,
+        byte_length: mesh.weights.len() * 16,
+        target: Some(TARGET_ARRAY_BUFFER),
+        component_type: COMPONENT_F32,
         count: mesh.weights.len(),
         ty: "VEC4",
-        min: None,
-        max: None,
-    });
-    accessors.len() - 1
+        min_max: None,
+    })
 }
 
 pub(crate) fn push_track_values(
@@ -251,25 +284,22 @@ pub(crate) fn push_track_values(
     track: &Track,
 ) -> usize {
     let offset = align_up(bin, 4);
-    let ty = match track.property {
-        TrackProperty::Rotation => "VEC4",
-        TrackProperty::Translation | TrackProperty::Scale => "VEC3",
+    let (ty, components): (&'static str, usize) = match track.property {
+        TrackProperty::Rotation => ("VEC4", 4),
+        TrackProperty::Translation | TrackProperty::Scale => ("VEC3", 3),
     };
-    let components = if ty == "VEC4" { 4 } else { 3 };
     for v in &track.values {
         for c in &v[..components] {
             bin.extend_from_slice(&c.to_le_bytes());
         }
     }
-    let byte_length = track.values.len() * components * 4;
-    views.push(BufferView { buffer: 0, byte_offset: offset, byte_length, target: None });
-    accessors.push(Accessor {
-        buffer_view: views.len() - 1,
-        component_type: 5126,
+    push_view_and_accessor(views, accessors, ViewAccessor {
+        byte_offset: offset,
+        byte_length: track.values.len() * components * 4,
+        target: None,
+        component_type: COMPONENT_F32,
         count: track.values.len(),
-        ty: if ty == "VEC4" { "VEC4" } else { "VEC3" },
-        min: None,
-        max: None,
-    });
-    accessors.len() - 1
+        ty,
+        min_max: None,
+    })
 }

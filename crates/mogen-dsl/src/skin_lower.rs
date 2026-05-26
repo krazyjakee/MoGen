@@ -294,8 +294,8 @@ fn walk_bindings(
     if node.kind == "skeleton" || node.kind == "bone" {
         return;
     }
-    let own_skin = string_attr(node, "skin");
-    let own_bind = string_attr(node, "bind");
+    let own_skin = node.attr_string("skin").map(String::from);
+    let own_bind = node.attr_string("bind").map(String::from);
     let effective_skin: Option<String> = own_skin
         .as_deref()
         .or(inherited_skin)
@@ -330,13 +330,6 @@ fn walk_bindings(
             effective_bind.as_deref(),
             out,
         );
-    }
-}
-
-fn string_attr(node: &Node, key: &str) -> Option<String> {
-    match node.attr(key)? {
-        crate::ast::Value::String(s) | crate::ast::Value::Ident(s) => Some(s.clone()),
-        _ => None,
     }
 }
 

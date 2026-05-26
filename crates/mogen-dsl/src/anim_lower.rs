@@ -48,7 +48,7 @@ fn compose_with_rest_pose(clip: &mut Clip, graph: &SceneGraph) {
     }
 }
 
-use crate::ast::{Node, Value};
+use crate::ast::Node;
 
 /// Lower a top-level or scene-level `joint` node.
 pub fn lower_joint(node: &Node, graph: &mut SceneGraph) -> Result<()> {
@@ -59,7 +59,8 @@ pub fn lower_joint(node: &Node, graph: &mut SceneGraph) -> Result<()> {
     let kind = joint_kind_attr(node)?;
     let axis = node.attr_vec3("axis").unwrap_or(Vec3::Y);
     let limits = node.attr_pair("limits");
-    let pivot_ref = string_or_ident(node.attr("pivot"))
+    let pivot_ref = node
+        .attr_string("pivot")
         .ok_or_else(|| anyhow!("joint \"{name}\" requires pivot=\"<node_name>\""))?;
     let pivot = find_node_scoped(graph, &pivot_ref, node.use_id)
         .ok_or_else(|| anyhow!("joint \"{name}\" pivot \"{pivot_ref}\" is not a scene node"))?;
@@ -133,9 +134,10 @@ fn lower_track(
     };
 
     // Direct node track: caller must supply an explicit property.
-    let prop = string_or_ident(node.attr("prop"))
+    let prop = node
+        .attr_string("prop")
         .ok_or_else(|| anyhow!("direct-node track requires prop=\"translation|rotation|scale\""))?;
-    let property = match prop.as_str() {
+    let property = match prop {
         "translation" | "pos" => TrackProperty::Translation,
         "rotation" | "rot" => TrackProperty::Rotation,
         "scale" => TrackProperty::Scale,
@@ -186,10 +188,10 @@ fn lower_joint_track(
 /// attribute → [`Easing::Linear`]. Unknown spelling → error so typos surface
 /// at lower time rather than silently degrading to linear.
 fn parse_easing_attr(node: &Node) -> Result<Easing> {
-    let Some(s) = string_or_ident(node.attr("easing")) else {
+    let Some(s) = node.attr_string("easing") else {
         return Ok(Easing::Linear);
     };
-    Easing::from_str(&s).ok_or_else(|| {
+    Easing::from_str(s).ok_or_else(|| {
         anyhow!(
             "unknown easing `{s}` (expected linear|ease_in|ease_out|ease_in_out|\
              ease_in_cubic|ease_out_cubic|ease_in_out_cubic|ease_in_sine|ease_out_sine|\
@@ -288,9 +290,10 @@ pub fn lower_template(node: &Node, graph: &mut SceneGraph) -> Result<()> {
         .name
         .clone()
         .unwrap_or_else(|| format!("{}_clip", node.kind));
-    let target_ref = string_or_ident(node.attr("target"))
+    let target_ref = node
+        .attr_string("target")
         .ok_or_else(|| anyhow!("`{}` requires target=\"<name>\"", node.kind))?;
-    let targets = resolve_anim_targets(&target_ref, graph, node.use_id);
+    let targets = resolve_anim_targets(target_ref, graph, node.use_id);
     if targets.is_empty() {
         bail!(
             "`{}` target \"{}\" is neither a joint nor a scene node",
@@ -300,7 +303,7 @@ pub fn lower_template(node: &Node, graph: &mut SceneGraph) -> Result<()> {
     }
     // A joint target re-uses the joint's own axis when the caller didn't override.
     let axis_default = graph
-        .find_joint(&target_ref)
+        .find_joint(target_ref)
         .map(|j| j.axis)
         .unwrap_or(Vec3::Y);
     let axis = node.attr_vec3("axis").unwrap_or(axis_default);
@@ -416,21 +419,15 @@ fn find_nodes_by_role_scoped(
 }
 
 fn joint_kind_attr(node: &Node) -> Result<JointKind> {
-    let s = string_or_ident(node.attr("type"))
+    let s = node
+        .attr_string("type")
         .ok_or_else(|| anyhow!("joint requires type=hinge|slider|ball|rotor"))?;
-    match s.as_str() {
+    match s {
         "hinge" => Ok(JointKind::Hinge),
         "slider" => Ok(JointKind::Slider),
         "ball" => Ok(JointKind::Ball),
         "rotor" => Ok(JointKind::Rotor),
         other => bail!("unknown joint type `{other}`"),
-    }
-}
-
-fn string_or_ident(v: Option<&Value>) -> Option<String> {
-    match v? {
-        Value::String(s) | Value::Ident(s) => Some(s.clone()),
-        _ => None,
     }
 }
 
