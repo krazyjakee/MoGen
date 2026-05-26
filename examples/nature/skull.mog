@@ -1,0 +1,79 @@
+// Human skull built from a single `blob` container — true SDF + surface-nets
+// meshing with the **carve-from-a-block** approach: one large head-shaped
+// ellipsoid is the entire skull mass, then subtractive children carve the
+// face structure (mandible undercut, cheek recesses, temple flattening,
+// eye sockets, nasal cavity, mouth slit). This works far better for
+// anatomy than stacking many small additive ellipsoids — the stack-of-
+// bumps approach produces a "kawaii balloon head", while carving from a
+// single mass naturally yields skull-like proportions because the additive
+// silhouette already IS skull-shaped.
+//
+// Key principle: additive geometry defines the OUTER silhouette; subtractive
+// geometry defines the FEATURES. For a skull:
+//   * 1 additive ellipsoid for the head mass (taller than wide, slightly
+//     deeper than tall — matches real ~22 × 14 × 18 cm proportions)
+//   * 2 small additive bumps for the brow ridge and chin (the only two
+//     features that PROTRUDE beyond the head silhouette)
+//   * 7 subtracts that scoop away material: under the jaw (separates
+//     mandible from "throat"), behind each cheekbone (creates the
+//     cheek-to-mouth recess so cheekbones and chin pop), behind each
+//     temple (flattens sides), then eye sockets / nasal cavity / mouth.
+//
+// ONE blob = ONE skull. Do NOT split cranium + jaw into separate blobs.
+//
+// Coordinate system: +Y up, the skull faces -Z. Realistic ~0.15 m wide
+// human-scale; blend ~4 % of longest size axis. resolution=160 keeps the
+// subtract cavities crisp.
+//
+// ~120k tris at LOD scale 1.0; `lod_scale (value=0.5)` drops to ~30k for
+// game-asset use, 0.25 for ~8k mobile.
+
+meta (
+  name = "skull",
+  description = "Human skull — carved from a single head-shaped ellipsoid with subtractive mandible undercut, cheek recesses, eye sockets, nasal cavity and mouth slit.",
+  tags = ["anatomy", "skull", "blob", "organic"],
+)
+
+material "bone" (color=[0.92, 0.88, 0.78], roughness=0.55)
+
+scene {
+  blob "skull" (blend=0.008, resolution=160, mat="bone") {
+    // === ADDITIVE: one head, plus protrusions for brow and chin ===
+
+    // Single head mass — taller than wide, slightly deeper than tall.
+    ellipsoid (size=[0.140, 0.200, 0.180], pos=[0, -0.010, 0.005])
+
+    // Brow ridge — small protrusion above the eye sockets.
+    ellipsoid (size=[0.110, 0.025, 0.025], pos=[0, 0.030, -0.085])
+
+    // Chin protrusion at the bottom front.
+    ellipsoid (size=[0.045, 0.035, 0.050], pos=[0, -0.085, -0.055])
+
+    // === SUBTRACTIVE: carve the face and undercut from the mass ===
+
+    // Undercut beneath the mandible — scoops out the lower-back area
+    // so the jaw is separated from where the "throat" would be.
+    ellipsoid (size=[0.110, 0.060, 0.100], pos=[0, -0.105, 0.020], op=subtract)
+
+    // Cheek-to-mouth recess on each side — carves a hollow behind the
+    // cheekbone area, which makes the cheekbones AND chin pop out as
+    // natural prominences rather than added bumps.
+    sphere (radius=0.045, pos=[-0.080, -0.045, -0.040], op=subtract)
+    sphere (radius=0.045, pos=[ 0.080, -0.045, -0.040], op=subtract)
+
+    // Temporal indentations — real skulls are slightly concave above
+    // and behind the ear, not perfectly spherical.
+    sphere (radius=0.060, pos=[-0.105, 0.035, -0.010], op=subtract)
+    sphere (radius=0.060, pos=[ 0.105, 0.035, -0.010], op=subtract)
+
+    // Eye sockets — deep round pits.
+    sphere (radius=0.033, pos=[-0.033, 0.005, -0.085], op=subtract)
+    sphere (radius=0.033, pos=[ 0.033, 0.005, -0.085], op=subtract)
+
+    // Nasal cavity — pear-shaped opening.
+    ellipsoid (size=[0.022, 0.055, 0.040], pos=[0, -0.030, -0.095], op=subtract)
+
+    // Mouth slit between maxilla and mandible.
+    ellipsoid (size=[0.060, 0.008, 0.020], pos=[0, -0.058, -0.080], op=subtract)
+  }
+}

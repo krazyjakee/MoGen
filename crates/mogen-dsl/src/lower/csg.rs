@@ -9,7 +9,7 @@ use crate::ast::{Node, Value};
 
 use super::connector::{add_aabb_connectors_if_missing, add_connector};
 use super::deform::apply_deform;
-use super::helpers::{inherit_material_from_ancestor, transform_from_attrs};
+use super::helpers::{apply_subdivide, inherit_material_from_ancestor, transform_from_attrs};
 use super::node::apply_metadata;
 use super::primitive::primitive_mesh;
 
@@ -109,7 +109,9 @@ pub(super) fn lower_csg(
         _ => unreachable!(),
     };
 
-    graph.set_mesh(id, clean_csg_output(&combined));
+    let cleaned = clean_csg_output(&combined);
+    let cleaned = apply_subdivide(node, cleaned)?;
+    graph.set_mesh(id, cleaned);
 
     // Attach connectors declared directly on the CSG node.
     for c in &node.children {

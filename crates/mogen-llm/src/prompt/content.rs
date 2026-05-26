@@ -184,7 +184,29 @@ from a validator failure.
    ear/leg slightly different) — biology is never perfectly mirrored. \
    Material naming: `<creature>_<region>_<surface>` (e.g. \
    `tiger_back_fur`, `oak_bark`, `koi_belly_scales`) so the texture \
-   pipeline picks anatomical priors when generating the albedo.";
+   pipeline picks anatomical priors when generating the albedo. \
+   For **single-mass anatomical forms** — skulls, hearts, brains, \
+   organs, fruits, snouts, monster heads, melted creatures, slimes — \
+   use `blob { ... }` instead of stacking discrete primitives. **ONE \
+   anatomical object = ONE blob.** Do NOT split a skull into separate \
+   `cranium` and `jaw` blobs and `attach` them — each blob is its own \
+   SDF field, surfaces don't blend across boundaries, the result is two \
+   disconnected pieces. For an articulated jaw use a skinned mesh. \
+   **For complex anatomy (skulls, faces, monster heads), prefer the \
+   carve-from-a-block approach** over the stack-of-bumps approach: ONE \
+   large head-shaped additive ellipsoid as the entire mass, then use \
+   `op=\"subtract\"` children to carve features and undercut (mandible \
+   undercut, cheek recesses, temple flattening, eye sockets, nasal \
+   cavity, mouth slit). Add small additive bumps only for things that \
+   PROTRUDE beyond the silhouette (brow ridge, chin, nose bridge). \
+   Stacking many small additive ellipsoids produces a kawaii balloon \
+   head with a tiny face stuck on; carving from a single mass naturally \
+   gives skull-like proportions because the additive silhouette already \
+   IS skull-shaped. Same principle for hearts (one mass, carve the \
+   cleft and ventricle separation), brains (one mass, carve the \
+   longitudinal fissure), fruits with cavities. Keep `blend` at ~3–8 % \
+   of the longest size axis (0.005–0.015 at 0.15 m skull scale); \
+   `resolution=128–160`. See `human skull` fewshot.";
 
 pub(super) const GRAMMAR_REFERENCE: &str = "\
 A `.mog` file is a sequence of nodes. Each node is:
@@ -455,6 +477,7 @@ pub(super) const KINDS_REFERENCE: &str = "\
 | `heightfield` | `size=[x,z]` | `segments_u`/`segments_v` (64 each, capped at 4096), `amplitude` (Y relief, 0.5), `octaves` (fbm depth, 1\\|..\\|8, default 4), `frequency` (base spatial freq, 1.0), `persistence` (octave amplitude falloff, 0.5), `seed`; tessellated XZ grid displaced along +Y by deterministic fbm value-noise. Hash mixer is byte-compatible with `noise=` deformer's `cell_noise`, so a heightfield and a `noise=`-deformed mesh share the same bumps for the same seed. Use for terrain, dunes, scaled rooftops, organic stone slabs. |
 | `bezier_patch` | `points=[[x,y,z], …]` (exactly 16, row-major 4×4) | `segments_u`/`segments_v` (16 each); bicubic Bézier surface — organic skin panels, faces, hoods, fenders, sails, fabric, pillows. Wrong point count is a friendly lower-time error. |
 | `metaball` | `points=[[x,y,z], …]` (centres) | `radius` (uniform across all centres) OR `radii=[r0, r1, …]` (one per centre — must match `points` length); `blend` (smooth-union distance, 0 = hard union), `rings`/`segments` (sphere tessellation, 16/24); N implicit spheres unioned with smooth blending — soft creatures, slimes, blobs, jellyfish bodies, pumpkin lobes. Requires `csg` feature. |
+| `blob` | implicit-field container | `blend` (smooth-min radius, scene units, typical 0.05–0.25), `resolution` (voxel grid along longest AABB axis, default 96, max 256), `subdivide` (Loop post-pass, 0–3, default 0); **true SDF + surface-nets** mesh of `sphere`/`ellipsoid`/`box`/`rounded_box`/`capsule`/`cylinder`/`torus` children, smoothly blended into one continuous watertight surface. A child carrying `op=\"subtract\"` carves a smooth cavity (eye socket, nostril, mouth, dimple). The right tool for any organic mass that should read as ONE continuous form — skulls, hearts, brains, organs, fruits, animal faces, monster bodies. Always prefer over stacked primitives here: sphere + box + cone reads as a robot; the same skull as a `blob` of ellipsoids reads as bone. |
 | `decal` | name (acts as prompt fallback) | `size=[w,h]` (default `[0.5, 0.5]`), `prompt` (Gemini description), `image` (path; wins over `prompt`), `tint=[r,g,b]`, `roughness` (0.6), `offset` (+Z gap from surface, 0.001), **`on`/`at`/`up`/`lift`** (curved-surface shortcut — see below), `pos`, `rot`. Synthesizes its own transparent `alpha_mode=\"blend\"` material — DO NOT set `mat=`. Use for logos, labels, stickers, handwritten notes, patches: anything that's a transparent image overlaid on another surface. For flat hosts (a panel, a box face), parent the decal under the host and set `pos=`. For curved hosts (a bag, a bottle, a helmet), use `on=\"<host>\", at=\"<connector>\"` so the decal's vertices bend onto the surface — much better than floating a flat quad above curvature. |
 | `branch` | `length`, `radius`, `depth` | `splits`, `length_falloff`, `radius_falloff`, `branch_angle`, `roll`, `tropism`, `bend`, `seed`, `jitter`, `leaves`, `leaf_size`, `leaf_cards`, `leaf_mat`; **recursive procedural tree — one declaration becomes a whole tree** |
 | `slab` | `size=[x,y,z]` | `box` alias; default `anchor=bottom` (sits on ground) |
@@ -509,7 +532,7 @@ pub(super) const KINDS_REFERENCE: &str = "\
 | `extrude`, `sweep`, `loft` | `top`, `bottom`, `left`, `right`, `front`, `back` (synthesized from the lowered mesh AABB — same as `group`) |";
 
 pub(super) const FEWSHOT: &str = "\
-Ten prompt / output pairs spanning mechanical, architectural, and organic \
+Prompt / output pairs spanning mechanical, architectural, and organic \
 subjects. The user message will be a single short phrase like these.
 
 ### Prompt: \"a simple wooden stool\"
@@ -805,6 +828,40 @@ scene {
     samples=12,
     mat=\"hull\"
   )
+}
+
+### Prompt: \"a human skull\"
+### Output:
+meta (name = \"human_skull\", description = \"a stylised human skull from a single blob of ellipsoids with carved eye sockets, nose and mouth\", tags = [\"anatomy\", \"skull\", \"bone\"])
+
+material \"bone\" (color=[0.92, 0.88, 0.78], roughness=0.55)
+
+scene {
+  // CARVE-FROM-A-BLOCK approach: ONE head-shaped ellipsoid is the entire
+  // skull mass; subtracts carve mandible undercut + cheek recesses +
+  // temple flattening + eye sockets + nasal + mouth. Two small additive
+  // bumps for brow ridge and chin (the only features that PROTRUDE beyond
+  // the head silhouette). This beats stacking many small additive
+  // ellipsoids — stack-of-bumps produces a balloon head with a tiny
+  // face stuck on; carving from a single mass naturally gives skull-like
+  // proportions because the additive silhouette already IS skull-shaped.
+  // ONE blob = ONE skull (never split cranium + jaw).
+  blob \"skull\" (blend=0.008, resolution=160, mat=\"bone\") {
+    // Additive: one head, plus brow + chin protrusions.
+    ellipsoid (size=[0.140, 0.200, 0.180], pos=[0, -0.010,  0.005])   // head mass
+    ellipsoid (size=[0.110, 0.025, 0.025], pos=[0,  0.030, -0.085])   // brow ridge
+    ellipsoid (size=[0.045, 0.035, 0.050], pos=[0, -0.085, -0.055])   // chin
+    // Subtractive: undercut + recesses + sockets.
+    ellipsoid (size=[0.110, 0.060, 0.100], pos=[0, -0.105,  0.020], op=subtract) // jaw undercut
+    sphere    (radius=0.045, pos=[-0.080, -0.045, -0.040], op=subtract) // L cheek recess
+    sphere    (radius=0.045, pos=[ 0.080, -0.045, -0.040], op=subtract) // R cheek recess
+    sphere    (radius=0.060, pos=[-0.105,  0.035, -0.010], op=subtract) // L temple
+    sphere    (radius=0.060, pos=[ 0.105,  0.035, -0.010], op=subtract) // R temple
+    sphere    (radius=0.033, pos=[-0.033,  0.005, -0.085], op=subtract) // L eye socket
+    sphere    (radius=0.033, pos=[ 0.033,  0.005, -0.085], op=subtract) // R eye socket
+    ellipsoid (size=[0.022, 0.055, 0.040], pos=[0, -0.030, -0.095], op=subtract) // nasal
+    ellipsoid (size=[0.060, 0.008, 0.020], pos=[0, -0.058, -0.080], op=subtract) // mouth slit
+  }
 }";
 
 pub(super) const OUTPUT_CONTRACT: &str = "\n\n## Output contract\n\n\

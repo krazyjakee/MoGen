@@ -436,11 +436,27 @@ mod tests {
         // `cacheable_block()` and don't count against this budget. Two new
         // fewshots demonstrating `extrude` (I-beam) and `loft` (boat hull)
         // added ~1 KB to the inline portion; cap raised from 25_000 →
-        // 26_500 to keep headroom for one more fewshot.
+        // 26_500 to keep headroom for one more fewshot. The `blob` rollout
+        // (organic-mass paragraph in PREAMBLE rule 8 + a `human skull`
+        // fewshot demonstrating subtract-carved eye sockets and nasal
+        // cavity) added ~1.7 KB net; cap raised 26_500 → 28_500 because
+        // every existing fewshot still earns its bytes and the skull is
+        // the highest-leverage example for organic anatomy. First
+        // production run had the model split the skull into separate
+        // cranium + jaw blobs and `attach` them; the anti-split rule
+        // ("ONE anatomical object = ONE blob") in PREAMBLE rule 8 plus
+        // a rescale of the skull fewshot to realistic ~0.15 m head size
+        // (so blend / cavity sizes track the Conventions table) added
+        // another ~0.5 KB; cap raised 28_500 → 29_500. Skull fewshot then
+        // gained a sizing-pitfalls comment block (cranium-height-matches-
+        // face, overlap-or-disconnect, cheekbones-within-width, mandible-
+        // narrower-than-maxilla) after the first regen produced an oversized
+        // cranium dome dwarfing a tiny face; ~30 B net, cap raised
+        // 29_500 → 30_000.
         let s = inline_block(&StdlibIndex::default());
         assert!(
-            s.len() < 26_500,
-            "inline_block grew to {} bytes — cap is 26_500. Either tighten an \
+            s.len() < 30_000,
+            "inline_block grew to {} bytes — cap is 30_000. Either tighten an \
              existing section, drop a fewshot, or move a stable section into \
              cacheable_block.",
             s.len()
@@ -466,10 +482,14 @@ mod tests {
         // `water_patch`) added ~530 bytes of Detailing-recipe entries; PR
         // review follow-up filled in `coil`/`heightfield`/`bezier_patch`/
         // `metaball` KINDS_REFERENCE rows for direct LLM authoring (~770 B).
+        // The new `blob` container kind (true SDF + surface-nets meshing
+        // for organic anatomical masses) added a KINDS_REFERENCE row plus
+        // `blob`/`subdivide`/`op` entries in the auto-rendered allowlist —
+        // ~700 bytes total; cap raised 31_000 → 32_000.
         let s = cacheable_block();
         assert!(
-            s.len() < 31_000,
-            "cacheable_block grew to {} bytes — cap is 31_000. Reference \
+            s.len() < 32_000,
+            "cacheable_block grew to {} bytes — cap is 32_000. Reference \
              material that grows without bound should be fetched on demand, \
              not pinned in the cache.",
             s.len()

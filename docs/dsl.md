@@ -20,6 +20,8 @@ modules, see [`modules.md`](./modules.md).
 - [Conform: moulding a primitive onto a target surface](#conform-moulding-a-primitive-onto-a-target-surface)
 - [Replicators: `mirror`, `array`, `stack`, `grid`](#replicators-mirror-array-stack-grid)
 - [CSG: `union` / `difference` / `intersect`](#csg-union--difference--intersect)
+- [Implicit-field blob: `blob`](#implicit-field-blob-blob)
+- [Mesh subdivision: `subdivide`](#mesh-subdivision-subdivide)
 - [Solid groups: `solid`](#solid-groups-solid)
 - [Modules: `module` and `use`](#modules-module-and-use)
 - [Imports: `import`](#imports-import)
@@ -95,7 +97,7 @@ Top-level directives that tune the build itself.
 
 | directive | value | effect |
 |---|---|---|
-| `lod_scale (value=N)` | number, default `1.0` | multiplies every primitive `segments`/`rings`/`samples` (implicit defaults *and* explicit values like `segments_u=64`). `icosphere` `subdivisions` step by `round(log2(N))` instead. Counts clamp to a per-primitive minimum |
+| `lod_scale (value=N)` | number, default `1.0` | multiplies every primitive `segments`/`rings`/`samples` (implicit defaults *and* explicit values like `segments_u=64`) and `blob` `resolution`. `icosphere` `subdivisions` and any `subdivide=` post-pass step by `round(log2(N))` instead. Counts clamp to a per-primitive minimum |
 
 ```
 lod_scale (value=0.5)
@@ -340,6 +342,7 @@ All primitives accept the common attributes above (`pos`, `rot`, `scale`,
 | `heightfield` | — | XZ grid with fBm displacement. `size=[w,d]` (`[1, 1]`), `segments_u`/`segments_v` (32), `amplitude` (0.5), `octaves` (1..=8, default 3), `frequency` (1.0), `persistence` (0.5), `seed` (1). Layer `wave` on top for water |
 | `bezier_patch` | `points=[…]` (exactly 16 control points, row-major u × v) | `segments_u`/`segments_v` (12). Bicubic Bézier surface — corners are `[0]`/`[3]`/`[12]`/`[15]`, inner four `[5]/[6]/[9]/[10]` shape the bulge |
 | `metaball` | `points=[…]` (≥1) plus `radius=` or `radii=[…]` | `blend` (smooth-union radius, 0), `rings` (12), `segments` (16). Sugar over `union (smooth=k) { sphere … }` |
+| `blob` | container with implicit-field children | true SDF + surface-nets mesh of any mix of `sphere` / `ellipsoid` / `box` / `rounded_box` / `capsule` / `cylinder` / `torus` children, smoothly blended. Each child may carry `op="subtract"` to carve a smooth cavity. See [Implicit-field blob](#implicit-field-blob-blob) |
 | `extrude` | `points=[[x,z], …]` (closed CCW) | `hole=[[x,z], …]` (one CW inner contour), `height` (1.0), `taper` (1.0), `twist` (0), `caps` (1). Multi-hole: chain `extrude` + `difference` |
 | `sweep` | `profile=[[x,y], …]` (closed CCW), `path=[[x,y,z], …]` | `samples` per segment (8), `twist` (uniform deg), `roll=[deg, …]`, `scale_along=[s, …]`, `caps` (1). Generalises `spline_tube`/`spline_ribbon` |
 | `loft` | `points=[[x,z], …]`, `heights=[y, …]` | sections flat-packed in `points` (vertex counts must match); `samples` (4), `caps` (1) |
@@ -996,6 +999,105 @@ difference "wall_with_door" (mat="concrete") {
 Operand transforms bake into vertices at eval time. Connectors / `material`
 children on the CSG node apply; those on operands are ignored. Output is
 cleaned (weld, degen-tri cull, normal recompute) for a watertight mesh.
+
+---
+
+## Implicit-field blob: `blob`
+
+`blob { … }` meshes its children as a true SDF field via surface nets —
+distinct from both `metaball` (sphere-cluster on a vertex-fillet approximate
+union) and `union(smooth=k)` (vertex-fillet pull applied to a sharp mesh
+CSG). Use `blob` whenever you want **smooth concave junctions** —
+eye sockets melted into a cranium, the cleft of a heart, a nostril dipping
+into a snout. The vertex-fillet path breaks down on concave junctions and
+large blend radii; `blob` does not.
+
+```
+blob "heart" (blend=0.22, resolution=80, subdivide=1, mat="heart") {
+  sphere    (radius=0.45, pos=[-0.30, 0.32, 0])      // left lobe
+  sphere    (radius=0.45, pos=[ 0.30, 0.32, 0])      // right lobe
+  ellipsoid (size=[0.85, 1.00, 0.85], pos=[0, -0.25, 0])   // apex
+  sphere    (radius=0.20, pos=[0, 0.58, 0], op=subtract)   // cleft
+}
+```
+
+### Attributes
+
+- `blend` — smooth-min radius in scene units. `0` collapses to a sharp
+  union. Typical organic values: `0.05–0.25`. Higher = more melt.
+- `resolution` — voxels along the longest world-space axis of the AABB
+  enclosing every additive child (plus padding). Default `96`; clamped to
+  `[16, 256]`. Cost scales O(N³); `128` is usually plenty. Scales with the
+  active `lod_scale` (linear) and per-node `lod=`.
+- `subdivide` — optional Loop subdivision count applied to the surface-nets
+  output. Default `0` (surface nets is already clean enough for most uses);
+  bump to `1` only when you need extra shading smoothness. Stepped by
+  `round(log2(lod_scale))`, capped at 3. See
+  [Mesh subdivision](#mesh-subdivision-subdivide).
+- `mat`, `pos`, `rot`, `scale`, `role`, `tags` — same as any other mesh node.
+
+### Children
+
+Only implicit-field primitives are allowed inside a `blob`:
+
+| kind | attrs | SDF |
+|---|---|---|
+| `sphere` | `radius` | sphere |
+| `ellipsoid` | `size=[x,y,z]` | axis-aligned ellipsoid (radii are `size/2`) |
+| `box` | `size=[x,y,z]` | axis-aligned box |
+| `rounded_box` | `size`, `radius` | box with rounded edges |
+| `capsule` | `radius`, `height` | Y-axis capsule (caps at `±height/2 + radius`) |
+| `cylinder` | `radius`, `height` | Y-axis closed cylinder |
+| `torus` | `major`, `minor` | torus in XZ plane |
+
+Each child accepts `pos` / `rot` / `scale`, which set the local-to-blob
+transform applied before SDF evaluation. Non-uniform `scale` is allowed
+(distances are compressed by the smallest scale axis as a conservative
+Lipschitz fix); for elongated shapes prefer `ellipsoid` over a scaled
+`sphere`.
+
+The optional `op="subtract"` (synonyms: `"sub"`, `"carve"`) makes the child
+a smooth carver instead of an additive mass. At least one additive child
+is required — a blob of only subtracts has nothing to carve into.
+
+### Notes
+
+- Output is one mesh, one node. Children do not become separate scene nodes.
+- The mesh is always watertight (surface nets closes any iso it extracts).
+- UVs are bbox-projected (XZ planar). Pair with `uv_mode="tile"` for
+  tileable surface textures; fitted image textures will project from above.
+- A `blob` without `subdivide` shows mild stairstepping from the voxel
+  grid; one round of Loop subdivision polishes it. Two rounds is glassy
+  but quadruples tri count.
+
+See [`examples/nature/skull.mog`](../examples/nature/skull.mog) and
+[`examples/nature/heart.mog`](../examples/nature/heart.mog) for full
+worked examples.
+
+---
+
+## Mesh subdivision: `subdivide`
+
+Add `subdivide = N` to any mesh-producing node — primitives (`sphere`,
+`box`, `lathe`, …), CSG ops (`union` / `difference` / `intersect`), or
+`blob` — to run `N` rounds of Loop subdivision on the resulting mesh
+before it is attached to the scene graph. Each round splits every
+triangle into four; `N` is clamped to `[0, 3]` so the cap is `64×` the
+input triangles.
+
+```
+union (subdivide=1, mat="bone") {
+  sphere    (radius=0.5)
+  ellipsoid (size=[0.6, 0.4, 0.8], pos=[0, -0.3, 0])
+}
+```
+
+Use `subdivide` to polish staircased blob outputs, smooth a low-poly
+primitive without re-tessellating it (`icosphere(radius=1, subdivide=2)`
+is often nicer than `icosphere(subdivisions=4)` because Loop smooths
+existing topology), or refine a CSG output for shading. It is a no-op on
+container kinds with no own mesh (`group`, `scene`, `mirror`, `array`,
+`stack`, `grid`).
 
 ---
 

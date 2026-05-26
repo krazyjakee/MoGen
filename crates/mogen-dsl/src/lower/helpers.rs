@@ -1,7 +1,45 @@
+use anyhow::{bail, Result};
 use glam::{Quat, Vec3};
 use mogen_core::{Aabb, Mesh, NodeId, SceneGraph, Transform};
+use mogen_geom::loop_subdivide;
 
 use crate::ast::{Node, Value};
+
+use super::lod::scaled_subdivisions;
+
+/// Cap applied to `subdivide=N` on every mesh-producing node. 3 keeps the
+/// post-pass at most 64× the input triangles — enough headroom that a
+/// surface-nets `blob` output (~5–15k tris at default resolution) stays
+/// under a million tris even at the cap.
+pub(super) const SUBDIVIDE_CAP: u32 = 3;
+
+/// Apply Loop subdivision to `mesh` per `node`'s `subdivide=N` attr
+/// (clamped to [0, SUBDIVIDE_CAP]). Returns the mesh unchanged if the attr
+/// is absent or zero. Called from the three mesh-producing lowering
+/// paths (`primitive_mesh` for leaves, `lower_csg` for boolean ops, and
+/// `lower_blob` for implicit-field containers) so any mesh-producing kind
+/// honours the same `subdivide=` knob with the same cap.
+///
+/// LOD scaling: Loop subdivision is exponential (4× tris per level), so it
+/// gets the same `log2(scale)` additive offset that `icosphere`'s
+/// `subdivisions=` does. A global `lod_scale=0.5` drops `subdivide=1` to
+/// 0 (skipping the 4× pass); `lod_scale=0.25` would knock `subdivide=2`
+/// to 0. Hero `lod_scale=2.0` adds a level back, still capped at
+/// `SUBDIVIDE_CAP` to keep the worst case bounded.
+pub(super) fn apply_subdivide(node: &Node, mesh: Mesh) -> Result<Mesh> {
+    let n = match node.attr_number("subdivide") {
+        Some(n) => n as i32,
+        None => return Ok(mesh),
+    };
+    if n < 0 {
+        bail!("`subdivide` must be a non-negative integer (got {n})");
+    }
+    let n = scaled_subdivisions(n as u32).min(SUBDIVIDE_CAP);
+    if n == 0 {
+        return Ok(mesh);
+    }
+    Ok(loop_subdivide(&mesh, n))
+}
 
 /// Lexical material inheritance: if `id`'s own material is unset, walk up its
 /// parent chain and copy the nearest ancestor's material onto it.

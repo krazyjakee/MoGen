@@ -11,7 +11,7 @@ pub const KNOWN_KINDS: &[&str] = &[
     "meta",
     "box", "plane", "quad", "cylinder", "cone", "sphere", "capsule", "torus",
     "prism", "pyramid", "disc", "icosphere", "rounded_box", "chamfered_box", "inset_box",
-    "wedge", "frustum", "tube", "hemisphere", "half_cylinder", "torus_arc", "ellipsoid", "heightfield", "bezier_patch", "metaball",
+    "wedge", "frustum", "tube", "hemisphere", "half_cylinder", "torus_arc", "ellipsoid", "heightfield", "bezier_patch", "metaball", "blob",
     "superellipsoid", "curved_plane", "lathe", "spline_tube", "spline_ribbon", "coil", "leaf_card", "mesh",
     "extrude", "sweep", "loft",
     "slab", "post", "panel", "wall",
@@ -63,6 +63,16 @@ pub const GEOMETRY_COMMON_ATTRS: &[&str] = &[
     // Per-node LOD multiplier — compounds with the file-global `lod_scale`
     // for the duration of this node and its subtree (see lod.rs guards).
     "lod",
+    // Loop subdivision post-pass count (clamped to [0, 3]). Honoured on any
+    // mesh-producing kind: leaf primitives, `union`/`difference`/`intersect`,
+    // and `blob`. No-op on group/scene/replicator nodes.
+    "subdivide",
+    // Blob-child operator: `op="subtract"` (or `"sub"`/`"carve"`) inside a
+    // `blob {}` body carves a smooth cavity instead of adding mass. Ignored
+    // outside a `blob` container — kept in the geometry-common list so the
+    // LLM can write `sphere(op=subtract)` as a blob child without tripping
+    // the per-kind allowlist on `sphere`.
+    "op",
 ];
 
 /// Transform-only subset. Used by `skeleton` (places the whole rig) and `bone`
@@ -168,6 +178,13 @@ pub fn attrs_for_kind(kind: &str) -> &'static [&'static str] {
         ],
         "bezier_patch" => &["points", "segments_u", "segments_v"],
         "metaball" => &["points", "radius", "radii", "blend", "rings", "segments"],
+        // True SDF + surface-nets container. Children are implicit-field
+        // primitives (sphere, ellipsoid, box, rounded_box, capsule, cylinder,
+        // torus) combined with smooth-min, with optional `op=subtract`
+        // children for smooth cavities. Distinct code path from `metaball`
+        // (which only smooths sphere clusters) and `union(smooth=k)`
+        // (vertex-fillet approximation of mesh CSG).
+        "blob" => &["blend", "resolution"],
         "leaf_card" => &["size", "cards"],
         "extrude" => &["points", "hole", "height", "taper", "twist", "caps"],
         "sweep" => &[
@@ -301,7 +318,10 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         | (_, "wave_phase")
         | (_, "faceted")
         | (_, "cast_shadow")
-        | (_, "lod") => "number",
+        | (_, "lod")
+        | (_, "subdivide") => "number",
+        // Blob-child operator; valid values checked at lowering time.
+        (_, "op") => "string",
         ("chamfered_box", "radius") => "number",
         ("inset_box", "face") => "string",
         (_, "wave_axis") => "string",
@@ -498,6 +518,8 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         | ("metaball", "blend")
         | ("metaball", "rings")
         | ("metaball", "segments")
+        | ("blob", "blend")
+        | ("blob", "resolution")
         | ("frustum", "height")
         | ("union", "smooth")
         | ("material", "alpha")

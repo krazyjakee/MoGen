@@ -5,7 +5,10 @@ pub mod csg;
 #[cfg(any(feature = "csg", feature = "unstable-wasm-uu"))]
 pub mod csg_smooth;
 pub mod deform;
+pub mod isosurface;
 pub mod primitives;
+pub mod sdf;
+pub mod subdivide;
 pub mod surface_query;
 pub mod xform;
 
@@ -22,6 +25,9 @@ pub use csg::{difference, difference_many, intersect, intersect_many, union, uni
 #[cfg(any(feature = "csg", feature = "unstable-wasm-uu"))]
 pub use csg_smooth::union_smooth;
 pub use deform::{bend, droop, jitter, noise, split_for_facets, taper, twist_y, wave};
+pub use isosurface::blob_to_mesh;
+pub use sdf::{blob_aabb, evaluate_field, smax, smin, BlobChild, SdfOp, SdfPrim};
+pub use subdivide::loop_subdivide;
 pub use surface_query::{SurfaceIndex, SurfacePoint};
 pub use primitives::{
     box_mesh, capsule_mesh, chamfered_box_mesh, coil_mesh, cone_mesh, curved_plane_mesh,
