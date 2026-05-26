@@ -189,11 +189,11 @@ fn walk(n: &Node, out: &mut Vec<AttachSpec>) -> Result<()> {
 fn build_spec(n: &Node) -> Result<AttachSpec> {
     let parent = n
         .attr_string("parent")
-        .map(String::from)
+        .map(str::to_string)
         .ok_or_else(|| anyhow!("attach requires parent=\"<node name>\""))?;
     let child = n
         .attr_string("child")
-        .map(String::from)
+        .map(str::to_string)
         .ok_or_else(|| anyhow!("attach requires child=\"<node name>\""))?;
     let socket = n.attr_string("socket").unwrap_or("top").to_string();
     let plug = n.attr_string("plug").unwrap_or("bottom").to_string();

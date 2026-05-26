@@ -439,4 +439,21 @@ mod tests {
         assert_eq!(secs[0].0, "box");
         assert_eq!(secs[0].1, palette().keyword);
     }
+
+    #[test]
+    fn highlights_kinds_absent_from_old_keyword_list() {
+        // chamfered_box, metaball, coil, extrude, heightfield are in KNOWN_KINDS
+        // but were missing from the old hand-written KEYWORDS array. Verify
+        // they now paint as keywords via the KNOWN_KINDS reference.
+        let src = "chamfered_box metaball coil extrude heightfield";
+        let job = highlight(src, font(), palette(), f32::INFINITY);
+        let secs = sections_text(&job);
+        for token in &["chamfered_box", "metaball", "coil", "extrude", "heightfield"] {
+            let sec = secs
+                .iter()
+                .find(|(t, _)| t.as_str() == *token)
+                .unwrap_or_else(|| panic!("{token} section not found"));
+            assert_eq!(sec.1, palette().keyword, "{token} should paint as keyword");
+        }
+    }
 }

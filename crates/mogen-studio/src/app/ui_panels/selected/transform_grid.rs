@@ -32,8 +32,8 @@ fn expr_attr(
 
 /// Render three `DragValue`s for the X/Y/Z components of `vals`, all sharing
 /// `speed` and `suffix` (the suffix renders e.g. the `°` on rotation rows).
-/// Returns `true` if any of the three changed this frame — callers use this
-/// to decide whether to emit a `SetAttrCanonical` write.
+/// Returns `Some(i)` where `i` is the axis index (0=X, 1=Y, 2=Z) that last
+/// changed this frame, or `None` if no axis changed.
 fn drag_triple(
     ui: &mut egui::Ui,
     vals: &mut [f32; 3],

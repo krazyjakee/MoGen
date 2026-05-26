@@ -294,8 +294,8 @@ fn walk_bindings(
     if node.kind == "skeleton" || node.kind == "bone" {
         return;
     }
-    let own_skin = node.attr_string("skin").map(String::from);
-    let own_bind = node.attr_string("bind").map(String::from);
+    let own_skin = node.attr_string("skin").map(str::to_string);
+    let own_bind = node.attr_string("bind").map(str::to_string);
     let effective_skin: Option<String> = own_skin
         .as_deref()
         .or(inherited_skin)
