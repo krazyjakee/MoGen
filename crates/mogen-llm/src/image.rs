@@ -68,6 +68,15 @@ impl GeminiClient {
         prompt: &str,
         seed: Option<u64>,
     ) -> Result<GeneratedImage, GeminiError> {
+        // Honor the `ImageClient::generate_image` contract that `""` means
+        // "use the provider default". Empty model would otherwise produce
+        // `/models/:generateContent` and a confusing 404.
+        let resolved_model = if model.is_empty() {
+            default_image_model_for(self.auth())
+        } else {
+            model
+        };
+        let model = resolved_model;
         let inline = match self.auth() {
             GeminiAuth::ApiKey(key) => {
                 // Public API speaks `responseModalities: ["IMAGE"]` and returns

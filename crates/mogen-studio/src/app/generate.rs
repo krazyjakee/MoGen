@@ -224,7 +224,10 @@ impl MogenStudioApp {
     /// owner could read them.
     pub(super) fn poll_generate(&mut self, ctx: &egui::Context) {
         if let Some(outcome) = self.viewer.take_capture_outcome_if(|kind| {
-            !matches!(kind, CaptureKind::PickerThumb | CaptureKind::Publish)
+            !matches!(
+                kind,
+                CaptureKind::PickerThumb | CaptureKind::Publish | CaptureKind::WizardThumb
+            )
         }) {
             self.handle_capture_outcome(ctx, outcome);
         }
@@ -270,12 +273,13 @@ impl MogenStudioApp {
                     self.files[i].status = "thumbnail: render produced no output".into();
                 }
             }
-            CaptureKind::PickerThumb | CaptureKind::Publish => {
+            CaptureKind::PickerThumb | CaptureKind::Publish | CaptureKind::WizardThumb => {
                 // PickerThumb is owned by `ThumbnailManager`; Publish by the
-                // community publish dialog. `poll_generate` filters both out
-                // before reaching this handler. Reaching here would only
-                // happen if the filter were bypassed — drop on the floor
-                // rather than mis-attributing it to the active file's status.
+                // community publish dialog; WizardThumb by the Scene Wizard.
+                // `poll_generate` filters all three out before reaching this
+                // handler. Reaching here would only happen if the filter were
+                // bypassed — drop on the floor rather than mis-attributing it
+                // to the active file's status.
             }
             CaptureKind::ModifyScreenshot => {
                 // Modify-with-screenshot captures are handled by the

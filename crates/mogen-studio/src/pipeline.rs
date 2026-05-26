@@ -43,6 +43,20 @@ pub enum Stage {
 }
 
 pub fn compile(src: &str, source_dir: Option<&Path>) -> CompileResult {
+    // A `.mog` file that contains only `module "X" () { … }` (e.g. each
+    // wizard per-object file) lowers to an empty scene because nothing
+    // instantiates the module. Detect that pattern and append a transient
+    // `scene { use "X" () }` so the previewer renders the body. The on-disk
+    // source is untouched — the rewrite lives only in this compile call.
+    let preview_src;
+    let src = match mogen_dsl::synthesise_standalone_module_use(src) {
+        Some(rewritten) => {
+            preview_src = rewritten;
+            preview_src.as_str()
+        }
+        None => src,
+    };
+
     let ast = match mogen_dsl::parse(src) {
         Ok(a) => a,
         Err(e) => {

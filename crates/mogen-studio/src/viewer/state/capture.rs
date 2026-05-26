@@ -32,6 +32,11 @@ pub enum CaptureKind {
     PickerThumb,
     Publish,
     ModifyScreenshot,
+    /// Single-frame isometric screenshot owned by the Scene Wizard. The
+    /// renderer treats it identically to a `Thumbnail`; the variant only
+    /// tells `poll_generate` to route the outcome back into the wizard
+    /// instead of the active tab's status line.
+    WizardThumb,
 }
 
 /// One frame the renderer should produce as part of a capture. Yaw/pitch

@@ -74,3 +74,4 @@ examples/textures
 # Local CLI scratch outputs (regenerated on each run)
 /test_outputs/
 /target-wasm-check/
+/wizard/
