@@ -96,8 +96,12 @@ pub struct ObjectGenResult {
 /// reviewed before spending more LLM/image calls.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum Stage {
-    /// User edits the prompt and reviews cost estimates.
+    /// User picks the save location that every wizard artefact lives under.
+    /// Gates everything else so no LLM/image calls run before a folder is
+    /// confirmed.
     #[default]
+    Location,
+    /// User edits the prompt and reviews cost estimates.
     Prompt,
     /// Brief generated; user reviews / can regenerate.
     Brief,
@@ -120,6 +124,7 @@ pub enum Stage {
 impl Stage {
     pub fn label(self) -> &'static str {
         match self {
+            Stage::Location => "Save location",
             Stage::Prompt => "Prompt",
             Stage::Brief => "Brief",
             Stage::Manifest => "Object manifest",
@@ -134,15 +139,16 @@ impl Stage {
 
     pub fn order(self) -> u32 {
         match self {
-            Stage::Prompt => 0,
-            Stage::Brief => 1,
-            Stage::Manifest => 2,
-            Stage::References => 3,
-            Stage::Objects => 4,
-            Stage::Assemble => 5,
-            Stage::ReviewObjects => 6,
-            Stage::ReviewScene => 7,
-            Stage::Done => 8,
+            Stage::Location => 0,
+            Stage::Prompt => 1,
+            Stage::Brief => 2,
+            Stage::Manifest => 3,
+            Stage::References => 4,
+            Stage::Objects => 5,
+            Stage::Assemble => 6,
+            Stage::ReviewObjects => 7,
+            Stage::ReviewScene => 8,
+            Stage::Done => 9,
         }
     }
 }
@@ -192,28 +198,6 @@ impl WizardState {
     pub fn find_object_mut(&mut self, id: &str) -> Option<&mut ObjectEntry> {
         self.manifest.iter_mut().find(|o| o.id == id)
     }
-}
-
-/// First object that still needs a reference image generated.
-pub fn next_pending_reference(state: &WizardState) -> Option<&ObjectEntry> {
-    state.manifest.iter().find(|o| {
-        o.reference_image
-            .as_ref()
-            .map(|p| !p.exists())
-            .unwrap_or(true)
-    })
-}
-
-/// First object that still needs a `.mog` generated. Skips objects whose
-/// `.mog` is on disk; falls back to objects without a reference image only
-/// when reference generation is being skipped.
-pub fn next_pending_object(state: &WizardState) -> Option<&ObjectEntry> {
-    state.manifest.iter().find(|o| {
-        o.mog_path
-            .as_ref()
-            .map(|p| !p.exists())
-            .unwrap_or(true)
-    })
 }
 
 /// First object that still needs a per-object visual review. Used to drive

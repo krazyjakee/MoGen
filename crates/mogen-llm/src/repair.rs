@@ -243,6 +243,20 @@ fn run_repair_loop(
 /// references) are promoted to E0701 so the repair loop can emit them in the
 /// same JSON shape as validator output.
 pub fn validate_text(dsl: &str) -> Vec<Diagnostic> {
+    // A module-only file (e.g. a wizard per-object `.mog`) lowers to an empty
+    // `SceneGraph` because nothing instantiates the module — `validate_graph`
+    // then sees no errors and the repair loop happily declares success even
+    // though the previewer would render nothing. Apply the same transient
+    // `scene { use "X" () }` synthesis the studio/web previewers use so the
+    // module body is actually lowered and graph-validated.
+    let preview_dsl;
+    let dsl = match mogen_dsl::synthesise_standalone_module_use(dsl) {
+        Some(rewritten) => {
+            preview_dsl = rewritten;
+            preview_dsl.as_str()
+        }
+        None => dsl,
+    };
     let ast = match mogen_dsl::parse(dsl) {
         Ok(ast) => ast,
         Err(e) => return vec![Diagnostic::error("E0001", format!("parse error: {e}"))],

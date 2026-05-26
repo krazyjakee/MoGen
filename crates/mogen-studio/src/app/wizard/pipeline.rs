@@ -134,7 +134,7 @@ pub fn run_manifest(
 /// path. The wizard loops over objects, one per call, so a single failure
 /// only loses one object's reference rather than the whole batch.
 pub fn run_reference_image(
-    image_client: ImageClient,
+    image_client: &ImageClient,
     obj: ObjectEntry,
     out_path: PathBuf,
     seed: u64,
@@ -145,8 +145,11 @@ pub fn run_reference_image(
     }
     let prompt = format!(
         "A clean studio reference photo of {name} — {prompt}. \
-         Single object on a plain neutral background, no text, no watermark, \
-         no logos, no people. Reference-grade lighting, full object visible.",
+         Render ONLY the object itself, fully isolated against a plain neutral \
+         background. No ground, no floor, no surface, no table, no pedestal, \
+         no shadow plane — the object must appear to float with nothing beneath \
+         it. No text, no watermark, no logos, no people. Reference-grade \
+         lighting, full object visible.",
         name = obj.name,
         prompt = obj.prompt
     );

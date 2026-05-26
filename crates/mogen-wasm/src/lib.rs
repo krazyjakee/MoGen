@@ -179,6 +179,17 @@ fn compile_with_cache(
             );
         }
     };
+    // Module-only files (e.g. a wizard per-object `.mog`) need a transient
+    // `scene { use "X" () }` so the previewer has something to render. The
+    // on-disk source is untouched — the rewrite lives only in this call.
+    let preview_src;
+    let source = match mogen_dsl::synthesise_standalone_module_use(source) {
+        Some(rewritten) => {
+            preview_src = rewritten;
+            preview_src.as_str()
+        }
+        None => source,
+    };
     let ast = match mogen_dsl::parse(source) {
         Ok(a) => a,
         Err(e) => {

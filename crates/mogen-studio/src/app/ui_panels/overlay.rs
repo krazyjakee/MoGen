@@ -358,8 +358,15 @@ impl MogenStudioApp {
 
         // First-launch / empty-buffer state. Rendered centred over the
         // viewport so the user has somewhere to start instead of staring at
-        // a black canvas.
-        if !self.viewer.has_scene() {
+        // a black canvas. Suppressed when the buffer has DSL but failed to
+        // render — the diagnostics panel is the relevant signal there, not a
+        // "no scene loaded" nudge.
+        let buffer_empty = self
+            .files
+            .get(self.active)
+            .map(|f| f.source.trim().is_empty())
+            .unwrap_or(true);
+        if !self.viewer.has_scene() && buffer_empty {
             egui::Area::new(egui::Id::new("viewport_empty_state"))
                 .fixed_pos(viewport_rect.center())
                 .pivot(egui::Align2::CENTER_CENTER)
