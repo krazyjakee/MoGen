@@ -425,6 +425,7 @@ impl MogenStudioApp {
                 }
             }
             WizardAction::BackToAssemble => self.wizard_back_to(Stage::Assemble),
+            WizardAction::BackToReviewObjects => self.wizard_back_to(Stage::ReviewObjects),
             WizardAction::RunSceneReview => self.start_wizard_scene_review(ctx),
             WizardAction::ApplyCorrections => self.apply_wizard_corrections(ctx),
             WizardAction::FinishWizard => {
@@ -591,8 +592,6 @@ impl MogenStudioApp {
                 .map(|s| s.state.seed)
                 .unwrap_or_else(pick_default_seed),
             style: self.settings.style(),
-            claude_code_path: self.settings.claude_code_path(),
-            zai_base_url: self.settings.zai_base_url().to_string(),
             session_id: self.spend_session_id.clone(),
         }
     }
@@ -1232,6 +1231,7 @@ enum WizardAction {
     RegenerateObject(String),
     AdvanceToReviewScene,
     BackToAssemble,
+    BackToReviewObjects,
     RunSceneReview,
     ApplyCorrections,
     FinishWizard,
@@ -1245,20 +1245,21 @@ enum WizardAction {
 }
 
 fn draw_stage_strip(ui: &mut egui::Ui, session: &WizardSession) {
+    const STAGES: [Stage; 10] = [
+        Stage::Location,
+        Stage::Prompt,
+        Stage::Brief,
+        Stage::Manifest,
+        Stage::References,
+        Stage::Objects,
+        Stage::Assemble,
+        Stage::ReviewObjects,
+        Stage::ReviewScene,
+        Stage::Done,
+    ];
     ui.horizontal_wrapped(|ui| {
-        for stage in [
-            Stage::Location,
-            Stage::Prompt,
-            Stage::Brief,
-            Stage::Manifest,
-            Stage::References,
-            Stage::Objects,
-            Stage::Assemble,
-            Stage::ReviewObjects,
-            Stage::ReviewScene,
-            Stage::Done,
-        ] {
-            let active = stage == session.state.stage;
+        for (i, stage) in STAGES.iter().enumerate() {
+            let active = *stage == session.state.stage;
             let reached = stage.order() <= session.state.stage.order();
             let mut text = egui::RichText::new(format!(
                 "{}. {}",
@@ -1271,7 +1272,9 @@ fn draw_stage_strip(ui: &mut egui::Ui, session: &WizardSession) {
                 text = text.weak();
             }
             ui.label(text);
-            ui.label("→");
+            if i < STAGES.len() - 1 {
+                ui.label("→");
+            }
         }
     });
 }
@@ -1888,7 +1891,7 @@ fn draw_review_scene_stage(ui: &mut egui::Ui, session: &mut WizardSession) -> Wi
     ui.add_space(6.0);
     ui.horizontal(|ui| {
         if ui.button("← Back").clicked() {
-            action = WizardAction::BackToObjects;
+            action = WizardAction::BackToReviewObjects;
         }
         if ui
             .add_enabled(

@@ -4,7 +4,7 @@
 //! pipeline handles it without any wizard awareness.
 
 use std::fmt::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use super::state::{ObjectEntry, WizardState};
 
@@ -125,16 +125,6 @@ pub(crate) fn sanitize_group_name(s: &str) -> String {
         out.push('x');
     }
     out
-}
-
-/// Strip the assembly file path back to its workspace root so other tooling
-/// (the LLM correction loop) can refer to objects by relative path.
-#[allow(dead_code)]
-pub(crate) fn relative_objects_dir(assembly_path: &Path) -> PathBuf {
-    assembly_path
-        .parent()
-        .map(|p| p.join("objects"))
-        .unwrap_or_else(|| PathBuf::from("objects"))
 }
 
 #[cfg(test)]
