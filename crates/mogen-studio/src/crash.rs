@@ -10,7 +10,7 @@
 //! [`Settings::crash_reports_enabled`] consent flag — Sentry only initialises
 //! when the user has explicitly opted in.
 
-const DSN: &str = "https://fec046177fb54225805b1c011f783d5d@crash.daccord.gg/3";
+const DSN: &str = "https://9ee8ddd1a1b8436fa31e56cafa33a1bb@crash.daccord.gg/4";
 
 /// True when the environment hard-disables telemetry. Independent of any
 /// saved consent — env-level opt-out wins, so the first-launch prompt should
