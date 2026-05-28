@@ -47,3 +47,39 @@ pub fn init(consented: Option<bool>) -> Option<sentry::ClientInitGuard> {
         },
     )))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    // Env-var mutations must be serialised within this module — parallel tests
+    // on the same process would race on the shared environment.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn blocked_by_mogen_disable_telemetry() {
+        let _g = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("DO_NOT_TRACK");
+        std::env::set_var("MOGEN_DISABLE_TELEMETRY", "1");
+        assert!(telemetry_blocked_by_env());
+        std::env::remove_var("MOGEN_DISABLE_TELEMETRY");
+    }
+
+    #[test]
+    fn blocked_by_do_not_track() {
+        let _g = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("MOGEN_DISABLE_TELEMETRY");
+        std::env::set_var("DO_NOT_TRACK", "1");
+        assert!(telemetry_blocked_by_env());
+        std::env::remove_var("DO_NOT_TRACK");
+    }
+
+    #[test]
+    fn not_blocked_when_neither_var_set() {
+        let _g = ENV_LOCK.lock().unwrap();
+        std::env::remove_var("MOGEN_DISABLE_TELEMETRY");
+        std::env::remove_var("DO_NOT_TRACK");
+        assert!(!telemetry_blocked_by_env());
+    }
+}
