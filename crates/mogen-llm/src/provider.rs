@@ -690,6 +690,7 @@ mod tests {
             Provider::ClaudeCode,
             Provider::Fireworks,
             Provider::Zai,
+            Provider::OpenAiCompat,
         ] {
             assert_eq!(Provider::parse(p.key()), Some(p));
         }
@@ -708,6 +709,12 @@ mod tests {
         assert_eq!(Provider::parse("Z.AI"), Some(Provider::Zai));
         assert_eq!(Provider::parse("zhipu"), Some(Provider::Zai));
         assert_eq!(Provider::parse("glm"), Some(Provider::Zai));
+        assert_eq!(Provider::parse("lmstudio"), Some(Provider::OpenAiCompat));
+        assert_eq!(Provider::parse("LM-Studio"), Some(Provider::OpenAiCompat));
+        assert_eq!(Provider::parse("llama.cpp"), Some(Provider::OpenAiCompat));
+        assert_eq!(Provider::parse("llamacpp"), Some(Provider::OpenAiCompat));
+        assert_eq!(Provider::parse("local-openai"), Some(Provider::OpenAiCompat));
+        assert_eq!(Provider::parse("openai-compatible"), Some(Provider::OpenAiCompat));
         assert_eq!(Provider::parse("wat"), None);
     }
 
@@ -758,5 +765,16 @@ mod tests {
             panic!("ollama should work keyless")
         });
         assert_eq!(c.provider(), Provider::Ollama);
+    }
+
+    #[test]
+    fn from_env_succeeds_for_openai_compat_without_key() {
+        // OpenAiCompat is keyless (local servers need no token); from_env
+        // must succeed without consulting OPENAI_COMPAT_API_KEY.
+        std::env::remove_var("OPENAI_COMPAT_API_KEY");
+        let c = LlmClient::from_env(Provider::OpenAiCompat).unwrap_or_else(|_| {
+            panic!("openai-compat should work keyless")
+        });
+        assert_eq!(c.provider(), Provider::OpenAiCompat);
     }
 }
