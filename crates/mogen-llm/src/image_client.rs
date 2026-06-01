@@ -69,9 +69,29 @@ impl ImageClient {
         seed: Option<u64>,
         ctx: &crate::spend::CallContext,
     ) -> Result<GeneratedImage, ImageError> {
+        self.generate_image_with_inputs(model, prompt, seed, &[], ctx)
+    }
+
+    /// Like [`Self::generate_image_with_context`] but conditions generation on
+    /// one or more input images (image-to-image / editing). Only providers
+    /// where [`Self::supports_image_input`] is `true` actually use the inputs;
+    /// others silently fall back to text-to-image. Records to the spend DB the
+    /// same way as the context variant.
+    pub fn generate_image_with_inputs(
+        &self,
+        model: &str,
+        prompt: &str,
+        seed: Option<u64>,
+        input_images: &[crate::types::ImageInput],
+        ctx: &crate::spend::CallContext,
+    ) -> Result<GeneratedImage, ImageError> {
         let result = match self {
-            Self::Gemini(c) => c.generate_image(model, prompt, seed).map_err(ImageError::from),
-            Self::Zai(c) => c.generate_image(model, prompt, seed).map_err(ImageError::from),
+            Self::Gemini(c) => c
+                .generate_image_with_inputs(model, prompt, seed, input_images)
+                .map_err(ImageError::from),
+            Self::Zai(c) => c
+                .generate_image_with_inputs(model, prompt, seed, input_images)
+                .map_err(ImageError::from),
         };
 
         if !ctx.is_empty() {
@@ -108,6 +128,17 @@ impl ImageClient {
         match self {
             Self::Gemini(_) => "gemini",
             Self::Zai(_) => "zai",
+        }
+    }
+
+    /// Whether this backend honours input images passed to
+    /// [`Self::generate_image_with_inputs`] (true image-to-image / editing).
+    /// Gemini's `generateContent` image surface does; Z.ai's `glm-image`
+    /// `/images/generations` is text-to-image only and ignores them.
+    pub fn supports_image_input(&self) -> bool {
+        match self {
+            Self::Gemini(_) => true,
+            Self::Zai(_) => false,
         }
     }
 }
