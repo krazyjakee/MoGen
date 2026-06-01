@@ -21,7 +21,10 @@ pub use conform::{
     ConformParams, PatchParams, PathFrame,
 };
 #[cfg(any(feature = "csg", feature = "unstable-wasm-uu"))]
-pub use csg::{difference, difference_many, intersect, intersect_many, union, union_many};
+pub use csg::{
+    difference, difference_many, intersect, intersect_many, is_csg_manifold, try_union_many, union,
+    union_many,
+};
 #[cfg(any(feature = "csg", feature = "unstable-wasm-uu"))]
 pub use csg_smooth::union_smooth;
 pub use deform::{bend, droop, jitter, noise, split_for_facets, taper, twist_y, wave};
@@ -66,6 +69,15 @@ mod csg_stub {
     pub fn union_many(_meshes: &[Mesh]) -> Mesh {
         unsupported()
     }
+    pub fn try_union_many(_meshes: &[Mesh]) -> Option<Mesh> {
+        // No CSG backend: there is nothing to merge into, so report "can't".
+        None
+    }
+    pub fn is_csg_manifold(_mesh: &Mesh) -> bool {
+        // Without a CSG backend nothing can be a boolean operand, so the merge
+        // pass must treat every leaf as non-mergeable.
+        false
+    }
     pub fn difference_many(_a: &Mesh, _rest: &[Mesh]) -> Mesh {
         unsupported()
     }
@@ -78,5 +90,6 @@ mod csg_stub {
 }
 #[cfg(not(any(feature = "csg", feature = "unstable-wasm-uu")))]
 pub use csg_stub::{
-    difference, difference_many, intersect, intersect_many, union, union_many, union_smooth,
+    difference, difference_many, intersect, intersect_many, is_csg_manifold, try_union_many, union,
+    union_many, union_smooth,
 };
