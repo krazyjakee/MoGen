@@ -19,8 +19,23 @@ use super::wizard::pipeline::{
     run_reference_image, run_scene_review, WizardRunConfig,
 };
 use super::wizard::state::{
-    next_pending_review_object, ObjectGenResult, Stage, WizardMessage, WizardState,
+    next_pending_review_object, ObjectEntry, ObjectGenResult, Stage, WizardMessage, WizardState,
 };
+use super::wizard::{persist, write_assembly};
+use super::MogenStudioApp;
+
+/// A reference image still needs generating when its PNG isn't on disk yet.
+fn reference_missing(o: &ObjectEntry) -> bool {
+    o.reference_image
+        .as_ref()
+        .map(|p| !p.exists())
+        .unwrap_or(true)
+}
+
+/// A per-object module still needs generating when its `.mog` isn't on disk.
+fn object_missing(o: &ObjectEntry) -> bool {
+    o.mog_path.as_ref().map(|p| !p.exists()).unwrap_or(true)
+}
 
 /// Same intent as `next_pending_reference` but also skips ids that already
 /// have a worker thread in flight, so the batch dispatcher doesn't double-
@@ -28,29 +43,45 @@ use super::wizard::state::{
 fn next_pending_reference_skipping<'a>(
     state: &'a WizardState,
     in_flight: &HashSet<String>,
-) -> Option<&'a super::wizard::state::ObjectEntry> {
-    state.manifest.iter().find(|o| {
-        let missing = o
-            .reference_image
-            .as_ref()
-            .map(|p| !p.exists())
-            .unwrap_or(true);
-        missing && !in_flight.contains(&o.id)
-    })
+) -> Option<&'a ObjectEntry> {
+    state
+        .manifest
+        .iter()
+        .find(|o| reference_missing(o) && !in_flight.contains(&o.id))
 }
 
 /// Module equivalent of `next_pending_reference_skipping`.
 fn next_pending_object_skipping<'a>(
     state: &'a WizardState,
     in_flight: &HashSet<String>,
-) -> Option<&'a super::wizard::state::ObjectEntry> {
-    state.manifest.iter().find(|o| {
-        let missing = o.mog_path.as_ref().map(|p| !p.exists()).unwrap_or(true);
-        missing && !in_flight.contains(&o.id)
-    })
+) -> Option<&'a ObjectEntry> {
+    state
+        .manifest
+        .iter()
+        .find(|o| object_missing(o) && !in_flight.contains(&o.id))
 }
-use super::wizard::{persist, write_assembly};
-use super::MogenStudioApp;
+
+/// Claim pending entries up to `target_concurrency - in_flight.len()` capacity, reserving them
+/// in `in_flight` atomically — selection and reservation must stay one step to prevent the
+/// 150ms poll tick from re-issuing in-flight ids before their artifacts land on disk.
+fn claim_pending_batch(
+    manifest: &[ObjectEntry],
+    in_flight: &mut HashSet<String>,
+    target_concurrency: usize,
+    missing: impl Fn(&ObjectEntry) -> bool,
+) -> Vec<ObjectEntry> {
+    let capacity = target_concurrency.saturating_sub(in_flight.len());
+    let claimed: Vec<ObjectEntry> = manifest
+        .iter()
+        .filter(|o| missing(o) && !in_flight.contains(&o.id))
+        .take(capacity)
+        .cloned()
+        .collect();
+    for o in &claimed {
+        in_flight.insert(o.id.clone());
+    }
+    claimed
+}
 
 /// In-flight pump for the wizard. Holds the message channel and small UI
 /// drafts that don't belong in `WizardState` (per-row name overrides,
@@ -700,25 +731,18 @@ impl MogenStudioApp {
         let Some(session) = self.wizard.as_mut() else {
             return;
         };
-        let capacity = target_concurrency.saturating_sub(session.running_ref_ids.len());
-        if capacity == 0 {
+        // Pool already full: let the in-flight workers finish before topping up.
+        if session.running_ref_ids.len() >= target_concurrency {
             return;
         }
-        let pending: Vec<_> = session
-            .state
-            .manifest
-            .iter()
-            .filter(|o| {
-                let missing = o
-                    .reference_image
-                    .as_ref()
-                    .map(|p| !p.exists())
-                    .unwrap_or(true);
-                missing && !session.running_ref_ids.contains(&o.id)
-            })
-            .take(capacity)
-            .cloned()
-            .collect();
+        // Claim+reserve in one shot so the auto-continue poll can't re-issue
+        // the same ids on the next 150ms tick before their PNGs land on disk.
+        let pending = claim_pending_batch(
+            &session.state.manifest,
+            &mut session.running_ref_ids,
+            target_concurrency,
+            reference_missing,
+        );
         if pending.is_empty() {
             if auto_continue {
                 session.auto_continue_refs = false;
@@ -827,21 +851,17 @@ impl MogenStudioApp {
             let Some(session) = self.wizard.as_mut() else {
                 return;
             };
-            let capacity = target_concurrency.saturating_sub(session.running_object_ids.len());
-            if capacity == 0 {
+            // Pool already full: let the in-flight workers finish first.
+            if session.running_object_ids.len() >= target_concurrency {
                 return;
             }
-            let pending: Vec<_> = session
-                .state
-                .manifest
-                .iter()
-                .filter(|o| {
-                    let missing = o.mog_path.as_ref().map(|p| !p.exists()).unwrap_or(true);
-                    missing && !session.running_object_ids.contains(&o.id)
-                })
-                .take(capacity)
-                .cloned()
-                .collect();
+            // Claim+reserve atomically (see `claim_pending_batch`).
+            let pending = claim_pending_batch(
+                &session.state.manifest,
+                &mut session.running_object_ids,
+                target_concurrency,
+                object_missing,
+            );
             if pending.is_empty() {
                 if auto_continue {
                     session.auto_continue_objects = false;
@@ -857,9 +877,6 @@ impl MogenStudioApp {
                 pending.len(),
                 names.join(", ")
             );
-            for obj in &pending {
-                session.running_object_ids.insert(obj.id.clone());
-            }
             pending
         };
         for obj in pending {
@@ -2071,3 +2088,149 @@ fn apply_wizard_message(session: &mut WizardSession, msg: WizardMessage) {
     }
 }
 
+
+#[cfg(test)]
+mod batch_tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn obj(id: &str) -> ObjectEntry {
+        ObjectEntry {
+            id: id.to_string(),
+            name: id.to_string(),
+            role: String::new(),
+            prompt: String::new(),
+            size: [1.0, 1.0, 1.0],
+            position: [0.0, 0.0, 0.0],
+            rotation_y_deg: 0.0,
+            reference_image: None,
+            mog_path: None,
+            thumb_path: None,
+            position_guide: None,
+        }
+    }
+
+    // RAII guard: removes the temp file on drop, even if the test panics.
+    struct TempFile(PathBuf);
+    impl Drop for TempFile {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    fn existing_file() -> TempFile {
+        let dir = std::env::temp_dir().join("mogen-studio-batch-tests");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(format!(
+            "{}-{}.png",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::write(&path, b"x").unwrap();
+        TempFile(path)
+    }
+
+    // Regression: batch was selected without reservation, so the 150ms poll re-issued the same ids.
+    #[test]
+    fn second_claim_before_completion_is_empty() {
+        let manifest = vec![obj("a"), obj("b"), obj("c")];
+        let mut in_flight = HashSet::new();
+
+        let first = claim_pending_batch(&manifest, &mut in_flight, 3, reference_missing);
+        assert_eq!(first.len(), 3, "first claim takes the whole batch");
+        assert_eq!(in_flight.len(), 3, "claimed ids are reserved");
+
+        let second = claim_pending_batch(&manifest, &mut in_flight, 3, reference_missing);
+        assert!(
+            second.is_empty(),
+            "nothing left to claim while the first batch is still in flight"
+        );
+        assert_eq!(in_flight.len(), 3, "no double-issue");
+    }
+
+    // poll_wizard checks next_pending_reference_skipping; once claimed, that probe must return None.
+    #[test]
+    fn poll_gate_sees_no_pending_after_claim() {
+        let mut state = WizardState::default();
+        state.manifest = vec![obj("a"), obj("b"), obj("c")];
+        let mut in_flight = HashSet::new();
+
+        assert!(
+            next_pending_reference_skipping(&state, &in_flight).is_some(),
+            "work exists before any claim"
+        );
+        let _ = claim_pending_batch(&state.manifest, &mut in_flight, 3, reference_missing);
+        assert!(
+            next_pending_reference_skipping(&state, &in_flight).is_none(),
+            "poll gate must report no pending work once the batch is reserved"
+        );
+    }
+
+    #[test]
+    fn claim_never_exceeds_target_concurrency() {
+        let manifest: Vec<_> = (0..10).map(|i| obj(&format!("o{i}"))).collect();
+        let mut in_flight = HashSet::new();
+        let claimed = claim_pending_batch(&manifest, &mut in_flight, 3, reference_missing);
+        assert_eq!(claimed.len(), 3, "capacity caps the batch at target_concurrency");
+        assert_eq!(in_flight.len(), 3);
+    }
+
+    #[test]
+    fn capacity_accounts_for_already_in_flight() {
+        let manifest: Vec<_> = (0..10).map(|i| obj(&format!("o{i}"))).collect();
+        let mut in_flight = HashSet::new();
+        in_flight.insert("o0".to_string());
+        in_flight.insert("o1".to_string());
+        let claimed = claim_pending_batch(&manifest, &mut in_flight, 3, reference_missing);
+        assert_eq!(claimed.len(), 1, "only one free slot remains under a target of 3");
+        assert_eq!(in_flight.len(), 3, "o0, o1 pre-existing + o2 newly claimed");
+    }
+
+    // ReferenceDone removes the id; a still-missing object becomes claimable again.
+    #[test]
+    fn completed_id_can_be_reclaimed() {
+        let manifest = vec![obj("a")];
+        let mut in_flight = HashSet::new();
+        let first = claim_pending_batch(&manifest, &mut in_flight, 3, reference_missing);
+        assert_eq!(first.len(), 1);
+        in_flight.remove("a");
+        let again = claim_pending_batch(&manifest, &mut in_flight, 3, reference_missing);
+        assert_eq!(again.len(), 1, "a freed, still-missing object is reclaimable");
+    }
+
+    #[test]
+    fn objects_with_existing_reference_are_not_claimed() {
+        let _guard = existing_file();
+        let mut done = obj("done");
+        done.reference_image = Some(_guard.0.clone());
+        let manifest = vec![done, obj("todo")];
+        let mut in_flight = HashSet::new();
+        let claimed = claim_pending_batch(&manifest, &mut in_flight, 3, reference_missing);
+        assert_eq!(claimed.len(), 1, "only the object missing its PNG is claimed");
+        assert_eq!(claimed[0].id, "todo");
+    }
+
+    #[test]
+    fn objects_with_existing_mog_are_not_claimed() {
+        let _guard = existing_file();
+        let mut built = obj("built");
+        built.mog_path = Some(_guard.0.clone());
+        let manifest = vec![built, obj("todo")];
+        let mut in_flight = HashSet::new();
+        let claimed = claim_pending_batch(&manifest, &mut in_flight, 3, object_missing);
+        assert_eq!(claimed.len(), 1, "only the object missing its .mog is claimed");
+        assert_eq!(claimed[0].id, "todo");
+    }
+
+    #[test]
+    fn object_missing_tracks_mog_path() {
+        let _guard = existing_file();
+        let mut built = obj("built");
+        built.mog_path = Some(_guard.0.clone());
+        assert!(!object_missing(&built), "an on-disk .mog is not missing");
+        assert!(object_missing(&obj("fresh")), "no .mog means missing");
+    }
+}
