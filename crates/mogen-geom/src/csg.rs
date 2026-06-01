@@ -251,6 +251,10 @@ pub fn union_many(meshes: &[Mesh]) -> Mesh {
 pub fn try_union_many(meshes: &[Mesh]) -> Option<Mesh> {
     let mut it = meshes.iter();
     let first = it.next()?;
+    // Validate the first operand explicitly. The fold only runs try_boolean on
+    // it when there are two or more meshes; a single-element non-manifold slice
+    // would otherwise bypass all validation and return Some instead of None.
+    try_build_manifold(first)?;
     let mut acc = first.clone();
     for m in it {
         acc = try_boolean(&acc, m, Op::Union)?;
@@ -317,6 +321,27 @@ mod tests {
     #[test]
     fn is_csg_manifold_accepts_closed_primitive() {
         assert!(is_csg_manifold(&ubox([1.0, 1.0, 1.0])));
+    }
+
+    #[test]
+    fn try_union_many_two_valid_manifolds_returns_some() {
+        let a = ubox([1.0, 1.0, 1.0]);
+        let mut b = ubox([1.0, 1.0, 1.0]);
+        for p in &mut b.positions {
+            p[0] += 2.0;
+        }
+        let result = try_union_many(&[a, b]);
+        assert!(result.is_some(), "two valid manifolds must union to Some");
+        assert!(!result.unwrap().positions.is_empty());
+    }
+
+    #[test]
+    fn try_union_many_single_non_manifold_returns_none() {
+        let bad = edge_closed_but_inconsistent();
+        assert!(
+            try_union_many(&[bad]).is_none(),
+            "single non-manifold operand must return None, not Some"
+        );
     }
 
     fn ucyl(r: f32, h: f32, seg: u32) -> Mesh {
