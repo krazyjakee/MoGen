@@ -17,6 +17,7 @@ pub const KNOWN_KINDS: &[&str] = &[
     "slab", "post", "panel", "wall",
     "branch",
     "building", "room_type", "adjacency",
+    "cave", "feature",
     "decal",
     "module", "use", "import",
     "union", "difference", "intersect",
@@ -119,8 +120,9 @@ pub fn common_attrs_for_kind(kind: &str) -> &'static [&'static str] {
         | "lod_scale" | "meta"
         // `room_type` and `adjacency` are pure metadata children of `building`
         // — they carry no transforms, materials, or placement helpers; the
-        // generator owns where their geometry lands.
-        | "room_type" | "adjacency"
+        // generator owns where their geometry lands. `feature` plays the same
+        // role for `cave` (it tunes one decoration kind).
+        | "room_type" | "adjacency" | "feature"
         // Control-flow constructs are pre-expansion only — they don't
         // accept transforms or material binding, just their control attrs.
         | "if" | "else" | "for" => &[],
@@ -210,6 +212,14 @@ pub fn attrs_for_kind(kind: &str) -> &'static [&'static str] {
         ],
         "room_type" => &["kind", "density", "mat", "min_area", "max_area"],
         "adjacency" => &["adjacent_to", "away_from"],
+        "cave" => &[
+            "seed", "mat_style", "size", "chambers", "levels",
+            "chamber_min", "chamber_max", "chamber_flatten",
+            "passage_radius", "loops", "max_slope", "roughness", "blend",
+            "margin", "resolution", "entrances", "water_mat",
+            "rock_piles", "pools", "lakes", "stalagmites", "stalactites",
+        ],
+        "feature" => &["kind", "count", "min_size", "max_size", "mat"],
         "decal" => &[
             "size", "prompt", "image", "tint", "roughness", "offset",
             // Curved-surface shortcut: synthesizes a `conform` patch under
@@ -439,6 +449,30 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         | ("room_type", "max_area") => "number",
         ("room_type", "mat") => "string",
         ("adjacency", "adjacent_to") | ("adjacency", "away_from") => "list of string",
+        ("cave", "size") => "vec3",
+        ("cave", "chambers")
+        | ("cave", "levels")
+        | ("cave", "chamber_min")
+        | ("cave", "chamber_max")
+        | ("cave", "chamber_flatten")
+        | ("cave", "passage_radius")
+        | ("cave", "loops")
+        | ("cave", "max_slope")
+        | ("cave", "roughness")
+        | ("cave", "blend")
+        | ("cave", "margin")
+        | ("cave", "resolution")
+        | ("cave", "entrances")
+        | ("cave", "rock_piles")
+        | ("cave", "pools")
+        | ("cave", "lakes")
+        | ("cave", "stalagmites")
+        | ("cave", "stalactites") => "number",
+        ("cave", "mat_style") | ("cave", "water_mat") => "string",
+        ("feature", "kind") | ("feature", "mat") => "string",
+        ("feature", "count")
+        | ("feature", "min_size")
+        | ("feature", "max_size") => "number",
         ("cylinder", "radius")
         | ("cylinder", "height")
         | ("cylinder", "segments")

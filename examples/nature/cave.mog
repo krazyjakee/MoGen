@@ -1,0 +1,34 @@
+// A traversable multi-floor cave: chambers carved across two vertical levels
+// and linked by slope-capped passages, populated with stalagmites, stalactites,
+// a rock pile and a small pool. Everything is a deterministic function of
+// `seed=`, so rebuilds are reproducible. See docs/caves.md for the full surface.
+
+meta (name = "cave", description = "A traversable multi-floor cave with chambers, sloped passages, stalagmites, stalactites and a pool", tags = ["cave", "nature", "environment", "dungeon", "procedural"], mogen_version = "0.1.8")
+
+material "limestone" (color=[0.40, 0.37, 0.32], roughness=0.95)
+
+cave "hollow" (
+  seed=12,
+  size=[26, 12, 26],
+  chambers=7,
+  levels=2,
+  chamber_min=3,
+  chamber_max=5.5,
+  passage_radius=1.3,
+  max_slope=45,
+  loops=2,
+  roughness=0.4,
+  margin=2.5,
+  resolution=112,
+  entrances=2,
+  mat="limestone",
+
+  stalagmites=14,
+  stalactites=10,
+  rock_piles=3,
+  pools=2,
+) {
+  // Tune the drip features: smaller, sharper spikes than the defaults.
+  feature "drips"  (kind=stalactite, min_size=0.25, max_size=0.7)
+  feature "spires" (kind=stalagmite, min_size=0.3, max_size=1.1)
+}

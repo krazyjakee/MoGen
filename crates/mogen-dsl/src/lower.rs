@@ -2,6 +2,7 @@ mod anim;
 mod blob;
 mod branch;
 mod building;
+mod cave;
 pub(crate) mod connector;
 mod csg;
 mod deform;

@@ -482,6 +482,56 @@ building "house" (seed=4, style="apartment-block",
 }
 ```
 
+### Cave
+
+`cave` is a procedural cave generator. One node expands into a single
+watertight rock shell — a bounding block hollowed by a smooth-blended field of
+chamber and passage carvers (surface-nets meshed) — plus optional scattered
+features. Chambers are distributed across vertical `levels` so cavities overlap
+into multiple connected floors; passages steeper than `max_slope` are rebuilt
+as switchback ramps so no walkable surface exceeds the angle cap; and
+`entrances` punch horizontal mouths out through the nearest side face so the
+cave is enterable. The generated subtree is stamped non-editable (pure function
+of `seed=` plus the declared attrs). See `docs/caves.md` for the full spec.
+
+| attribute | default | effect |
+|---|---|---|
+| `seed` | `1` | RNG seed; same seed = identical cave. |
+| `size` | `[24, 10, 24]` | Outer rock-block dimensions `[width, height, depth]` (m); base sits on `y=0`. |
+| `chambers` | `6` | Number of chambers carved. |
+| `levels` | `2` | Vertical bands chambers are spread across (multi-floor overlap). |
+| `chamber_min`, `chamber_max` | `2.5, 5.0` | Chamber radius range (m). |
+| `chamber_flatten` | `0.6` | Vertical squash (height = radius × this); < 1 keeps floors gentle. |
+| `passage_radius` | `1.1` | Tunnel radius (m). |
+| `loops` | `1` | Extra connections beyond the spanning tree, for looping layouts. |
+| `max_slope` | `45` | Maximum walkable slope (degrees); steeper passages switchback. |
+| `roughness` | `0.35` | Wall-noise amount `[0, 1]` for a natural stone finish. |
+| `blend` | `1.5` | Smooth-union radius blending chambers + passages. |
+| `margin` | `2.0` | Rock thickness kept around the void on every face (m). |
+| `resolution` | `96` | Voxel-grid resolution (32–224). Higher = finer + slower. |
+| `entrances` | `1` | Horizontal mouths punched out to a side face. |
+| `mat` | `cave_rock` | Rock material; defaults to an auto-stamped grey stone. |
+| `water_mat` | `cave_water` | Material for pools / lakes. |
+| `rock_piles`, `pools`, `lakes`, `stalagmites`, `stalactites` | `0` | Decoration counts scattered on chamber floors / ceilings. |
+
+`cave` accepts only `feature` children, which tune one decoration kind:
+
+```
+feature "<name>" (kind=stalagmite|stalactite|rock_pile|pool|lake,
+                  count=…, min_size=…, max_size=…, mat="<material>")
+```
+
+`kind` is required. `count` overrides the matching top-level count knob;
+`min_size`/`max_size` set the size range (m); `mat` overrides the material.
+
+```
+cave "hollow" (seed=12, size=[26, 12, 26], chambers=7, levels=2,
+               max_slope=45, entrances=2, mat="limestone",
+               stalagmites=14, stalactites=10, pools=2) {
+  feature "spires" (kind=stalagmite, min_size=0.3, max_size=1.1)
+}
+```
+
 Every primitive is authored in its local frame and positioned via
 `pos`/`rot`/`scale`. Defaults make bare `cylinder "leg"` a 1 m unit-radius
 cylinder at the origin.

@@ -6,6 +6,7 @@
 //! and name collection / import resolution in [`collect`].
 
 mod building_rules;
+mod cave_rules;
 mod collect;
 mod rules;
 mod schema;
