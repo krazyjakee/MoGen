@@ -275,24 +275,12 @@ impl MogenStudioApp {
                     node_path: self.current_selection_path(i),
                 };
                 self.push_undo(i, undo_before, key);
-                // Inspector DragValues emit a fresh edit on every frame of a
-                // drag, whereas the gizmo and discrete widgets (combo picks,
-                // typed values, deletes) emit once on release. A full
-                // recompile + mesh re-flatten reloads geometry and textures
-                // from disk, so doing it per frame makes the app visibly hang
-                // while a transform field is dragged. While the pointer is
-                // still mid-drag we therefore defer to the debounce —
-                // `drive_compile_debounce` coalesces the burst into a single
-                // recompile once the user pauses (and still fires mid-drag if
-                // they hold without moving for the debounce window).
-                //
-                // On a discrete commit we keep compiling immediately so the
-                // viewport reflects the change on the very next frame.
-                // Gizmo releases are discrete events, not keystroke bursts —
-                // without the immediate compile the preview clears on release
-                // and the new scene only arrives on the next idle tick, which
-                // looks to the user like the action was rejected and the value
-                // snapped back. Deletes are always discrete too.
+                // Inspector DragValues fire every frame of a drag; a full
+                // recompile per frame makes the app visibly hang. Defer to
+                // the debounce while the pointer is held. Gizmo releases and
+                // deletes are discrete — compile immediately so the viewport
+                // updates on the very next frame and values don't appear to
+                // snap back.
                 let mid_drag = ctx.is_using_pointer() && !any_delete;
                 if !mid_drag {
                     self.compile_active();
