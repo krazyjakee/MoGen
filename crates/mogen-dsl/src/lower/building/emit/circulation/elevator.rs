@@ -18,6 +18,11 @@ use crate::lower::building::emit::openings::elevator_door_z;
 use crate::lower::building::emit::wall_build::wall_with_holes;
 use crate::lower::building::layout::{CellKind, Rect2, StoreyPlate};
 
+/// Thickness of the N/E/S solid shaft walls and the per-storey west pieces.
+/// Kept thin to minimise visual weight while still providing a watertight
+/// enclosure.
+const SHAFT_WALL_THICKNESS: f32 = 0.05;
+
 use super::{inherit_material_from_chain, storey_label};
 
 #[allow(clippy::too_many_arguments)]
@@ -107,7 +112,7 @@ fn emit_elevator_west_walls(
     let cell_w = cell.rect.width();
     let cell_d = cell.rect.depth();
     let step = cfg.ceiling_height + cfg.ceiling_thickness;
-    let thickness = 0.05;
+    let thickness = SHAFT_WALL_THICKNESS;
     let half = 0.5 * thickness;
     let elev_centre_z = 0.5 * (cell.rect.z_min + cell.rect.z_max);
     let door_w_default = cfg.door_w * 1.5;
@@ -178,7 +183,7 @@ pub(super) fn emit_shaft_enclosure(
     graph: &mut SceneGraph,
     origin: &Option<std::path::PathBuf>,
 ) {
-    let thickness = 0.05;
+    let thickness = SHAFT_WALL_THICKNESS;
     let half = 0.5 * thickness;
     // Center each wall so its inner face sits flush with the cell
     // boundary — the wall body lives just *outside* the cell. The stair

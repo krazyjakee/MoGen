@@ -16,6 +16,10 @@ use crate::lower::building::config::BuildingCfg;
 use crate::lower::building::layout::StoreyPlate;
 use crate::module::expand_modules;
 
+/// Target riser height in metres. Used for step-count calculations in both
+/// the stdlib-module path and the synthetic-stair fallback.
+const STAIR_TREAD_RISE: f32 = 0.18;
+
 use super::elevator::{emit_shaft_enclosure, shaft_face_adjacencies};
 use super::handrails::{emit_cutout_edge_railing, emit_flight_handrail, emit_landing_handrail};
 use super::{
@@ -250,12 +254,10 @@ fn emit_half_flight(
         label.into(),
     ]);
 
-    // Target ~0.18 m rise per step. Half-flights have less rise than the
-    // old full-storey flight, so the minimum step count drops to 4 — a
-    // very low ceiling still gives a readable stair instead of being
-    // padded up to 8.
-    let target_rise = 0.18;
-    let steps = ((rise / target_rise).round() as i32).max(4) as f32;
+    // Half-flights have less rise than the old full-storey flight, so the
+    // minimum step count drops to 4 — a very low ceiling still gives a
+    // readable stair instead of being padded up to 8.
+    let steps = stair_step_count(rise) as f32;
 
     let reg = crate::lower::MODULE_REGISTRY
         .with(|s| s.borrow().clone())
@@ -280,6 +282,10 @@ fn emit_half_flight(
     Ok(())
 }
 
+fn stair_step_count(rise: f32) -> u32 {
+    ((rise / STAIR_TREAD_RISE).round() as u32).max(4)
+}
+
 fn emit_synthetic_stair(
     flight_w: f32,
     flight_d: f32,
@@ -288,9 +294,7 @@ fn emit_synthetic_stair(
     graph: &mut SceneGraph,
     origin: &Option<std::path::PathBuf>,
 ) {
-    let target_rise = 0.18;
-    let steps = (rise / target_rise).round() as u32;
-    let steps = steps.max(4);
+    let steps = stair_step_count(rise);
     let tread = flight_d / steps as f32;
     let actual_rise = rise / steps as f32;
     for i in 0..steps {

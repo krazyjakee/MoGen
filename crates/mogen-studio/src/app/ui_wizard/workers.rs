@@ -433,13 +433,7 @@ impl MogenStudioApp {
             return;
         };
         let mime = guess_image_mime(&img_path);
-        let idx = session
-            .state
-            .manifest
-            .iter()
-            .position(|o| o.id == id)
-            .unwrap_or(0);
-        session.running = WizardBusy::ReviewObject(idx);
+        session.running = WizardBusy::ReviewObject;
         session.status = format!("Reviewing {}…", obj.name);
         session.error = None;
         let tx = session.tx.clone();
@@ -549,7 +543,6 @@ impl MogenStudioApp {
                 session.correction_iterations,
                 WizardSession::MAX_CORRECTION_ITERS
             );
-            session.apply_corrections_armed = false;
             session.state.scene_review = None;
             let _ = persist::save(&session.state);
             true

@@ -112,8 +112,6 @@ pub(in crate::app) struct WizardSession {
     /// save location. Mirrors `state.project_dir` while the user is on the
     /// Location stage so editing the field doesn't fight egui.
     pub location_draft: PathBuf,
-    /// Apply-corrections confirm latch on the ReviewScene stage.
-    pub apply_corrections_armed: bool,
     /// Counter of correction iterations done on this run. Capped via
     /// [`WizardSession::MAX_CORRECTION_ITERS`] so a misbehaving model can't
     /// loop the wizard indefinitely.
@@ -138,7 +136,7 @@ pub(in crate::app) enum WizardBusy {
     None,
     Brief,
     Manifest,
-    ReviewObject(usize),
+    ReviewObject,
     SceneReview,
     Assemble,
     Build,

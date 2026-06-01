@@ -61,7 +61,6 @@ impl MogenStudioApp {
             running: WizardBusy::None,
             prompt_draft,
             location_draft: suggested,
-            apply_corrections_armed: false,
             correction_iterations: 0,
             running_ref_ids: HashSet::new(),
             running_object_ids: HashSet::new(),

@@ -32,14 +32,14 @@
 use anyhow::Result;
 use glam::{Quat, Vec3};
 
-use mogen_core::{NodeId, SceneGraph, Span, Transform};
+use mogen_core::{NodeId, SceneGraph, Transform};
 
 use crate::ast::{Node, Value};
 use crate::lower::building::circulation::CirculationKind;
 use crate::lower::building::config::BuildingCfg;
 use crate::lower::building::emit::modules::emit_interior_door_slot;
 use crate::lower::building::emit::wall_build::wall_with_holes;
-use crate::lower::building::layout::{BuildingLayout, CellKind, Floorplate, Rect2};
+use crate::lower::building::layout::{BuildingLayout, CellKind, Floorplate};
 
 mod elevator;
 mod handrails;
@@ -349,9 +349,3 @@ fn inherit_material_from_chain(id: NodeId, graph: &mut SceneGraph) {
     }
 }
 
-// Suppress unused-import warning: Rect2/Span are used by paths above for
-// constructing module-instantiation specs but the imports route through
-// helpers; keep the binding so future T3 work that touches Rect2 doesn't
-// need to reintroduce it.
-#[allow(dead_code)]
-fn _types_reachable(_: Rect2, _: Span) {}

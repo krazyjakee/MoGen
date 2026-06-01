@@ -629,7 +629,7 @@ pub(super) fn draw_review_objects_stage(
     session: &mut WizardSession,
 ) -> WizardAction {
     let mut action = WizardAction::None;
-    let busy = matches!(session.running, WizardBusy::ReviewObject(_));
+    let busy = matches!(session.running, WizardBusy::ReviewObject);
     if let Some(next) = next_pending_review_object(&session.state) {
         ui.weak(format!("Next to review: {}", next.name));
     }
