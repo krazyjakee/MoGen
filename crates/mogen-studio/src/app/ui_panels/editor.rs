@@ -317,15 +317,9 @@ impl MogenStudioApp {
                                 CCursor::new(char_idx),
                             )));
                             state.store(ui.ctx(), editor_id);
-                            // Only pull keyboard focus into the editor when no
-                            // *other* widget already owns it. A viewport pick /
-                            // gizmo release leaves focus None (the GL viewport
-                            // isn't focusable) so the caret-jump grabs focus as
-                            // before. But an inspector DragValue the user is
-                            // actively typing into holds focus — and that field
-                            // queues this same pending_caret on every keystroke.
-                            // Stealing focus here would route the next character
-                            // into the editor instead of the field (issue #74).
+                            // Don't steal focus from a widget the user is
+                            // actively typing into (fixes #74). Viewport picks
+                            // leave focus None, so the guard still passes.
                             let other_focus = ui
                                 .ctx()
                                 .memory(|m| m.focused().is_some_and(|f| f != editor_id));
