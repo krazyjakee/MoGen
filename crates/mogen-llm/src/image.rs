@@ -8,6 +8,7 @@ use serde::Deserialize;
 
 use crate::gemini::{GeminiAuth, GeminiClient, GeminiError};
 use crate::google_oauth;
+use crate::types::ImageInput;
 
 /// Default image model for API-key flows. 2.5 Flash Image ("Nano Banana") is
 /// the cheapest tier on the public `generativelanguage.googleapis.com` surface
@@ -68,6 +69,22 @@ impl GeminiClient {
         prompt: &str,
         seed: Option<u64>,
     ) -> Result<GeneratedImage, GeminiError> {
+        self.generate_image_with_inputs(model, prompt, seed, &[])
+    }
+
+    /// Same as [`Self::generate_image`] but conditions generation on one or
+    /// more input images (image-to-image / editing). The images are attached
+    /// as `inline_data` parts ahead of the text prompt — the shape Gemini's
+    /// image surface uses for "edit this picture" requests. Used by the Scene
+    /// Wizard to cut an isolated per-object reference out of a source photo.
+    /// Pass an empty slice for plain text-to-image.
+    pub fn generate_image_with_inputs(
+        &self,
+        model: &str,
+        prompt: &str,
+        seed: Option<u64>,
+        input_images: &[ImageInput],
+    ) -> Result<GeneratedImage, GeminiError> {
         // Honor the `ImageClient::generate_image` contract that `""` means
         // "use the provider default". Empty model would otherwise produce
         // `/models/:generateContent` and a confusing 404.
@@ -81,7 +98,7 @@ impl GeminiClient {
             GeminiAuth::ApiKey(key) => {
                 // Public API speaks `responseModalities: ["IMAGE"]` and returns
                 // a single JSON envelope.
-                let inner = build_image_request(prompt, seed, Some(&["IMAGE"]));
+                let inner = build_image_request(prompt, seed, Some(&["IMAGE"]), input_images);
                 let url = format!(
                     "{}/models/{}:generateContent?key={}",
                     self.base_url(),
@@ -144,7 +161,7 @@ impl GeminiClient {
                 let project = self
                     .oauth_project_id()
                     .ok_or_else(|| GeminiError::OAuth("missing project id in token bundle".into()))?;
-                let inner = build_image_request(prompt, seed, None);
+                let inner = build_image_request(prompt, seed, None, input_images);
 
                 let candidates: Vec<(String, bool)> =
                     if model == DEFAULT_OAUTH_IMAGE_MODEL || model.is_empty() {
@@ -388,6 +405,7 @@ fn build_image_request(
     prompt: &str,
     seed: Option<u64>,
     modalities: Option<&[&str]>,
+    input_images: &[ImageInput],
 ) -> serde_json::Value {
     let mut gen_cfg = serde_json::json!({});
     if let Some(m) = modalities {
@@ -399,10 +417,23 @@ fn build_image_request(
         let clipped = (s as i64) & 0x7FFF_FFFF;
         gen_cfg["seed"] = serde_json::json!(clipped);
     }
+    // Input images first, then the text instruction — the ordering Gemini
+    // recommends for image-editing turns (mirrors the text vision path in
+    // `gemini::build_request`).
+    let mut parts: Vec<serde_json::Value> = Vec::with_capacity(input_images.len() + 1);
+    for img in input_images {
+        parts.push(serde_json::json!({
+            "inline_data": {
+                "mime_type": img.mime_type,
+                "data": STANDARD.encode(&img.data),
+            }
+        }));
+    }
+    parts.push(serde_json::json!({ "text": prompt }));
     serde_json::json!({
         "contents": [{
             "role": "user",
-            "parts": [{ "text": prompt }],
+            "parts": parts,
         }],
         "generationConfig": gen_cfg,
     })
@@ -479,6 +510,31 @@ mod tests {
                 }
             })
         )
+    }
+
+    #[test]
+    fn build_image_request_text_only_has_single_text_part() {
+        let req = build_image_request("a chair", Some(7), Some(&["IMAGE"]), &[]);
+        let parts = req["contents"][0]["parts"].as_array().expect("parts array");
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0]["text"], "a chair");
+        assert_eq!(req["generationConfig"]["responseModalities"][0], "IMAGE");
+    }
+
+    #[test]
+    fn build_image_request_input_image_comes_before_text() {
+        let inputs = vec![ImageInput {
+            mime_type: "image/png".into(),
+            data: b"hello".to_vec(),
+        }];
+        let req = build_image_request("extract the chair", None, None, &inputs);
+        let parts = req["contents"][0]["parts"].as_array().expect("parts array");
+        assert_eq!(parts.len(), 2);
+        // Image part is first.
+        assert_eq!(parts[0]["inline_data"]["mime_type"], "image/png");
+        assert_eq!(parts[0]["inline_data"]["data"], STANDARD.encode(b"hello"));
+        // Text part is last.
+        assert_eq!(parts[1]["text"], "extract the chair");
     }
 
     #[test]

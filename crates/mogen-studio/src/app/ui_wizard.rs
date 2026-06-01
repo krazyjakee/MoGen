@@ -334,6 +334,8 @@ impl MogenStudioApp {
                     let _ = persist::save(&s.state);
                 }
             }
+            WizardAction::PickSourceImage => self.pick_wizard_source_image(),
+            WizardAction::ClearSourceImage => self.clear_wizard_source_image(),
             WizardAction::GenerateBrief => self.start_wizard_brief(ctx),
             WizardAction::AdvanceToManifest => {
                 if let Some(s) = self.wizard.as_mut() {
@@ -498,6 +500,57 @@ impl MogenStudioApp {
         }
     }
 
+    /// Pick a source image and copy it into the wizard project dir as
+    /// `source.<ext>`, then point `state.source_image` at the copy. Copying
+    /// keeps the run self-contained: the file survives even if the user moves
+    /// or deletes the original, and a Studio restart resumes image-driven.
+    fn pick_wizard_source_image(&mut self) {
+        let picked = rfd::FileDialog::new()
+            .set_title("Choose a source image")
+            .add_filter("Image", &["png", "jpg", "jpeg", "webp"])
+            .set_directory(&self.project_root)
+            .pick_file();
+        let Some(picked) = picked else {
+            return;
+        };
+        let Some(s) = self.wizard.as_mut() else {
+            return;
+        };
+        let ext = picked
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_ascii_lowercase())
+            .filter(|e| matches!(e.as_str(), "png" | "jpg" | "jpeg" | "webp"))
+            .unwrap_or_else(|| "png".to_string());
+        // Drop any prior copy so a re-pick with a different extension doesn't
+        // leave a stale source.* behind.
+        if let Some(old) = s.state.source_image.take() {
+            let _ = std::fs::remove_file(old);
+        }
+        let dest = s.state.project_dir.join(format!("source.{ext}"));
+        match std::fs::copy(&picked, &dest) {
+            Ok(_) => {
+                s.state.source_image = Some(dest);
+                s.error = None;
+                s.status = "Source image set — the scene will be generated from it.".into();
+                let _ = persist::save(&s.state);
+            }
+            Err(e) => {
+                s.error = Some(format!("Couldn't copy source image: {e}"));
+            }
+        }
+    }
+
+    fn clear_wizard_source_image(&mut self) {
+        if let Some(s) = self.wizard.as_mut() {
+            if let Some(old) = s.state.source_image.take() {
+                let _ = std::fs::remove_file(old);
+            }
+            s.status = "Source image cleared — back to a text-only run.".into();
+            let _ = persist::save(&s.state);
+        }
+    }
+
     fn confirm_wizard_location(&mut self) {
         let Some(s) = self.wizard.as_mut() else {
             return;
@@ -627,24 +680,41 @@ impl MogenStudioApp {
             self.wizard_set_error("Provider credentials missing — open Preferences and sign in.".into());
             return;
         };
+        let provider = self.settings.provider_slot().to_provider();
         let cfg = self.build_wizard_run_config();
         let Some(session) = self.wizard.as_mut() else {
             return;
         };
         session.state.prompt = session.prompt_draft.clone();
-        if session.state.prompt.trim().is_empty() {
-            session.error = Some("Enter a scene prompt first.".into());
+        let has_image = session.state.source_image.is_some();
+        // An image-driven run needs a vision-capable text provider for the
+        // brief/manifest; bail clearly instead of sending a photo into the
+        // void on a text-only provider.
+        if has_image && !provider.supports_images() {
+            session.error = Some(format!(
+                "{provider:?} can't read images — switch to a vision provider (Gemini, OpenAI, \
+                 Anthropic…) in Preferences, or clear the source image."
+            ));
             return;
         }
+        if !has_image && session.state.prompt.trim().is_empty() {
+            session.error = Some("Enter a scene prompt or choose a source image first.".into());
+            return;
+        }
+        let (source_bytes, source_mime) = read_source_image(&session.state);
         let _ = persist::save(&session.state);
         session.running = WizardBusy::Brief;
         session.error = None;
-        session.status = "Generating scene brief…".into();
+        session.status = if has_image {
+            "Reading the source image…".into()
+        } else {
+            "Generating scene brief…".into()
+        };
         let tx = session.tx.clone();
         let ctx_clone = ctx.clone();
         let prompt = session.state.prompt.clone();
         std::thread::spawn(move || {
-            let result = run_brief(client, sys, prompt, cfg);
+            let result = run_brief(client, sys, prompt, source_bytes, source_mime, cfg);
             let _ = tx.send(WizardMessage::BriefDone(result));
             ctx_clone.request_repaint();
         });
@@ -664,13 +734,14 @@ impl MogenStudioApp {
             session.error = Some("Generate a brief first.".into());
             return;
         };
+        let (source_bytes, source_mime) = read_source_image(&session.state);
         session.running = WizardBusy::Manifest;
         session.error = None;
         session.status = "Generating object manifest…".into();
         let tx = session.tx.clone();
         let ctx_clone = ctx.clone();
         std::thread::spawn(move || {
-            let result = run_manifest(client, sys, prompt, brief, cfg);
+            let result = run_manifest(client, sys, prompt, brief, source_bytes, source_mime, cfg);
             let _ = tx.send(WizardMessage::ManifestDone(result));
             ctx_clone.request_repaint();
         });
@@ -757,11 +828,12 @@ impl MogenStudioApp {
             return;
         };
         let out = session.state.references_dir().join(format!("{}.png", obj.id));
+        let (source_bytes, source_mime) = read_source_image(&session.state);
         let tx = session.tx.clone();
         let ctx_clone = ctx.clone();
         let id = obj.id.clone();
         std::thread::spawn(move || {
-            let result = run_reference_image(&client, obj, out, seed);
+            let result = run_reference_image(&client, obj, out, source_bytes, source_mime, seed);
             let _ = tx.send(WizardMessage::ReferenceDone { id, result });
             ctx_clone.request_repaint();
         });
@@ -1167,6 +1239,20 @@ fn build_assembly(asm_path: &std::path::Path) -> Result<PathBuf, String> {
     Ok(out)
 }
 
+/// Read the run's source image (if any) into bytes + mime for handing to a
+/// wizard worker thread. Returns `(None, None)` when there's no source image
+/// or it can't be read (e.g. the user deleted the copy) — workers treat that
+/// as a plain text-driven stage.
+fn read_source_image(state: &WizardState) -> (Option<Vec<u8>>, Option<String>) {
+    let Some(path) = state.source_image.as_ref() else {
+        return (None, None);
+    };
+    match std::fs::read(path) {
+        Ok(bytes) => (Some(bytes), Some(guess_image_mime(path))),
+        Err(_) => (None, None),
+    }
+}
+
 fn guess_image_mime(path: &std::path::Path) -> String {
     match path
         .extension()
@@ -1194,6 +1280,11 @@ enum WizardAction {
     /// state from there, and advance to the Prompt stage.
     ConfirmLocation,
     SavePrompt,
+    /// Open an image picker and set `state.source_image` (copied into the
+    /// project dir) so the run becomes image-driven.
+    PickSourceImage,
+    /// Drop the source image, reverting to a text-only run.
+    ClearSourceImage,
     GenerateBrief,
     RegenerateBrief,
     AdvanceToManifest,
@@ -1323,11 +1414,51 @@ fn draw_location_stage(ui: &mut egui::Ui, session: &mut WizardSession) -> Wizard
 
 fn draw_prompt_stage(ui: &mut egui::Ui, session: &mut WizardSession) -> WizardAction {
     let mut action = WizardAction::None;
-    ui.label("Scene prompt:");
+    let has_image = session.state.source_image.is_some();
+
+    // Source image row — when set, it drives the whole run and the typed
+    // prompt becomes optional guidance.
+    ui.label("Source image (optional):");
+    ui.label(
+        egui::RichText::new(
+            "Upload a photo to generate the scene FROM it: each object is cut out as an isolated \
+             reference, then modelled. Needs a Gemini image credential (API key or Antigravity).",
+        )
+        .weak(),
+    );
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        if ui.button("Choose image…").clicked() {
+            action = WizardAction::PickSourceImage;
+        }
+        if let Some(path) = session.state.source_image.as_ref() {
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("source");
+            ui.label(name);
+            if ui.button("Clear").clicked() {
+                action = WizardAction::ClearSourceImage;
+            }
+        } else {
+            ui.label(egui::RichText::new("No image — text-only run.").weak());
+        }
+    });
+
+    ui.add_space(8.0);
+    ui.label(if has_image {
+        "Scene prompt (optional guidance):"
+    } else {
+        "Scene prompt:"
+    });
     let id = egui::Id::new("wizard_prompt_draft");
     ui.add(
         egui::TextEdit::multiline(&mut session.prompt_draft)
-            .hint_text("e.g. a cosy reading nook with a chair, lamp, and a stack of books")
+            .hint_text(if has_image {
+                "optional — e.g. make it stylized, warmer lighting, drop the clutter"
+            } else {
+                "e.g. a cosy reading nook with a chair, lamp, and a stack of books"
+            })
             .desired_rows(4)
             .desired_width(f32::INFINITY)
             .id(id),
@@ -1341,9 +1472,15 @@ fn draw_prompt_stage(ui: &mut egui::Ui, session: &mut WizardSession) -> WizardAc
     ui.add_space(8.0);
     ui.horizontal(|ui| {
         let busy = !matches!(session.running, WizardBusy::None);
-        let can_run = !busy && !session.prompt_draft.trim().is_empty();
+        // With an image, the prompt is optional; without one it's required.
+        let can_run = !busy && (has_image || !session.prompt_draft.trim().is_empty());
+        let label = if has_image {
+            "Generate scene from image →"
+        } else {
+            "Generate brief →"
+        };
         if ui
-            .add_enabled(can_run, egui::Button::new("Generate brief →"))
+            .add_enabled(can_run, egui::Button::new(label))
             .on_hover_text("Calls the active LLM provider for a one-paragraph design brief")
             .clicked()
         {

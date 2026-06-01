@@ -40,20 +40,48 @@ pub fn run_brief(
     client: LlmClient,
     sys_instr: Arc<String>,
     prompt: String,
+    source_bytes: Option<Vec<u8>>,
+    source_mime: Option<String>,
     cfg: WizardRunConfig,
 ) -> Result<String, String> {
-    let user = format!(
-        "You are planning an ISOMETRIC, DENSELY POPULATED 3D scene from this user prompt:\n\n\
-         \"{}\"\n\n\
-         Write a single design brief paragraph (60-120 words). Cover:\n\
-         - the setting and mood\n\
-         - lighting / time of day\n\
-         - the kind of objects that should appear (broad strokes — the next stage will list them)\n\
-         - any background / floor / wall hints\n\n\
-         The camera is always isometric (30° pitch, 45° yaw) and the floor is the Y=0 plane.\n\
-         Write the brief and nothing else — no headings, no markdown, no commentary.",
-        prompt.replace('"', "'")
-    );
+    let has_image = source_bytes.is_some() && source_mime.is_some();
+    let user = if has_image {
+        // Image-driven: the attached photo is the source of truth; any typed
+        // prompt is folded in as supplementary guidance.
+        let guidance = if prompt.trim().is_empty() {
+            String::new()
+        } else {
+            format!(
+                "\n\nAdditional guidance from the user (apply where it doesn't contradict the image): \"{}\"",
+                prompt.replace('"', "'")
+            )
+        };
+        format!(
+            "Study the ATTACHED IMAGE. You are planning how to recreate it as an ISOMETRIC, \
+             DENSELY POPULATED 3D scene.\n\n\
+             Write a single design brief paragraph (60-120 words). Cover:\n\
+             - the setting and mood actually shown in the image\n\
+             - lighting / time of day visible in the image\n\
+             - the kind of objects present (broad strokes — the next stage will list them)\n\
+             - any background / floor / wall hints from the image\n\n\
+             The camera is always isometric (30° pitch, 45° yaw) and the floor is the Y=0 plane.\n\
+             Describe what is in the image, not a generic scene.\n\
+             Write the brief and nothing else — no headings, no markdown, no commentary.{guidance}"
+        )
+    } else {
+        format!(
+            "You are planning an ISOMETRIC, DENSELY POPULATED 3D scene from this user prompt:\n\n\
+             \"{}\"\n\n\
+             Write a single design brief paragraph (60-120 words). Cover:\n\
+             - the setting and mood\n\
+             - lighting / time of day\n\
+             - the kind of objects that should appear (broad strokes — the next stage will list them)\n\
+             - any background / floor / wall hints\n\n\
+             The camera is always isometric (30° pitch, 45° yaw) and the floor is the Y=0 plane.\n\
+             Write the brief and nothing else — no headings, no markdown, no commentary.",
+            prompt.replace('"', "'")
+        )
+    };
     let user = apply_style_to_prompt(&user, cfg.style);
     let mut gc = GenerateConfig::new(user);
     gc.model = cfg.model.clone();
@@ -70,6 +98,9 @@ pub fn run_brief(
             Some(cfg.session_id.clone())
         },
     };
+    if let (Some(data), Some(mime)) = (source_bytes, source_mime) {
+        gc.user_images.push(mogen_llm::ImageInput { mime_type: mime, data });
+    }
     let resp = client.generate(&gc).map_err(|e| e.to_string())?;
     Ok(resp.text.trim().to_string())
 }
@@ -82,8 +113,18 @@ pub fn run_manifest(
     sys_instr: Arc<String>,
     prompt: String,
     brief: String,
+    source_bytes: Option<Vec<u8>>,
+    source_mime: Option<String>,
     cfg: WizardRunConfig,
 ) -> Result<Vec<ObjectEntry>, String> {
+    let has_image = source_bytes.is_some() && source_mime.is_some();
+    let image_rule = if has_image {
+        "- An IMAGE is attached. Inventory every DISTINCT physical object visible in it; \
+         estimate each object's `size`/`position`/`rotation_y_deg` from where it sits in the image \
+         (image left→right maps to -X→+X, nearer-the-camera→+Z). Don't invent objects that aren't in the image.\n"
+    } else {
+        ""
+    };
     let user = format!(
         "You are filling in the OBJECT MANIFEST for an isometric, densely-populated 3D scene.\n\n\
          Original user prompt: \"{}\"\n\n\
@@ -91,6 +132,7 @@ pub fn run_manifest(
          Return STRICT JSON describing every object in the scene. The shape:\n\
          {{\n  \"objects\": [\n    {{\n      \"id\": \"snake_case_unique_id\",\n      \"name\": \"Human readable\",\n      \"role\": \"hero\" | \"filler\" | \"decor\",\n      \"prompt\": \"5-15 word focused prompt for this single object\",\n      \"size\": [width, height, depth] in metres,\n      \"position\": [x, y, z] in metres with Y up and floor at Y=0,\n      \"rotation_y_deg\": yaw rotation in degrees\n    }}, ...\n  ]\n}}\n\n\
          Rules:\n\
+         {image_rule}\
          - For a dense scene, target 10-18 objects across roles.\n\
          - Cluster props sensibly (a desk has a chair near it, a lamp on top, etc.).\n\
          - Keep `id` lowercase, snake_case, unique across the manifest.\n\
@@ -116,6 +158,9 @@ pub fn run_manifest(
             Some(cfg.session_id.clone())
         },
     };
+    if let (Some(data), Some(mime)) = (source_bytes, source_mime) {
+        gc.user_images.push(mogen_llm::ImageInput { mime_type: mime, data });
+    }
     let resp = client.generate(&gc).map_err(|e| e.to_string())?;
     parse_manifest_json(&resp.text)
 }
@@ -128,28 +173,64 @@ pub fn run_reference_image(
     image_client: &ImageClient,
     obj: ObjectEntry,
     out_path: PathBuf,
+    source_bytes: Option<Vec<u8>>,
+    source_mime: Option<String>,
     seed: u64,
 ) -> Result<PathBuf, String> {
     if let Some(parent) = out_path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
     }
-    let prompt = format!(
-        "A clean studio reference photo of {name} — {prompt}. \
-         Render ONLY the object itself, fully isolated against a plain neutral \
-         background. No ground, no floor, no surface, no table, no pedestal, \
-         no shadow plane — the object must appear to float with nothing beneath \
-         it. No text, no watermark, no logos, no people. Reference-grade \
-         lighting, full object visible.",
-        name = obj.name,
-        prompt = obj.prompt
-    );
+    // Image-to-image only when a source photo is present AND the backend can
+    // actually consume input images (Gemini yes, Z.ai no). Otherwise fall back
+    // to text-to-image so a scene still gets references either way.
+    let inputs: Vec<mogen_llm::ImageInput> = match (source_bytes, source_mime) {
+        (Some(data), Some(mime)) if image_client.supports_image_input() => {
+            vec![mogen_llm::ImageInput { mime_type: mime, data }]
+        }
+        _ => Vec::new(),
+    };
+    let prompt = if inputs.is_empty() {
+        format!(
+            "A clean studio reference photo of {name} — {prompt}. \
+             Render ONLY the object itself, fully isolated against a plain neutral \
+             background. No ground, no floor, no surface, no table, no pedestal, \
+             no shadow plane — the object must appear to float with nothing beneath \
+             it. No text, no watermark, no logos, no people. Reference-grade \
+             lighting, full object visible.",
+            name = obj.name,
+            prompt = obj.prompt
+        )
+    } else {
+        format!(
+            "From the ATTACHED photo of a scene, render a clean studio reference of ONLY \
+             the {name} ({prompt}) that appears in it — match its real shape, colours and \
+             proportions as seen in the photo. Isolate it against a plain neutral background: \
+             no ground, no floor, no surface, no table, no pedestal, no shadow plane — the \
+             object must appear to float with nothing beneath it. Remove every other object. \
+             No text, no watermark, no logos, no people. Reference-grade lighting, full object visible.",
+            name = obj.name,
+            prompt = obj.prompt
+        )
+    };
     // Three attempts: image APIs occasionally return RECITATION (Gemini) or
     // transient 5xx. The textures pipeline does the same retry shape.
     let mut last_err: Option<String> = None;
     for attempt in 0..3u8 {
         let model = "";
-        match image_client.generate_image(model, &prompt, Some(seed ^ attempt as u64)) {
+        let seed = Some(seed ^ attempt as u64);
+        let result = if inputs.is_empty() {
+            image_client.generate_image(model, &prompt, seed)
+        } else {
+            image_client.generate_image_with_inputs(
+                model,
+                &prompt,
+                seed,
+                &inputs,
+                &mogen_llm::CallContext::default(),
+            )
+        };
+        match result {
             Ok(img) => {
                 std::fs::write(&out_path, &img.png_bytes)
                     .map_err(|e| format!("write {}: {e}", out_path.display()))?;

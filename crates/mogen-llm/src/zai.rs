@@ -73,6 +73,23 @@ impl ZaiClient {
         Ok(Self::new(key))
     }
 
+    /// Image-to-image variant kept for signature symmetry with
+    /// [`crate::gemini::GeminiClient::generate_image_with_inputs`]. The public
+    /// Z.ai `glm-image` `/images/generations` surface is text-to-image only —
+    /// it has no input-image field — so `_input_images` is ignored and this is
+    /// a plain forward to [`Self::generate_image`]. Callers that need true
+    /// image-to-image (the Scene Wizard) must gate on
+    /// [`crate::image_client::ImageClient::supports_image_input`].
+    pub fn generate_image_with_inputs(
+        &self,
+        model: &str,
+        prompt: &str,
+        seed: Option<u64>,
+        _input_images: &[crate::types::ImageInput],
+    ) -> Result<GeneratedImage, ZaiError> {
+        self.generate_image(model, prompt, seed)
+    }
+
     /// Issue an image generation call and return decoded PNG bytes.
     ///
     /// `seed` is accepted for API symmetry with [`crate::gemini::GeminiClient`]

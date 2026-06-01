@@ -182,6 +182,12 @@ pub struct WizardState {
     /// open time so a wizard rerun against the same prompt reproduces.
     #[serde(default)]
     pub seed: u64,
+    /// Optional source image driving the run. When set, the brief/manifest are
+    /// derived from this image (vision input) and per-object references are cut
+    /// out of it (image-to-image). Copied into `project_dir` at pick time so
+    /// the run is self-contained and resumes after a restart.
+    #[serde(default)]
+    pub source_image: Option<PathBuf>,
 }
 
 impl WizardState {
