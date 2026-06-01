@@ -26,6 +26,12 @@ pub enum ProviderSlot {
     /// model is `glm-5.1`. The same API key drives the `glm-image` texture
     /// path — see [`super::ImageProvider::ZAI`].
     Zai,
+    /// Generic OpenAI-compatible local server (llama.cpp, LM Studio, any
+    /// `/v1/chat/completions` host). The user supplies an arbitrary base URL
+    /// in Preferences; routes through [`Provider::OpenAiCompat`]. Keyless by
+    /// default. Text generation only — texture/image generation stays on a
+    /// cloud provider.
+    OpenAiCompat,
 }
 
 impl ProviderSlot {
@@ -39,6 +45,7 @@ impl ProviderSlot {
             ProviderSlot::ClaudeCode => "claude-code",
             ProviderSlot::Fireworks => "fireworks",
             ProviderSlot::Zai => "zai",
+            ProviderSlot::OpenAiCompat => "openai-compat",
         }
     }
 
@@ -52,6 +59,7 @@ impl ProviderSlot {
             ProviderSlot::ClaudeCode => "Claude Code (subscription)",
             ProviderSlot::Fireworks => "Fireworks AI Firepass",
             ProviderSlot::Zai => "Z.ai (GLM)",
+            ProviderSlot::OpenAiCompat => "OpenAI-compatible (local)",
         }
     }
 
@@ -69,6 +77,10 @@ impl ProviderSlot {
             "claude-code" | "claude_code" | "claudecode" | "cc" => Some(Self::ClaudeCode),
             "fireworks" | "fireworks-ai" | "firepass" | "kimi" => Some(Self::Fireworks),
             "zai" | "z-ai" | "z.ai" | "zhipu" | "glm" => Some(Self::Zai),
+            "openai-compat" | "openai-compatible" | "openai_compat" | "local-openai"
+            | "lmstudio" | "lm-studio" | "llamacpp" | "llama-cpp" | "llama.cpp" => {
+                Some(Self::OpenAiCompat)
+            }
             _ => None,
         }
     }
@@ -85,6 +97,7 @@ impl ProviderSlot {
             ProviderSlot::ClaudeCode => Provider::ClaudeCode,
             ProviderSlot::Fireworks => Provider::Fireworks,
             ProviderSlot::Zai => Provider::Zai,
+            ProviderSlot::OpenAiCompat => Provider::OpenAiCompat,
         }
     }
 
@@ -105,12 +118,13 @@ impl Default for ProviderSlot {
 /// Gemini auth modes are listed up front because Gemini is the historical
 /// default and the only image-capable backend; the OAuth slot is the path
 /// users with paid Antigravity plans will reach for.
-pub const PROVIDER_SLOTS: [ProviderSlot; 8] = [
+pub const PROVIDER_SLOTS: [ProviderSlot; 9] = [
     ProviderSlot::GeminiApiKey,
     ProviderSlot::GeminiOAuth,
     ProviderSlot::OpenAI,
     ProviderSlot::Anthropic,
     ProviderSlot::Ollama,
+    ProviderSlot::OpenAiCompat,
     ProviderSlot::ClaudeCode,
     ProviderSlot::Fireworks,
     ProviderSlot::Zai,

@@ -26,10 +26,11 @@ pub(in crate::app) struct LlmRunConfig {
     /// `None` → pick from the DSL header if present, else random; `Some(v)` →
     /// use exactly that seed (so the user can reproduce a prior generation).
     pub seed_override: Option<u64>,
-    /// Path to the `claude` binary. Honoured only when the active provider is
-    /// [`Provider::ClaudeCode`] (other providers ignore it). Empty/blank is a
-    /// valid value — the underlying client falls back to `claude` on `PATH`.
-    pub claude_code_path: String,
+    /// Per-provider base URLs / binary paths that don't fit the bare
+    /// `LlmClient::new(provider, api_key)` signature (Claude Code binary
+    /// path, Z.ai endpoint toggle, Ollama base URL, generic
+    /// OpenAI-compatible base URL). Consumed by [`build_provider_client`].
+    pub endpoints: ProviderEndpoints,
     /// Directory of the file being edited (for `Modify`/`Animate`/`Repair`),
     /// used to resolve relative `import "X.mog"` paths so the prompt can
     /// quote bounds for each `use`. `None` for unsaved buffers — the prompt
@@ -44,11 +45,6 @@ pub(in crate::app) struct LlmRunConfig {
     /// planner pass before the Coder pass. Mirrors the CLI's
     /// `mogen generate --plan` flag. Ignored on every other `LlmKind`.
     pub plan: bool,
-    /// Base URL for the Z.ai chat-completions surface. Honoured only
-    /// when the active provider is `Provider::Zai` (other providers
-    /// ignore it). Set from `Settings::zai_base_url()` in
-    /// `build_run_config`.
-    pub zai_base_url: String,
     /// Absolute path of the `.mog` this run is attributed to. Carried
     /// through to the spend tracker (issue 60) so the Spending panel
     /// can show "this scene cost $X to date". `None` for untitled
@@ -148,18 +144,41 @@ impl Credential {
     }
 }
 
+/// Per-provider connection settings that don't fit the bare
+/// `LlmClient::new(provider, api_key)` signature. Bundled into one struct so
+/// [`build_provider_client`] keeps a stable signature as providers gain
+/// base-URL knobs. Every field is "" when unset; each provider arm treats a
+/// blank value as "use the library default".
+#[derive(Clone, Default)]
+pub(in crate::app) struct ProviderEndpoints {
+    /// Path to the `claude` binary for [`Provider::ClaudeCode`]. Blank →
+    /// the client falls back to `claude` on `PATH`.
+    pub claude_code_path: String,
+    /// Base URL for the Z.ai chat-completions surface (GLM Coding Plan vs
+    /// general PaaS). Blank → library default.
+    pub zai_base_url: String,
+    /// Base URL for the Ollama chat endpoint (issue 67). Blank →
+    /// `http://localhost:11434`. Honoured only for [`Provider::Ollama`].
+    pub ollama_base_url: String,
+    /// Base URL for the generic OpenAI-compatible local server (issue 68),
+    /// e.g. `http://localhost:1234/v1`. Honoured only for
+    /// [`Provider::OpenAiCompat`]; the client posts to `{base}/chat/completions`.
+    pub openai_compat_base_url: String,
+}
+
 /// Construct an [`LlmClient`] honoring Studio-only settings that don't fit
 /// the bare `LlmClient::new(provider, api_key)` signature. Claude Code
 /// reroutes through `with_base_url` to honour the binary-path setting; a
 /// Gemini OAuth credential routes through `gemini_from_credential` so the
 /// resulting client speaks Cloud Code Assist instead of the public API.
 /// Z.ai routes through `with_base_url` to honour the GLM Coding Plan
-/// endpoint toggle.
+/// endpoint toggle. Ollama and the generic OpenAI-compatible server route
+/// through `with_base_url` only when the user set a non-empty base URL,
+/// otherwise they fall back to `LlmClient::new`'s library default.
 pub(in crate::app) fn build_provider_client(
     provider: Provider,
     credential: Credential,
-    claude_code_path: &str,
-    zai_base_url: &str,
+    endpoints: &ProviderEndpoints,
 ) -> LlmClient {
     match (provider, credential) {
         (Provider::Gemini, Credential::GeminiOAuth(bundle)) => {
@@ -169,10 +188,22 @@ pub(in crate::app) fn build_provider_client(
             LlmClient::gemini_from_credential(GoogleCredential::AntigravityOAuth(bundle))
         }
         (Provider::ClaudeCode, cred) => {
-            LlmClient::with_base_url(provider, cred.api_key_or_empty(), claude_code_path)
+            LlmClient::with_base_url(provider, cred.api_key_or_empty(), &endpoints.claude_code_path)
         }
         (Provider::Zai, cred) => {
-            LlmClient::with_base_url(provider, cred.api_key_or_empty(), zai_base_url)
+            LlmClient::with_base_url(provider, cred.api_key_or_empty(), &endpoints.zai_base_url)
+        }
+        (Provider::Ollama, cred) if !endpoints.ollama_base_url.trim().is_empty() => {
+            LlmClient::with_base_url(provider, cred.api_key_or_empty(), &endpoints.ollama_base_url)
+        }
+        (Provider::OpenAiCompat, cred)
+            if !endpoints.openai_compat_base_url.trim().is_empty() =>
+        {
+            LlmClient::with_base_url(
+                provider,
+                cred.api_key_or_empty(),
+                &endpoints.openai_compat_base_url,
+            )
         }
         (provider, cred) => LlmClient::new(provider, cred.api_key_or_empty()),
     }
@@ -209,7 +240,7 @@ pub(in crate::app) fn run_llm(
         let _ = tx.send(LlmMessage::Progress(p));
     };
 
-    let client = build_provider_client(provider, credential, &run_cfg.claude_code_path, &run_cfg.zai_base_url);
+    let client = build_provider_client(provider, credential, &run_cfg.endpoints);
     let seed = run_cfg.seed_override.unwrap_or_else(|| {
         existing
             .as_deref()
