@@ -22,4 +22,5 @@ glam = { workspace = true }
 anyhow = { workspace = true }
 gltf = { workspace = true }
 earcutr = "0.5"
+fast-surface-nets = "0.2"
 manifold-csg = { version = "0.1.8", optional = true, default-features = false }

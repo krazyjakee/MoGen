@@ -1336,6 +1336,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7360491ce676a36bf9bb3c56c1aa791658183a54d2744120f27285738d90465a"
 
 [[package]]
+name = "fast-surface-nets"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2aef9e8d9e33f51d8120a2e997a819f18239ad7c2735e353ade79208a9a1c442"
+dependencies = [
+ "glam 0.29.3",
+ "ndshape",
+]
+
+[[package]]
 name = "fastrand"
 version = "2.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1635,6 +1645,12 @@ dependencies = [
  "log",
  "xml-rs",
 ]
+
+[[package]]
+name = "glam"
+version = "0.29.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8babf46d4c1c9d92deac9f7be466f76dfc4482b6452fc5024b5e8daf6ffeb3ee"
 
 [[package]]
 name = "glam"
@@ -2655,7 +2671,7 @@ dependencies = [
 name = "mogen-anim"
 version = "0.1.7"
 dependencies = [
- "glam",
+ "glam 0.30.10",
  "mogen-core",
 ]
 
@@ -2663,7 +2679,7 @@ dependencies = [
 name = "mogen-core"
 version = "0.1.7"
 dependencies = [
- "glam",
+ "glam 0.30.10",
  "serde",
 ]
 
@@ -2672,7 +2688,7 @@ name = "mogen-dsl"
 version = "0.1.7"
 dependencies = [
  "anyhow",
- "glam",
+ "glam 0.30.10",
  "mogen-anim",
  "mogen-core",
  "mogen-geom",
@@ -2687,7 +2703,7 @@ version = "0.1.7"
 dependencies = [
  "anyhow",
  "fbxcel",
- "glam",
+ "glam 0.30.10",
  "image",
  "meshopt",
  "mogen-core",
@@ -2705,7 +2721,8 @@ version = "0.1.7"
 dependencies = [
  "anyhow",
  "earcutr",
- "glam",
+ "fast-surface-nets",
+ "glam 0.30.10",
  "gltf",
  "manifold-csg",
  "mogen-core",
@@ -2717,7 +2734,7 @@ version = "0.1.7"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
- "glam",
+ "glam 0.30.10",
  "image",
  "mogen-core",
  "mogen-dsl",
@@ -2766,7 +2783,7 @@ name = "mogen-render"
 version = "0.1.7"
 dependencies = [
  "anyhow",
- "glam",
+ "glam 0.30.10",
  "glow 0.14.2",
  "glutin",
  "glutin-winit",
@@ -2789,7 +2806,7 @@ dependencies = [
  "eframe",
  "egui",
  "egui_glow",
- "glam",
+ "glam 0.30.10",
  "glow 0.14.2",
  "image",
  "mogen-core",
@@ -2920,6 +2937,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ee6cda3051665f1fb8d9e08fc35c96d5a244fb1be711a03b71118828afc9a873"
 dependencies = [
  "jni-sys 0.3.1",
+]
+
+[[package]]
+name = "ndshape"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "975bce586ad637e27f6dc26ee907c07050686a588695bfd64b7873a9d48a700c"
+dependencies = [
+ "static_assertions",
 ]
 
 [[package]]

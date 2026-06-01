@@ -1,0 +1,32 @@
+// Stylised heart shape built from a single `blob` container. Two upper lobes
+// plus an elongated apex pointing down, smoothly blended into the classic
+// cardioid silhouette. The cleft between the lobes is carved with a
+// subtractive sphere — sharper than the blend would give on its own.
+//
+// This is the simplest possible `blob` example: three additive primitives
+// plus one subtract. Good baseline to compare against more complex blobs.
+// Realistic size (~0.12 m tall, roughly fist-sized) so it lands at the
+// same scale as a humanoid_full rig.
+
+meta (
+  name = "heart",
+  description = "Stylised heart — two lobes + apex blended into a cardioid, with a carved cleft.",
+  tags = ["anatomy", "heart", "blob", "organic"],
+)
+
+material "heart" (color=[0.78, 0.10, 0.12], roughness=0.40)
+
+scene {
+  blob "heart" (blend=0.020, resolution=80, mat="heart") {
+    // Two upper lobes (atria), slightly raised and to either side.
+    sphere (radius=0.045, pos=[-0.030, 0.032, 0])
+    sphere (radius=0.045, pos=[ 0.030, 0.032, 0])
+
+    // Apex (ventricles): elongated drop pointing down.
+    ellipsoid (size=[0.085, 0.100, 0.085], pos=[0, -0.025, 0])
+
+    // Cleft between the lobes: small carve at the top centre so the two
+    // lobes read as separate rather than merging into a single dome.
+    sphere (radius=0.020, pos=[0, 0.058, 0], op=subtract)
+  }
+}

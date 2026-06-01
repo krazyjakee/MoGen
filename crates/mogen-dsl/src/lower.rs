@@ -1,4 +1,5 @@
 mod anim;
+mod blob;
 mod branch;
 mod building;
 pub(crate) mod connector;

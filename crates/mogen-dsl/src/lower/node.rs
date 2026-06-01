@@ -12,7 +12,8 @@ use super::connector::{add_aabb_connectors_if_missing, add_connector, default_co
 use super::csg::lower_csg;
 use super::deform::apply_deform;
 use super::helpers::{
-    anchor_for, apply_anchor_to_mesh, inherit_material_from_ancestor, transform_from_attrs,
+    anchor_for, apply_anchor_to_mesh, apply_subdivide, inherit_material_from_ancestor,
+    transform_from_attrs,
 };
 use super::layout::{apply_relative_placement, expand_grid, expand_replicator, expand_stack};
 use super::light::lower_light;
@@ -41,6 +42,9 @@ pub(super) fn lower_into(
     }
     if matches!(node.kind.as_str(), "union" | "difference" | "intersect") {
         return lower_csg(node, parent, graph);
+    }
+    if node.kind == "blob" {
+        return super::blob::lower_blob(node, parent, graph);
     }
     if node.kind == "stack" {
         return expand_stack(node, parent, graph);
@@ -147,6 +151,7 @@ pub(super) fn lower_into(
             apply_deform(&mut mesh, node);
         }
         anchor_shift = apply_anchor_to_mesh(&mut mesh, anchor.as_deref());
+        let mesh = apply_subdivide(node, mesh)?;
         graph.set_mesh(id, mesh);
     } else {
         match node.kind.as_str() {

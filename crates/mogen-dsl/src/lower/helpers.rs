@@ -1,7 +1,30 @@
+use anyhow::{bail, Result};
 use glam::{Quat, Vec3};
 use mogen_core::{Aabb, Mesh, NodeId, SceneGraph, Transform};
+use mogen_geom::loop_subdivide;
 
 use crate::ast::{Node, Value};
+
+use super::lod::scaled_subdivisions;
+
+/// Max Loop subdivision rounds for any mesh-producing node (cap is 64× tri count).
+pub(super) const SUBDIVIDE_CAP: u32 = 3;
+
+/// Apply `subdivide=N` Loop subdivision to `mesh` (clamped via LOD scale; no-op if absent or 0).
+pub(super) fn apply_subdivide(node: &Node, mesh: Mesh) -> Result<Mesh> {
+    let n = match node.attr_number("subdivide") {
+        Some(n) => n as i32,
+        None => return Ok(mesh),
+    };
+    if n < 0 {
+        bail!("`subdivide` must be a non-negative integer (got {n})");
+    }
+    let n = scaled_subdivisions(n as u32).min(SUBDIVIDE_CAP);
+    if n == 0 {
+        return Ok(mesh);
+    }
+    Ok(loop_subdivide(&mesh, n))
+}
 
 /// Lexical material inheritance: if `id`'s own material is unset, walk up its
 /// parent chain and copy the nearest ancestor's material onto it.
