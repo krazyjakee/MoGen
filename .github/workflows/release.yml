@@ -231,3 +231,57 @@ jobs:
             mogen-*.msi
             mogen-studio-*.dmg
             SHA256SUMS
+
+  # Publish MoGen Studio to itch.io (cattrall/mogen-studio) via butler, tag
+  # pushes only. Windows/Linux go up as raw folders so the itch app can
+  # delta-patch between versions; macOS ships the per-arch .dmg. Channel names
+  # containing "windows", "linux" and "mac" let itch auto-detect each platform.
+  itch:
+    name: Publish to itch.io
+    runs-on: ubuntu-latest
+    needs: [build, publish]
+    if: startsWith(github.ref, 'refs/tags/')
+    env:
+      BUTLER_API_KEY: ${{ secrets.BUTLER_API_KEY }}
+      ITCH_TARGET: cattrall/mogen-studio
+      # Pin to a known stable release; bump this when upgrading butler.
+      BUTLER_VERSION: "15.24.0"
+    steps:
+      - name: Check credentials
+        run: |
+          if [[ -z "${BUTLER_API_KEY}" ]]; then
+            echo "::error::BUTLER_API_KEY secret is not set — cannot publish to itch.io" >&2
+            exit 1
+          fi
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          merge-multiple: true
+
+      - name: Install butler
+        run: |
+          sudo apt-get install -y --no-install-recommends unzip
+          curl -sL -o butler.zip "https://broth.itch.zone/butler/linux-amd64/${BUTLER_VERSION}/archive/default"
+          unzip -q butler.zip
+          chmod +x butler
+          ./butler -V
+
+      - name: Stage raw builds
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          mkdir -p push/windows push/linux
+          unzip -q "mogen-${tag}-x86_64-pc-windows-msvc.zip" -d push/windows
+          tar -xzf "mogen-${tag}-x86_64-unknown-linux-gnu.tar.gz" -C push/linux
+
+      - name: Push to itch.io
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          V="${tag#v}"
+          ./butler push push/windows "$ITCH_TARGET:windows"           --userversion "$V"
+          ./butler push push/linux   "$ITCH_TARGET:linux"             --userversion "$V"
+          ./butler push "mogen-studio-${tag}-aarch64-apple-darwin.dmg" "$ITCH_TARGET:mac-apple-silicon" --userversion "$V"
+          ./butler push "mogen-studio-${tag}-x86_64-apple-darwin.dmg"  "$ITCH_TARGET:mac-intel"         --userversion "$V"
