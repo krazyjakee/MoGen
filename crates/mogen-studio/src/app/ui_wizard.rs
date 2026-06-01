@@ -21,6 +21,8 @@ use super::wizard::pipeline::{
 use super::wizard::state::{
     next_pending_review_object, ObjectEntry, ObjectGenResult, Stage, WizardMessage, WizardState,
 };
+use super::wizard::{persist, write_assembly};
+use super::MogenStudioApp;
 
 /// A reference image still needs generating when its PNG isn't on disk yet.
 fn reference_missing(o: &ObjectEntry) -> bool {
@@ -59,16 +61,9 @@ fn next_pending_object_skipping<'a>(
         .find(|o| object_missing(o) && !in_flight.contains(&o.id))
 }
 
-/// Pick up to the remaining-capacity objects whose generated artifact is still
-/// missing and **atomically reserve them** in `in_flight`, returning the
-/// claimed entries to dispatch.
-///
-/// Selection and reservation are deliberately one operation. An earlier bug
-/// selected a reference batch without reserving it, so the 150ms auto-continue
-/// poll saw the in-flight set stay empty and re-spawned workers for the same
-/// objects every tick — thousands of image requests for a handful of images.
-/// Keeping claim+reserve inseparable makes that class of regression impossible
-/// to reintroduce by editing one path and forgetting the other.
+/// Claim pending entries up to `target_concurrency - in_flight.len()` capacity, reserving them
+/// in `in_flight` atomically — selection and reservation must stay one step to prevent the
+/// 150ms poll tick from re-issuing in-flight ids before their artifacts land on disk.
 fn claim_pending_batch(
     manifest: &[ObjectEntry],
     in_flight: &mut HashSet<String>,
@@ -87,8 +82,6 @@ fn claim_pending_batch(
     }
     claimed
 }
-use super::wizard::{persist, write_assembly};
-use super::MogenStudioApp;
 
 /// In-flight pump for the wizard. Holds the message channel and small UI
 /// drafts that don't belong in `WizardState` (per-row name overrides,
@@ -2117,9 +2110,15 @@ mod batch_tests {
         }
     }
 
-    /// A unique temp file that actually exists on disk, for exercising the
-    /// `exists()` branch of the "missing" predicates.
-    fn existing_file() -> PathBuf {
+    // RAII guard: removes the temp file on drop, even if the test panics.
+    struct TempFile(PathBuf);
+    impl Drop for TempFile {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    fn existing_file() -> TempFile {
         let dir = std::env::temp_dir().join("mogen-studio-batch-tests");
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join(format!(
@@ -2131,12 +2130,10 @@ mod batch_tests {
                 .unwrap_or(0)
         ));
         std::fs::write(&path, b"x").unwrap();
-        path
+        TempFile(path)
     }
 
-    // The regression that cost real money: a batch was selected but never
-    // reserved, so the 150ms auto-continue poll kept re-issuing the same ids.
-    // Claiming reserves, so a second claim before anything completes is empty.
+    // Regression: batch was selected without reservation, so the 150ms poll re-issued the same ids.
     #[test]
     fn second_claim_before_completion_is_empty() {
         let manifest = vec![obj("a"), obj("b"), obj("c")];
@@ -2154,9 +2151,7 @@ mod batch_tests {
         assert_eq!(in_flight.len(), 3, "no double-issue");
     }
 
-    // The same invariant expressed through the poll gate: once a batch is
-    // claimed, the poll's "is there pending work?" probe must say no for the
-    // reserved ids, so `poll_wizard` won't fire another batch.
+    // poll_wizard checks next_pending_reference_skipping; once claimed, that probe must return None.
     #[test]
     fn poll_gate_sees_no_pending_after_claim() {
         let mut state = WizardState::default();
@@ -2191,43 +2186,51 @@ mod batch_tests {
         in_flight.insert("o1".to_string());
         let claimed = claim_pending_batch(&manifest, &mut in_flight, 3, reference_missing);
         assert_eq!(claimed.len(), 1, "only one free slot remains under a target of 3");
+        assert_eq!(in_flight.len(), 3, "o0, o1 pre-existing + o2 newly claimed");
     }
 
-    // When a worker completes it removes its id (see ReferenceDone handling),
-    // which frees the slot for the next claim.
+    // ReferenceDone removes the id; a still-missing object becomes claimable again.
     #[test]
     fn completed_id_can_be_reclaimed() {
         let manifest = vec![obj("a")];
         let mut in_flight = HashSet::new();
         let first = claim_pending_batch(&manifest, &mut in_flight, 3, reference_missing);
         assert_eq!(first.len(), 1);
-        // The PNG still isn't on disk (reference_image stays None), so once the
-        // worker is removed from the in-flight set the object is claimable again.
         in_flight.remove("a");
         let again = claim_pending_batch(&manifest, &mut in_flight, 3, reference_missing);
         assert_eq!(again.len(), 1, "a freed, still-missing object is reclaimable");
     }
 
     #[test]
-    fn objects_with_existing_artifact_are_not_claimed() {
-        let path = existing_file();
+    fn objects_with_existing_reference_are_not_claimed() {
+        let _guard = existing_file();
         let mut done = obj("done");
-        done.reference_image = Some(path.clone());
+        done.reference_image = Some(_guard.0.clone());
         let manifest = vec![done, obj("todo")];
         let mut in_flight = HashSet::new();
         let claimed = claim_pending_batch(&manifest, &mut in_flight, 3, reference_missing);
         assert_eq!(claimed.len(), 1, "only the object missing its PNG is claimed");
         assert_eq!(claimed[0].id, "todo");
-        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn objects_with_existing_mog_are_not_claimed() {
+        let _guard = existing_file();
+        let mut built = obj("built");
+        built.mog_path = Some(_guard.0.clone());
+        let manifest = vec![built, obj("todo")];
+        let mut in_flight = HashSet::new();
+        let claimed = claim_pending_batch(&manifest, &mut in_flight, 3, object_missing);
+        assert_eq!(claimed.len(), 1, "only the object missing its .mog is claimed");
+        assert_eq!(claimed[0].id, "todo");
     }
 
     #[test]
     fn object_missing_tracks_mog_path() {
-        let path = existing_file();
+        let _guard = existing_file();
         let mut built = obj("built");
-        built.mog_path = Some(path.clone());
+        built.mog_path = Some(_guard.0.clone());
         assert!(!object_missing(&built), "an on-disk .mog is not missing");
         assert!(object_missing(&obj("fresh")), "no .mog means missing");
-        let _ = std::fs::remove_file(path);
     }
 }
