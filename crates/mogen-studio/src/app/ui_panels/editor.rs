@@ -317,7 +317,15 @@ impl MogenStudioApp {
                                 CCursor::new(char_idx),
                             )));
                             state.store(ui.ctx(), editor_id);
-                            ui.ctx().memory_mut(|m| m.request_focus(editor_id));
+                            // Don't steal focus from a widget the user is
+                            // actively typing into (fixes #74). Viewport picks
+                            // leave focus None, so the guard still passes.
+                            let other_focus = ui
+                                .ctx()
+                                .memory(|m| m.focused().is_some_and(|f| f != editor_id));
+                            if !other_focus {
+                                ui.ctx().memory_mut(|m| m.request_focus(editor_id));
+                            }
                         }
                     }
 
