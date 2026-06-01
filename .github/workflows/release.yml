@@ -85,9 +85,7 @@ jobs:
 
       - name: Install cargo-deb
         if: runner.os == 'Linux'
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-deb
+        run: cargo install cargo-deb --locked
 
       - name: Package .deb (linux)
         if: runner.os == 'Linux'
