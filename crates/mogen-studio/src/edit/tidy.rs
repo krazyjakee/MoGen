@@ -102,6 +102,7 @@ fn split_logical_lines(src: &str) -> Vec<String> {
             '{' => {
                 cur.push(c);
                 out.push(std::mem::take(&mut cur));
+                consume_line_tail(&mut chars);
             }
             '}' => {
                 if !cur.trim().is_empty() {
@@ -111,6 +112,7 @@ fn split_logical_lines(src: &str) -> Vec<String> {
                 }
                 cur.push(c);
                 out.push(std::mem::take(&mut cur));
+                consume_line_tail(&mut chars);
             }
             _ => cur.push(c),
         }
@@ -119,6 +121,26 @@ fn split_logical_lines(src: &str) -> Vec<String> {
         out.push(cur);
     }
     out
+}
+
+/// After a `{` / `}` forces a line break, the rest of that physical source
+/// line is just trailing whitespace and the line's own `\n`. Swallow it so it
+/// doesn't surface as a phantom blank logical line (which would render as a
+/// spurious blank after `{` or an extra trailing newline). Stops at the first
+/// non-whitespace char or after consuming a single newline, so deliberate
+/// blank lines further down are still preserved.
+fn consume_line_tail(chars: &mut std::iter::Peekable<std::str::Chars>) {
+    while let Some(&c) = chars.peek() {
+        if c == '\n' {
+            chars.next();
+            break;
+        }
+        if c == ' ' || c == '\t' || c == '\r' {
+            chars.next();
+        } else {
+            break;
+        }
+    }
 }
 
 /// Count `}` / `)` characters at the very start of a trimmed line. The line
