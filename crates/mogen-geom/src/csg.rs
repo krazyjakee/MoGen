@@ -122,22 +122,39 @@ fn to_manifold_input(mesh: &Mesh) -> (Vec<f32>, usize, Vec<u32>) {
     (vert_props, n_props, welded.indices)
 }
 
-fn build_manifold(mesh: &Mesh) -> (Manifold, usize) {
+fn try_build_manifold(mesh: &Mesh) -> Option<(Manifold, usize)> {
     let (vert_props, n_props, tri_indices) = to_manifold_input(mesh);
-    let manifold = Manifold::from_mesh_f32(&vert_props, n_props, &tri_indices)
-        .expect("CSG operand is not a manifold mesh; check that the primitive is closed");
-    (manifold, n_props)
+    Manifold::from_mesh_f32(&vert_props, n_props, &tri_indices)
+        .ok()
+        .map(|m| (m, n_props))
 }
 
-/// Convert a Manifold result back to `Mesh`. UVs are recovered when
-/// `n_props == 5`; otherwise the output `uvs` is empty and the caller's
-/// `clean_csg_output` will assign triplanar coordinates. Normals are
-/// recomputed from face geometry so the returned mesh is internally
-/// consistent — callers like `union_smooth` rely on per-vertex normals
-/// without needing a separate cleanup pass first.
-fn from_manifold_output(m: &Manifold, n_props: usize) -> Mesh {
+fn build_manifold(mesh: &Mesh) -> (Manifold, usize) {
+    try_build_manifold(mesh)
+        .expect("CSG operand is not a manifold mesh; check that the primitive is closed")
+}
+
+/// Ground-truth test for whether `mesh` can be used as a CSG operand: it runs
+/// the exact same import Manifold's boolean ops perform, so a `true` here
+/// guarantees [`union`]/[`difference`]/[`intersect`] won't trip on this mesh.
+///
+/// The cheap [`crate::is_closed_manifold`] edge-incidence check
+/// under-approximates this — it accepts meshes with inconsistent winding or
+/// non-manifold vertex fans that Manifold then rejects. The merge pass gates
+/// candidate leaves on *this* predicate so it never feeds the boolean a mesh
+/// that would panic.
+pub fn is_csg_manifold(mesh: &Mesh) -> bool {
+    try_build_manifold(mesh).is_some()
+}
+
+/// Convert a Manifold result back to `Mesh`. UVs are recovered when the
+/// Manifold carries them (`props >= 5`); otherwise the output `uvs` is empty
+/// and the caller's `clean_csg_output` will assign triplanar coordinates.
+/// Normals are recomputed from face geometry so the returned mesh is
+/// internally consistent — callers like `union_smooth` rely on per-vertex
+/// normals without needing a separate cleanup pass first.
+fn from_manifold_output(m: &Manifold) -> Mesh {
     let (flat, props, tri_indices) = m.to_mesh_f32();
-    debug_assert_eq!(props, n_props);
     let n_verts = flat.len() / props;
     let mut positions = Vec::with_capacity(n_verts);
     let mut uvs = Vec::with_capacity(if props >= 5 { n_verts } else { 0 });
@@ -161,10 +178,24 @@ fn from_manifold_output(m: &Manifold, n_props: usize) -> Mesh {
 fn boolean(a: &Mesh, b: &Mesh, op: Op) -> Mesh {
     let (ma, props_a) = build_manifold(a);
     let (mb, props_b) = build_manifold(b);
-    // If only one side carries UVs, fall back to position-only output —
-    // mixing a UV'd operand with a non-UV'd one would interpolate against
-    // garbage. The cleanup pass will synthesise triplanar UVs.
-    let out_props = if props_a == props_b { props_a } else { 3 };
+    boolean_inner(ma, props_a, mb, props_b, op)
+}
+
+/// Like [`boolean`] but returns `None` instead of panicking when either operand
+/// is not a valid manifold. The merge pass uses this so a stray non-manifold
+/// leaf degrades to "don't merge" rather than aborting the whole export.
+fn try_boolean(a: &Mesh, b: &Mesh, op: Op) -> Option<Mesh> {
+    let (ma, props_a) = try_build_manifold(a)?;
+    let (mb, props_b) = try_build_manifold(b)?;
+    Some(boolean_inner(ma, props_a, mb, props_b, op))
+}
+
+fn boolean_inner(ma: Manifold, props_a: usize, mb: Manifold, props_b: usize, op: Op) -> Mesh {
+    // Only trust the result's UVs when *both* operands carried them. If the
+    // operands disagree (one had UVs, one didn't) Manifold still emits a 5-prop
+    // result, but the UV channel of the non-UV side is garbage; strip it and
+    // let `clean_csg_output` synthesise triplanar coordinates instead.
+    let keep_uvs = props_a == props_b && props_a >= 5;
     let result = match op {
         Op::Union => ma.union(&mb),
         Op::Difference => ma.difference(&mb),
@@ -173,15 +204,11 @@ fn boolean(a: &Mesh, b: &Mesh, op: Op) -> Mesh {
     if result.is_empty() {
         return Mesh::default();
     }
-    if out_props != props_a {
-        // The result still has whatever n_props the operands shared inside
-        // Manifold; if we requested mixed handling we re-emit without UVs by
-        // stripping them after extraction.
-        let mut m = from_manifold_output(&result, props_a);
+    let mut m = from_manifold_output(&result);
+    if !keep_uvs {
         m.uvs.clear();
-        return m;
     }
-    from_manifold_output(&result, out_props)
+    m
 }
 
 #[derive(Clone, Copy)]
@@ -217,6 +244,24 @@ pub fn union_many(meshes: &[Mesh]) -> Mesh {
     it.fold(first.clone(), |acc, m| union(&acc, m))
 }
 
+/// Fallible variant of [`union_many`]: returns `None` the moment any operand
+/// (or fold intermediate) fails to import as a manifold, instead of panicking.
+/// Used by the export-time mesh-merge optimisation, where a non-manifold input
+/// should fall back to keeping meshes separate, never crash the build.
+pub fn try_union_many(meshes: &[Mesh]) -> Option<Mesh> {
+    let mut it = meshes.iter();
+    let first = it.next()?;
+    // Validate the first operand explicitly. The fold only runs try_boolean on
+    // it when there are two or more meshes; a single-element non-manifold slice
+    // would otherwise bypass all validation and return Some instead of None.
+    try_build_manifold(first)?;
+    let mut acc = first.clone();
+    for m in it {
+        acc = try_boolean(&acc, m, Op::Union)?;
+    }
+    Some(acc)
+}
+
 pub fn intersect_many(meshes: &[Mesh]) -> Mesh {
     let mut it = meshes.iter();
     let Some(first) = it.next() else {
@@ -235,6 +280,70 @@ mod tests {
     fn ubox(s: [f32; 3]) -> Mesh {
         box_mesh(s, UvMode::default())
     }
+
+    /// A tetrahedron with one face wound backwards. Every undirected edge is
+    /// still shared by exactly two triangles (so `is_closed_manifold` passes),
+    /// but the reversed face produces a duplicated directed halfedge, which
+    /// Manifold rejects. Models the `extrude`/`spline_tube` meshes that crashed
+    /// the merge pass.
+    fn edge_closed_but_inconsistent() -> Mesh {
+        Mesh {
+            positions: vec![
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+            ],
+            // Real meshes always carry normals; weld_vertices indexes them.
+            normals: vec![[0.0, 0.0, 0.0]; 4],
+            // Consistent winding is [0,1,2, 0,3,1, 0,2,3, 1,3,2]; the last face
+            // is flipped to [1,2,3] to break orientation.
+            indices: vec![0, 1, 2, 0, 3, 1, 0, 2, 3, 1, 2, 3],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn is_csg_manifold_rejects_edge_closed_but_inconsistent_winding() {
+        let bad = edge_closed_but_inconsistent();
+        assert!(
+            crate::is_closed_manifold(&bad),
+            "cheap edge check should still pass — that is why it under-approximates"
+        );
+        assert!(
+            !is_csg_manifold(&bad),
+            "Manifold must reject the inconsistent winding"
+        );
+        // The fallible union must decline rather than panic.
+        assert!(try_union_many(&[ubox([1.0, 1.0, 1.0]), bad]).is_none());
+    }
+
+    #[test]
+    fn is_csg_manifold_accepts_closed_primitive() {
+        assert!(is_csg_manifold(&ubox([1.0, 1.0, 1.0])));
+    }
+
+    #[test]
+    fn try_union_many_two_valid_manifolds_returns_some() {
+        let a = ubox([1.0, 1.0, 1.0]);
+        let mut b = ubox([1.0, 1.0, 1.0]);
+        for p in &mut b.positions {
+            p[0] += 2.0;
+        }
+        let result = try_union_many(&[a, b]);
+        assert!(result.is_some(), "two valid manifolds must union to Some");
+        assert!(!result.unwrap().positions.is_empty());
+    }
+
+    #[test]
+    fn try_union_many_single_non_manifold_returns_none() {
+        let bad = edge_closed_but_inconsistent();
+        assert!(
+            try_union_many(&[bad]).is_none(),
+            "single non-manifold operand must return None, not Some"
+        );
+    }
+
     fn ucyl(r: f32, h: f32, seg: u32) -> Mesh {
         cylinder_mesh(r, h, seg, UvMode::default())
     }
