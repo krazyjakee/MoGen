@@ -600,9 +600,8 @@ impl MogenStudioApp {
         let slot = self.settings.provider_slot();
         let provider = slot.to_provider();
         let cred = self.resolve_credential()?;
-        let claude_path = self.settings.claude_code_path();
-        let zai_url = self.settings.zai_base_url().to_string();
-        let client = build_text_client(provider, cred, &claude_path, &zai_url);
+        let endpoints = self.provider_endpoints();
+        let client = build_text_client(provider, cred, &endpoints);
         let sys = self.cached_system_instruction();
         Some((client, sys))
     }

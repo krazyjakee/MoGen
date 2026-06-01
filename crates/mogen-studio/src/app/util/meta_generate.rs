@@ -6,7 +6,7 @@
 
 use mogen_llm::{GenerateConfig, Provider, ThinkingLevel};
 
-use super::llm::{build_provider_client, Credential};
+use super::llm::{build_provider_client, Credential, ProviderEndpoints};
 
 /// Filled-in fields returned by [`run_meta_generate`]. Fields the model
 /// declined to produce (or whose JSON shape was wrong) come back as defaults
@@ -26,14 +26,13 @@ pub(in crate::app) fn run_meta_generate(
     provider: Provider,
     credential: Credential,
     model: String,
-    claude_code_path: String,
-    zai_base_url: String,
+    endpoints: ProviderEndpoints,
 ) -> Result<MetaSuggestion, String> {
     let trimmed = source.trim();
     if trimmed.is_empty() {
         return Err("nothing to summarise — load or generate a scene first".into());
     }
-    let client = build_provider_client(provider, credential, &claude_code_path, &zai_base_url);
+    let client = build_provider_client(provider, credential, &endpoints);
 
     let user = format!(
         "You are summarising a MoGen DSL scene file for a model registry.\n\

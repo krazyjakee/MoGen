@@ -59,7 +59,21 @@ pub enum Provider {
     /// Z.ai (Zhipu AI) GLM family. OpenAI-compatible Chat Completions at
     /// `api.z.ai/api/paas/v4/chat/completions`. Default model is `glm-5.1`.
     Zai,
+    /// Generic OpenAI-compatible Chat Completions endpoint, aimed at local
+    /// runtimes (llama.cpp's `server`, LM Studio, etc.) that expose
+    /// `POST {base_url}/chat/completions`. Reuses the [`OpenAIClient`]; the
+    /// base URL is supplied by the caller (no useful default for a local
+    /// server, so [`Self::new`] falls back to the public OpenAI host and the
+    /// caller is expected to pass a real URL via [`Self::with_base_url`]).
+    /// Keyless by default — local servers usually need no token.
+    OpenAiCompat,
 }
+
+/// Default model id sent to an OpenAI-compatible local server. llama.cpp
+/// ignores the field and serves whatever weights are loaded; LM Studio
+/// falls back to the currently-loaded model when the id is unknown. Users
+/// who need a specific id can override it.
+pub const OPENAI_COMPAT_DEFAULT_MODEL: &str = "local-model";
 
 impl Provider {
     /// Round-trip key. `gemini` is preserved as the legacy/default value so
@@ -73,6 +87,7 @@ impl Provider {
             Provider::ClaudeCode => "claude-code",
             Provider::Fireworks => "fireworks",
             Provider::Zai => "zai",
+            Provider::OpenAiCompat => "openai-compat",
         }
     }
 
@@ -86,6 +101,7 @@ impl Provider {
             Provider::ClaudeCode => "Claude Code (subscription)",
             Provider::Fireworks => "Fireworks AI Firepass",
             Provider::Zai => "Z.ai (GLM)",
+            Provider::OpenAiCompat => "OpenAI-compatible (local)",
         }
     }
 
@@ -101,6 +117,7 @@ impl Provider {
             Provider::ClaudeCode => "Claude Code",
             Provider::Fireworks => "Fireworks AI Firepass",
             Provider::Zai => "Z.ai",
+            Provider::OpenAiCompat => "OpenAI-compatible",
         }
     }
 
@@ -116,6 +133,10 @@ impl Provider {
             "claude-code" | "claude_code" | "claudecode" | "cc" => Some(Self::ClaudeCode),
             "fireworks" | "fireworks-ai" | "firepass" | "kimi" => Some(Self::Fireworks),
             "zai" | "z-ai" | "z.ai" | "zhipu" | "glm" => Some(Self::Zai),
+            "openai-compat" | "openai-compatible" | "openai_compat" | "local-openai"
+            | "lmstudio" | "lm-studio" | "llamacpp" | "llama-cpp" | "llama.cpp" => {
+                Some(Self::OpenAiCompat)
+            }
             _ => None,
         }
     }
@@ -134,6 +155,7 @@ impl Provider {
             Provider::ClaudeCode => "",
             Provider::Fireworks => "FIREWORKS_API_KEY",
             Provider::Zai => "ZAI_API_KEY",
+            Provider::OpenAiCompat => "OPENAI_COMPAT_API_KEY",
         }
     }
 
@@ -148,6 +170,7 @@ impl Provider {
             Provider::ClaudeCode => crate::claude_code::DEFAULT_MODEL,
             Provider::Fireworks => crate::fireworks::DEFAULT_MODEL,
             Provider::Zai => crate::zai_chat::DEFAULT_MODEL,
+            Provider::OpenAiCompat => OPENAI_COMPAT_DEFAULT_MODEL,
         }
     }
 
@@ -162,6 +185,7 @@ impl Provider {
             Provider::ClaudeCode => crate::claude_code::DEFAULT_FAST_MODEL,
             Provider::Fireworks => crate::fireworks::DEFAULT_FAST_MODEL,
             Provider::Zai => crate::zai_chat::DEFAULT_FAST_MODEL,
+            Provider::OpenAiCompat => OPENAI_COMPAT_DEFAULT_MODEL,
         }
     }
 
@@ -169,7 +193,10 @@ impl Provider {
     /// either absent or managed externally). Drives the Studio onboarding
     /// flow — these providers don't need a key field on the welcome screen.
     pub fn is_keyless(self) -> bool {
-        matches!(self, Provider::Ollama | Provider::ClaudeCode)
+        matches!(
+            self,
+            Provider::Ollama | Provider::ClaudeCode | Provider::OpenAiCompat
+        )
     }
 
     /// Whether this provider supports vision **input** — i.e. the user can
@@ -442,6 +469,11 @@ pub enum LlmClient {
     ClaudeCode(ClaudeCodeClient),
     Fireworks(FireworksClient),
     Zai(ZaiChatClient),
+    /// Generic OpenAI-compatible local server. Same wire client as
+    /// [`Self::OpenAI`]; kept as a distinct variant so [`Self::provider`]
+    /// reports `OpenAiCompat` (separate model/key settings, no cloud
+    /// pricing).
+    OpenAiCompat(OpenAIClient),
 }
 
 impl LlmClient {
@@ -458,6 +490,7 @@ impl LlmClient {
             Provider::ClaudeCode => LlmClient::ClaudeCode(ClaudeCodeClient::new()),
             Provider::Fireworks => LlmClient::Fireworks(FireworksClient::new(api_key)),
             Provider::Zai => LlmClient::Zai(ZaiChatClient::new(api_key)),
+            Provider::OpenAiCompat => LlmClient::OpenAiCompat(OpenAIClient::new(api_key)),
         }
     }
 
@@ -519,6 +552,9 @@ impl LlmClient {
                 LlmClient::Fireworks(FireworksClient::with_base_url(api_key, base_url))
             }
             Provider::Zai => LlmClient::Zai(ZaiChatClient::with_base_url(api_key, base_url)),
+            Provider::OpenAiCompat => {
+                LlmClient::OpenAiCompat(OpenAIClient::with_base_url(api_key, base_url))
+            }
         }
     }
 
@@ -532,6 +568,7 @@ impl LlmClient {
             LlmClient::ClaudeCode(_) => Provider::ClaudeCode,
             LlmClient::Fireworks(_) => Provider::Fireworks,
             LlmClient::Zai(_) => Provider::Zai,
+            LlmClient::OpenAiCompat(_) => Provider::OpenAiCompat,
         }
     }
 
@@ -575,6 +612,7 @@ impl LlmClient {
             LlmClient::ClaudeCode(c) => c.generate(cfg).map_err(Into::into),
             LlmClient::Fireworks(c) => c.generate(cfg).map_err(Into::into),
             LlmClient::Zai(c) => c.generate(cfg).map_err(Into::into),
+            LlmClient::OpenAiCompat(c) => c.generate(cfg).map_err(Into::into),
         };
 
         // Recording happens after the call, never inside the provider — the

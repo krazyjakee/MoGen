@@ -1,6 +1,6 @@
 use mogen_llm::{GenerateConfig, Provider, ThinkingLevel};
 
-use super::llm::{build_provider_client, Credential};
+use super::llm::{build_provider_client, Credential, ProviderEndpoints};
 use crate::app::types::EnhanceTarget;
 
 /// Run a single prompt-enhancement call against the fast model. Returns the
@@ -21,10 +21,9 @@ pub(in crate::app) fn run_prompt_enhance(
     provider: Provider,
     credential: Credential,
     model: String,
-    claude_code_path: String,
-    zai_base_url: String,
+    endpoints: ProviderEndpoints,
 ) -> Result<String, String> {
-    let client = build_provider_client(provider, credential, &claude_code_path, &zai_base_url);
+    let client = build_provider_client(provider, credential, &endpoints);
     let raw = raw_prompt.trim();
     // Templates focus the rewrite on enriching the user's high-level
     // description — what the object looks like or how a part should change —

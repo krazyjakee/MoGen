@@ -80,12 +80,15 @@ impl OpenAIClient {
         let url = format!("{}/chat/completions", self.base_url);
         let body = build_request(cfg);
 
-        let resp = self
-            .http
-            .post(&url)
-            .bearer_auth(&self.api_key)
-            .json(&body)
-            .send()?;
+        // Local OpenAI-compatible servers (llama.cpp, LM Studio) are usually
+        // keyless; only send the Authorization header when we actually have a
+        // token. Public OpenAI always supplies one, so this never drops auth
+        // there.
+        let mut req = self.http.post(&url).json(&body);
+        if !self.api_key.trim().is_empty() {
+            req = req.bearer_auth(&self.api_key);
+        }
+        let resp = req.send()?;
         let status = resp.status();
         let bytes = resp.bytes()?;
 

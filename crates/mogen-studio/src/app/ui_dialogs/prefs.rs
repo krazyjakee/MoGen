@@ -103,6 +103,11 @@ pub(super) fn model_presets(slot: ProviderSlot) -> &'static [&'static str] {
             "glm-4.5-air",
             "glm-4.5-flash",
         ],
+        // Model ids are server-defined for a local OpenAI-compatible host —
+        // there's no canonical preset list. `local-model` is the library
+        // default that many single-model servers (llama.cpp, some LM Studio
+        // setups) accept regardless of the loaded weights.
+        ProviderSlot::OpenAiCompat => &["local-model"],
     }
 }
 
@@ -273,6 +278,10 @@ impl MogenStudioApp {
                             self.settings.zai_api_key.trim().to_string();
                         self.settings.fireworks_api_key =
                             self.settings.fireworks_api_key.trim().to_string();
+                        self.settings.openai_compat_api_key =
+                            self.settings.openai_compat_api_key.trim().to_string();
+                        self.settings.openai_compat_base_url =
+                            self.settings.openai_compat_base_url.trim().to_string();
                         match self.settings.save() {
                             Ok(()) => {
                                 let active = self.settings.provider();
@@ -503,6 +512,13 @@ impl MogenStudioApp {
                      the `glm-image` texture path when you set Image \
                      provider → Z.ai.",
                 ),
+                Provider::OpenAiCompat => (
+                    "OpenAI-compatible API key (optional)",
+                    "Optional bearer token for a local OpenAI-compatible \
+                     server (LM Studio, llama.cpp, etc.). Leave blank for \
+                     keyless local servers. Text generation only — image \
+                     generation (Textures) always uses a cloud provider.",
+                ),
                 Provider::ClaudeCode => unreachable!(),
             };
             style::framed_section(ui, heading, Some(hint), |ui| {
@@ -514,6 +530,7 @@ impl MogenStudioApp {
                     Provider::Ollama => &mut self.settings.ollama_api_key,
                     Provider::Fireworks => &mut self.settings.fireworks_api_key,
                     Provider::Zai => &mut self.settings.zai_api_key,
+                    Provider::OpenAiCompat => &mut self.settings.openai_compat_api_key,
                     Provider::ClaudeCode => unreachable!(),
                 };
                 crate::app::text_menu::text_edit_with_menu(
@@ -544,6 +561,29 @@ impl MogenStudioApp {
                             .hint_text(style::placeholder("http://localhost:11434"))
                             .desired_width(f32::INFINITY),
                     );
+                }
+
+                if matches!(active_provider, Provider::OpenAiCompat) {
+                    ui.add_space(6.0);
+                    ui.label("Base URL").on_hover_text(
+                        "Base URL of your local OpenAI-compatible server. \
+                         Requests go to {base}/chat/completions. Examples: \
+                         http://localhost:1234/v1 (LM Studio), \
+                         http://localhost:8080/v1 (llama.cpp).",
+                    );
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.settings.openai_compat_base_url)
+                            .hint_text(style::placeholder("http://localhost:1234/v1"))
+                            .desired_width(f32::INFINITY),
+                    );
+                    if self.settings.openai_compat_base_url.trim().is_empty() {
+                        ui.add_space(4.0);
+                        style::info_row(
+                            ui,
+                            "Set a base URL — without one, requests fall back to \
+                             the public OpenAI host and will fail.",
+                        );
+                    }
                 }
 
                 let env_var = active_provider.env_var();

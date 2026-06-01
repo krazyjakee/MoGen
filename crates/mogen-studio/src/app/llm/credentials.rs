@@ -1,7 +1,22 @@
-use crate::app::util::Credential;
+use crate::app::util::{Credential, ProviderEndpoints};
 use crate::app::MogenStudioApp;
 
 impl MogenStudioApp {
+    /// Gather the per-provider base URLs / binary paths from settings into a
+    /// [`ProviderEndpoints`] for [`crate::app::util::build_provider_client`].
+    /// One source of truth shared by `build_run_config` and the direct
+    /// `build_provider_client` callers (ask / enhance / meta-generate /
+    /// wizard) so every path honours the same Ollama (issue 67) and
+    /// OpenAI-compatible (issue 68) endpoint settings.
+    pub(in crate::app) fn provider_endpoints(&self) -> ProviderEndpoints {
+        ProviderEndpoints {
+            claude_code_path: self.settings.claude_code_path(),
+            zai_base_url: self.settings.zai_base_url().to_string(),
+            ollama_base_url: self.settings.ollama_base_url.clone(),
+            openai_compat_base_url: self.settings.openai_compat_base_url.clone(),
+        }
+    }
+
     /// Resolve the credential for the active provider slot. The slot dictates
     /// which path is taken — there's no fallback between API-key and OAuth
     /// auth for Gemini, picking the slot in Preferences is the explicit

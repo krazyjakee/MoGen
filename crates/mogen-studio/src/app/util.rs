@@ -28,6 +28,7 @@ pub(super) use enhance::run_prompt_enhance;
 pub(super) use meta_generate::{run_meta_generate, MetaSuggestion};
 pub(super) use llm::{
     build_provider_client, pick_default_seed, run_llm, Credential, LlmRunConfig,
+    ProviderEndpoints,
 };
 pub(super) use paths::{
     ellipsize_path, format_inspector_scalar, locate_project_root, offset_to_line_col,

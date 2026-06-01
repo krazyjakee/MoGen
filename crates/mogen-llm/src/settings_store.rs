@@ -90,7 +90,7 @@ pub fn read_api_key(provider: Provider) -> Option<String> {
         Provider::Ollama => &keys.ollama_api_key,
         Provider::Fireworks => &keys.fireworks_api_key,
         Provider::Zai => &keys.zai_api_key,
-        Provider::ClaudeCode => return None,
+        Provider::ClaudeCode | Provider::OpenAiCompat => return None,
     };
     let trimmed = raw.trim();
     if trimmed.is_empty() {

@@ -212,6 +212,32 @@ pub struct Settings {
     #[serde(default)]
     pub ollama_base_url: String,
 
+    /// Base URL for the OpenAI-compatible (local) provider, e.g.
+    /// `http://localhost:1234/v1` (LM Studio) or `http://localhost:8080/v1`
+    /// (llama.cpp's server). Has no useful default — when the active slot is
+    /// `OpenAiCompat` and this is blank, requests fall back to the public
+    /// OpenAI host and will fail, so the Preferences UI nudges the user to
+    /// set it.
+    #[serde(default)]
+    pub openai_compat_base_url: String,
+
+    /// Optional bearer token for the OpenAI-compatible local provider. Usually
+    /// empty — local servers are keyless. Falls back to the
+    /// `OPENAI_COMPAT_API_KEY` env var when blank.
+    #[serde(default)]
+    pub openai_compat_api_key: String,
+
+    /// OpenAI-compatible thinking-model override. Empty → `local-model`
+    /// ([`mogen_llm::OPENAI_COMPAT_DEFAULT_MODEL`]). Set this to the model id
+    /// your local server expects (e.g. the loaded LM Studio model).
+    #[serde(default)]
+    pub openai_compat_model: String,
+
+    /// OpenAI-compatible fast-model override. Empty → falls back to
+    /// [`Self::openai_compat_model`] (or the library default when both blank).
+    #[serde(default)]
+    pub openai_compat_fast_model: String,
+
     /// Optional override for the Claude Code binary path. Empty → resolve
     /// `claude` from `PATH`. Set this when the user's install lives outside
     /// `PATH` (e.g. a `~/.local/bin/claude` they haven't shimmed in yet).
@@ -686,6 +712,7 @@ impl Settings {
             ProviderSlot::ClaudeCode => "",
             ProviderSlot::Fireworks => self.fireworks_api_key.as_str(),
             ProviderSlot::Zai => self.zai_api_key.as_str(),
+            ProviderSlot::OpenAiCompat => self.openai_compat_api_key.as_str(),
         };
         let trimmed = raw.trim();
         if trimmed.is_empty() {
@@ -748,10 +775,11 @@ impl Settings {
                 return preview.to_string();
             }
         }
-        // Ollama is the only provider whose library default for fast == thinking,
-        // so let the user's thinking override apply to fast too when fast is blank.
-        if matches!(provider, Provider::Ollama) {
-            let thinking = self.ollama_model.trim();
+        // Ollama and the generic OpenAI-compatible server both default fast ==
+        // thinking, so let the user's thinking override apply to fast too when
+        // fast is blank.
+        if matches!(provider, Provider::Ollama | Provider::OpenAiCompat) {
+            let thinking = self.thinking_model_field(provider).trim();
             if !thinking.is_empty() {
                 return thinking.to_string();
             }
@@ -771,6 +799,7 @@ impl Settings {
             Provider::Ollama => &self.ollama_model,
             Provider::Fireworks => &self.fireworks_model,
             Provider::Zai => &self.zai_chat_model,
+            Provider::OpenAiCompat => &self.openai_compat_model,
             _ => "",
         }
     }
@@ -784,6 +813,7 @@ impl Settings {
             Provider::Ollama => &self.ollama_fast_model,
             Provider::Fireworks => &self.fireworks_fast_model,
             Provider::Zai => &self.zai_chat_fast_model,
+            Provider::OpenAiCompat => &self.openai_compat_fast_model,
             _ => "",
         }
     }
@@ -798,6 +828,7 @@ impl Settings {
             Provider::Ollama => Some(&mut self.ollama_model),
             Provider::Fireworks => Some(&mut self.fireworks_model),
             Provider::Zai => Some(&mut self.zai_chat_model),
+            Provider::OpenAiCompat => Some(&mut self.openai_compat_model),
             _ => None,
         }
     }
@@ -811,6 +842,7 @@ impl Settings {
             Provider::Ollama => Some(&mut self.ollama_fast_model),
             Provider::Fireworks => Some(&mut self.fireworks_fast_model),
             Provider::Zai => Some(&mut self.zai_chat_fast_model),
+            Provider::OpenAiCompat => Some(&mut self.openai_compat_fast_model),
             _ => None,
         }
     }

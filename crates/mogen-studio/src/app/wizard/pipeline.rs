@@ -15,7 +15,7 @@ use mogen_llm::{
 };
 use mogen_llm::image_client::{ImageClient, ImageError};
 
-use crate::app::util::Credential;
+use crate::app::util::{Credential, ProviderEndpoints};
 
 use super::state::{
     ObjectEntry, ObjectGenResult, ObjectReview, PositionCorrection, PositionGuide, SceneReview,
@@ -634,8 +634,7 @@ mod tests {
 pub fn build_text_client(
     provider: mogen_llm::Provider,
     credential: Credential,
-    claude_code_path: &str,
-    zai_base_url: &str,
+    endpoints: &ProviderEndpoints,
 ) -> LlmClient {
-    crate::app::util::build_provider_client(provider, credential, claude_code_path, zai_base_url)
+    crate::app::util::build_provider_client(provider, credential, endpoints)
 }

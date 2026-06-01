@@ -31,7 +31,7 @@ impl MogenStudioApp {
             temperature: self.settings.temperature(),
             max_repair_iters: self.settings.max_repair_iters(),
             seed_override: self.settings.seed_override(),
-            claude_code_path: self.settings.claude_code_path(),
+            endpoints: self.provider_endpoints(),
             // Populated per-call by `spawn_llm` from the active file's path
             // so relative `import "X.mog"` lookups resolve correctly.
             base_dir: None,
@@ -41,7 +41,6 @@ impl MogenStudioApp {
             // here to keep that boundary clean.
             style: None,
             plan: self.settings.plan_first(),
-            zai_base_url: self.settings.zai_base_url().to_string(),
             // Per-call: scene path comes from the active file, session id
             // from the app-wide UUID. `spawn_llm` populates these from the
             // file it's about to call against.

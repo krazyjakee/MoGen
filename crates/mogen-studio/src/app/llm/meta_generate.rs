@@ -42,8 +42,7 @@ impl MogenStudioApp {
             }
         };
         let model = self.settings.provider_fast_model();
-        let claude_code_path = self.settings.claude_code_path();
-        let zai_base_url = self.settings.zai_base_url().to_string();
+        let endpoints = self.provider_endpoints();
 
         self.meta_generate_error.remove(&file_index);
 
@@ -56,8 +55,7 @@ impl MogenStudioApp {
                 provider,
                 credential,
                 model,
-                claude_code_path,
-                zai_base_url,
+                endpoints,
             );
             let _ = tx.send(result);
             ctx.request_repaint();
