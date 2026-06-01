@@ -30,6 +30,28 @@ fn expr_attr(
     None
 }
 
+/// Render three `DragValue`s for the X/Y/Z components of `vals`, all sharing
+/// `speed` and `suffix` (the suffix renders e.g. the `°` on rotation rows).
+/// Returns `Some(i)` where `i` is the axis index (0=X, 1=Y, 2=Z) that last
+/// changed this frame, or `None` if no axis changed.
+fn drag_triple(
+    ui: &mut egui::Ui,
+    vals: &mut [f32; 3],
+    speed: f32,
+    suffix: &str,
+) -> Option<u8> {
+    let mut changed_axis: Option<u8> = None;
+    for (i, v) in vals.iter_mut().enumerate() {
+        if ui
+            .add(egui::DragValue::new(v).speed(speed).suffix(suffix))
+            .changed()
+        {
+            changed_axis = Some(i as u8);
+        }
+    }
+    changed_axis
+}
+
 fn locked_transform_row(ui: &mut egui::Ui, label: &str, raw: &str) {
     // The transform grid has num_columns(4): label + X + Y + Z (or link).
     // Span the value across all three value columns so the lock row aligns
@@ -97,15 +119,13 @@ pub(super) fn render(
     };
     let t_scale = node.transform.scale;
     let (rx_rad, ry_rad, rz_rad) = effective_rotation.to_euler(glam::EulerRot::XYZ);
-    let mut tx = effective_translation.x;
-    let mut ty = effective_translation.y;
-    let mut tz = effective_translation.z;
-    let mut rx = rx_rad.to_degrees();
-    let mut ry = ry_rad.to_degrees();
-    let mut rz = rz_rad.to_degrees();
-    let mut sx = t_scale.x;
-    let mut sy = t_scale.y;
-    let mut sz = t_scale.z;
+    let mut t = [
+        effective_translation.x,
+        effective_translation.y,
+        effective_translation.z,
+    ];
+    let mut r = [rx_rad.to_degrees(), ry_rad.to_degrees(), rz_rad.to_degrees()];
+    let mut s = [t_scale.x, t_scale.y, t_scale.z];
 
     // DSL shortcut/corner-form attrs that override the canonical transform
     // field. Stripped on commit for the same reason the gizmo does — otherwise
@@ -127,17 +147,7 @@ pub(super) fn render(
                 locked_transform_row(ui, "Translate", raw);
             } else {
                 ui.label("Translate");
-                let mut emit_pos = false;
-                if ui.add(egui::DragValue::new(&mut tx).speed(0.02)).changed() {
-                    emit_pos = true;
-                }
-                if ui.add(egui::DragValue::new(&mut ty).speed(0.02)).changed() {
-                    emit_pos = true;
-                }
-                if ui.add(egui::DragValue::new(&mut tz).speed(0.02)).changed() {
-                    emit_pos = true;
-                }
-                if emit_pos {
+                if drag_triple(ui, &mut t, 0.02, "").is_some() {
                     // Emit the full `pos=[x,y,z]` vector and strip shadow attrs.
                     // Per-axis `x=`/`y=`/`z=` writes left two attrs fighting in
                     // the header; whichever won depended on resolution order.
@@ -146,9 +156,9 @@ pub(super) fn render(
                         attr: "pos".into(),
                         value: format!(
                             "[{}, {}, {}]",
-                            format_inspector_scalar(tx),
-                            format_inspector_scalar(ty),
-                            format_inspector_scalar(tz),
+                            format_inspector_scalar(t[0]),
+                            format_inspector_scalar(t[1]),
+                            format_inspector_scalar(t[2]),
                         ),
                         delete: pos_shadows.clone(),
                     });
@@ -160,25 +170,15 @@ pub(super) fn render(
                 locked_transform_row(ui, "Rotate\u{00B0}", raw);
             } else {
                 ui.label("Rotate\u{00B0}");
-                let mut emit_rot = false;
-                if ui.add(egui::DragValue::new(&mut rx).speed(0.5).suffix("\u{00B0}")).changed() {
-                    emit_rot = true;
-                }
-                if ui.add(egui::DragValue::new(&mut ry).speed(0.5).suffix("\u{00B0}")).changed() {
-                    emit_rot = true;
-                }
-                if ui.add(egui::DragValue::new(&mut rz).speed(0.5).suffix("\u{00B0}")).changed() {
-                    emit_rot = true;
-                }
-                if emit_rot {
+                if drag_triple(ui, &mut r, 0.5, "\u{00B0}").is_some() {
                     edits.push(PendingEdit::SetAttrCanonical {
                         node: node_id,
                         attr: "rot".into(),
                         value: format!(
                             "[{}, {}, {}]",
-                            format_inspector_scalar(rx),
-                            format_inspector_scalar(ry),
-                            format_inspector_scalar(rz),
+                            format_inspector_scalar(r[0]),
+                            format_inspector_scalar(r[1]),
+                            format_inspector_scalar(r[2]),
                         ),
                         delete: rot_shadows.clone(),
                     });
@@ -191,40 +191,22 @@ pub(super) fn render(
                 return;
             }
             ui.label("Scale");
-            let pre_sx = sx;
-            let pre_sy = sy;
-            let pre_sz = sz;
+            let pre = s;
             let linked = *scale_linked;
-            let mut changed_axis: Option<u8> = None;
-            if ui.add(egui::DragValue::new(&mut sx).speed(0.02)).changed() {
-                changed_axis = Some(0);
-            }
-            if ui.add(egui::DragValue::new(&mut sy).speed(0.02)).changed() {
-                changed_axis = Some(1);
-            }
-            if ui.add(egui::DragValue::new(&mut sz).speed(0.02)).changed() {
-                changed_axis = Some(2);
-            }
+            let changed_axis = drag_triple(ui, &mut s, 0.02, "");
             if let Some(axis) = changed_axis {
                 if linked {
                     // Multiply the other two axes by the same ratio the
                     // dragged axis just took, falling back to uniform when
                     // the old value is ~0 — otherwise the others would stay
                     // at 0 and silently swallow the drag.
-                    let (new_v, old_v) = match axis {
-                        0 => (sx, pre_sx),
-                        1 => (sy, pre_sy),
-                        _ => (sz, pre_sz),
-                    };
+                    let i = axis as usize;
+                    let (new_v, old_v) = (s[i], pre[i]);
                     if old_v.abs() > 1.0e-6 {
                         let ratio = new_v / old_v;
-                        sx = pre_sx * ratio;
-                        sy = pre_sy * ratio;
-                        sz = pre_sz * ratio;
+                        s = [pre[0] * ratio, pre[1] * ratio, pre[2] * ratio];
                     } else {
-                        sx = new_v;
-                        sy = new_v;
-                        sz = new_v;
+                        s = [new_v, new_v, new_v];
                     }
                 }
                 edits.push(PendingEdit::SetAttrCanonical {
@@ -233,9 +215,9 @@ pub(super) fn render(
                     delete: Vec::new(),
                     value: format!(
                         "[{}, {}, {}]",
-                        format_inspector_scalar(sx),
-                        format_inspector_scalar(sy),
-                        format_inspector_scalar(sz),
+                        format_inspector_scalar(s[0]),
+                        format_inspector_scalar(s[1]),
+                        format_inspector_scalar(s[2]),
                     ),
                 });
             }

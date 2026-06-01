@@ -34,7 +34,7 @@ use glam::{Quat, Vec3};
 
 use mogen_core::{AttachBinding, NodeId, SceneGraph, Span, Transform};
 
-use crate::ast::{Node, Value};
+use crate::ast::Node;
 
 #[derive(Debug)]
 struct AttachSpec {
@@ -187,12 +187,16 @@ fn walk(n: &Node, out: &mut Vec<AttachSpec>) -> Result<()> {
 }
 
 fn build_spec(n: &Node) -> Result<AttachSpec> {
-    let parent = str_attr(n, "parent")
+    let parent = n
+        .attr_string("parent")
+        .map(str::to_string)
         .ok_or_else(|| anyhow!("attach requires parent=\"<node name>\""))?;
-    let child = str_attr(n, "child")
+    let child = n
+        .attr_string("child")
+        .map(str::to_string)
         .ok_or_else(|| anyhow!("attach requires child=\"<node name>\""))?;
-    let socket = str_attr(n, "socket").unwrap_or_else(|| "top".to_string());
-    let plug = str_attr(n, "plug").unwrap_or_else(|| "bottom".to_string());
+    let socket = n.attr_string("socket").unwrap_or("top").to_string();
+    let plug = n.attr_string("plug").unwrap_or("bottom").to_string();
     let offset = n.attr_number("offset").unwrap_or(0.0);
     let twist_deg = n.attr_number("twist").unwrap_or(0.0);
     Ok(AttachSpec {
@@ -205,13 +209,6 @@ fn build_spec(n: &Node) -> Result<AttachSpec> {
         use_id: n.use_id,
         span: n.span,
     })
-}
-
-fn str_attr(n: &Node, key: &str) -> Option<String> {
-    match n.attr(key)? {
-        Value::String(s) | Value::Ident(s) => Some(s.clone()),
-        _ => None,
-    }
 }
 
 fn apply_attach(

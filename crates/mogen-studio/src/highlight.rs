@@ -8,30 +8,23 @@
 
 use eframe::egui::{self, text::LayoutJob, Color32, FontId, TextFormat};
 
-/// Node kinds + parameter enum values from the `.mog` grammar. Anything in this
-/// set is painted as a keyword regardless of position; everything else is left
-/// with the default text colour. Keep this list aligned with `KNOWN_KINDS` in
-/// `mogen-validate/src/ast_checks/schema.rs` plus the dispatched enum values
-/// in `mogen-dsl/src/{lower,module,anim_lower,skin_lower,attach,conform}.rs`.
-const KEYWORDS: &[&str] = &[
-    // Top-level + structural
-    "scene", "module", "use", "import", "group", "solid", "stack", "grid", "lod_scale",
-    // Primitives
-    "box", "sphere", "cylinder", "cone", "capsule", "torus", "prism", "pyramid", "disc",
-    "icosphere", "rounded_box", "plane", "quad", "ellipsoid", "superellipsoid", "hemisphere",
-    "frustum", "tube", "spline_tube", "spline_ribbon", "torus_arc", "half_cylinder",
-    "curved_plane", "lathe", "leaf_card", "mesh", "wedge", "slab", "post", "panel", "wall",
-    "branch", "decal",
-    // CSG + repetition
-    "union", "difference", "intersect", "array", "mirror",
-    // Materials, attachment, lights
-    "material", "attach", "conform", "connector", "light",
-    // Animation + skinning
-    "joint", "skeleton", "bone", "clip", "track", "spin", "open_close", "wave", "flap", "idle",
+use mogen_validate::KNOWN_KINDS;
+
+/// Parameter enum values that commonly appear bare on the RHS of an attribute
+/// (e.g. `axis=y`, `uv_mode=tile`, `kind=directional`). These aren't node
+/// kinds — the highlighter paints them as keywords for visual consistency with
+/// the enum names dispatched on in `mogen-dsl/src/{lower,anim_lower,…}`.
+/// Node kinds themselves come from [`KNOWN_KINDS`].
+const ENUM_VALUE_KEYWORDS: &[&str] = &[
+    // Joint type names
     "translation", "rotation", "scale", "hinge", "slider", "ball", "rotor",
-    // Parameter enum values that commonly appear at the top level of an attr
+    // Material/light enum values
     "opaque", "mask", "blend", "tile", "fit", "directional", "point", "spot",
 ];
+
+fn is_keyword(word: &str) -> bool {
+    KNOWN_KINDS.contains(&word) || ENUM_VALUE_KEYWORDS.contains(&word)
+}
 
 #[derive(Clone, Copy)]
 pub struct Palette {
@@ -161,7 +154,7 @@ pub fn highlight(src: &str, font_id: FontId, palette: Palette, wrap_width: f32) 
                 i += 1;
             }
             let word = &src[start..i];
-            let color = if KEYWORDS.contains(&word) {
+            let color = if is_keyword(word) {
                 palette.keyword
             } else {
                 palette.default
@@ -445,5 +438,22 @@ mod tests {
         let secs = sections_text(&job);
         assert_eq!(secs[0].0, "box");
         assert_eq!(secs[0].1, palette().keyword);
+    }
+
+    #[test]
+    fn highlights_kinds_absent_from_old_keyword_list() {
+        // chamfered_box, metaball, coil, extrude, heightfield are in KNOWN_KINDS
+        // but were missing from the old hand-written KEYWORDS array. Verify
+        // they now paint as keywords via the KNOWN_KINDS reference.
+        let src = "chamfered_box metaball coil extrude heightfield";
+        let job = highlight(src, font(), palette(), f32::INFINITY);
+        let secs = sections_text(&job);
+        for token in &["chamfered_box", "metaball", "coil", "extrude", "heightfield"] {
+            let sec = secs
+                .iter()
+                .find(|(t, _)| t.as_str() == *token)
+                .unwrap_or_else(|| panic!("{token} section not found"));
+            assert_eq!(sec.1, palette().keyword, "{token} should paint as keyword");
+        }
     }
 }

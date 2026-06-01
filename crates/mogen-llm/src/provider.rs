@@ -683,12 +683,19 @@ mod tests {
 
     #[test]
     fn from_env_returns_missing_key_for_blank_cloud_provider() {
-        // SAFETY: tests are single-threaded per file by default in cargo, but
-        // these env mutations could race under `--test-threads`. Using
-        // unique variable names per provider would be ideal; here we just
-        // unset and assert the error path.
+        // `from_env` resolves keys in two stages: the env var, then the
+        // shared `~/.mogen/settings.json` store. To exercise the error path
+        // hermetically we must defeat *both* — otherwise a developer with a
+        // real key on disk (env or settings file) sees this pass on CI but
+        // fail locally. Point `MOGEN_SETTINGS` at a guaranteed-absent path so
+        // the settings-store fallback reads nothing.
+        let missing_settings =
+            std::env::temp_dir().join("mogen-test-nonexistent-settings.json");
         std::env::remove_var("OPENAI_API_KEY");
-        match LlmClient::from_env(Provider::OpenAI) {
+        std::env::set_var("MOGEN_SETTINGS", &missing_settings);
+        let result = LlmClient::from_env(Provider::OpenAI);
+        std::env::remove_var("MOGEN_SETTINGS");
+        match result {
             Err(ProviderError::MissingApiKey { var: "OPENAI_API_KEY" }) => {}
             Err(other) => panic!("wrong error: {other}"),
             Ok(_) => panic!("expected MissingApiKey but got Ok"),
