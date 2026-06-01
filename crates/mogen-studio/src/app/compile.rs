@@ -275,21 +275,38 @@ impl MogenStudioApp {
                     node_path: self.current_selection_path(i),
                 };
                 self.push_undo(i, undo_before, key);
+                // Inspector DragValues emit a fresh edit on every frame of a
+                // drag, whereas the gizmo and discrete widgets (combo picks,
+                // typed values, deletes) emit once on release. A full
+                // recompile + mesh re-flatten reloads geometry and textures
+                // from disk, so doing it per frame makes the app visibly hang
+                // while a transform field is dragged. While the pointer is
+                // still mid-drag we therefore defer to the debounce —
+                // `drive_compile_debounce` coalesces the burst into a single
+                // recompile once the user pauses (and still fires mid-drag if
+                // they hold without moving for the debounce window).
+                //
+                // On a discrete commit we keep compiling immediately so the
+                // viewport reflects the change on the very next frame.
                 // Gizmo releases are discrete events, not keystroke bursts —
-                // skip the 180 ms debounce and compile immediately so the
-                // viewport can pick up the rotated / translated / scaled
-                // scene on the very next frame. Without this, the preview
-                // clears on release and the new scene only arrives on the
-                // next idle tick, which looks to the user like the gizmo
-                // action was rejected and the value snapped back.
-                self.compile_active();
-                // Belt-and-braces: also request the debounce-boundary
-                // repaint so if something does leave `needs_compile` set
-                // (e.g. the caller wraps a batch of gizmo edits through
-                // this path), the next window still fires.
+                // without the immediate compile the preview clears on release
+                // and the new scene only arrives on the next idle tick, which
+                // looks to the user like the action was rejected and the value
+                // snapped back. Deletes are always discrete too.
+                let mid_drag = ctx.is_using_pointer() && !any_delete;
+                if !mid_drag {
+                    self.compile_active();
+                }
+                // Request the debounce-boundary repaint either way: an
+                // immediate compile clears `needs_compile`, but a deferred one
+                // relies on this to wake `drive_compile_debounce`.
                 ctx.request_repaint_after(COMPILE_DEBOUNCE);
                 if trace {
-                    eprintln!("[gizmo] drain done — triggered immediate compile");
+                    if mid_drag {
+                        eprintln!("[gizmo] drain done — deferred compile (mid-drag)");
+                    } else {
+                        eprintln!("[gizmo] drain done — triggered immediate compile");
+                    }
                 }
             }
         }

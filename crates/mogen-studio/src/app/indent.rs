@@ -1,15 +1,22 @@
 //! Block-indent / block-dedent for the code editor's selection.
 //!
 //! Runs before the `TextEdit` paints so it can swallow Tab / Shift+Tab and
-//! rewrite the source + cursor itself. Defaults are preserved when the action
-//! doesn't apply: a single-line Tab still inserts a literal `\t`.
+//! rewrite the source + cursor itself. Tab inserts two spaces (one indent
+//! unit) rather than a literal `\t`: a multi-line selection indents every
+//! covered line, while a caret or in-line selection inserts a single indent.
 
 use eframe::egui;
 use egui::text::{CCursor, CCursorRange};
 
 use super::MogenStudioApp;
 
-const SPACES_PER_TAB: usize = 4;
+/// Width of one indent level, in spaces. Drives both the Tab insert and the
+/// Shift+Tab dedent so the two stay symmetric.
+const SPACES_PER_TAB: usize = 2;
+
+/// One indent level as literal text. Inserted on Tab in place of egui's
+/// default `\t` so the code surface stays space-indented.
+const INDENT: &str = "  ";
 
 impl MogenStudioApp {
     /// Returns `true` when the source was mutated and the caller should mark
@@ -42,18 +49,19 @@ impl MogenStudioApp {
         let multi_line = source_ref[lo_byte..hi_byte].contains('\n');
         let has_selection = hi_byte > lo_byte;
 
-        // Tab is only intercepted for multi-line selections — otherwise the
-        // default code-editor behaviour (insert / replace with `\t`) wins.
-        // Shift+Tab is always handled (dedents the current line at minimum).
+        // Tab is always intercepted so it inserts spaces instead of egui's
+        // default literal `\t`: a multi-line selection block-indents, a caret
+        // or in-line selection inserts a single indent unit. Shift+Tab is
+        // likewise always handled (dedents the current line at minimum).
         //
         // Check Shift+Tab FIRST: egui's `consume_key` uses
         // `Modifiers::matches_logically`, which ignores extra modifiers — so
         // `consume_key(NONE, Tab)` happily matches a Shift+Tab event too. If
-        // we matched the broader Tab pattern first on a multi-line selection,
-        // Shift+Tab would silently re-indent instead of dedenting.
+        // we matched the broader Tab pattern first, Shift+Tab would silently
+        // re-indent instead of dedenting.
         let (tab, shift_tab) = ui.input_mut(|i| {
             let shift_tab = i.consume_key(egui::Modifiers::SHIFT, egui::Key::Tab);
-            let tab = if multi_line && !shift_tab {
+            let tab = if !shift_tab {
                 i.consume_key(egui::Modifiers::NONE, egui::Key::Tab)
             } else {
                 false
@@ -89,17 +97,27 @@ impl MogenStudioApp {
         let source = &mut self.files[i].source;
 
         let mutated = if tab {
-            // Insert in reverse so earlier byte offsets stay valid.
-            for &ls in line_starts.iter().rev() {
-                source.insert(ls, '\t');
-            }
-            for &ls in &line_starts {
-                if ls < new_lo {
-                    new_lo += 1;
+            if multi_line {
+                // Block-indent every covered line by one indent unit. Insert
+                // in reverse so earlier byte offsets stay valid.
+                for &ls in line_starts.iter().rev() {
+                    source.insert_str(ls, INDENT);
                 }
-                if ls < new_hi {
-                    new_hi += 1;
+                for &ls in &line_starts {
+                    if ls < new_lo {
+                        new_lo += INDENT.len();
+                    }
+                    if ls < new_hi {
+                        new_hi += INDENT.len();
+                    }
                 }
+            } else {
+                // Caret or in-line selection: replace the selection (empty for
+                // a bare caret) with one indent unit and drop the cursor after
+                // it. This is what makes a plain Tab insert two spaces.
+                source.replace_range(lo_byte..hi_byte, INDENT);
+                new_lo = lo_byte + INDENT.len();
+                new_hi = new_lo;
             }
             true
         } else {
