@@ -686,14 +686,28 @@ impl MogenStudioApp {
             return;
         };
         session.state.prompt = session.prompt_draft.clone();
-        let has_image = session.state.source_image.is_some();
+        let has_image_path = session.state.source_image.is_some();
+        let (source_bytes, source_mime) = read_source_image(&session.state);
+        let has_image = source_bytes.is_some();
+        // Source image path is set but the file can't be read — likely moved or
+        // deleted after being picked. Surface this rather than silently falling
+        // back to text-only while the status line says "Reading the source image".
+        if has_image_path && !has_image {
+            session.error = Some(
+                "Source image could not be read — it may have been moved or deleted. \
+                 Clear the source image or choose a new one."
+                    .into(),
+            );
+            return;
+        }
         // An image-driven run needs a vision-capable text provider for the
         // brief/manifest; bail clearly instead of sending a photo into the
         // void on a text-only provider.
         if has_image && !provider.supports_images() {
             session.error = Some(format!(
-                "{provider:?} can't read images — switch to a vision provider (Gemini, OpenAI, \
-                 Anthropic…) in Preferences, or clear the source image."
+                "{} can't read images — switch to a vision provider (Gemini, OpenAI, \
+                 Anthropic…) in Preferences, or clear the source image.",
+                provider.label()
             ));
             return;
         }
@@ -701,7 +715,6 @@ impl MogenStudioApp {
             session.error = Some("Enter a scene prompt or choose a source image first.".into());
             return;
         }
-        let (source_bytes, source_mime) = read_source_image(&session.state);
         let _ = persist::save(&session.state);
         session.running = WizardBusy::Brief;
         session.error = None;
@@ -805,30 +818,44 @@ impl MogenStudioApp {
             pending.len(),
             names.join(", ")
         );
+        // Read the source image once here so batch spawns don't each re-read
+        // the file from disk (one read per object for up to 18 objects is
+        // wasteful; the bytes are cloned into each worker thread instead).
+        let (source_bytes, source_mime) = read_source_image(&session.state);
         // Wrap in Arc so each worker shares the same client without forcing
         // `ImageClient: Clone` (its inner Gemini auth holds a Mutex).
         let client = Arc::new(client);
         let seed = cfg.seed;
         for obj in pending {
-            self.spawn_reference_worker(ctx, obj, Arc::clone(&client), seed);
+            self.spawn_reference_worker(
+                ctx,
+                obj,
+                Arc::clone(&client),
+                seed,
+                source_bytes.clone(),
+                source_mime.clone(),
+            );
         }
     }
 
     /// Spawn a single reference-image worker. Assumes the caller has already
     /// reserved `obj.id` in `running_ref_ids` so the snapshot-and-filter loop
-    /// can't double-issue an id.
+    /// can't double-issue an id. `source_bytes`/`source_mime` should be read
+    /// once by the caller (via `read_source_image`) and passed in so batch
+    /// spawns don't re-read the source file once per object.
     fn spawn_reference_worker(
         &mut self,
         ctx: &egui::Context,
         obj: super::wizard::state::ObjectEntry,
         client: Arc<ImageClient>,
         seed: u64,
+        source_bytes: Option<Vec<u8>>,
+        source_mime: Option<String>,
     ) {
         let Some(session) = self.wizard.as_mut() else {
             return;
         };
         let out = session.state.references_dir().join(format!("{}.png", obj.id));
-        let (source_bytes, source_mime) = read_source_image(&session.state);
         let tx = session.tx.clone();
         let ctx_clone = ctx.clone();
         let id = obj.id.clone();
@@ -872,7 +899,13 @@ impl MogenStudioApp {
             s.running_ref_ids.insert(id.clone());
             obj
         };
-        self.spawn_reference_worker(ctx, obj, Arc::new(client), seed);
+        let (source_bytes, source_mime) = {
+            let Some(s) = self.wizard.as_ref() else {
+                return;
+            };
+            read_source_image(&s.state)
+        };
+        self.spawn_reference_worker(ctx, obj, Arc::new(client), seed, source_bytes, source_mime);
     }
 
     /// Spawn up to `target_concurrency` per-object module workers, skipping
