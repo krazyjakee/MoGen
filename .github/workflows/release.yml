@@ -85,7 +85,7 @@ jobs:
 
       - name: Install cargo-deb
         if: runner.os == 'Linux'
-        run: cargo install cargo-deb --locked
+        run: cargo install cargo-deb --version 3.7.0 --locked
 
       - name: Package .deb (linux)
         if: runner.os == 'Linux'
