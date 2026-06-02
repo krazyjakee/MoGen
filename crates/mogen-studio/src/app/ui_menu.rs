@@ -537,8 +537,10 @@ impl MogenStudioApp {
                     .button("Tidy Code")
                     .on_hover_text(
                         "Reformat the active file with consistent 2-space \
-                         indentation, trailing-whitespace strip, and one \
-                         statement per line — like a JavaScript beautifier",
+                         indentation, trailing-whitespace strip, one statement \
+                         per line, normalized argument spacing (a = 1, [1, 2, \
+                         3]), and long argument lists broken one-per-line — \
+                         like a JavaScript beautifier",
                     )
                     .clicked()
                 {

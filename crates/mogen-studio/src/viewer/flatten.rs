@@ -184,6 +184,14 @@ pub struct FlatMesh {
     /// `SceneNode` id that contributed the triangle. CPU-side only — used by
     /// the viewport picker, never uploaded.
     pub tri_node: Vec<NodeId>,
+    /// `(index_start, index_count, node)` for every collider-bearing mesh node.
+    /// Each node's triangles are appended contiguously, so a collider maps to a
+    /// single index range into `indices`. The viewport's collider overlay draws
+    /// these ranges as a wireframe (reusing the main VBO — positions are already
+    /// rest-pose world-baked) so trimesh/convex colliders are visible, not just
+    /// AABBs. Holds runs for every collider variant; the overlay simply outlines
+    /// the node's own mesh, which is what trimesh/convex collide against 1:1.
+    pub collider_index_runs: Vec<(u32, u32, NodeId)>,
 }
 
 impl FlatMesh {
@@ -282,6 +290,7 @@ pub fn flatten_with_worlds(
     let mut batches: Vec<DrawBatch> = Vec::new();
     let mut palette_sources: Vec<PaletteSource> = Vec::new();
     let mut tri_node: Vec<NodeId> = Vec::new();
+    let mut collider_index_runs: Vec<(u32, u32, NodeId)> = Vec::new();
     let mut min = Vec3::splat(f32::INFINITY);
     let mut max = Vec3::splat(f32::NEG_INFINITY);
 
@@ -399,6 +408,14 @@ pub fn flatten_with_worlds(
                 indices.extend(mesh.indices.iter().map(|idx| base + idx));
                 let tri_count = (indices.len() - idx_before) / 3;
                 tri_node.extend(std::iter::repeat(node_id).take(tri_count));
+                // Record the contiguous index range for collider-bearing nodes
+                // so the overlay can outline exactly this node's geometry.
+                if node.collider.is_some() {
+                    let count = (indices.len() - idx_before) as u32;
+                    if count > 0 {
+                        collider_index_runs.push((idx_before as u32, count, node_id));
+                    }
+                }
             }
             let batch_count = indices.len() as u32 - batch_start;
             if batch_count == 0 {
@@ -535,6 +552,7 @@ pub fn flatten_with_worlds(
         center,
         radius,
         tri_node,
+        collider_index_runs,
     }
 }
 

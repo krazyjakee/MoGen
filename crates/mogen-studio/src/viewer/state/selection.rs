@@ -228,6 +228,25 @@ pub(crate) fn toggle_selection(st: &mut ViewerState, id: NodeId) {
 /// ancestor exists.
 pub(crate) fn redirect_pick(scene: &SceneGraph, id: NodeId) -> Option<NodeId> {
     let node = scene.nodes.get(id.0 as usize)?;
+    // A non-editable node belongs to a generated subtree (cave / array /
+    // mirror / CSG output) that a rebuild regenerates from its source. The
+    // user can't act on it directly, so redirect the pick up to the nearest
+    // editable ancestor that owns a source span — the generator wrapper /
+    // operator node they CAN edit. Without this, clicking a cave's rock or
+    // decoration geometry dead-ends on a non-editable child and the cave's
+    // wrapper-level controls (the debug toggles) stay unreachable.
+    if !node.editable {
+        let mut cur = node.parent;
+        while let Some(pid) = cur {
+            let parent = scene.nodes.get(pid.0 as usize)?;
+            if parent.editable && parent.source_span.is_some() {
+                return Some(pid);
+            }
+            cur = parent.parent;
+        }
+        // No editable ancestor (a bare non-editable root). Fall through to
+        // the use_id logic below, which bails to None / self as appropriate.
+    }
     if node.use_id.is_none() {
         return Some(id);
     }

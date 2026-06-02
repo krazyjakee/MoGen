@@ -515,11 +515,19 @@ of `seed=` plus the declared attrs). See `docs/caves.md` for the full spec.
 | `blend` | `1.5` | Smooth-union radius blending chambers + passages. |
 | `margin` | `2.0` | Rock thickness kept around the void on every face (m). |
 | `resolution` | `96` | Voxel-grid resolution (32–224). Higher = finer + slower. |
+| `lod_scale` | `1.0` | Mesh-quality scale `[0.1, 1.0]`; scales rock voxel grid + decoration tessellation. Lower = fewer triangles. Layout / counts / POIs unaffected. |
 | `entrances` | `1` | Horizontal mouths punched out to a side face. |
 | `mat` | `cave_rock` | Rock material; defaults to an auto-stamped grey stone. |
 | `water_mat` | `cave_water` | Material for pools / lakes. |
-| `rock_piles`, `pools`, `lakes`, `stalagmites`, `stalactites` | `0` | Decoration counts scattered on chamber floors / ceilings. |
+| `rock_piles`, `pools`, `lakes`, `stalagmites`, `stalactites`, `columns` | `0` | Decoration counts scattered on chamber floors / ceilings (`columns` span floor→ceiling). |
+| `mushrooms` | `0` | Mushroom-spot POI markers on chamber floors (empty nodes, no geometry). |
 | `debug_hide_shell` | `0` | Debug: slice the front (+Z) half of the rock away to see the chambers in cross-section (like `building`'s `debug_hide_roof`). |
+| `debug_show_poi` | `0` | Debug: give every point-of-interest marker a small bright per-kind `cave_poi_<kind>` sphere (colour-coded by group) so the empty markers are visible in a preview. |
+
+Beyond geometry, `cave` embeds **points of interest** as empty marker nodes
+(`role`/`tags` in glTF extras) under a `points_of_interest` group:
+`dead_end_chamber` (single-connection rooms), `column_base`, `ladder_anchor`
+(passages steeper than `max_slope`) and `mushroom_spot`. See `docs/caves.md`.
 
 Decorations are placed by querying the **real carved floor / ceiling** under
 each feature, so drips and boulders sit flush on the surface rather than the
@@ -527,7 +535,7 @@ geometric chamber bound. `cave` accepts only `feature` children, which tune one
 decoration kind:
 
 ```
-feature "<name>" (kind=stalagmite|stalactite|rock_pile|pool|lake,
+feature "<name>" (kind=stalagmite|stalactite|column|rock_pile|pool|lake,
                   count=…, min_size=…, max_size=…, mat="<material>")
 ```
 

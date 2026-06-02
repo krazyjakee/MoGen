@@ -358,6 +358,116 @@ impl MogenStudioApp {
             add_attr::render(ui, &kind, &add_src, span, node_id, &mut edits);
         }
 
+        // Cave debug toggles. `cave` is a generator wrapper, not a primitive, so
+        // it has no geometry grid — surface its preview-only flags here. The
+        // checkbox writes `debug_show_poi=1`/`0` through the same span-aware
+        // edit path so it round-trips with the text editor and undo stack.
+        if node.kind == "cave" {
+            if let Some(span) = node_span {
+                // Cave colliders are managed per-surface by the generator (the
+                // shell + decorations get trimesh colliders); these knobs pick
+                // which surfaces collide rather than the generic AABB toggle.
+                ui.add_space(8.0);
+                ui.separator();
+                ui.label(egui::RichText::new("Collider").strong());
+                let cur_mode = crate::edit::get_attr(&self.files[i].source, span, "colliders")
+                    .map(|v| v.trim().trim_matches('"').to_string())
+                    .unwrap_or_else(|| "all".to_string());
+                ui.horizontal(|ui| {
+                    ui.label("Surfaces");
+                    egui::ComboBox::from_id_salt(("cave_colliders", node_id.0))
+                        .selected_text(&cur_mode)
+                        .show_ui(ui, |ui| {
+                            for (opt, hint) in [
+                                ("all", "Rock shell + every solid decoration"),
+                                ("shell", "Only the outer rock shell; decorations walk-through"),
+                                ("none", "No colliders on any cave geometry"),
+                            ] {
+                                let selected = cur_mode == opt;
+                                if ui
+                                    .selectable_label(selected, opt)
+                                    .on_hover_text(hint)
+                                    .clicked()
+                                    && !selected
+                                {
+                                    edits.push(PendingEdit::SetAttrCanonical {
+                                        node: node_id,
+                                        attr: "colliders".into(),
+                                        value: format!("\"{opt}\""),
+                                        delete: Vec::new(),
+                                    });
+                                }
+                            }
+                        });
+                });
+                let mut water_collider =
+                    crate::edit::get_attr(&self.files[i].source, span, "water_collider")
+                        .map(|v| v.trim().parse::<f32>().map(|n| n.abs() > 0.5).unwrap_or(false))
+                        .unwrap_or(false);
+                if ui
+                    .checkbox(&mut water_collider, "Water is solid")
+                    .on_hover_text(
+                        "Give pools and lakes a trimesh collider so a player \
+                         stands on the surface. Off by default so water is \
+                         wadeable.",
+                    )
+                    .changed()
+                {
+                    edits.push(PendingEdit::SetAttrCanonical {
+                        node: node_id,
+                        attr: "water_collider".into(),
+                        value: if water_collider { "1" } else { "0" }.into(),
+                        delete: Vec::new(),
+                    });
+                }
+
+                let mut show_poi = crate::edit::get_attr(&self.files[i].source, span, "debug_show_poi")
+                    .map(|v| v.trim().parse::<f32>().map(|n| n.abs() > 0.5).unwrap_or(false))
+                    .unwrap_or(false);
+                ui.add_space(8.0);
+                ui.separator();
+                ui.label(egui::RichText::new("Debug").strong());
+                if ui
+                    .checkbox(&mut show_poi, "Show POI markers")
+                    .on_hover_text(
+                        "Give every point-of-interest marker (dead-end chambers, \
+                         column bases, ladder anchors, mushroom spots) a small \
+                         bright sphere so the otherwise-empty markers are visible \
+                         in the preview. Off for production bakes.",
+                    )
+                    .changed()
+                {
+                    edits.push(PendingEdit::SetAttrCanonical {
+                        node: node_id,
+                        attr: "debug_show_poi".into(),
+                        value: if show_poi { "1" } else { "0" }.into(),
+                        delete: Vec::new(),
+                    });
+                }
+
+                let mut hide_shell =
+                    crate::edit::get_attr(&self.files[i].source, span, "debug_hide_shell")
+                        .map(|v| v.trim().parse::<f32>().map(|n| n.abs() > 0.5).unwrap_or(false))
+                        .unwrap_or(false);
+                if ui
+                    .checkbox(&mut hide_shell, "Hide outer shell")
+                    .on_hover_text(
+                        "Slice the front (+Z) half of the rock shell away so the \
+                         chambers are visible in cross-section. Off for production \
+                         bakes.",
+                    )
+                    .changed()
+                {
+                    edits.push(PendingEdit::SetAttrCanonical {
+                        node: node_id,
+                        attr: "debug_hide_shell".into(),
+                        value: if hide_shell { "1" } else { "0" }.into(),
+                        delete: Vec::new(),
+                    });
+                }
+            }
+        }
+
         // CSG op switch + array / mirror modifier rows.
         let mut change_kind_to: Option<&'static str> = None;
         {
@@ -446,12 +556,15 @@ impl MogenStudioApp {
 
         // Collider editor — single checkbox toggling `collider="aabb"` on
         // the node. Skipped for `light` nodes since the validator rejects
-        // `collider=` there (lights have no AABB to enclose).
+        // `collider=` there (lights have no AABB to enclose). Skipped for
+        // `cave` too: the cave manages its own per-surface trimesh colliders
+        // via `colliders=` (handled in the cave block above), and an AABB on
+        // the wrapper would be a solid box enclosing the hollow cave.
         let collider_present = node.collider.is_some();
         let collider_aabb = node.collider.as_ref().and_then(|c| c.as_aabb());
         let mut wants_set_collider = false;
         let mut wants_remove_collider = false;
-        if node.light.is_none() {
+        if node.light.is_none() && node.kind != "cave" {
             ui.add_space(8.0);
             ui.separator();
             ui.label(egui::RichText::new("Collider").strong());

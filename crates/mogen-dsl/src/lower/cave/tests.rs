@@ -168,31 +168,299 @@ cave "ice_cave" (
 }
 
 #[test]
-fn cave_debug_hide_shell_cuts_the_front_half() {
+fn cave_debug_hide_shell_strips_the_outer_hull() {
     let full = lower_src(BASIC);
     let cut = lower_src(&BASIC.replace("entrances=1,", "entrances=1, debug_hide_shell=1,"));
-    let rock_z_max = |g: &SceneGraph| -> f32 {
+    let extents = |g: &SceneGraph| -> ([f32; 3], [f32; 3]) {
         let rock = g
             .nodes
             .iter()
             .find(|n| n.role.as_deref() == Some("cave_rock"))
             .unwrap();
-        rock.mesh
-            .as_ref()
-            .unwrap()
-            .positions
-            .iter()
-            .map(|p| p[2])
-            .fold(f32::NEG_INFINITY, f32::max)
+        let mut lo = [f32::INFINITY; 3];
+        let mut hi = [f32::NEG_INFINITY; 3];
+        for p in &rock.mesh.as_ref().unwrap().positions {
+            for k in 0..3 {
+                lo[k] = lo[k].min(p[k]);
+                hi[k] = hi[k].max(p[k]);
+            }
+        }
+        (lo, hi)
     };
-    // The cutaway removes everything in front of the mid-Z plane, so the rock
-    // should no longer extend into positive Z the way the full shell does.
+    let (flo, fhi) = extents(&full);
+    let (clo, chi) = extents(&cut);
+    // With the outer hull removed, the remaining inner cavity walls sit well
+    // inside the original block on every axis — the bounding box shrinks inward
+    // from all six faces, not just the +Z one.
+    for k in 0..3 {
+        assert!(
+            chi[k] < fhi[k] - 0.5 && clo[k] > flo[k] + 0.5,
+            "axis {k}: hidden-shell extent should shrink inward on both ends \
+             (full [{}, {}], cut [{}, {}])",
+            flo[k],
+            fhi[k],
+            clo[k],
+            chi[k],
+        );
+    }
+}
+
+#[test]
+fn cave_columns_span_floor_to_ceiling_and_get_colliders() {
+    let src = r#"
+cave "pillared" (
+  seed=5,
+  size=[24, 12, 24],
+  chambers=6,
+  resolution=48,
+  columns=4,
+)
+"#;
+    let g = lower_src(src);
+    let columns: Vec<_> = g
+        .nodes
+        .iter()
+        .filter(|n| n.role.as_deref() == Some("column"))
+        .collect();
+    assert!(!columns.is_empty(), "expected at least one column placed");
+    for col in &columns {
+        let mesh = col.mesh.as_ref().expect("column mesh");
+        let (mut lo, mut hi) = (f32::INFINITY, f32::NEG_INFINITY);
+        for p in &mesh.positions {
+            lo = lo.min(p[1]);
+            hi = hi.max(p[1]);
+        }
+        // A column spans a real vertical extent (floor to ceiling), not a stub.
+        assert!(hi - lo > 1.0, "column too short: span {}", hi - lo);
+        // Like every other solid cave mesh, a column gets a collider.
+        assert!(col.collider.is_some(), "column should carry a collider");
+    }
+}
+
+#[test]
+fn cave_emits_points_of_interest() {
+    let src = r#"
+cave "poi_cave" (
+  seed=7,
+  size=[28, 14, 28],
+  chambers=8,
+  levels=2,
+  resolution=48,
+  columns=3,
+  mushrooms=5,
+)
+"#;
+    let g = lower_src(src);
+    // Mushroom spots are an exact count and are pure markers (no mesh/collider).
+    let shrooms: Vec<_> = g
+        .nodes
+        .iter()
+        .filter(|n| n.role.as_deref() == Some("mushroom_spot"))
+        .collect();
+    assert_eq!(shrooms.len(), 5);
+    for s in &shrooms {
+        assert!(s.mesh.is_none(), "POI markers carry no geometry");
+        assert!(s.collider.is_none(), "POI markers carry no collider");
+        assert!(s.tags.iter().any(|t| t == "poi"), "POI tagged for the importer");
+    }
+    // A column placed → its base is marked.
     assert!(
-        rock_z_max(&cut) < rock_z_max(&full) - 1.0,
-        "cutaway should shrink the +Z extent (full {}, cut {})",
-        rock_z_max(&full),
-        rock_z_max(&cut)
+        count_role(&g, "column_base") > 0,
+        "each column should emit a column_base POI"
     );
+    // Two layers joined by passages → at least one inter-floor climb gets a
+    // ladder / rope anchor.
+    assert!(
+        count_role(&g, "ladder_anchor") > 0,
+        "inter-layer climbs should emit ladder_anchor POIs"
+    );
+}
+
+#[test]
+fn cave_debug_show_poi_visualizes_markers() {
+    let base = r#"
+cave "poi_cave" (
+  seed=7,
+  size=[28, 14, 28],
+  chambers=8,
+  levels=2,
+  resolution=48,
+  columns=3,
+  mushrooms=5,
+)
+"#;
+    // Without the flag, markers are geometry-free.
+    let plain = lower_src(base);
+    let shrooms_plain: Vec<_> = plain
+        .nodes
+        .iter()
+        .filter(|n| n.role.as_deref() == Some("mushroom_spot"))
+        .collect();
+    assert!(shrooms_plain.iter().all(|n| n.mesh.is_none()));
+
+    // With debug_show_poi=1, every marker gets a small mesh + a debug material
+    // colour-coded by kind, but still no collider (it's a viewing aid only).
+    let dbg = lower_src(&base.replace("mushrooms=5,", "mushrooms=5, debug_show_poi=1,"));
+    let markers: Vec<_> = dbg
+        .nodes
+        .iter()
+        .filter(|n| n.tags.iter().any(|t| t == "poi"))
+        .collect();
+    assert!(!markers.is_empty(), "expected POI markers");
+    for m in &markers {
+        assert!(m.mesh.is_some(), "debug markers carry a sphere mesh");
+        assert!(m.collider.is_none(), "debug markers never get a collider");
+        let kind = m.role.as_deref().expect("marker has a role");
+        let want = dbg
+            .find_material(&format!("cave_poi_{kind}"))
+            .unwrap_or_else(|| panic!("debug material for {kind}"));
+        assert_eq!(m.material, Some(want), "markers bind their per-kind debug material");
+    }
+    // Different kinds use different materials (colour-coded groups).
+    let shroom = markers.iter().find(|n| n.role.as_deref() == Some("mushroom_spot"));
+    let column = markers.iter().find(|n| n.role.as_deref() == Some("column_base"));
+    if let (Some(s), Some(c)) = (shroom, column) {
+        assert_ne!(s.material, c.material, "POI groups should be colour-coded distinctly");
+    }
+}
+
+#[test]
+fn cave_lod_scale_reduces_triangle_count() {
+    let base = r#"
+cave "lod" (
+  seed=8,
+  size=[24, 12, 24],
+  chambers=6,
+  resolution=96,
+  stalagmites=6,
+)
+"#;
+    let full = lower_src(base);
+    let low = lower_src(&base.replace("resolution=96,", "resolution=96, lod_scale=0.4,"));
+    let tris = |g: &SceneGraph| -> usize {
+        g.nodes
+            .iter()
+            .filter_map(|n| n.mesh.as_ref())
+            .map(|m| m.indices.len())
+            .sum()
+    };
+    assert!(
+        tris(&low) < tris(&full),
+        "lod_scale=0.4 should cut triangles ({} !< {})",
+        tris(&low),
+        tris(&full)
+    );
+    // Layout is unchanged: the same number of stalagmites land regardless of LOD.
+    assert_eq!(count_role(&full, "stalagmite"), count_role(&low, "stalagmite"));
+}
+
+#[test]
+fn cave_honours_file_global_lod_scale_directive() {
+    // The studio LOD slider writes a top-level `lod_scale (value=…)` directive
+    // rather than the cave node's own attr; the cave must still respond to it.
+    let base = r#"
+cave "lod" (
+  seed=8,
+  size=[24, 12, 24],
+  chambers=6,
+  resolution=96,
+  stalagmites=6,
+)
+"#;
+    let full = lower_src(base);
+    let low = lower_src(&format!("lod_scale (value=0.4)\n{base}"));
+    let tris = |g: &SceneGraph| -> usize {
+        g.nodes
+            .iter()
+            .filter_map(|n| n.mesh.as_ref())
+            .map(|m| m.indices.len())
+            .sum()
+    };
+    assert!(
+        tris(&low) < tris(&full),
+        "top-level lod_scale=0.4 should cut cave triangles ({} !< {})",
+        tris(&low),
+        tris(&full)
+    );
+}
+
+#[test]
+fn cave_colliders_none_leaves_everything_collider_free() {
+    let src = r#"
+cave "smooth" (
+  seed=5,
+  size=[22, 10, 22],
+  chambers=5,
+  resolution=40,
+  stalagmites=4,
+  columns=2,
+  colliders="none",
+)
+"#;
+    let g = lower_src(src);
+    assert!(
+        g.nodes.iter().all(|n| n.collider.is_none()),
+        "colliders=\"none\" should leave every cave node collider-free"
+    );
+}
+
+#[test]
+fn cave_colliders_shell_only_collides_the_rock() {
+    let src = r#"
+cave "shellonly" (
+  seed=5,
+  size=[22, 10, 22],
+  chambers=5,
+  resolution=40,
+  stalagmites=4,
+  columns=2,
+  colliders="shell",
+)
+"#;
+    let g = lower_src(src);
+    let rock = g
+        .nodes
+        .iter()
+        .find(|n| n.role.as_deref() == Some("cave_rock"))
+        .unwrap();
+    assert!(rock.collider.is_some(), "shell must keep its collider");
+    // Decorations are walk-through under `shell`.
+    for n in &g.nodes {
+        if matches!(n.role.as_deref(), Some("stalagmite") | Some("column")) {
+            assert!(
+                n.collider.is_none(),
+                "decorations should be collider-free under colliders=\"shell\""
+            );
+        }
+    }
+}
+
+#[test]
+fn cave_water_collider_opts_water_in() {
+    let base = r#"
+cave "spring" (seed=1, size=[18, 8, 18], chambers=4, resolution=40, pools=2)
+"#;
+    // Default: water is wadeable (no collider).
+    let plain = lower_src(base);
+    assert!(plain
+        .nodes
+        .iter()
+        .filter(|n| n.role.as_deref() == Some("pool"))
+        .all(|n| n.collider.is_none()));
+
+    // Opt in: pools get a trimesh collider, shell still collides.
+    let solid = lower_src(&base.replace("pools=2)", "pools=2, water_collider=1)"));
+    assert!(solid
+        .nodes
+        .iter()
+        .filter(|n| n.role.as_deref() == Some("pool"))
+        .all(|n| n.collider.is_some()));
+    let rock = solid
+        .nodes
+        .iter()
+        .find(|n| n.role.as_deref() == Some("cave_rock"))
+        .unwrap();
+    assert!(rock.collider.is_some(), "rock still collides with water_collider=1");
 }
 
 #[test]
@@ -202,6 +470,11 @@ cave "spring" (seed=1, size=[18, 8, 18], chambers=4, resolution=40, pools=2)
 "#;
     let g = lower_src(src);
     let water = g.find_material("cave_water").expect("default water material");
+    assert_eq!(
+        g.materials[water.0 as usize].shader,
+        mogen_core::MaterialShader::Water,
+        "cave water should use the animated water shader"
+    );
     let pools = g
         .nodes
         .iter()

@@ -217,9 +217,11 @@ pub fn attrs_for_kind(kind: &str) -> &'static [&'static str] {
             "chamber_min", "chamber_max", "spacing", "overlap", "chamber_flatten",
             "level_gap", "level_links",
             "passage_radius", "loops", "max_slope", "roughness", "blend",
-            "margin", "resolution", "entrances", "water_mat",
+            "margin", "resolution", "entrances", "water_mat", "lod_scale",
             "rock_piles", "pools", "lakes", "stalagmites", "stalactites",
-            "debug_hide_shell",
+            "columns", "mushrooms",
+            "colliders", "water_collider",
+            "debug_hide_shell", "debug_show_poi",
         ],
         "feature" => &["kind", "count", "min_size", "max_size", "mat"],
         "decal" => &[
@@ -474,8 +476,13 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         | ("cave", "lakes")
         | ("cave", "stalagmites")
         | ("cave", "stalactites")
-        | ("cave", "debug_hide_shell") => "number",
-        ("cave", "mat_style") | ("cave", "water_mat") => "string",
+        | ("cave", "columns")
+        | ("cave", "mushrooms")
+        | ("cave", "lod_scale")
+        | ("cave", "water_collider")
+        | ("cave", "debug_hide_shell")
+        | ("cave", "debug_show_poi") => "number",
+        ("cave", "mat_style") | ("cave", "water_mat") | ("cave", "colliders") => "string",
         ("feature", "kind") | ("feature", "mat") => "string",
         ("feature", "count")
         | ("feature", "min_size")

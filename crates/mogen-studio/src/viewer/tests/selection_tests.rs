@@ -90,6 +90,26 @@ fn redirect_pick_returns_self_for_local_module_top_level_node() {
 }
 
 #[test]
+fn redirect_pick_walks_non_editable_generated_child_up_to_editable_wrapper() {
+    // Mirrors a `cave` subtree: an editable wrapper (with a source span)
+    // owns a non-editable generated child (the rock shell) which in turn
+    // owns a non-editable nested marker (a POI sphere). Clicking either
+    // generated node must redirect to the wrapper — the only node carrying
+    // the cave's editable header (and its debug toggles).
+    let mut scene = SceneGraph::new();
+    let wrapper = scene.add_root("den", "cave", Transform::IDENTITY);
+    scene.set_source_span(wrapper, Span { start: 0, end: 40 });
+    let rock = scene.add_child(wrapper, "den_rock", "mesh", Transform::IDENTITY);
+    scene.nodes[rock.0 as usize].editable = false;
+    let marker = scene.add_child(rock, "mushroom_spot", "empty", Transform::IDENTITY);
+    scene.nodes[marker.0 as usize].editable = false;
+    assert_eq!(redirect_pick(&scene, rock), Some(wrapper));
+    assert_eq!(redirect_pick(&scene, marker), Some(wrapper));
+    // The editable wrapper itself is returned unchanged.
+    assert_eq!(redirect_pick(&scene, wrapper), Some(wrapper));
+}
+
+#[test]
 fn replace_selection_redirects_pick_to_wrapper() {
     // Picking the imported child must land selection on the wrapper —
     // the gizmo + inspector both read `st.selected`, so this is what

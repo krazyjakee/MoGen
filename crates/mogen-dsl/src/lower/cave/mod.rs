@@ -15,6 +15,7 @@ mod decorate;
 mod emit;
 mod generate;
 mod materials;
+mod poi;
 mod rng;
 
 #[cfg(test)]
@@ -25,6 +26,7 @@ use anyhow::Result;
 use mogen_core::{ColliderShape, NodeId, SceneGraph};
 
 use crate::ast::Node;
+use crate::lower::cave::config::ColliderMode;
 use crate::lower::helpers::transform_from_attrs;
 use crate::lower::node::apply_metadata;
 
@@ -57,7 +59,8 @@ pub(super) fn expand_cave(
 
     let layout = generate::generate(&cfg);
     emit::emit_rock(node, &cfg, &layout, wrapper_id, graph)?;
-    decorate::emit_decorations(node, &cfg, &layout, wrapper_id, graph);
+    let column_bases = decorate::emit_decorations(node, &cfg, &layout, wrapper_id, graph);
+    poi::emit_points_of_interest(node, &cfg, &layout, &column_bases, wrapper_id, graph);
 
     // Stamp the whole generated subtree non-editable (a rebuild regenerates it
     // from the seed, so hand edits wouldn't survive).
@@ -65,28 +68,48 @@ pub(super) fn expand_cave(
         graph.nodes[i].editable = false;
     }
 
-    tag_cave_colliders(graph, pre_expand_count);
+    tag_cave_colliders(graph, pre_expand_count, cfg.colliders, cfg.water_collider);
 
     Ok(wrapper_id)
 }
 
 /// Tag mesh-bearing cave nodes with a collider so a game engine importer gets
-/// working physics for free. The rock shell uses a trimesh (its cavities and
-/// slopes are not box-aligned); water surfaces are left without a collider
-/// (they're decorative, and a player should be able to wade in).
-fn tag_cave_colliders(graph: &mut SceneGraph, start: usize) {
+/// working physics. Rock surfaces use a trimesh (their cavities and slopes are
+/// not box-aligned). `mode` selects which rock surfaces collide; water surfaces
+/// are decorative and only collide when `water_collider` is set (so a player
+/// can wade in by default).
+fn tag_cave_colliders(
+    graph: &mut SceneGraph,
+    start: usize,
+    mode: ColliderMode,
+    water_collider: bool,
+) {
     for i in start..graph.nodes.len() {
         if graph.nodes[i].collider.is_some() || graph.nodes[i].mesh.is_none() {
             continue;
         }
-        let is_water = graph.nodes[i]
-            .role
-            .as_deref()
-            .map(|r| r == "pool" || r == "lake")
-            .unwrap_or(false);
-        if is_water {
+        // POI debug markers (`debug_show_poi`) are a visual aid only — never
+        // give them collision.
+        if graph.nodes[i].tags.iter().any(|t| t == "poi") {
             continue;
         }
-        graph.nodes[i].collider = Some(ColliderShape::Trimesh);
+        let role = graph.nodes[i].role.as_deref();
+        let is_water = matches!(role, Some("pool") | Some("lake"));
+        if is_water {
+            // Water collision is its own opt-in, independent of `mode`.
+            if water_collider {
+                graph.nodes[i].collider = Some(ColliderShape::Trimesh);
+            }
+            continue;
+        }
+        let is_shell = role == Some("cave_rock");
+        let wants_collider = match mode {
+            ColliderMode::None => false,
+            ColliderMode::Shell => is_shell,
+            ColliderMode::All => true,
+        };
+        if wants_collider {
+            graph.nodes[i].collider = Some(ColliderShape::Trimesh);
+        }
     }
 }

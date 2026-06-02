@@ -11,8 +11,8 @@
 //! 3. Any passage steeper than `max_slope` is rebuilt as a switchback ramp —
 //!    each leg's rise-over-run is capped, so no walkable surface exceeds the
 //!    angle limit even when linking distant floors.
-//! 4. Punch `entrances` horizontal mouths out through the nearest side face so
-//!    the cave can actually be entered.
+//! 4. Punch `entrances` horizontal mouths out through the nearest side face,
+//!    hosted on the highest chambers so the cave is entered from the top layer.
 //!
 //! Every carver is a `Subtract` `BlobChild`; `emit.rs` pairs them with an
 //! additive bounding box and meshes `box − ⋃ carvers` with surface nets.
@@ -28,11 +28,18 @@ use super::config::CaveCfg;
 use super::rng::{rand_f01, rand_in, rand_range, sub_seed};
 
 /// One carved cavity. Oblate (`half.y < half.x`) so the floor reads as gently
-/// curved rather than a deep bowl.
+/// curved rather than a deep bowl. `half.x`/`half.z` differ per chamber (an
+/// aspect ratio) and the whole ellipsoid is yawed by `rot`, so no two chambers
+/// read as the same axis-aligned disc.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Chamber {
     pub center: Vec3,
     pub half: Vec3,
+    /// Yaw applied to the chamber ellipsoid about +Y, so its long axis isn't
+    /// grid-aligned. Floor-finding marches straight down the centre and the
+    /// inscribed walkable disc is rotation-invariant, so downstream passes can
+    /// ignore this — only the carver transform consumes it.
+    pub rot: Quat,
     /// Vertical band index this chamber was placed in. Read by tests and kept
     /// for downstream passes that may want to reason about floors.
     #[allow(dead_code)]
@@ -50,6 +57,11 @@ impl Chamber {
     pub fn floor_radius(&self) -> f32 {
         0.55 * self.half.x.min(self.half.z)
     }
+    /// Largest horizontal half-extent — the conservative clearance radius used
+    /// for spacing and footprint clamping regardless of yaw.
+    fn plan_radius(&self) -> f32 {
+        self.half.x.max(self.half.z)
+    }
 }
 
 pub(super) struct CaveLayout {
@@ -58,6 +70,16 @@ pub(super) struct CaveLayout {
     pub carvers: Vec<BlobChild>,
     pub block_half: Vec3,
     pub block_center: Vec3,
+    /// Passage-graph degree per chamber (parallel to `chambers`). A chamber with
+    /// degree 1 is a dead end — exactly one way in or out — which the POI pass
+    /// marks for the game (treasure rooms, ambush spots, …).
+    pub chamber_degree: Vec<u32>,
+    /// Floor anchor at the foot of every passage a player climbs rather than
+    /// strolls: inter-layer ramps (capped at `max_slope` but steep enough to
+    /// want a ladder) plus any passage whose direct line still exceeds the cap.
+    /// These are the ladder / rope placement points the POI pass exposes — a
+    /// game may drop a ladder here instead of walking the switchback ramp.
+    pub steep_links: Vec<Vec3>,
 }
 
 pub(super) fn generate(cfg: &CaveCfg) -> CaveLayout {
@@ -72,12 +94,13 @@ pub(super) fn generate(cfg: &CaveCfg) -> CaveLayout {
 
     // Chamber cavities.
     for c in &chambers {
-        carvers.push(ellipsoid_carver(c.center, c.half));
+        carvers.push(ellipsoid_carver(c.center, c.half, c.rot));
     }
 
     // Passages: a horizontal network per layer (MST + loops), plus a few
     // vertical links between adjacent layers. Every passage is slope-capped.
-    for (i, j) in connect_chambers(cfg, &chambers) {
+    let edges = connect_chambers(cfg, &chambers);
+    for &(i, j) in &edges {
         add_passage(
             &mut carvers,
             chambers[i].center,
@@ -90,12 +113,72 @@ pub(super) fn generate(cfg: &CaveCfg) -> CaveLayout {
     // Entrances: punch horizontal mouths out through the nearest side face.
     add_entrances(&mut carvers, &chambers, cfg, block_half);
 
+    let chamber_degree = chamber_degrees(&chambers, &edges);
+    let steep_links = steep_link_anchors(cfg, &chambers, &edges);
+
     CaveLayout {
         chambers,
         carvers,
         block_half,
         block_center,
+        chamber_degree,
+        steep_links,
     }
+}
+
+/// Count how many passages touch each chamber. A degree of 1 marks a dead-end
+/// room (one entrance), surfaced as a point of interest.
+fn chamber_degrees(chambers: &[Chamber], edges: &[(usize, usize)]) -> Vec<u32> {
+    let mut degree = vec![0u32; chambers.len()];
+    for &(i, j) in edges {
+        degree[i] += 1;
+        degree[j] += 1;
+    }
+    degree
+}
+
+/// Anchor a ladder / rope point at the foot of every passage a player would
+/// climb rather than stroll: any link between two different layers (an
+/// inter-floor ramp — capped at `max_slope`, but a 45° climb is steep enough to
+/// want a ladder), plus any same-layer passage whose direct line still exceeds
+/// the cap. The anchor steps out from the lower chamber centre toward the upper
+/// one, to the edge of the walkable floor disc — where that specific ramp
+/// begins to rise — so several climbs leaving one chamber get distinct spots.
+/// The POI pass re-marches the carved floor for the final height.
+fn steep_link_anchors(cfg: &CaveCfg, chambers: &[Chamber], edges: &[(usize, usize)]) -> Vec<Vec3> {
+    let tan_max = cfg.max_slope.to_radians().tan();
+    let mut anchors = Vec::new();
+    for &(i, j) in edges {
+        let a = chambers[i].center;
+        let b = chambers[j].center;
+        let horiz = ((a.x - b.x).powi(2) + (a.z - b.z).powi(2)).sqrt();
+        let rise = (a.y - b.y).abs();
+        let cross_level = chambers[i].level != chambers[j].level;
+        let over_cap = horiz < 1e-3 || rise > horiz * tan_max + 1e-3;
+        if !(cross_level || over_cap) {
+            continue;
+        }
+        let (lo, hi) = if a.y <= b.y { (i, j) } else { (j, i) };
+        let lower = &chambers[lo];
+        let upper = &chambers[hi];
+        let mut dx = upper.center.x - lower.center.x;
+        let mut dz = upper.center.z - lower.center.z;
+        let len = (dx * dx + dz * dz).sqrt();
+        if len > 1e-3 {
+            dx /= len;
+            dz /= len;
+        } else {
+            dx = 0.0;
+            dz = 0.0;
+        }
+        let r = lower.floor_radius();
+        anchors.push(Vec3::new(
+            lower.center.x + dx * r,
+            lower.floor_y(),
+            lower.center.z + dz * r,
+        ));
+    }
+    anchors
 }
 
 /// Maximum rejection-sampling attempts per chamber before accepting the best
@@ -149,16 +232,37 @@ fn place_chambers(cfg: &CaveCfg, block_half: Vec3) -> Vec<Chamber> {
         let level_start = chambers.len();
 
         for _ in 0..counts[level as usize] {
+            // Base radius, then an aspect ratio (one horizontal axis shortened)
+            // and a per-chamber flatten so chambers vary in plan shape and
+            // oblateness instead of all reading as one identical disc.
             let r0 = rand_in(&mut state, cfg.chamber_min, cfg.chamber_max)
                 .min(max_fit)
                 .min(max_fit_v);
-            let hy0 = (r0 * cfg.chamber_flatten).max(0.4);
-            let cy_lo = (layer_lo + hy0).max(margin + hy0);
-            let cy_hi = (layer_hi - hy0).min(2.0 * block_half.y - margin - hy0);
-            let x_lim = (block_half.x - margin - r0).max(0.0);
-            let z_lim = (block_half.z - margin - r0).max(0.0);
+            let aspect = rand_in(&mut state, 0.55, 1.0);
+            let (mut hx, mut hz) = if rand_f01(&mut state) < 0.5 {
+                (r0, r0 * aspect)
+            } else {
+                (r0 * aspect, r0)
+            };
+            hx = hx.clamp(0.8, max_fit);
+            hz = hz.clamp(0.8, max_fit);
+            let flatten = (cfg.chamber_flatten * rand_in(&mut state, 0.8, 1.3)).clamp(0.25, 1.0);
+            let max_hy = (layer_h * 0.5 - 0.2).max(0.4);
+            let mut hy = (r0 * flatten).clamp(0.4, max_hy);
+            let rot = Quat::from_rotation_y(rand_in(&mut state, 0.0, TAU));
 
-            let (center, r) = {
+            // Conservative clearance radius (largest horizontal half-extent),
+            // used for spacing and footprint clamping regardless of yaw.
+            let mut pr = hx.max(hz);
+            let cy_lo = (layer_lo + hy).max(margin + hy);
+            let cy_hi = (layer_hi - hy).min(2.0 * block_half.y - margin - hy);
+            let clamp_xz = |c: Vec3, pr: f32| {
+                let x_lim = (block_half.x - margin - pr).max(0.0);
+                let z_lim = (block_half.z - margin - pr).max(0.0);
+                Vec3::new(c.x.clamp(-x_lim, x_lim), c.y, c.z.clamp(-z_lim, z_lim))
+            };
+
+            let center = {
                 let same_level: &[Chamber] = &chambers[level_start..];
                 let want_overlap =
                     !same_level.is_empty() && rand_f01(&mut state) < cfg.overlap;
@@ -167,12 +271,17 @@ fn place_chambers(cfg: &CaveCfg, block_half: Vec3) -> Vec<Chamber> {
                     // pair smooth-unions into one cavern.
                     let nb = same_level[rand_range(&mut state, same_level.len() as u32) as usize];
                     let frac = rand_in(&mut state, 0.3, 0.8);
-                    let dist = frac * (r0 + nb.half.x);
+                    let dist = frac * (pr + nb.plan_radius());
                     let ang = rand_in(&mut state, 0.0, TAU);
-                    let cx = (nb.center.x + dist * ang.cos()).clamp(-x_lim, x_lim);
-                    let cz = (nb.center.z + dist * ang.sin()).clamp(-z_lim, z_lim);
                     let cy = nb.center.y.clamp(cy_lo.min(cy_hi), cy_lo.max(cy_hi));
-                    (Vec3::new(cx, cy, cz), r0)
+                    clamp_xz(
+                        Vec3::new(
+                            nb.center.x + dist * ang.cos(),
+                            cy,
+                            nb.center.z + dist * ang.sin(),
+                        ),
+                        pr,
+                    )
                 } else {
                     // Rejection-sample a spot that clears every same-layer
                     // chamber by `spacing`; keep the best found.
@@ -183,6 +292,8 @@ fn place_chambers(cfg: &CaveCfg, block_half: Vec3) -> Vec<Chamber> {
                         } else {
                             0.5 * (cy_lo + cy_hi)
                         };
+                        let x_lim = (block_half.x - margin - pr).max(0.0);
+                        let z_lim = (block_half.z - margin - pr).max(0.0);
                         let cand = Vec3::new(
                             rand_in(&mut state, -x_lim, x_lim),
                             cy,
@@ -190,7 +301,10 @@ fn place_chambers(cfg: &CaveCfg, block_half: Vec3) -> Vec<Chamber> {
                         );
                         let mut slack = f32::INFINITY;
                         for other in same_level {
-                            let gap = cand.distance(other.center) - r0 - other.half.x - cfg.spacing;
+                            let gap = cand.distance(other.center)
+                                - pr
+                                - other.plan_radius()
+                                - cfg.spacing;
                             slack = slack.min(gap);
                         }
                         if best.map_or(true, |(bs, _)| slack > bs) {
@@ -202,16 +316,24 @@ fn place_chambers(cfg: &CaveCfg, block_half: Vec3) -> Vec<Chamber> {
                     }
                     let (slack, center) =
                         best.unwrap_or((0.0, Vec3::new(0.0, 0.5 * (cy_lo + cy_hi), 0.0)));
-                    // Crowded layer: shrink rather than let two rooms merge.
-                    let r = if slack < 0.0 { (r0 + slack - 0.1).max(0.8) } else { r0 };
-                    (center, r)
+                    // Crowded layer: shrink the footprint rather than let two
+                    // rooms merge. Scale both horizontal axes (and re-derive the
+                    // clearance radius) so the aspect ratio is preserved.
+                    if slack < 0.0 {
+                        let scale = ((pr + slack - 0.1).max(0.8) / pr).clamp(0.2, 1.0);
+                        hx *= scale;
+                        hz *= scale;
+                        hy = (hy * scale.max(0.5)).max(0.4);
+                        pr *= scale;
+                    }
+                    clamp_xz(center, pr)
                 }
             };
 
-            let hy = (r * cfg.chamber_flatten).max(0.4);
             chambers.push(Chamber {
                 center,
-                half: Vec3::new(r, hy, r),
+                half: Vec3::new(hx, hy, hz),
+                rot,
                 level,
             });
         }
@@ -427,7 +549,7 @@ fn add_passage(carvers: &mut Vec<BlobChild>, a: Vec3, b: Vec3, radius: f32, max_
 }
 
 /// Punch `entrances` horizontal mouths out through the nearest side face,
-/// hosted on the lowest chambers so the openings land at ground level.
+/// hosted on the highest chambers so the openings land on the top layer.
 fn add_entrances(
     carvers: &mut Vec<BlobChild>,
     chambers: &[Chamber],
@@ -437,13 +559,13 @@ fn add_entrances(
     if cfg.entrances == 0 || chambers.is_empty() {
         return;
     }
-    // Lowest chambers first (prefer ground-level mouths).
+    // Highest chambers first (mouths open onto the top layer).
     let mut order: Vec<usize> = (0..chambers.len()).collect();
     order.sort_by(|&i, &j| {
-        chambers[i]
+        chambers[j]
             .center
             .y
-            .partial_cmp(&chambers[j].center.y)
+            .partial_cmp(&chambers[i].center.y)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 
@@ -473,9 +595,9 @@ fn add_entrances(
     }
 }
 
-/// A sphere carver at `center` with the given ellipsoid half-extents.
-fn ellipsoid_carver(center: Vec3, half: Vec3) -> BlobChild {
-    let xform = Mat4::from_translation(center);
+/// An ellipsoid carver at `center` with the given half-extents, yawed by `rot`.
+fn ellipsoid_carver(center: Vec3, half: Vec3, rot: Quat) -> BlobChild {
+    let xform = Mat4::from_scale_rotation_translation(Vec3::ONE, rot, center);
     BlobChild::new(SdfPrim::Ellipsoid { half }, SdfOp::Subtract, xform)
 }
 
@@ -532,8 +654,13 @@ mod tests {
             resolution: 64,
             entrances: 1,
             water_mat: None,
+            colliders: super::super::config::ColliderMode::All,
+            water_collider: false,
             decorations: Vec::new(),
+            lod_scale: 1.0,
+            mushrooms: 0,
             debug_hide_shell: false,
+            debug_show_poi: false,
         }
     }
 

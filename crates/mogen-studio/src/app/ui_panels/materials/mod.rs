@@ -30,9 +30,9 @@ impl MogenStudioApp {
     /// group exposing its PBR values (colour, metallic, roughness, emissive,
     /// transmission, alpha, uv) plus its texture slots with ✓/✗ existence
     /// marks. Edits are spliced straight into the `.mog` source via span-aware
-    /// `edit::set_attr`, then an immediate recompile keeps the viewport + the
-    /// widgets' bound values in sync with the compiled scene (same pattern
-    /// the gizmo commits use — debouncing would flicker during drags).
+    /// `edit::set_attr`; the viewport and bound widget values catch up on the
+    /// debounced recompile (`drive_compile_debounce`), so a keystroke/drag
+    /// burst on a heavy scene doesn't run the full pipeline per frame.
     ///
     /// Also houses the "unused textures" cleanup list: PNGs sitting in
     /// `./textures/` that no material references.
@@ -457,11 +457,16 @@ impl MogenStudioApp {
                         node_path: Vec::new(),
                     },
                 );
-                // Immediate recompile so the widgets read the updated
-                // material on the very next frame (matches the gizmo-commit
-                // pattern in `drain_viewport_edits`). Debouncing causes
-                // DragValue drags to snap back to the old value mid-drag.
-                self.compile_active();
+                // Don't recompile inline. `set_attr` already updated the
+                // source and `needs_compile` / `last_edit_at` are set above,
+                // so `drive_compile_debounce` rebuilds 180 ms after the last
+                // edit. Compiling here instead ran the whole pipeline (incl.
+                // CSG) on every keystroke/drag tick, which locks the UI on a
+                // heavy scene. Drags don't snap back without it: egui caches a
+                // DragValue's precise in-progress value in its own temp memory
+                // keyed by widget id, so accumulation survives the stale base
+                // the widget re-reads from the compiled scene each frame.
+                ctx.request_repaint_after(crate::app::types::COMPILE_DEBOUNCE);
             }
         }
 

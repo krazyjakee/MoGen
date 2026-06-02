@@ -126,6 +126,11 @@ pub struct Renderer {
     /// Per-batch draw plan owned by the renderer so the paint callback doesn't
     /// have to re-read the mesh on every frame.
     batches: Vec<DrawBatch>,
+    /// `(index_start, index_count, node)` for each collider-bearing mesh node,
+    /// copied from the uploaded [`FlatMesh`]. The collider overlay redraws
+    /// these index ranges in wireframe (reusing the main VBO/EBO) so trimesh
+    /// and convex colliders are visible, not just AABB boxes.
+    collider_runs: Vec<(u32, u32, mogen_core::NodeId)>,
     /// Latest per-batch matrix palettes. Indexed by `DrawBatch::palette_id`;
     /// the same array carries both rigid (single-bone-per-vertex) and
     /// skinned palettes — the shader doesn't care which is which. Refreshed
@@ -406,6 +411,7 @@ impl Renderer {
                 vbo_bytes: 0,
                 ebo_bytes: 0,
                 batches: Vec::new(),
+                collider_runs: Vec::new(),
                 palettes: Vec::new(),
                 draw_textures: Vec::new(),
                 opaque_indices: Vec::new(),
@@ -512,6 +518,7 @@ impl Renderer {
             gl.bind_buffer(glow::ARRAY_BUFFER, None);
             gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, None);
             self.batches = mesh.batches.clone();
+            self.collider_runs = mesh.collider_index_runs.clone();
             self.palettes = mesh.palettes.clone();
             // Mesh changed — depth maps may now contain stale silhouettes.
             self.shadows_dirty = true;
@@ -639,15 +646,27 @@ impl Renderer {
             .draw(gl, viewproj, eye, viewport_height, &self.lights, selected);
     }
 
-    /// Draw the AABB collider wireframe overlay. Caller resolves the per-node
-    /// world transforms + selection state into [`ColliderInstance`]s via
-    /// [`super::colliders_gl::collect`] and hands them in.
+    /// Draw the collider overlay. AABB colliders come in as
+    /// [`ColliderInstance`]s (built by [`super::colliders_gl::collect`]);
+    /// trimesh/convex colliders are drawn by re-rendering the node's mesh in
+    /// wireframe from [`Self::collider_runs`], reusing the main scene VAO.
+    /// `selected` highlights the matching runs in gold.
     pub fn draw_colliders_overlay(
         &self,
         gl: &glow::Context,
         viewproj: glam::Mat4,
         instances: &[ColliderInstance],
+        selected: &[mogen_core::NodeId],
     ) {
         self.colliders_overlay.draw(gl, viewproj, instances);
+        if !self.collider_runs.is_empty() {
+            let runs: Vec<(u32, u32, bool)> = self
+                .collider_runs
+                .iter()
+                .map(|&(start, count, node)| (start, count, selected.contains(&node)))
+                .collect();
+            self.colliders_overlay
+                .draw_trimesh_runs(gl, viewproj, self.vao, &runs);
+        }
     }
 }

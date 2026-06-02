@@ -422,6 +422,8 @@ fn node_kind_pool() -> Vec<Candidate> {
         ("wall", "wall with cutouts"),
         ("roof", "roof shell"),
         ("decal", "transparent image overlay (logo, label, handwriting)"),
+        ("cave", "traversable multi-floor cave"),
+        ("feature", "tune a cave decoration kind (inside cave)"),
         // CSG / replicators
         ("union", "CSG union of children"),
         ("difference", "CSG first minus rest"),
@@ -568,6 +570,45 @@ fn attr_key_pool(parent_kind: Option<&str>) -> Vec<Candidate> {
         "wall" => &[
             ("holes", "[[cx, cy, w, h], …]"),
         ],
+        "cave" => &[
+            ("seed", "deterministic generation seed"),
+            ("chambers", "number of chambers (rooms)"),
+            ("levels", "stacked vertical floors (1)"),
+            ("level_gap", "solid rock between floors"),
+            ("level_links", "vertical ramps joining floors"),
+            ("chamber_min", "smallest chamber radius"),
+            ("chamber_max", "largest chamber radius"),
+            ("spacing", "min gap between chambers"),
+            ("overlap", "0..1 fraction that merge into caverns"),
+            ("chamber_flatten", "vertical squash of chambers"),
+            ("passage_radius", "tunnel radius"),
+            ("loops", "extra non-tree passages"),
+            ("max_slope", "steepest walkable passage°"),
+            ("roughness", "wall noise amount"),
+            ("blend", "SDF smoothing radius"),
+            ("margin", "rock padding around the block"),
+            ("resolution", "voxel grid resolution"),
+            ("lod_scale", "0.1..1.0 mesh-quality / triangle budget"),
+            ("entrances", "openings carved to the surface"),
+            ("stalagmites", "floor spike count"),
+            ("stalactites", "ceiling spike count"),
+            ("columns", "floor-to-ceiling stone pillars"),
+            ("rock_piles", "rubble heap count"),
+            ("pools", "small water pool count"),
+            ("lakes", "large water body count"),
+            ("mushrooms", "floor POI marker count"),
+            ("mat_style", "rock material name"),
+            ("water_mat", "water material name"),
+            ("debug_hide_shell", "0|1 — strip outer hull to see interior"),
+            ("debug_show_poi", "0|1 — show POI markers as debug spheres"),
+        ],
+        "feature" => &[
+            ("kind", "stalagmite|stalactite|column|rock_pile|pool|lake"),
+            ("count", "override the top-level count"),
+            ("min_size", "smallest instance size"),
+            ("max_size", "largest instance size"),
+            ("mat", "material reference"),
+        ],
         "array" => &[
             ("count", "copies"),
             ("around", "rotation axis x|y|z"),
@@ -685,6 +726,9 @@ fn attr_value_pool(attr: &str, parent_kind: Option<&str>, materials: &[String]) 
         ("material", "uv_mode") => &["\"tile\"", "\"fit\""],
         ("solid", "cleanup") => &["\"coplanar\"", "\"none\""],
         ("joint", "type") => &["hinge", "slider", "ball", "rotor"],
+        ("feature", "kind") => &[
+            "stalagmite", "stalactite", "column", "rock_pile", "pool", "lake",
+        ],
         ("stack", "align") => &["center", "start", "end"],
         ("stack", "pack") => &["start", "center", "end"],
         ("track", "prop") => &["\"translation\"", "\"rotation\"", "\"scale\""],
@@ -694,7 +738,8 @@ fn attr_value_pool(attr: &str, parent_kind: Option<&str>, materials: &[String]) 
             "bottom_left_front", "bottom_right_front",
             "bottom_left_back", "bottom_right_back",
         ],
-        (_, "double_sided") | (_, "cap_ends") | (_, "center") => &["0", "1"],
+        (_, "double_sided") | (_, "cap_ends") | (_, "center") | (_, "debug_hide_shell")
+        | (_, "debug_show_poi") => &["0", "1"],
         _ => &[],
     };
 
@@ -774,6 +819,27 @@ mod tests {
         let src = "array (around=y";
         let cs = compute_completions(src, src.len(), &[]).unwrap();
         assert!(labels(&cs).contains(&"y"));
+    }
+
+    #[test]
+    fn cave_attr_keys_include_new_features() {
+        let src = "cave \"c\" (col";
+        let cs = compute_completions(src, src.len(), &[]).unwrap();
+        assert!(labels(&cs).contains(&"columns"), "{:?}", labels(&cs));
+        let src = "cave \"c\" (chambers=8, lod";
+        let cs = compute_completions(src, src.len(), &[]).unwrap();
+        let ls = labels(&cs);
+        assert!(ls.contains(&"lod_scale"), "{ls:?}");
+        let src = "cave \"c\" (chambers=8, mush";
+        let cs = compute_completions(src, src.len(), &[]).unwrap();
+        assert!(labels(&cs).contains(&"mushrooms"), "{:?}", labels(&cs));
+    }
+
+    #[test]
+    fn feature_kind_enum_values() {
+        let src = "feature \"f\" (kind=col";
+        let cs = compute_completions(src, src.len(), &[]).unwrap();
+        assert!(labels(&cs).contains(&"column"), "{:?}", labels(&cs));
     }
 
     #[test]

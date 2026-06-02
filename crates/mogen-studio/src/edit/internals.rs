@@ -32,6 +32,14 @@ pub(super) fn match_closing_paren(src: &str, open_idx: usize, limit: usize) -> O
             i += 1;
             continue;
         }
+        // Line comments run to end of line; parens/brackets inside them are
+        // text, not structure, so skip the whole comment before matching.
+        if c == b'/' && i + 1 < limit && bytes[i + 1] == b'/' {
+            while i < limit && bytes[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        }
         match c {
             b'"' => in_string = true,
             b'(' | b'[' => depth += 1,

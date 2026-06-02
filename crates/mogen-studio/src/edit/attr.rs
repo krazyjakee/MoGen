@@ -37,25 +37,22 @@ pub fn set_attr(src: &str, span: Span, name: &str, value: &str) -> String {
         return splice(src, kstart..vend, &format!("{name}={value}"));
     }
 
-    // Append before closing `)`. Preserve leading spacing: if the header
-    // already has trailing content immediately before `)`, prepend ", " —
-    // unless that trailing content is itself a `,` (the multi-line idiom
-    // `last_attr,\n)`), in which case prepend just a space so we don't
-    // produce `,,`.
-    let body = &src[hdr_open + 1..hdr_close];
-    let trimmed = body.trim_end();
-    let prefix = if trimmed.is_empty() {
-        ""
-    } else if trimmed.ends_with(',') {
+    // Append before closing `)`. Insert flush with the last *real* attribute,
+    // not after a trailing `//` comment — `mushrooms=24, // note` must become
+    // `mushrooms=24, newattr=val // note`, never `… // note newattr=val`
+    // (which buries the attr inside the comment and silently drops it).
+    let body_start = hdr_open + 1;
+    let insert_at = last_code_byte_end(src, body_start, hdr_close);
+    // Preserve leading spacing: if the last real content is itself a `,` (the
+    // multi-line idiom `last_attr,\n)`), prepend just a space so we don't
+    // produce `,,`; otherwise prepend ", ".
+    let prefix = if insert_at == body_start {
+        "" // empty (or comment-only) header body
+    } else if src.as_bytes()[insert_at - 1] == b',' {
         " "
     } else {
         ", "
     };
-    // Insert just after the last non-whitespace byte (skips trailing commas
-    // and newlines inside multiline headers so the new attr stays flush with
-    // the existing last attr rather than getting pushed past a `\n    )`
-    // indent.)
-    let insert_at = hdr_open + 1 + trimmed.len();
     splice(src, insert_at..insert_at, &format!("{prefix}{name}={value}"))
 }
 
@@ -213,6 +210,12 @@ fn find_attr_in_header(
                 i += 1;
                 continue;
             }
+            // A `//` comment ends the value (its text — including any comma —
+            // is not part of the attribute). Leave `i` on the comment so the
+            // outer scan skips it before looking for the next key.
+            if c == b'/' && i + 1 < body_end && bytes[i + 1] == b'/' {
+                break;
+            }
             match c {
                 b'"' => in_string = true,
                 b'[' | b'(' => depth += 1,
@@ -246,6 +249,49 @@ fn skip_ws_and_commas(bytes: &[u8], i: &mut usize, end: usize) {
         }
         break;
     }
+}
+
+/// Index one past the last byte in `[start..end)` that is real attribute
+/// content — i.e. not whitespace and not inside a `//` line comment. String
+/// contents (which may contain `//`) count as real. Returns `start` when the
+/// range holds nothing but whitespace and/or comments. Used by `set_attr` to
+/// append a new attribute flush with the last existing one instead of after a
+/// trailing comment.
+fn last_code_byte_end(src: &str, start: usize, end: usize) -> usize {
+    let bytes = src.as_bytes();
+    let mut i = start;
+    let mut last = start;
+    let mut in_string = false;
+    while i < end {
+        let c = bytes[i];
+        if in_string {
+            if c == b'\\' && i + 1 < end {
+                i += 2;
+                last = i;
+                continue;
+            }
+            if c == b'"' {
+                in_string = false;
+            }
+            i += 1;
+            last = i;
+            continue;
+        }
+        if c == b'/' && i + 1 < end && bytes[i + 1] == b'/' {
+            while i < end && bytes[i] != b'\n' {
+                i += 1;
+            }
+            continue;
+        }
+        if c == b'"' {
+            in_string = true;
+        }
+        if !c.is_ascii_whitespace() {
+            last = i + 1;
+        }
+        i += 1;
+    }
+    last
 }
 
 fn trim_trailing_ws_end(bytes: &[u8], start: usize, mut end: usize) -> usize {
@@ -333,6 +379,42 @@ mod tests {
         assert!(
             out.starts_with("box \"b\" (x=3)"),
             "expected header inserted, got {out}"
+        );
+    }
+
+    #[test]
+    fn set_attr_appends_before_trailing_line_comment() {
+        // Regression: the last attr line ends in a `//` comment. The new attr
+        // must land flush with the real last attr, NOT inside the comment
+        // (which would silently disable it — the "Show POI markers" freeze).
+        let src = "cave \"c\" (\n  seed=1,\n  mushrooms=24,  // markers on chamber floors\n)";
+        let span = span_of(src, "cave \"c\" (");
+        let out = set_attr(src, span, "debug_show_poi", "1");
+        assert_eq!(
+            out,
+            "cave \"c\" (\n  seed=1,\n  mushrooms=24, debug_show_poi=1  // markers on chamber floors\n)"
+        );
+        // And it round-trips: get_attr/set_attr see the real attr, not the
+        // comment text, so toggling back off rewrites the value in place.
+        let span2 = span_of(&out, "cave \"c\" (");
+        assert_eq!(get_attr(&out, span2, "debug_show_poi"), Some("1"));
+        let off = set_attr(&out, span2, "debug_show_poi", "0");
+        assert!(
+            off.contains("debug_show_poi=0  // markers on chamber floors"),
+            "toggle-off must rewrite value and keep the comment intact: {off}"
+        );
+    }
+
+    #[test]
+    fn set_attr_ignores_attr_name_inside_comment() {
+        // A key that only appears in a comment must not be matched/replaced;
+        // set_attr should append a fresh attribute instead.
+        let src = "box \"b\" (x=1 // size=99 here\n)";
+        let span = span_of(src, "box \"b\" (");
+        let out = set_attr(src, span, "size", "[2,2,2]");
+        assert!(
+            out.contains("x=1, size=[2,2,2] // size=99 here"),
+            "size must be appended, not written into the comment: {out}"
         );
     }
 
@@ -557,6 +639,77 @@ mod tests {
             (ry.to_degrees() - 45.0).abs() < 1e-3,
             "expected 45° Y rotation, got {}°",
             ry.to_degrees()
+        );
+    }
+
+    #[test]
+    fn cave_debug_show_poi_checkbox_roundtrips_through_compile() {
+        // Replicate the exact path the "Show POI markers" checkbox takes:
+        // grab the cave wrapper's span out of a compiled scene, splice
+        // `debug_show_poi=1` onto it, recompile, and confirm a POI marker
+        // gained a mesh. The cave node carries a `{ feature … }` body block,
+        // so this also guards `find_header_parens` against tripping on the
+        // body brace before the header parens.
+        let src = "cave \"den\" (\n  seed=3,\n  size=[20, 10, 20],\n  chambers=5,\n  resolution=40,\n  mushrooms=4,\n) {\n  feature \"spikes\" (kind=stalagmite, count=2)\n}\n";
+        let compiled = crate::pipeline::compile(src, None);
+        assert!(
+            matches!(compiled.stage, crate::pipeline::Stage::Ok),
+            "baseline cave should compile cleanly: stage={:?} diags={:?}",
+            compiled.stage,
+            compiled.diagnostics
+        );
+        let scene = compiled.scene.as_ref().expect("scene present");
+        let (wrapper_idx, _) = scene
+            .nodes
+            .iter()
+            .enumerate()
+            .find(|(_, n)| n.kind == "cave")
+            .expect("cave wrapper node present");
+        let span = compiled.node_spans[wrapper_idx]
+            .expect("cave wrapper must carry a source span for the inspector");
+
+        let out = set_attr(src, span, "debug_show_poi", "1");
+        assert_ne!(out, src, "set_attr must actually mutate the source");
+        assert!(
+            out.contains("debug_show_poi=1"),
+            "debug_show_poi attr missing after set_attr: {out}"
+        );
+
+        let recompiled = crate::pipeline::compile(&out, None);
+        assert!(
+            matches!(recompiled.stage, crate::pipeline::Stage::Ok),
+            "cave with debug_show_poi must still compile clean: stage={:?} diags={:?}",
+            recompiled.stage,
+            recompiled.diagnostics
+        );
+        let scene2 = recompiled.scene.as_ref().unwrap();
+        let any_marker_mesh = scene2
+            .nodes
+            .iter()
+            .any(|n| n.tags.iter().any(|t| t == "poi") && n.mesh.is_some());
+        assert!(
+            any_marker_mesh,
+            "debug_show_poi=1 should give at least one POI marker a debug mesh"
+        );
+
+        // The next inspector frame re-reads the checkbox state via `get_attr`
+        // against the RECOMPILED wrapper span (which shifted when the attr was
+        // inserted). If that readback can't see `debug_show_poi`, the checkbox
+        // reverts to unchecked every frame and looks inert — exactly the
+        // "does not check the box" symptom. Guard it.
+        let (wrapper2_idx, _) = scene2
+            .nodes
+            .iter()
+            .enumerate()
+            .find(|(_, n)| n.kind == "cave")
+            .expect("cave wrapper still present after recompile");
+        let span2 = recompiled.node_spans[wrapper2_idx]
+            .expect("recompiled cave wrapper must keep a source span");
+        let readback = get_attr(&out, span2, "debug_show_poi");
+        assert_eq!(
+            readback.map(str::trim),
+            Some("1"),
+            "inspector readback must see debug_show_poi=1 on the recompiled span"
         );
     }
 }

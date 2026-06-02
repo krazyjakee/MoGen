@@ -12,10 +12,14 @@ use super::schema::as_string_or_ident;
 const FEATURE_KINDS: &[&str] = &[
     "stalagmite",
     "stalactite",
+    "column",
     "rock_pile",
     "pool",
     "lake",
 ];
+
+/// Allowed `cave.colliders` values — which rock surfaces collide.
+const COLLIDER_MODES: &[&str] = &["all", "shell", "none"];
 
 pub(super) fn check_cave(n: &Node, diags: &mut Vec<Diagnostic>) {
     // Only `feature` children are accepted — geometry smuggled into the wrapper
@@ -69,6 +73,8 @@ pub(super) fn check_cave(n: &Node, diags: &mut Vec<Diagnostic>) {
         "lakes",
         "stalagmites",
         "stalactites",
+        "columns",
+        "mushrooms",
     ] {
         if let Some(Value::Number(v)) = n.attr(key) {
             if *v < 0.0 {
@@ -122,6 +128,51 @@ pub(super) fn check_cave(n: &Node, diags: &mut Vec<Diagnostic>) {
                 .with_span(n.span),
             );
         }
+    }
+
+    // Mesh-quality scale must be a positive fraction; it is clamped to
+    // [0.1, 1.0] at lowering, so flag anything outside that the author may not
+    // expect to be capped.
+    if let Some(Value::Number(v)) = n.attr("lod_scale") {
+        if *v <= 0.0 || *v > 1.0 {
+            diags.push(
+                Diagnostic::warning(
+                    "W1210",
+                    format!("`cave.lod_scale` is {v}; values are clamped to [0.1, 1.0]"),
+                )
+                .with_span(n.span),
+            );
+        }
+    }
+
+    // Collider mode must be one of the known surfaces selectors.
+    if let Some(mode) = n.attr("colliders").and_then(as_string_or_ident) {
+        if !COLLIDER_MODES.contains(&mode) {
+            diags.push(
+                Diagnostic::error(
+                    "E1215",
+                    format!(
+                        "`cave.colliders` must be one of: {} (got \"{mode}\")",
+                        COLLIDER_MODES.join(", ")
+                    ),
+                )
+                .with_span(n.span),
+            );
+        }
+    }
+
+    // `collider="aabb"` (the geometry-common attr) is meaningless on a cave —
+    // the cave manages its own per-surface trimesh colliders via `colliders=`.
+    // Point the author at the right knob rather than silently ignoring it.
+    if n.attr("collider").is_some() {
+        diags.push(
+            Diagnostic::warning(
+                "W1211",
+                "`collider=` is ignored on `cave`; use `colliders=all|shell|none` \
+                 (and `water_collider=1`) to control cave physics",
+            )
+            .with_span(n.span),
+        );
     }
 
     // [0,1] dials.

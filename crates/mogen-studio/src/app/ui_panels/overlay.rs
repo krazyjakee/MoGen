@@ -115,6 +115,25 @@ impl MogenStudioApp {
                                             .set_show_transform_gizmo(show_xform);
                                         let _ = self.settings.save();
                                     }
+                                    let mut show_colliders =
+                                        self.settings.show_colliders();
+                                    if ui
+                                        .checkbox(
+                                            &mut show_colliders,
+                                            "Colliders",
+                                        )
+                                        .on_hover_text(
+                                            "AABB collider wireframe overlay \
+                                             (off by default)",
+                                        )
+                                        .changed()
+                                    {
+                                        self.settings
+                                            .set_show_colliders(show_colliders);
+                                        self.viewer
+                                            .set_show_colliders(show_colliders);
+                                        let _ = self.settings.save();
+                                    }
                                 })
                                 .response
                                 .on_hover_text("Toggle viewport overlays");

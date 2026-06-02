@@ -2,8 +2,10 @@
 
 `cave` is a top-level node kind that expands deterministically into a
 traversable cave: a single watertight rock shell with hollow chambers linked by
-walkable passages, optionally populated with stalagmites, stalactites, rock
-piles, pools and lakes. It is to subterranean environments what `building` is to
+walkable passages, optionally populated with stalagmites, stalactites, stone
+columns, rock piles, pools and lakes, plus invisible **points of interest** a
+game engine reads from the glTF. It is to subterranean environments what
+`building` is to
 architectural floorplates — one editable wrapper, with the entire subtree below
 it stamped non-editable because the geometry is a pure function of `seed=` plus
 the declared attrs. A rebuild regenerates it, so hand-edits below the wrapper
@@ -59,8 +61,8 @@ The pipeline, all seeded from `seed=`:
    exceeds the angle cap** — even when linking distant floors.
 
 5. **Entrances.** `entrances` horizontal mouths are punched out through the
-   nearest side face, hosted on the lowest chambers so they land at ground
-   level. This is what makes the otherwise-enclosed block enterable.
+   nearest side face, hosted on the highest chambers so they open onto the top
+   layer. This is what makes the otherwise-enclosed block enterable.
 
 6. **Roughening.** The shell is displaced along its normals by bounded,
    low-frequency value noise (`roughness`) for a natural stone finish. The
@@ -73,10 +75,33 @@ The pipeline, all seeded from `seed=`:
    **marching the real carved rock field** (the same `box − ⋃ carvers` the
    shell is meshed from) and sinking the feature slightly into it, so drips and
    boulders sit flush on the surface instead of floating at the geometric
-   chamber bound.
+   chamber bound. A **column** marches *both* the floor and the ceiling and
+   spans the full gap (a stalagmite fused with a stalactite at a waist); it is
+   skipped where the sampled spot has no reachable ceiling.
 
-The rock shell gets a `Trimesh` collider so a game-engine importer gets working
-physics for free; water surfaces are left collider-free so a player can wade in.
+8. **Points of interest.** Empty marker nodes the generator drops for a game
+   engine to populate — see [Points of interest](#points-of-interest) below.
+
+By default every solid mesh — the rock shell and each decoration, columns
+included — gets a `Trimesh` collider so a game-engine importer gets working
+physics for free; water surfaces and POI markers are left collider-free (wade
+into water; markers are pure metadata). Two attributes tune this:
+
+- `colliders` picks which **rock** surfaces collide: `all` (default — shell +
+  every solid decoration), `shell` (only the outer rock shell; stalagmites,
+  columns and piles become walk-through), or `none` (no rock colliders).
+- `water_collider=1` opts pools and lakes *into* a collider so a player stands
+  on the surface instead of wading. It's independent of `colliders`.
+
+The generic `collider="aabb"` attribute is **ignored** on `cave` (an AABB would
+be a solid box around the hollow cave) — use `colliders=` instead. MoGen Studio
+hides the AABB checkbox for caves and shows the surface picker described here.
+
+`lod_scale` is a single quality dial `(0, 1]`: it scales the rock voxel grid and
+every decoration's tessellation to trade triangles for fidelity. It changes
+**only** polygon budget — the chamber layout, decoration counts and every point
+of interest are identical at any `lod_scale`, so a low-detail bake and a hero
+bake of the same seed are structurally the same cave.
 
 ---
 
@@ -102,16 +127,21 @@ cave "hollow" (
   blend=1.5,             // smooth-union radius
   margin=2.5,            // rock thickness around the void (m)
   resolution=112,        // voxel grid (32–224); higher = finer + slower
+  lod_scale=1.0,         // mesh-quality scale (0.1–1.0); lower = fewer triangles
   entrances=2,           // mouths punched to a side face
   mat="limestone",       // rock material (defaults to cave_rock)
   water_mat="water",     // pool/lake material (defaults to cave_water)
+  colliders="all",       // which rock surfaces collide: all | shell | none
+  water_collider=0,      // 1 = pools/lakes are solid (stand on water)
 
   // Decoration counts (scattered on chamber floors / ceilings):
   stalagmites=14,
   stalactites=10,
+  columns=4,             // floor-to-ceiling stone pillars
   rock_piles=3,
   pools=2,
   lakes=0,
+  mushrooms=12,          // point-of-interest markers (no geometry)
 ) {
   // Optional per-kind tuning. `kind=` is required; `count` overrides the
   // top-level knob for that kind; min_size/max_size set the size range (m);
@@ -142,12 +172,17 @@ cave "hollow" (
 | `blend` | `1.5` | Smooth-union radius (m). |
 | `margin` | `2.0` | Rock thickness around the void (m). |
 | `resolution` | `96` | Voxel-grid resolution, clamped `[32, 224]`. |
+| `lod_scale` | `1.0` | Mesh-quality scale, clamped `[0.1, 1.0]`. Scales rock voxel grid + decoration tessellation; lower = fewer triangles. Layout / counts / POIs unaffected. |
 | `entrances` | `1` | Mouths punched out to a side face. |
 | `mat` | `cave_rock` | Rock material (auto-stamped grey stone if undeclared). |
 | `mat_style` | `""` | Free-text style hint forwarded to texture generation. |
 | `water_mat` | `cave_water` | Pool / lake material. |
-| `rock_piles`, `pools`, `lakes`, `stalagmites`, `stalactites` | `0` | Decoration counts. |
+| `colliders` | `all` | Which rock surfaces get a `Trimesh` collider: `all` (shell + decorations), `shell` (shell only), `none`. |
+| `water_collider` | `0` | `1` = pools/lakes are solid (stand on the surface); independent of `colliders`. |
+| `rock_piles`, `pools`, `lakes`, `stalagmites`, `stalactites`, `columns` | `0` | Decoration counts. |
+| `mushrooms` | `0` | Mushroom-spot POI markers scattered on chamber floors (no geometry). |
 | `debug_hide_shell` | `0` | Debug cutaway (see below). |
+| `debug_show_poi` | `0` | Debug: visualise POI markers as spheres (see below). |
 
 ### Debug
 
@@ -158,12 +193,22 @@ the removed half are culled so they don't float in the opened section; the
 remaining ones keep the exact positions they have with the shell shown, so the
 flag is purely a viewing aid. Remove it before exporting a final asset.
 
+`debug_show_poi=1` gives every point-of-interest marker (which are normally
+empty, geometry-free nodes) a small bright sphere in an emissive, per-kind
+`cave_poi_<kind>` material — magenta dead-end chambers, blue column bases, lime
+ladder anchors, amber mushroom spots — so you can see where each POI group
+landed in any glTF viewer. The markers keep their
+`role`/`tags`, get no collider, and the flag changes nothing about layout — turn
+it off for a production bake so the POIs stay geometry-free. In MoGen Studio,
+select the `cave` node and toggle **Show POI markers** in the inspector instead
+of editing the attribute by hand.
+
 ### `feature` children
 
 `cave` accepts only `feature` children. Each tunes one decoration kind:
 
 ```
-feature "<name>" (kind=stalagmite|stalactite|rock_pile|pool|lake,
+feature "<name>" (kind=stalagmite|stalactite|column|rock_pile|pool|lake,
                   count=…, min_size=…, max_size=…, mat="<material>")
 ```
 
@@ -182,16 +227,44 @@ A top-level count with no matching `feature` uses the kind's default size range.
 
 ```
 hollow (editable wrapper, kind="cave")
-├── rock              (mesh, role="cave_rock", Trimesh collider)
-└── decorations       (group)
-    ├── rock_piles    (group) → rock_pile_0 …
-    ├── pools         (group) → pool_0 …       (water material, no collider)
-    ├── lakes         (group) → lake_0 …
-    ├── stalagmites   (group) → stalagmite_0 …
-    └── stalactites   (group) → stalactite_0 …
+├── rock                  (mesh, role="cave_rock", Trimesh collider)
+├── decorations           (group)
+│   ├── rock_piles        (group) → rock_pile_0 …
+│   ├── pools             (group) → pool_0 …       (water material, no collider)
+│   ├── lakes             (group) → lake_0 …
+│   ├── stalagmites       (group) → stalagmite_0 …
+│   ├── stalactites       (group) → stalactite_0 …
+│   └── columns           (group) → column_0 …     (Trimesh collider)
+└── points_of_interest    (group)
+    ├── dead_end_chamber_0 …   (empty marker, role="dead_end_chamber")
+    ├── column_base_0 …        (empty marker, role="column_base")
+    ├── ladder_anchor_0 …      (empty marker, role="ladder_anchor")
+    └── mushroom_spot_0 …      (empty marker, role="mushroom_spot")
 ```
 
 Every node under the wrapper carries `tags=["cave", …]` and is non-editable.
+
+---
+
+## Points of interest
+
+POIs are **transform-only marker nodes** (no mesh, no collider) under a
+`points_of_interest` group. Each carries `role=<kind>` and
+`tags=["cave", "poi", <kind>]`, both stamped into the glTF node's `extras`, so a
+Godot importer can find every marker by role and drop a prefab at its transform.
+They are a deterministic function of the same `seed=` as the geometry and are
+**not** affected by `lod_scale`.
+
+| role | placed at | use |
+|---|---|---|
+| `dead_end_chamber` | floor centre of each chamber the passage graph touches exactly once | treasure rooms, ambush spots, bosses |
+| `column_base` | floor anchor of each stone column | props/altars around a pillar |
+| `ladder_anchor` | foot of each passage steeper than `max_slope` (vertical shafts / inter-floor climbs) | ladder / rope placement — an alternative to the walkable switchback |
+| `mushroom_spot` | random points on chamber floors (`mushrooms=` count) | scattered flora / pickups |
+
+`dead_end_chamber`, `column_base` and `ladder_anchor` counts are **derived**
+from the generated layout (a dead-end cave with no columns and no steep links
+emits none of them); `mushroom_spot` count is set by `mushrooms=`.
 
 ---
 
@@ -202,13 +275,15 @@ Every node under the wrapper carries `tags=["cave", …]` and is non-editable.
 - non-`feature` children (`E1201`),
 - non-positive `chambers` / `levels` / `chamber_min` / `chamber_max` /
   `passage_radius` / `margin` / `resolution` (`E1207` / `E1208`),
-- negative decoration / `loops` / `entrances` / `level_gap` / `level_links`
-  counts (`E1202`),
+- negative decoration (`rock_piles` / `pools` / `lakes` / `stalagmites` /
+  `stalactites` / `columns` / `mushrooms`) / `loops` / `entrances` /
+  `level_gap` / `level_links` counts (`E1202`),
 - a `size` component that isn't finite and `> 0` (`E1203`),
 - `max_slope` outside `(0, 90)` degrees (`E1204`).
 
 Warnings: `chamber_min > chamber_max` (`W1205`, swapped at lowering),
-`roughness` / `chamber_flatten` / `overlap` outside `[0, 1]` (`W1206`, clamped).
+`roughness` / `chamber_flatten` / `overlap` outside `[0, 1]` (`W1206`, clamped),
+`lod_scale` outside `(0, 1]` (`W1210`, clamped to `[0.1, 1.0]`).
 
 On a `feature`: missing or unknown `kind` (`E1211` / `E1212`), a body block
 (`E1210`), negative `count` (`E1213`), non-positive `min_size` / `max_size`

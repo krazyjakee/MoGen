@@ -13,14 +13,16 @@ use anyhow::{bail, Result};
 
 use crate::ast::Node;
 
-/// The five decoration kinds a cave can be populated with. Each maps to a
-/// distinct mesh builder in `decorate.rs`.
+/// The decoration kinds a cave can be populated with. Each maps to a distinct
+/// mesh builder in `decorate.rs`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum DecoKind {
     /// Floor spike pointing up.
     Stalagmite,
     /// Ceiling spike pointing down.
     Stalactite,
+    /// Floor-to-ceiling stone pillar (a fused stalagmite + stalactite).
+    Column,
     /// Cluster of small boulders on the floor.
     RockPile,
     /// Small flat water surface on a chamber floor.
@@ -34,6 +36,7 @@ impl DecoKind {
         Some(match s {
             "stalagmite" => DecoKind::Stalagmite,
             "stalactite" => DecoKind::Stalactite,
+            "column" => DecoKind::Column,
             "rock_pile" => DecoKind::RockPile,
             "pool" => DecoKind::Pool,
             "lake" => DecoKind::Lake,
@@ -45,6 +48,7 @@ impl DecoKind {
         match self {
             DecoKind::Stalagmite => "stalagmite",
             DecoKind::Stalactite => "stalactite",
+            DecoKind::Column => "column",
             DecoKind::RockPile => "rock_pile",
             DecoKind::Pool => "pool",
             DecoKind::Lake => "lake",
@@ -54,6 +58,29 @@ impl DecoKind {
     /// Whether this decoration is a water surface (drives default material).
     pub fn is_water(self) -> bool {
         matches!(self, DecoKind::Pool | DecoKind::Lake)
+    }
+}
+
+/// Which generated rock surfaces get a trimesh collider for the game engine.
+/// Water is handled separately by `CaveCfg::water_collider` regardless of this.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ColliderMode {
+    /// No colliders on any cave geometry.
+    None,
+    /// Only the outer rock shell collides; decorations are walk-through.
+    Shell,
+    /// Shell plus every solid decoration (stalagmites, columns, rock piles…).
+    All,
+}
+
+impl ColliderMode {
+    pub fn parse(s: &str) -> Option<ColliderMode> {
+        Some(match s {
+            "none" => ColliderMode::None,
+            "shell" => ColliderMode::Shell,
+            "all" => ColliderMode::All,
+            _ => return None,
+        })
     }
 }
 
@@ -121,18 +148,40 @@ pub(super) struct CaveCfg {
     /// Openings punched out to a side face so the cave is enterable.
     pub entrances: u32,
     pub water_mat: Option<String>,
+    /// Which rock surfaces get a trimesh collider (`all` | `shell` | `none`).
+    /// A game importer reads `extras.collider` off these nodes for physics.
+    pub colliders: ColliderMode,
+    /// When true, pools and lakes also get a trimesh collider (so a player
+    /// stands on the surface). Off by default so water is wadeable.
+    pub water_collider: bool,
     pub decorations: Vec<DecoGroup>,
+    /// Mesh-quality scale `(0, 1]`. `1.0` is full detail; lower values reduce
+    /// triangle count — the rock voxel grid and every decoration's tessellation
+    /// scale by this factor. Layout, counts and feature positions are unchanged,
+    /// so a low-detail bake keeps the same chambers, passages and POIs as the
+    /// hero bake; only the polygon budget drops.
+    pub lod_scale: f32,
+    /// Number of mushroom-spawn points of interest scattered on chamber floors.
+    /// These are empty marker nodes (no geometry) the game populates with props.
+    pub mushrooms: u32,
     /// Debug-only: slice the front (+Z) half of the rock shell away so the
     /// chambers, passages and floors are visible in cross-section. Mirrors
     /// `building`'s `debug_hide_roof`. Decorations in the removed half are
     /// culled so they don't float in the opened section.
     pub debug_hide_shell: bool,
+    /// Debug-only: give every point-of-interest marker a small visible sphere
+    /// (in a bright debug material) so the otherwise-empty markers show up in a
+    /// glTF preview. Off by default — production bakes keep POIs geometry-free.
+    pub debug_show_poi: bool,
 }
 
 /// Default size range per decoration kind (min, max) in metres.
 fn default_size_range(kind: DecoKind) -> (f32, f32) {
     match kind {
         DecoKind::Stalagmite | DecoKind::Stalactite => (0.3, 1.2),
+        // Column size is the pillar's base radius; kept slender so a column
+        // reads as a pillar rather than a plug.
+        DecoKind::Column => (0.35, 0.9),
         DecoKind::RockPile => (0.4, 1.0),
         DecoKind::Pool => (1.0, 2.5),
         DecoKind::Lake => (3.0, 6.0),
@@ -179,8 +228,33 @@ pub(super) fn read_cfg(node: &Node) -> Result<CaveCfg> {
 
     let water_mat = node.attr_string("water_mat").map(|s| s.to_string());
 
+    // Collider controls. `colliders` defaults to `all` (every solid rock
+    // surface collides); a bad value falls back to `all` since the validator
+    // has already flagged it. `water_collider` is an independent opt-in.
+    let colliders = node
+        .attr_string("colliders")
+        .and_then(ColliderMode::parse)
+        .unwrap_or(ColliderMode::All);
+    let water_collider = node
+        .attr_number("water_collider")
+        .map(|n| n.abs() > 0.5)
+        .unwrap_or(false);
+
+    // Combine the cave's own `lod_scale=` attr with the file-global LOD scale
+    // (the studio slider writes the top-level `lod_scale (value=…)` directive,
+    // which lands in `current_lod_scale()` here). Without this the slider would
+    // have no effect on cave geometry, since the cave reads only its own attr.
+    let lod_scale = (node.attr_number("lod_scale").unwrap_or(1.0)
+        * crate::lower::lod::current_lod_scale())
+    .clamp(0.1, 1.0);
+    let mushrooms = node.attr_number("mushrooms").unwrap_or(0.0).max(0.0) as u32;
+
     let debug_hide_shell = node
         .attr_number("debug_hide_shell")
+        .map(|n| n.abs() > 0.5)
+        .unwrap_or(false);
+    let debug_show_poi = node
+        .attr_number("debug_show_poi")
         .map(|n| n.abs() > 0.5)
         .unwrap_or(false);
 
@@ -208,8 +282,13 @@ pub(super) fn read_cfg(node: &Node) -> Result<CaveCfg> {
         resolution,
         entrances,
         water_mat,
+        colliders,
+        water_collider,
         decorations,
+        lod_scale,
+        mushrooms,
         debug_hide_shell,
+        debug_show_poi,
     })
 }
 
@@ -225,6 +304,7 @@ fn read_decorations(node: &Node) -> Result<Vec<DecoGroup>> {
         (DecoKind::Lake, "lakes"),
         (DecoKind::Stalagmite, "stalagmites"),
         (DecoKind::Stalactite, "stalactites"),
+        (DecoKind::Column, "columns"),
     ];
 
     // Parse the explicit `feature` children first so they can override knobs.
