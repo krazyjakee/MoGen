@@ -126,13 +126,20 @@ fn check_connectivity(graph: &SceneGraph) -> Vec<Diagnostic> {
     let inherits_floating: Vec<bool> = compute_floating_flags(graph);
 
     // Gather mesh-bearing nodes with their world AABBs. Skip empty meshes and
-    // nodes whose tags (or ancestors' tags) include `floating`.
+    // nodes whose tags (or ancestors' tags) include `floating`. `poi` nodes are
+    // skipped too: they are placement-only markers that only carry a mesh in
+    // `debug_show_poi` mode (a tiny scattered visualization sphere), so they
+    // are never structural geometry and must not register as their own
+    // disconnected clusters.
     let mut entries: Vec<(NodeId, Aabb)> = Vec::new();
     for (i, n) in graph.nodes.iter().enumerate() {
         if n.mesh.is_none() {
             continue;
         }
         if inherits_floating[i] {
+            continue;
+        }
+        if n.kind == "poi" {
             continue;
         }
         let id = NodeId(i as u32);

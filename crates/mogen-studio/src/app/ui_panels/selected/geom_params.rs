@@ -438,8 +438,11 @@ pub(in crate::app) fn geom_params_for_kind(
             // drops the top-storey ceiling slab (and skylights) so the
             // interior is visible from above; `debug_render_floor` isolates a
             // single signed storey index, skipping vertical circulation, so
-            // one floor can be inspected without surrounding storeys. Both are
-            // intentionally surfaced in the inspector for ad-hoc debugging.
+            // one floor can be inspected without surrounding storeys;
+            // `debug_show_poi` gives every furnishing point-of-interest marker
+            // a small bright sphere so the otherwise-empty markers are visible
+            // in the preview. All are intentionally surfaced here for ad-hoc
+            // debugging.
             ui.label("");
             ui.label(egui::RichText::new("Debug").strong().weak());
             ui.end_row();
@@ -455,6 +458,7 @@ pub(in crate::app) fn geom_params_for_kind(
                 64,
                 out,
             );
+            bool_row(ui, "Show POI markers", "debug_show_poi", src, span, false, out);
             shown = true;
         }
         _ => {}

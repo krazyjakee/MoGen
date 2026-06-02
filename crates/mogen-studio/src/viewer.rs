@@ -92,6 +92,9 @@ impl Viewer {
             && press_pos_raw.map(|p| rect.contains(p)).unwrap_or(false);
         let primary_dragging = response.dragged_by(egui::PointerButton::Primary);
         let mut needs_repaint = false;
+        // Name of the POI marker currently under the cursor, shown as a
+        // viewport tooltip. Set during the hover pick below.
+        let mut hover_poi: Option<String> = None;
         let max_fps;
         {
             let mut st = self.state.lock().unwrap();
@@ -270,6 +273,29 @@ impl Viewer {
                             needs_repaint = true;
                         }
                         (true, None) => {}
+                    }
+                }
+            }
+
+            // Hover tooltip for POI markers. POI nodes (`kind == "poi"`) only
+            // carry a mesh — and so only appear in the pickable `FlatMesh` —
+            // when `debug_show_poi` is on, so this naturally fires only while
+            // the debug spheres are visible. Skipped during camera/gizmo
+            // gestures so a drag doesn't flash tooltips.
+            if !cinema_active
+                && response.hovered()
+                && !primary_dragging
+                && !gizmo_in_progress
+                && !panning
+            {
+                if let Some(cursor) = cursor_now {
+                    if let Some(id) = crate::pick::pick_node(&st.camera, rect, cursor, &st.mesh) {
+                        if let Some(scene) = st.scene.as_ref() {
+                            let node = scene.get(id);
+                            if node.kind == "poi" {
+                                hover_poi = Some(node.name.clone());
+                            }
+                        }
                     }
                 }
             }
@@ -538,7 +564,14 @@ impl Viewer {
             callback: Arc::new(cb),
         });
 
-        response
+        // Anchor at the pointer, not the widget: the viewport fills the whole
+        // 3D view, so the default widget-rect tooltip placement would pin the
+        // label to the bottom edge of the view instead of next to the marker.
+        if let Some(name) = hover_poi {
+            response.on_hover_text_at_pointer(name)
+        } else {
+            response
+        }
     }
 }
 
