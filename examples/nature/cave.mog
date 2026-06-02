@@ -9,26 +9,29 @@ material "limestone" (color=[0.40, 0.37, 0.32], roughness=0.95)
 
 cave "hollow" (
   seed=12,
-  size=[36, 13, 36],     // roomy footprint so chambers stay full-size + distinct
-  chambers=7,
-  levels=2,
-  chamber_min=2.8,
-  chamber_max=4.5,
-  spacing=3,              // rock kept between rooms → real passages join them
-  passage_radius=1.3,
+  size=[34, 20, 34],     // tall enough for three stacked layers
+  chambers=10,
+  levels=3,              // three floors of chambers + passages, stacked
+  level_gap=2,           // solid rock between layers
+  level_links=2,         // vertical ramps joining each pair of layers
+  chamber_min=2.2,
+  chamber_max=3.2,
+  spacing=2.5,           // separated rooms within a layer …
+  overlap=0.4,           // … but ~40% merge into larger caverns (both styles)
+  passage_radius=1.2,
   max_slope=45,
   loops=2,
   roughness=0.4,
   margin=2.5,
-  resolution=120,
+  resolution=128,
   entrances=2,
   mat="limestone",
   // debug_hide_shell=1,  // uncomment to slice the front wall and peek inside
 
-  stalagmites=16,
-  stalactites=12,
-  rock_piles=4,
-  pools=2,
+  stalagmites=18,
+  stalactites=14,
+  rock_piles=5,
+  pools=3,
 ) {
   // Tune the drip features: smaller, sharper spikes than the defaults.
   feature "drips"  (kind=stalactite, min_size=0.25, max_size=0.7)

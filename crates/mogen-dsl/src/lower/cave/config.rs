@@ -86,14 +86,26 @@ pub(super) struct CaveCfg {
     pub levels: u32,
     pub chamber_min: f32,
     pub chamber_max: f32,
-    /// Minimum rock gap kept between chamber surfaces (m). Keeps chambers
-    /// distinct rooms joined by passages rather than merging into one blob.
+    /// Minimum rock gap kept between chamber surfaces of the SAME layer (m).
+    /// Keeps separated chambers distinct rooms rather than merging into a blob.
     pub spacing: f32,
+    /// Probability [0, 1] that a chamber is placed deliberately overlapping a
+    /// same-layer neighbour, merging into one larger irregular cavern. The rest
+    /// stay `spacing`-separated, so a cave mixes merged caverns and distinct
+    /// rooms. `0` = all rooms separate; `1` = everything clusters/overlaps.
+    pub overlap: f32,
     /// Vertical squash applied to chambers (height = radius * flatten). < 1
     /// keeps chamber floors gentle so they read as walkable rooms.
     pub chamber_flatten: f32,
+    /// Rock thickness kept between vertical layers (m). Each `level` is its own
+    /// horizontal layer of chambers + passages, stacked on top of the next with
+    /// this much solid rock between them and linked by `level_links` shafts.
+    pub level_gap: f32,
+    /// Vertical passages carved between each pair of adjacent layers. Clamped
+    /// to ≥ 1 when `levels > 1` so every layer stays reachable.
+    pub level_links: u32,
     pub passage_radius: f32,
-    /// Extra connections beyond the spanning tree, for loops in the layout.
+    /// Extra connections beyond the spanning tree within a layer, for loops.
     pub loops: u32,
     /// Maximum walkable slope in degrees. Tunnels steeper than this are
     /// rebuilt as switchback ramps so no floor ever exceeds it.
@@ -148,7 +160,10 @@ pub(super) fn read_cfg(node: &Node) -> Result<CaveCfg> {
         std::mem::swap(&mut chamber_min, &mut chamber_max);
     }
     let spacing = node.attr_number("spacing").unwrap_or(2.0).max(0.0);
+    let overlap = node.attr_number("overlap").unwrap_or(0.35).clamp(0.0, 1.0);
     let chamber_flatten = node.attr_number("chamber_flatten").unwrap_or(0.6).clamp(0.2, 1.0);
+    let level_gap = node.attr_number("level_gap").unwrap_or(1.5).max(0.0);
+    let level_links = node.attr_number("level_links").unwrap_or(1.0).max(0.0) as u32;
 
     let passage_radius = node.attr_number("passage_radius").unwrap_or(1.1).max(0.3);
     let loops = node.attr_number("loops").unwrap_or(1.0).max(0.0) as u32;
@@ -180,7 +195,10 @@ pub(super) fn read_cfg(node: &Node) -> Result<CaveCfg> {
         chamber_min,
         chamber_max,
         spacing,
+        overlap,
         chamber_flatten,
+        level_gap,
+        level_links,
         passage_radius,
         loops,
         max_slope,

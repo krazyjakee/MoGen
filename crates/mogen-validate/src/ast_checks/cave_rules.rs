@@ -48,6 +48,8 @@ pub(super) fn check_cave(n: &Node, diags: &mut Vec<Diagnostic>) {
     for key in [
         "loops",
         "entrances",
+        "level_gap",
+        "level_links",
         "rock_piles",
         "pools",
         "lakes",
@@ -109,7 +111,7 @@ pub(super) fn check_cave(n: &Node, diags: &mut Vec<Diagnostic>) {
     }
 
     // [0,1] dials.
-    for key in ["roughness", "chamber_flatten"] {
+    for key in ["roughness", "chamber_flatten", "overlap"] {
         if let Some(Value::Number(v)) = n.attr(key) {
             if !(0.0..=1.0).contains(v) {
                 diags.push(

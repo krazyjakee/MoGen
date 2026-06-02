@@ -19,7 +19,7 @@ fn count_role(g: &SceneGraph, role: &str) -> usize {
 const BASIC: &str = r#"
 cave "den" (
   seed=3,
-  size=[20, 9, 20],
+  size=[20, 13, 20],
   chambers=5,
   levels=2,
   resolution=48,

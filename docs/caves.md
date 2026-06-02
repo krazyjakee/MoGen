@@ -24,36 +24,50 @@ giving one organic, watertight rock mesh.
 
 The pipeline, all seeded from `seed=`:
 
-1. **Chamber placement.** `chambers` oblate ellipsoids are scattered inside the
-   block, distributed across `levels` vertical bands. Oblate (`height =
-   radius × chamber_flatten`) so each chamber floor reads as gently curved
-   rather than a deep bowl. Every chamber keeps a `margin` rock shell away from
-   the block faces **and at least `spacing` metres of rock from every other
-   chamber** (rejection-sampled; if a footprint is too crowded the chamber is
-   shrunk to hold the gap rather than merging into its neighbour). Separation is
-   what makes the cave read as **distinct rooms joined by passages** — a
-   dungeon — instead of one continuous blob.
+1. **Layers.** Chambers are organised into `levels` **stacked horizontal
+   layers** — floors — each occupying its own Y band, separated from the next by
+   `level_gap` metres of solid rock. Chamber radius is auto-capped to fit a
+   layer's height, so taller caves (or fewer `levels`) allow bigger chambers.
 
-2. **Passages.** A minimum spanning tree over the chamber centres guarantees the
-   whole cave is **traversable** — every chamber reachable from every other.
-   `loops` extra short edges add cycles so the layout isn't a pure tree.
+2. **Chamber placement.** Within a layer, `chambers` oblate ellipsoids are
+   scattered (oblate `height = radius × chamber_flatten` so floors read gently
+   curved). Each keeps a `margin` rock shell from the block faces, and the mix
+   of separated vs merged rooms is set by `overlap`:
 
-3. **Slope cap.** Each passage is a capsule carver. Any passage whose direct
+   - most chambers are rejection-sampled at least `spacing` metres apart, so
+     they stay **distinct rooms** (crowded layers shrink a chamber rather than
+     letting two merge); but
+   - with probability `overlap` a chamber is placed deliberately overlapping a
+     same-layer neighbour, so the two smooth-union into one **larger irregular
+     cavern**.
+
+   That gives "both overlaid and separated" in one cave. Chambers in *different*
+   layers may share XZ (rooms stacked over rooms) — the `level_gap` keeps them
+   apart vertically.
+
+3. **Passages.** A minimum spanning tree (+ `loops`) within each layer makes
+   every floor a connected, near-flat network. Then `level_links` vertical
+   passages join each adjacent layer pair (clamped to ≥ 1 so upper floors are
+   reachable), preferring chamber pairs offset enough for a single ≤ `max_slope`
+   ramp. The union is **fully traversable** — every chamber reachable from every
+   other across all floors.
+
+4. **Slope cap.** Each passage is a capsule carver. Any passage whose direct
    line would exceed `max_slope` (default **45°**) is rebuilt as a **switchback
    ramp**: it zig-zags between the two chamber columns, climbing at most
    `horizontal_run × tan(max_slope)` per leg, so **no walkable surface ever
    exceeds the angle cap** — even when linking distant floors.
 
-4. **Entrances.** `entrances` horizontal mouths are punched out through the
+5. **Entrances.** `entrances` horizontal mouths are punched out through the
    nearest side face, hosted on the lowest chambers so they land at ground
    level. This is what makes the otherwise-enclosed block enterable.
 
-5. **Roughening.** The shell is displaced along its normals by bounded,
+6. **Roughening.** The shell is displaced along its normals by bounded,
    low-frequency value noise (`roughness`) for a natural stone finish. The
    magnitude is an absolute cap (≤ ~0.35 m), not AABB-relative, so the mesh
    stays watertight regardless of block size.
 
-6. **Decorations.** Independent leaf meshes scattered onto chamber floors /
+7. **Decorations.** Independent leaf meshes scattered onto chamber floors /
    ceilings — never carved into the field, so this stage is pure mesh
    construction with no CSG. Each feature's floor / ceiling is found by
    **marching the real carved rock field** (the same `box − ⋃ carvers` the
@@ -71,11 +85,15 @@ physics for free; water surfaces are left collider-free so a player can wade in.
 ```mog
 cave "hollow" (
   seed=12,
-  size=[26, 12, 26],     // outer rock block [width, height, depth] (m); base on y=0
-  chambers=7,            // chambers carved
-  levels=2,              // vertical bands → overlapping floors
-  chamber_min=3,         // chamber radius range (m)
-  chamber_max=5.5,
+  size=[34, 20, 34],     // outer rock block [width, height, depth] (m); base on y=0
+  chambers=10,           // chambers carved
+  levels=3,              // stacked horizontal layers (floors)
+  level_gap=2,           // solid rock between layers (m)
+  level_links=2,         // vertical ramps per adjacent layer pair
+  chamber_min=2.2,       // chamber radius range (m); auto-capped to fit a layer
+  chamber_max=3.2,
+  spacing=2.5,           // min rock gap between same-layer rooms (m)
+  overlap=0.4,           // ~40% of rooms merge into larger caverns; rest stay separate
   chamber_flatten=0.6,   // height = radius × this (< 1 = flatter floors)
   passage_radius=1.3,    // tunnel radius (m)
   loops=2,               // extra connections beyond the spanning tree
@@ -110,9 +128,12 @@ cave "hollow" (
 | `seed` | `1` | RNG seed; same seed = identical cave. |
 | `size` | `[24, 10, 24]` | Outer block `[width, height, depth]` (m); base on `y=0`. |
 | `chambers` | `6` | Number of chambers carved. |
-| `levels` | `2` | Vertical bands chambers are spread across. |
-| `chamber_min`, `chamber_max` | `2.5, 5.0` | Chamber radius range (m). Swapped if reversed. |
-| `spacing` | `2.0` | Minimum rock gap between chamber surfaces (m). Crowded caves shrink chambers to keep the gap. |
+| `levels` | `2` | Stacked horizontal layers (floors). |
+| `level_gap` | `1.5` | Solid rock kept between layers (m). |
+| `level_links` | `1` | Vertical ramps per adjacent layer pair (clamped ≥ 1 when `levels > 1`). |
+| `chamber_min`, `chamber_max` | `2.5, 5.0` | Chamber radius range (m). Swapped if reversed; auto-capped to fit a layer's height. |
+| `spacing` | `2.0` | Minimum rock gap between same-layer chamber surfaces (m). Crowded layers shrink chambers to keep the gap. |
+| `overlap` | `0.35` | Probability `[0,1]` a chamber merges with a same-layer neighbour. `0` = all separate, `1` = all clustered. |
 | `chamber_flatten` | `0.6` | Vertical squash (`height = radius × this`), clamped `[0.2, 1.0]`. |
 | `passage_radius` | `1.1` | Tunnel radius (m). |
 | `loops` | `1` | Extra connections beyond the spanning tree. |
@@ -181,12 +202,13 @@ Every node under the wrapper carries `tags=["cave", …]` and is non-editable.
 - non-`feature` children (`E1201`),
 - non-positive `chambers` / `levels` / `chamber_min` / `chamber_max` /
   `passage_radius` / `margin` / `resolution` (`E1207` / `E1208`),
-- negative decoration / `loops` / `entrances` counts (`E1202`),
+- negative decoration / `loops` / `entrances` / `level_gap` / `level_links`
+  counts (`E1202`),
 - a `size` component that isn't finite and `> 0` (`E1203`),
 - `max_slope` outside `(0, 90)` degrees (`E1204`).
 
 Warnings: `chamber_min > chamber_max` (`W1205`, swapped at lowering),
-`roughness` / `chamber_flatten` outside `[0, 1]` (`W1206`, clamped).
+`roughness` / `chamber_flatten` / `overlap` outside `[0, 1]` (`W1206`, clamped).
 
 On a `feature`: missing or unknown `kind` (`E1211` / `E1212`), a body block
 (`E1210`), negative `count` (`E1213`), non-positive `min_size` / `max_size`
@@ -202,6 +224,10 @@ On a `feature`: missing or unknown `kind` (`E1211` / `E1212`), a body block
 - Floor *slope* is capped per passage; chamber floors are gently curved (oblate
   ellipsoids) rather than perfectly flat. Lower `chamber_flatten` for flatter
   floors.
+- More `levels` means thinner layer bands, so chamber radius is auto-capped to
+  fit — stacking many floors shrinks the rooms. For big chambers, raise `size`
+  height, drop `levels`, or lower `level_gap`. A `W`-class warning isn't emitted;
+  the cap is silent.
 - Decorations are anchored to the real carved surface (field-marched) and sunk
   slightly so they sit flush, not floating. They are not collision-tested
   against each other or passages, so a stalactite can occasionally hang near a

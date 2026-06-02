@@ -214,7 +214,8 @@ pub fn attrs_for_kind(kind: &str) -> &'static [&'static str] {
         "adjacency" => &["adjacent_to", "away_from"],
         "cave" => &[
             "seed", "mat_style", "size", "chambers", "levels",
-            "chamber_min", "chamber_max", "spacing", "chamber_flatten",
+            "chamber_min", "chamber_max", "spacing", "overlap", "chamber_flatten",
+            "level_gap", "level_links",
             "passage_radius", "loops", "max_slope", "roughness", "blend",
             "margin", "resolution", "entrances", "water_mat",
             "rock_piles", "pools", "lakes", "stalagmites", "stalactites",
@@ -456,7 +457,10 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         | ("cave", "chamber_min")
         | ("cave", "chamber_max")
         | ("cave", "spacing")
+        | ("cave", "overlap")
         | ("cave", "chamber_flatten")
+        | ("cave", "level_gap")
+        | ("cave", "level_links")
         | ("cave", "passage_radius")
         | ("cave", "loops")
         | ("cave", "max_slope")

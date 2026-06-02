@@ -487,9 +487,11 @@ building "house" (seed=4, style="apartment-block",
 `cave` is a procedural cave generator. One node expands into a single
 watertight rock shell — a bounding block hollowed by a smooth-blended field of
 chamber and passage carvers (surface-nets meshed) — plus optional scattered
-features. Chambers are distributed across vertical `levels` so cavities overlap
-into multiple connected floors; passages steeper than `max_slope` are rebuilt
-as switchback ramps so no walkable surface exceeds the angle cap; and
+features. Chambers are organised into `levels` stacked horizontal layers
+(separated by `level_gap` rock, joined by `level_links` vertical ramps); within
+a layer they mix `spacing`-separated rooms with `overlap`-merged caverns.
+Passages steeper than `max_slope` are rebuilt as switchback ramps so no walkable
+surface exceeds the angle cap; and
 `entrances` punch horizontal mouths out through the nearest side face so the
 cave is enterable. The generated subtree is stamped non-editable (pure function
 of `seed=` plus the declared attrs). See `docs/caves.md` for the full spec.
@@ -499,9 +501,12 @@ of `seed=` plus the declared attrs). See `docs/caves.md` for the full spec.
 | `seed` | `1` | RNG seed; same seed = identical cave. |
 | `size` | `[24, 10, 24]` | Outer rock-block dimensions `[width, height, depth]` (m); base sits on `y=0`. |
 | `chambers` | `6` | Number of chambers carved. |
-| `levels` | `2` | Vertical bands chambers are spread across (multi-floor overlap). |
-| `chamber_min`, `chamber_max` | `2.5, 5.0` | Chamber radius range (m). |
-| `spacing` | `2.0` | Minimum rock gap between chambers (m); keeps rooms distinct (overpacked caves shrink chambers to hold the gap). |
+| `levels` | `2` | Stacked horizontal layers (floors). Each is its own chamber+passage network. |
+| `level_gap` | `1.5` | Solid rock kept between layers (m). |
+| `level_links` | `1` | Vertical ramps carved between each adjacent layer pair (clamped ≥ 1 when `levels > 1`). |
+| `chamber_min`, `chamber_max` | `2.5, 5.0` | Chamber radius range (m). Auto-capped to fit a layer's height. |
+| `spacing` | `2.0` | Minimum rock gap between same-layer chambers (m); keeps rooms distinct. |
+| `overlap` | `0.35` | Probability a chamber merges with a same-layer neighbour into a larger cavern. `0` = all separate, `1` = all clustered. |
 | `chamber_flatten` | `0.6` | Vertical squash (height = radius × this); < 1 keeps floors gentle. |
 | `passage_radius` | `1.1` | Tunnel radius (m). |
 | `loops` | `1` | Extra connections beyond the spanning tree, for looping layouts. |
