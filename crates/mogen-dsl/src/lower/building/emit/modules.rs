@@ -15,8 +15,10 @@
 use anyhow::Result;
 use glam::{Quat, Vec3};
 
-use mogen_core::{NodeId, SceneGraph, Slot, Transform, UvMode};
-use mogen_geom::box_mesh;
+use std::path::Path;
+
+use mogen_core::{Material, NodeId, SceneGraph, Slot, Transform, UvMode};
+use mogen_geom::{box_mesh, icosphere_mesh};
 
 use crate::ast::{Node, Value};
 use crate::module::{expand_modules, ModuleRegistry};
@@ -59,7 +61,23 @@ pub(super) fn emit_interior_door_slot(
     emit_one(
         parent_node, parent, graph, &reg, &op,
         &cfg.internal_door, "int_door", "door", Some(INT_DOOR_MAT),
-    )
+    )?;
+    // The circulation-filler door is cut outside the per-storey `OpeningPlan`,
+    // so `emit_opening_pois` never sees it. Drop a matching `door` POI here so
+    // every doorway in the building — plan-driven or circulation-driven —
+    // carries the same marker for custom-door tooling. Name keys off the world
+    // pose to stay distinct from the plan-indexed `door_<n>` markers.
+    emit_opening_poi(
+        graph,
+        parent,
+        parent_node.origin.as_deref(),
+        cfg,
+        "door",
+        format!("door_{}_{}", encode(x), encode(z)),
+        Vec3::new(x, sill, z),
+        facing,
+    );
+    Ok(())
 }
 
 pub(super) fn emit_module_instances(
@@ -106,6 +124,132 @@ pub(super) fn emit_module_instances(
         )?;
     }
     Ok(())
+}
+
+/// Emit transform-only POI markers (`kind="poi"`) at every door and window
+/// so a downstream tool can drop in its own custom door/window prefabs without
+/// parsing the generated panel geometry. Mirrors the furniture / cave POI
+/// contract: each marker carries `role` + `tags` and the opening's outward
+/// pose (position at the threshold/sill, local +Z aligned with the wall's
+/// outward normal — identical to the module wrapper in `emit_one`, so a prefab
+/// authored facing +Z at its base lands flush). Markers are always emitted (so
+/// the role/tags round-trip into `node.extras` for importers); they only gain
+/// a small bright debug sphere when `debug_show_poi` is on.
+pub(super) fn emit_opening_pois(
+    parent_node: &Node,
+    cfg: &BuildingCfg,
+    plan: &OpeningPlan,
+    parent: NodeId,
+    graph: &mut SceneGraph,
+) {
+    // Exterior entrances and interior doors are both "door" POIs (entrances
+    // get an extra `entrance` tag); windows are "window" POIs. Skylights keep
+    // their existing slot wrapper and are intentionally left out here — the
+    // request is doors and windows.
+    let groups: [(&[Opening], &str); 3] = [
+        (plan.entrances.as_slice(), "entrance"),
+        (plan.interior_doors.as_slice(), "door"),
+        (plan.windows.as_slice(), "window"),
+    ];
+    if groups.iter().all(|(ops, _)| ops.is_empty()) {
+        return;
+    }
+
+    let origin = parent_node.origin.clone();
+    let group = graph.add_child(
+        parent,
+        "opening_pois".to_string(),
+        "group",
+        Transform::IDENTITY,
+    );
+    graph.nodes[group.0 as usize].origin = origin.clone();
+    graph.nodes[group.0 as usize]
+        .tags
+        .extend(["building".to_string(), "points_of_interest".to_string()]);
+
+    // Stable per-role suffixes (door_0, window_0, …) so two markers of the
+    // same role get distinct, snapshot-stable names.
+    let mut counts: std::collections::BTreeMap<&str, u32> = std::collections::BTreeMap::new();
+    for (ops, role) in groups {
+        for op in ops {
+            let idx = counts.entry(role).or_default();
+            emit_opening_poi(
+                graph,
+                group,
+                origin.as_deref(),
+                cfg,
+                role,
+                format!("{role}_{idx}"),
+                Vec3::new(op.x, op.sill, op.z),
+                op.facing,
+            );
+            *idx += 1;
+        }
+    }
+}
+
+/// Spawn one transform-only POI marker (`kind="poi"`) at `pos` facing
+/// `facing`, with `role`/`tags` set per the door/window contract. Shared by
+/// the plan-driven `emit_opening_pois` and the circulation-filler door slot in
+/// `emit_interior_door_slot` so every opening — wherever it's cut — gets the
+/// same marker. The marker stays geometry-free unless `debug_show_poi` is set,
+/// in which case it gains a small role-coloured emissive sphere.
+fn emit_opening_poi(
+    graph: &mut SceneGraph,
+    parent: NodeId,
+    origin: Option<&Path>,
+    cfg: &BuildingCfg,
+    role: &str,
+    name: String,
+    pos: Vec3,
+    facing: [f32; 3],
+) -> NodeId {
+    let rot = quat_facing(facing);
+    let id = graph.add_child(parent, name, "poi", Transform::from_trs(pos, rot, Vec3::ONE));
+    graph.nodes[id.0 as usize].origin = origin.map(|p| p.to_path_buf());
+    graph.nodes[id.0 as usize].role = Some(role.to_string());
+    let mut tags = vec!["building".to_string(), "poi".to_string()];
+    if role == "entrance" {
+        tags.push("door".to_string());
+        tags.push("entrance".to_string());
+    } else {
+        tags.push(role.to_string());
+    }
+    graph.nodes[id.0 as usize].tags.extend(tags);
+    // Debug viz: a small emissive sphere per marker, colour-coded per role, so
+    // the otherwise-empty POIs are visible in a glTF preview.
+    if cfg.debug_show_poi {
+        ensure_opening_poi_mat(graph, origin, role);
+        if let Some(mid) = graph.find_material_scoped(&opening_poi_mat_name(role), origin) {
+            graph.set_mesh(id, icosphere_mesh(0.12, 1, UvMode::Tile));
+            graph.set_material(id, mid);
+        }
+    }
+    id
+}
+
+fn opening_poi_mat_name(role: &str) -> String {
+    format!("building_poi_{role}")
+}
+
+fn ensure_opening_poi_mat(graph: &mut SceneGraph, origin: Option<&Path>, role: &str) {
+    let name = opening_poi_mat_name(role);
+    if graph.find_material_scoped(&name, origin).is_some() {
+        return;
+    }
+    let [r, g, b] = match role {
+        "entrance" => [0.95, 0.40, 0.20], // orange
+        "door" => [0.95, 0.85, 0.20],     // yellow
+        "window" => [0.30, 0.80, 1.00],   // cyan
+        _ => [0.80, 0.80, 0.80],
+    };
+    let mut m = Material::new(&name);
+    m.base_color = [r, g, b, 1.0];
+    m.emissive = [r, g, b];
+    m.emissive_strength = 2.0;
+    m.roughness = 0.5;
+    m.origin = origin.map(|p| p.to_path_buf());
+    graph.add_material(m);
 }
 
 fn emit_one(

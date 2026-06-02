@@ -106,6 +106,9 @@ pub(super) fn emit_floor(
     );
     graph.nodes[openings_group.0 as usize].origin = origin.clone();
     modules::emit_module_instances(node, cfg, &plan, openings_group, graph)?;
+    // Transform-only POI markers for every door / window, parented at floor
+    // level alongside the openings so custom-door/window tooling can find them.
+    modules::emit_opening_pois(node, cfg, &plan, floor_group, graph);
 
     if !skylight_rects.is_empty() {
         let sky_group = graph.add_child(

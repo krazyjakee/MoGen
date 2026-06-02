@@ -87,7 +87,7 @@ building "house" (
 | `elevators` | `0` | int ≥ 0 | Vertical shafts spanning every storey. |
 | `staircases` | `0` | int ≥ 0 | Stairwells spanning adjacent storeys (≥1 if `floors_above + floors_below > 1`). |
 | `furnish` | `1` | bool (0/1) | Emit furnishing POI markers in each room (see [Furnishing markers](#furnishing-markers)). `0` leaves rooms as bare shells. Markers carry no geometry either way. |
-| `debug_show_poi` | `0` | bool (0/1) | Debug: give every furnishing marker a small emissive sphere so the geometry-free POIs are visible in a glTF viewer, colour-coded by room category. |
+| `debug_show_poi` | `0` | bool (0/1) | Debug: give every furnishing and door/window marker a small emissive sphere so the geometry-free POIs are visible in a glTF viewer, colour-coded by category/role. |
 | `debug_hide_roof` | `0` | bool (0/1) | Debug: drop the top-storey ceiling slab (and its skylights) so the interior can be seen from above. |
 | `debug_render_floor` | _unset_ | signed int storey | Debug: render only the given storey index (`0` = ground, `1..` = upper, `-1..` = basement). The rendered floor gets no ceiling and vertical circulation is skipped. |
 
@@ -148,6 +148,10 @@ name (building)                       editable wrapper
     │   ├── ext_door_<j> (group)      external_door module instance (ground floor)
     │   ├── window_<k> (group)        sized module instance
     │   └── skylight_<m> (group)      top-floor only
+    ├── opening_pois (group)          door/window POI markers (see below)
+    │   ├── entrance_0 (poi)          role=entrance, geometry-free
+    │   ├── door_0 (poi)              role=door, geometry-free
+    │   └── window_0 (poi)            role=window, geometry-free
     └── circulation (group)
         ├── stair_<n> (group)
         └── elevator_<n> (group)
@@ -244,6 +248,35 @@ category (kitchens orange, bedrooms pink, server rooms teal, …) so you can see
 the furnishing plan in any glTF viewer. The spheres are a viewing aid only —
 they keep the markers' `role`/`tags`, never get a collider, and must be turned
 off for a production bake to keep the POIs geometry-free.
+
+## Door & window POIs
+
+Alongside the door/window *geometry* in the `openings` group, every floor also
+gets an `opening_pois` group of **points-of-interest** — the same transform-only
+contract as furnishing markers, but for openings. They make it easy to drop in
+your own custom door/window prefabs without parsing the generated panel meshes:
+read the marker pose, instantiate your prefab there, and (optionally) delete or
+hide MoGen's default panel.
+
+Each marker is:
+
+- `kind = "poi"`, with **no mesh and no collider** by default;
+- `role` = `entrance` (exterior door), `door` (interior door), or `window`;
+- `tags` = `["building", "poi", "window"]` for windows, `["building", "poi",
+  "door"]` for interior doors, and `["building", "poi", "door", "entrance"]` for
+  exterior doors — so a generic "door" importer catches both door kinds while an
+  entrance-only importer can still single out the street doors;
+- a transform whose **position** sits at the opening's threshold/sill and whose
+  local **+Z** points along the wall's outward normal — identical to the pose of
+  the default module instance, so a prefab authored facing +Z at its base lands
+  flush in the hole.
+
+Door/window POIs are always emitted (independent of `furnish`); they only gain a
+debug sphere under `debug_show_poi=1`, colour-coded by role (entrances orange,
+interior doors yellow, windows cyan). Skylights keep their existing
+`extras.slot` wrapper and are not given a POI marker. The opening's
+width/height still live on the module-instance group's `slot` block; the POI
+carries pose + role only, matching the furnishing-marker contract.
 
 ---
 

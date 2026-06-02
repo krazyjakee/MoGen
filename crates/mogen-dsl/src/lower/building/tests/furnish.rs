@@ -46,9 +46,17 @@ fn classify_routes_by_room_name() {
 }
 
 #[test]
-fn furnish_zero_suppresses_all_markers() {
+fn furnish_zero_suppresses_furniture_markers() {
+    // `furnish=0` turns off the furnishing pass; structural door/window POIs
+    // are unaffected (they're emitted regardless), so scope the check to
+    // furniture-tagged POIs rather than every `kind="poi"` node.
     let g = lower_src(&building_src("bedroom", "private", "furnish=0,"));
-    assert_eq!(count_kind(&g, "poi"), 0, "furnish=0 emits no POI markers");
+    let furniture_pois = g
+        .nodes
+        .iter()
+        .filter(|n| n.kind == "poi" && n.tags.iter().any(|t| t == "furniture"))
+        .count();
+    assert_eq!(furniture_pois, 0, "furnish=0 emits no furniture POI markers");
     assert!(!has_tag(&g, "furniture"), "furnish=0 emits no furniture group");
 }
 

@@ -4,6 +4,53 @@ use crate::parser::parse;
 use mogen_core::SceneGraph;
 
 #[test]
+fn doors_and_windows_emit_geometry_free_pois() {
+    // Every door / window gets a transform-only POI marker (kind="poi") so
+    // downstream tooling can substitute custom door/window prefabs. They are
+    // emitted regardless of furnish/debug flags and carry no geometry by
+    // default. MIN_GRID_SRC has windows=2 and entrances=1.
+    let g = lower_src(MIN_GRID_SRC);
+
+    let pois: Vec<_> = g
+        .nodes
+        .iter()
+        .filter(|n| n.kind == "poi" && n.tags.iter().any(|t| t == "building"))
+        .collect();
+
+    let entrance_pois = pois
+        .iter()
+        .filter(|n| n.role.as_deref() == Some("entrance"))
+        .count();
+    let door_pois = pois
+        .iter()
+        .filter(|n| n.role.as_deref() == Some("door"))
+        .count();
+    let window_pois = pois
+        .iter()
+        .filter(|n| n.role.as_deref() == Some("window"))
+        .count();
+
+    assert!(entrance_pois >= 1, "expected an entrance POI, got {entrance_pois}");
+    assert!(door_pois >= 1, "expected interior-door POIs, got {door_pois}");
+    assert!(window_pois >= 2, "expected ≥2 window POIs, got {window_pois}");
+
+    // Markers are pure metadata without the debug flag: no mesh, no collider.
+    // Entrance POIs also carry the `door` tag so a generic door importer
+    // catches exterior doors too.
+    for p in &pois {
+        assert!(p.mesh.is_none(), "POI {} should be geometry-free", p.name);
+        assert!(p.collider.is_none(), "POI {} should never collide", p.name);
+        if p.role.as_deref() == Some("entrance") {
+            assert!(
+                p.tags.iter().any(|t| t == "door"),
+                "entrance POI {} should also be tagged `door`",
+                p.name
+            );
+        }
+    }
+}
+
+#[test]
 fn building_lowers_to_walls_slabs_doors() {
     let g = lower_src(MIN_GRID_SRC);
     // Top-level wrapper plus floor + shell + rooms + openings groups.
