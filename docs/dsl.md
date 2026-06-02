@@ -501,6 +501,7 @@ of `seed=` plus the declared attrs). See `docs/caves.md` for the full spec.
 | `chambers` | `6` | Number of chambers carved. |
 | `levels` | `2` | Vertical bands chambers are spread across (multi-floor overlap). |
 | `chamber_min`, `chamber_max` | `2.5, 5.0` | Chamber radius range (m). |
+| `spacing` | `2.0` | Minimum rock gap between chambers (m); keeps rooms distinct (overpacked caves shrink chambers to hold the gap). |
 | `chamber_flatten` | `0.6` | Vertical squash (height = radius × this); < 1 keeps floors gentle. |
 | `passage_radius` | `1.1` | Tunnel radius (m). |
 | `loops` | `1` | Extra connections beyond the spanning tree, for looping layouts. |
@@ -513,8 +514,12 @@ of `seed=` plus the declared attrs). See `docs/caves.md` for the full spec.
 | `mat` | `cave_rock` | Rock material; defaults to an auto-stamped grey stone. |
 | `water_mat` | `cave_water` | Material for pools / lakes. |
 | `rock_piles`, `pools`, `lakes`, `stalagmites`, `stalactites` | `0` | Decoration counts scattered on chamber floors / ceilings. |
+| `debug_hide_shell` | `0` | Debug: slice the front (+Z) half of the rock away to see the chambers in cross-section (like `building`'s `debug_hide_roof`). |
 
-`cave` accepts only `feature` children, which tune one decoration kind:
+Decorations are placed by querying the **real carved floor / ceiling** under
+each feature, so drips and boulders sit flush on the surface rather than the
+geometric chamber bound. `cave` accepts only `feature` children, which tune one
+decoration kind:
 
 ```
 feature "<name>" (kind=stalagmite|stalactite|rock_pile|pool|lake,

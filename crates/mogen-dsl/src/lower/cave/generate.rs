@@ -96,8 +96,14 @@ pub(super) fn generate(cfg: &CaveCfg) -> CaveLayout {
     }
 }
 
+/// Maximum rejection-sampling attempts per chamber before accepting the best
+/// candidate found so far.
+const PLACE_ATTEMPTS: u32 = 24;
+
 /// Place chambers across the vertical bands, keeping every cavity a `margin`
-/// rock shell away from the block faces.
+/// rock shell away from the block faces AND at least `spacing` metres of rock
+/// from every other chamber. Separation is what keeps chambers distinct rooms
+/// linked by passages instead of merging into one continuous blob.
 fn place_chambers(cfg: &CaveCfg, block_half: Vec3) -> Vec<Chamber> {
     let mut state = sub_seed(cfg.seed, 0x0CA7_E001);
     let margin = cfg.margin;
@@ -108,7 +114,7 @@ fn place_chambers(cfg: &CaveCfg, block_half: Vec3) -> Vec<Chamber> {
     let usable_hi = (2.0 * block_half.y - margin).max(usable_lo + 1.0);
     let band = (usable_hi - usable_lo) / levels as f32;
 
-    let mut chambers = Vec::with_capacity(cfg.chambers as usize);
+    let mut chambers: Vec<Chamber> = Vec::with_capacity(cfg.chambers as usize);
     for i in 0..cfg.chambers {
         let level = ((i as u32) * levels / cfg.chambers.max(1)).min(levels - 1);
 
@@ -117,31 +123,79 @@ fn place_chambers(cfg: &CaveCfg, block_half: Vec3) -> Vec<Chamber> {
         let r = rand_in(&mut state, cfg.chamber_min, cfg.chamber_max).min(max_fit);
         let hy = (r * cfg.chamber_flatten).max(0.4);
 
-        // Vertical placement within the level's band, clamped so the oblate
-        // body stays inside the shell.
         let band_lo = usable_lo + level as f32 * band;
         let band_hi = band_lo + band;
         let cy_lo = (band_lo + hy).max(margin + hy);
         let cy_hi = (band_hi - hy).min(2.0 * block_half.y - margin - hy);
-        let cy = if cy_hi > cy_lo {
-            rand_in(&mut state, cy_lo, cy_hi)
-        } else {
-            0.5 * (cy_lo + cy_hi)
-        };
-
-        // Horizontal placement inside the footprint.
         let x_lim = (block_half.x - margin - r).max(0.0);
         let z_lim = (block_half.z - margin - r).max(0.0);
-        let cx = rand_in(&mut state, -x_lim, x_lim);
-        let cz = rand_in(&mut state, -z_lim, z_lim);
+
+        // Rejection sample: keep the candidate that sits furthest from its
+        // nearest neighbour (relative to the required gap), so even a crowded
+        // footprint degrades gracefully instead of stacking chambers.
+        let mut best: Option<(f32, Vec3)> = None;
+        for _ in 0..PLACE_ATTEMPTS {
+            let cy = if cy_hi > cy_lo {
+                rand_in(&mut state, cy_lo, cy_hi)
+            } else {
+                0.5 * (cy_lo + cy_hi)
+            };
+            let cand = Vec3::new(
+                rand_in(&mut state, -x_lim, x_lim),
+                cy,
+                rand_in(&mut state, -z_lim, z_lim),
+            );
+            // Slack = nearest surface-to-surface gap minus the required spacing.
+            // Positive means the candidate clears every existing chamber.
+            let mut slack = f32::INFINITY;
+            for other in &chambers {
+                let surf_gap = cand.distance(other.center) - r - other.half.x - cfg.spacing;
+                slack = slack.min(surf_gap);
+            }
+            if best.map_or(true, |(bs, _)| slack > bs) {
+                best = Some((slack, cand));
+            }
+            if slack >= 0.0 {
+                break; // good enough — clears everyone
+            }
+        }
+        let (slack, center) =
+            best.unwrap_or((0.0, Vec3::new(0.0, 0.5 * (cy_lo + cy_hi), 0.0)));
+
+        // If even the best spot still overlaps a neighbour (crowded footprint),
+        // shrink this chamber to restore the gap rather than letting two rooms
+        // merge. Clamped to a small floor so it stays a usable cavity.
+        let r = if slack < 0.0 {
+            (r + slack - 0.1).max(0.8)
+        } else {
+            r
+        };
+        let hy = (r * cfg.chamber_flatten).max(0.4);
 
         chambers.push(Chamber {
-            center: Vec3::new(cx, cy, cz),
+            center,
             half: Vec3::new(r, hy, r),
             level,
         });
     }
     chambers
+}
+
+/// The implicit-field children that define the rock solid: an additive
+/// bounding box minus every cavity carver. Shared by the mesher (`emit`) and
+/// the decoration placer (`decorate`), which marches this field to find the
+/// true carved floor / ceiling under each feature.
+pub(super) fn rock_field(layout: &CaveLayout) -> Vec<BlobChild> {
+    let mut children = Vec::with_capacity(layout.carvers.len() + 1);
+    children.push(BlobChild::new(
+        SdfPrim::Box {
+            half: layout.block_half,
+        },
+        SdfOp::Add,
+        Mat4::from_translation(layout.block_center),
+    ));
+    children.extend(layout.carvers.iter().cloned());
+    children
 }
 
 /// Minimum spanning tree over chamber centres (Prim's). Guarantees every
@@ -344,6 +398,7 @@ mod tests {
             levels: 2,
             chamber_min: 2.5,
             chamber_max: 4.0,
+            spacing: 2.0,
             chamber_flatten: 0.6,
             passage_radius: 1.1,
             loops: 1,
@@ -355,6 +410,7 @@ mod tests {
             entrances: 1,
             water_mat: None,
             decorations: Vec::new(),
+            debug_hide_shell: false,
         }
     }
 
@@ -385,6 +441,25 @@ mod tests {
         assert_eq!(a.chambers.len(), b.chambers.len());
         for (x, y) in a.chambers.iter().zip(&b.chambers) {
             assert!((x.center - y.center).length() < 1e-6);
+        }
+    }
+
+    #[test]
+    fn chambers_are_separated() {
+        // With spacing=2 and a roomy footprint, every pair of chambers should
+        // keep a positive rock gap between their surfaces (so they read as
+        // distinct rooms rather than one merged blob).
+        let mut c = cfg();
+        c.size = [40.0, 14.0, 40.0];
+        c.chambers = 5;
+        c.chamber_max = 3.0;
+        let layout = generate(&c);
+        let cs = &layout.chambers;
+        for i in 0..cs.len() {
+            for j in (i + 1)..cs.len() {
+                let gap = cs[i].center.distance(cs[j].center) - cs[i].half.x - cs[j].half.x;
+                assert!(gap > 0.0, "chambers {i}/{j} overlap (gap {gap})");
+            }
         }
     }
 

@@ -214,10 +214,11 @@ pub fn attrs_for_kind(kind: &str) -> &'static [&'static str] {
         "adjacency" => &["adjacent_to", "away_from"],
         "cave" => &[
             "seed", "mat_style", "size", "chambers", "levels",
-            "chamber_min", "chamber_max", "chamber_flatten",
+            "chamber_min", "chamber_max", "spacing", "chamber_flatten",
             "passage_radius", "loops", "max_slope", "roughness", "blend",
             "margin", "resolution", "entrances", "water_mat",
             "rock_piles", "pools", "lakes", "stalagmites", "stalactites",
+            "debug_hide_shell",
         ],
         "feature" => &["kind", "count", "min_size", "max_size", "mat"],
         "decal" => &[
@@ -454,6 +455,7 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         | ("cave", "levels")
         | ("cave", "chamber_min")
         | ("cave", "chamber_max")
+        | ("cave", "spacing")
         | ("cave", "chamber_flatten")
         | ("cave", "passage_radius")
         | ("cave", "loops")
@@ -467,7 +469,8 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         | ("cave", "pools")
         | ("cave", "lakes")
         | ("cave", "stalagmites")
-        | ("cave", "stalactites") => "number",
+        | ("cave", "stalactites")
+        | ("cave", "debug_hide_shell") => "number",
         ("cave", "mat_style") | ("cave", "water_mat") => "string",
         ("feature", "kind") | ("feature", "mat") => "string",
         ("feature", "count")

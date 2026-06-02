@@ -7,7 +7,7 @@
 //! Decorations are emitted separately by `decorate.rs`.
 
 use anyhow::{bail, Result};
-use glam::Mat4;
+use glam::{Mat4, Vec3};
 
 use mogen_core::{Mesh, NodeId, SceneGraph, Transform};
 use mogen_geom::{blob_to_mesh, recompute_normals, BlobChild, SdfOp, SdfPrim};
@@ -15,7 +15,7 @@ use mogen_geom::{blob_to_mesh, recompute_normals, BlobChild, SdfOp, SdfPrim};
 use crate::ast::Node;
 
 use super::config::CaveCfg;
-use super::generate::CaveLayout;
+use super::generate::{rock_field, CaveLayout};
 use super::materials::ROCK_MAT;
 use super::rng::sub_seed;
 
@@ -26,15 +26,29 @@ pub(super) fn emit_rock(
     parent: NodeId,
     graph: &mut SceneGraph,
 ) -> Result<()> {
-    let mut children: Vec<BlobChild> = Vec::with_capacity(layout.carvers.len() + 1);
-    children.push(BlobChild::new(
-        SdfPrim::Box {
-            half: layout.block_half,
-        },
-        SdfOp::Add,
-        Mat4::from_translation(layout.block_center),
-    ));
-    children.extend(layout.carvers.iter().cloned());
+    let mut children = rock_field(layout);
+
+    // Debug cutaway: slice the front (+Z) half of the rock away so the chamber
+    // network is visible in cross-section in the editor (parallels building's
+    // `debug_hide_roof`). A big box carver spanning everything in front of the
+    // block mid-Z plane does the cut; the smooth-min rounds its lip slightly,
+    // which is fine for an inspection aid.
+    if cfg.debug_hide_shell {
+        let bh = layout.block_half;
+        let big = bh.length() * 2.0;
+        let cut_center = Vec3::new(
+            layout.block_center.x,
+            layout.block_center.y,
+            layout.block_center.z + big,
+        );
+        children.push(BlobChild::new(
+            SdfPrim::Box {
+                half: Vec3::new(bh.x + big, bh.y + big, big),
+            },
+            SdfOp::Subtract,
+            Mat4::from_translation(cut_center),
+        ));
+    }
 
     let mut mesh = blob_to_mesh(&children, cfg.blend, cfg.resolution);
     if mesh.indices.is_empty() {

@@ -86,6 +86,9 @@ pub(super) struct CaveCfg {
     pub levels: u32,
     pub chamber_min: f32,
     pub chamber_max: f32,
+    /// Minimum rock gap kept between chamber surfaces (m). Keeps chambers
+    /// distinct rooms joined by passages rather than merging into one blob.
+    pub spacing: f32,
     /// Vertical squash applied to chambers (height = radius * flatten). < 1
     /// keeps chamber floors gentle so they read as walkable rooms.
     pub chamber_flatten: f32,
@@ -107,6 +110,11 @@ pub(super) struct CaveCfg {
     pub entrances: u32,
     pub water_mat: Option<String>,
     pub decorations: Vec<DecoGroup>,
+    /// Debug-only: slice the front (+Z) half of the rock shell away so the
+    /// chambers, passages and floors are visible in cross-section. Mirrors
+    /// `building`'s `debug_hide_roof`. Decorations in the removed half are
+    /// culled so they don't float in the opened section.
+    pub debug_hide_shell: bool,
 }
 
 /// Default size range per decoration kind (min, max) in metres.
@@ -139,6 +147,7 @@ pub(super) fn read_cfg(node: &Node) -> Result<CaveCfg> {
     if chamber_min > chamber_max {
         std::mem::swap(&mut chamber_min, &mut chamber_max);
     }
+    let spacing = node.attr_number("spacing").unwrap_or(2.0).max(0.0);
     let chamber_flatten = node.attr_number("chamber_flatten").unwrap_or(0.6).clamp(0.2, 1.0);
 
     let passage_radius = node.attr_number("passage_radius").unwrap_or(1.1).max(0.3);
@@ -155,6 +164,11 @@ pub(super) fn read_cfg(node: &Node) -> Result<CaveCfg> {
 
     let water_mat = node.attr_string("water_mat").map(|s| s.to_string());
 
+    let debug_hide_shell = node
+        .attr_number("debug_hide_shell")
+        .map(|n| n.abs() > 0.5)
+        .unwrap_or(false);
+
     let decorations = read_decorations(node)?;
 
     Ok(CaveCfg {
@@ -165,6 +179,7 @@ pub(super) fn read_cfg(node: &Node) -> Result<CaveCfg> {
         levels,
         chamber_min,
         chamber_max,
+        spacing,
         chamber_flatten,
         passage_radius,
         loops,
@@ -176,6 +191,7 @@ pub(super) fn read_cfg(node: &Node) -> Result<CaveCfg> {
         entrances,
         water_mat,
         decorations,
+        debug_hide_shell,
     })
 }
 

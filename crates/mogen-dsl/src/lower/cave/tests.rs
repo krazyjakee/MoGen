@@ -157,6 +157,34 @@ cave "ice_cave" (
 }
 
 #[test]
+fn cave_debug_hide_shell_cuts_the_front_half() {
+    let full = lower_src(BASIC);
+    let cut = lower_src(&BASIC.replace("entrances=1,", "entrances=1, debug_hide_shell=1,"));
+    let rock_z_max = |g: &SceneGraph| -> f32 {
+        let rock = g
+            .nodes
+            .iter()
+            .find(|n| n.role.as_deref() == Some("cave_rock"))
+            .unwrap();
+        rock.mesh
+            .as_ref()
+            .unwrap()
+            .positions
+            .iter()
+            .map(|p| p[2])
+            .fold(f32::NEG_INFINITY, f32::max)
+    };
+    // The cutaway removes everything in front of the mid-Z plane, so the rock
+    // should no longer extend into positive Z the way the full shell does.
+    assert!(
+        rock_z_max(&cut) < rock_z_max(&full) - 1.0,
+        "cutaway should shrink the +Z extent (full {}, cut {})",
+        rock_z_max(&full),
+        rock_z_max(&cut)
+    );
+}
+
+#[test]
 fn cave_water_uses_default_water_material() {
     let src = r#"
 cave "spring" (seed=1, size=[18, 8, 18], chambers=4, resolution=40, pools=2)

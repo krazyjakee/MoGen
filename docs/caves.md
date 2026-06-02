@@ -28,8 +28,11 @@ The pipeline, all seeded from `seed=`:
    block, distributed across `levels` vertical bands. Oblate (`height =
    radius × chamber_flatten`) so each chamber floor reads as gently curved
    rather than a deep bowl. Every chamber keeps a `margin` rock shell away from
-   the block faces. Because bands overlap, cavities at different heights merge
-   into **multiple connected floors**.
+   the block faces **and at least `spacing` metres of rock from every other
+   chamber** (rejection-sampled; if a footprint is too crowded the chamber is
+   shrunk to hold the gap rather than merging into its neighbour). Separation is
+   what makes the cave read as **distinct rooms joined by passages** — a
+   dungeon — instead of one continuous blob.
 
 2. **Passages.** A minimum spanning tree over the chamber centres guarantees the
    whole cave is **traversable** — every chamber reachable from every other.
@@ -52,7 +55,11 @@ The pipeline, all seeded from `seed=`:
 
 6. **Decorations.** Independent leaf meshes scattered onto chamber floors /
    ceilings — never carved into the field, so this stage is pure mesh
-   construction with no CSG.
+   construction with no CSG. Each feature's floor / ceiling is found by
+   **marching the real carved rock field** (the same `box − ⋃ carvers` the
+   shell is meshed from) and sinking the feature slightly into it, so drips and
+   boulders sit flush on the surface instead of floating at the geometric
+   chamber bound.
 
 The rock shell gets a `Trimesh` collider so a game-engine importer gets working
 physics for free; water surfaces are left collider-free so a player can wade in.
@@ -105,6 +112,7 @@ cave "hollow" (
 | `chambers` | `6` | Number of chambers carved. |
 | `levels` | `2` | Vertical bands chambers are spread across. |
 | `chamber_min`, `chamber_max` | `2.5, 5.0` | Chamber radius range (m). Swapped if reversed. |
+| `spacing` | `2.0` | Minimum rock gap between chamber surfaces (m). Crowded caves shrink chambers to keep the gap. |
 | `chamber_flatten` | `0.6` | Vertical squash (`height = radius × this`), clamped `[0.2, 1.0]`. |
 | `passage_radius` | `1.1` | Tunnel radius (m). |
 | `loops` | `1` | Extra connections beyond the spanning tree. |
@@ -118,6 +126,16 @@ cave "hollow" (
 | `mat_style` | `""` | Free-text style hint forwarded to texture generation. |
 | `water_mat` | `cave_water` | Pool / lake material. |
 | `rock_piles`, `pools`, `lakes`, `stalagmites`, `stalactites` | `0` | Decoration counts. |
+| `debug_hide_shell` | `0` | Debug cutaway (see below). |
+
+### Debug
+
+`debug_hide_shell=1` slices the front (+Z) half of the rock shell away so the
+chamber network, passages and floors are visible in cross-section in the editor
+— the cave analogue of `building`'s `debug_hide_roof`. Decorations that land in
+the removed half are culled so they don't float in the opened section; the
+remaining ones keep the exact positions they have with the shell shown, so the
+flag is purely a viewing aid. Remove it before exporting a final asset.
 
 ### `feature` children
 
@@ -184,8 +202,9 @@ On a `feature`: missing or unknown `kind` (`E1211` / `E1212`), a body block
 - Floor *slope* is capped per passage; chamber floors are gently curved (oblate
   ellipsoids) rather than perfectly flat. Lower `chamber_flatten` for flatter
   floors.
-- Decorations are placed on chamber floor/ceiling discs; they are not
-  collision-tested against passages, so a stalactite can occasionally hang near
-  a passage mouth. Re-seed if a placement reads badly.
+- Decorations are anchored to the real carved surface (field-marched) and sunk
+  slightly so they sit flush, not floating. They are not collision-tested
+  against each other or passages, so a stalactite can occasionally hang near a
+  passage mouth. Re-seed if a placement reads badly.
 - `resolution` drives both quality and cost — a 26 m cave at `resolution=112`
   is ~75k triangles. Keep it modest for previews, raise it for hero assets.
