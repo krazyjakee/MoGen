@@ -1,7 +1,14 @@
-//! Wireframe overlay for nodes carrying an AABB collider. Draws the 12 edges
-//! of the node's local AABB transformed into world space so the user can see
-//! collider bounds without a physics simulation. Off by default; toggled by
-//! the viewport context menu's "Show Colliders" checkbox.
+//! Wireframe overlay for nodes carrying a collider. Off by default; toggled by
+//! the viewport's "Show Colliders" option.
+//!
+//! Two paths share one flat-colour shader:
+//! - **AABB** colliders draw the 12 edges of the node's local AABB transformed
+//!   into world space (a synthetic unit-cube VBO scaled per instance).
+//! - **Trimesh / Convex** colliders collide against the node's own mesh 1:1, so
+//!   the overlay simply re-draws that mesh in wireframe (`glPolygonMode(LINE)`)
+//!   reusing the renderer's already-uploaded VBO — no second copy of the
+//!   geometry. The caller hands in the index ranges (see
+//!   [`crate::viewer::flatten::FlatMesh::collider_index_runs`]).
 
 use glam::{Mat4, Quat};
 use glow::HasContext;
@@ -160,6 +167,72 @@ impl CollidersGl {
         }
     }
 
+    /// Draw trimesh/convex colliders by re-rendering the node's mesh in
+    /// wireframe. `mesh_vao` is the renderer's main scene VAO — its position
+    /// attribute (location 0) and element buffer are reused as-is, since the
+    /// flattened VBO already bakes positions to rest-pose world space, so the
+    /// model matrix is identity. Each run is `(index_start, index_count,
+    /// selected)` into that element buffer. A small polygon offset pulls the
+    /// lines toward the camera so they don't z-fight the surface they trace.
+    pub(super) fn draw_trimesh_runs(
+        &self,
+        gl: &glow::Context,
+        viewproj: Mat4,
+        mesh_vao: glow::VertexArray,
+        runs: &[(u32, u32, bool)],
+    ) {
+        if runs.is_empty() {
+            return;
+        }
+        unsafe {
+            gl.use_program(Some(self.program));
+            gl.bind_vertex_array(Some(mesh_vao));
+            gl.enable(glow::DEPTH_TEST);
+            gl.depth_func(glow::LEQUAL);
+            gl.depth_mask(false);
+            gl.disable(glow::CULL_FACE);
+            gl.enable(glow::POLYGON_OFFSET_LINE);
+            gl.polygon_offset(-1.0, -1.0);
+            gl.polygon_mode(glow::FRONT_AND_BACK, glow::LINE);
+            gl.line_width(1.0);
+
+            if let Some(loc) = &self.u_viewproj {
+                gl.uniform_matrix_4_f32_slice(Some(loc), false, &viewproj.to_cols_array());
+            }
+            if let Some(loc) = &self.u_model {
+                gl.uniform_matrix_4_f32_slice(
+                    Some(loc),
+                    false,
+                    &Mat4::IDENTITY.to_cols_array(),
+                );
+            }
+
+            for &(start, count, selected) in runs {
+                let color = if selected {
+                    [1.0, 0.85, 0.0]
+                } else {
+                    [0.20, 0.90, 0.40]
+                };
+                if let Some(loc) = &self.u_color {
+                    gl.uniform_3_f32(Some(loc), color[0], color[1], color[2]);
+                }
+                gl.draw_elements(
+                    glow::TRIANGLES,
+                    count as i32,
+                    glow::UNSIGNED_INT,
+                    (start as i32) * 4,
+                );
+            }
+
+            gl.polygon_mode(glow::FRONT_AND_BACK, glow::FILL);
+            gl.disable(glow::POLYGON_OFFSET_LINE);
+            gl.bind_vertex_array(None);
+            gl.use_program(None);
+            gl.depth_mask(true);
+            gl.enable(glow::CULL_FACE);
+        }
+    }
+
     pub(super) fn destroy(&self, gl: &glow::Context) {
         unsafe {
             gl.delete_program(self.program);
@@ -184,9 +257,8 @@ pub(super) fn collect(
 ) -> Vec<ColliderInstance> {
     let mut out = Vec::new();
     for (i, node) in scene.nodes.iter().enumerate() {
-        // The overlay only renders AABB colliders — Trimesh/Convex shapes
-        // re-use the node's mesh, which the regular preview already draws,
-        // so there's no separate wireframe to overlay.
+        // This pass handles AABB colliders only; Trimesh/Convex shapes are
+        // drawn by `draw_trimesh_runs`, which outlines the node's own mesh.
         let Some(aabb) = node.collider.as_ref().and_then(|c| c.as_aabb()) else {
             continue;
         };

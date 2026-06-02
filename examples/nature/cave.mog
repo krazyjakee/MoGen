@@ -1,0 +1,58 @@
+// A traversable multi-floor cave: chambers carved across two vertical levels
+// and linked by slope-capped passages, populated with stalagmites, stalactites,
+// a rock pile and a small pool. Everything is a deterministic function of
+// `seed=`, so rebuilds are reproducible. See docs/caves.md for the full surface.
+
+meta (
+  name = "cave",
+  description = "A traversable multi-floor cave with chambers, sloped passages, stalagmites, stalactites and a pool",
+  tags = ["cave", "nature", "environment", "dungeon", "procedural"],
+  mogen_version = "0.1.8")
+
+lod_scale (value=0.6)
+
+material "limestone" (
+  color = [0.40, 0.37, 0.32],
+  roughness = 0.95,
+  base_color_texture = "textures/cave/limestone_albedo.png",
+  normal_texture = "textures/cave/limestone_normal.png",
+  metallic_roughness_texture = "textures/cave/limestone_metallicRoughness.png",
+  occlusion_texture = "textures/cave/limestone_ao.png",
+  uv_scale = [15, 15]
+)
+
+cave "hollow" (
+  seed = 12,
+  size = [64, 40, 64], // tall enough for three stacked layers
+  chambers = 20,
+  levels = 4, // three floors of chambers + passages, stacked
+  level_gap = 2, // solid rock between layers
+  level_links = 2, // vertical ramps joining each pair of layers
+  chamber_min = 2.2,
+  chamber_max = 10.2,
+  spacing = 2.5, // separated rooms within a layer …
+  overlap = 0.4, // … but ~40% merge into larger caverns (both styles)
+  passage_radius = 1.2,
+  max_slope = 45,
+  loops = 2,
+  roughness = 0.4,
+  margin = 2.5,
+  resolution = 128,
+  lod_scale = 1.0, // mesh-quality scale (0.1–1.0); lower = fewer triangles
+  entrances = 1,
+  mat = "limestone",
+  debug_hide_shell=0, // uncomment to hide the outer shell and see the whole cave interior
+
+  stalagmites = 36,
+  stalactites = 36,
+  columns = 10, // floor-to-ceiling stone pillars
+  rock_piles = 15,
+  pools = 3,
+  mushrooms = 24,
+  debug_show_poi=0,
+  colliders = "all" // point-of-interest markers on chamber floors
+) {
+  // Tune the drip features: smaller, sharper spikes than the defaults.
+  feature "drips" (kind = stalactite, min_size = 0.25, max_size = 0.7)
+  feature "spires" (kind = stalagmite, min_size = 0.3, max_size = 1.1)
+}

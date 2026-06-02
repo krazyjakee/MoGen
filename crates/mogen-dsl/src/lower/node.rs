@@ -58,6 +58,9 @@ pub(super) fn lower_into(
     if node.kind == "building" {
         return super::building::expand_building(node, parent, graph);
     }
+    if node.kind == "cave" {
+        return super::cave::expand_cave(node, parent, graph);
+    }
     if node.kind == "light" {
         return lower_light(node, parent, graph);
     }

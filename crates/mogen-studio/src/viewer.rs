@@ -501,7 +501,7 @@ impl Viewer {
                     if let Some(scene) = st.scene.as_ref() {
                         let worlds = scene.world_transforms();
                         let instances = colliders_gl::collect(scene, &worlds, &st.selected);
-                        rr.draw_colliders_overlay(gl, viewproj, &instances);
+                        rr.draw_colliders_overlay(gl, viewproj, &instances, &st.selected);
                     }
                 }
                 if let (true, Some(sel), Some(scene)) =

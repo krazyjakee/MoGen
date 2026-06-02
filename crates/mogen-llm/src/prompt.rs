@@ -485,11 +485,14 @@ mod tests {
         // The new `blob` container kind (true SDF + surface-nets meshing
         // for organic anatomical masses) added a KINDS_REFERENCE row plus
         // `blob`/`subdivide`/`op` entries in the auto-rendered allowlist —
-        // ~700 bytes total; cap raised 31_000 → 32_000.
+        // ~700 bytes total; cap raised 31_000 → 32_000. The cave
+        // `lod_scale`/`columns`/`mushrooms` attributes plus the `column`
+        // feature kind added ~150 bytes of auto-rendered allowlist entries;
+        // cap raised 32_000 → 33_000.
         let s = cacheable_block();
         assert!(
-            s.len() < 32_000,
-            "cacheable_block grew to {} bytes — cap is 32_000. Reference \
+            s.len() < 33_000,
+            "cacheable_block grew to {} bytes — cap is 33_000. Reference \
              material that grows without bound should be fetched on demand, \
              not pinned in the cache.",
             s.len()

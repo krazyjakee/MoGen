@@ -482,6 +482,74 @@ building "house" (seed=4, style="apartment-block",
 }
 ```
 
+### Cave
+
+`cave` is a procedural cave generator. One node expands into a single
+watertight rock shell — a bounding block hollowed by a smooth-blended field of
+chamber and passage carvers (surface-nets meshed) — plus optional scattered
+features. Chambers are organised into `levels` stacked horizontal layers
+(separated by `level_gap` rock, joined by `level_links` vertical ramps); within
+a layer they mix `spacing`-separated rooms with `overlap`-merged caverns.
+Passages steeper than `max_slope` are rebuilt as switchback ramps so no walkable
+surface exceeds the angle cap; and
+`entrances` punch horizontal mouths out through the nearest side face so the
+cave is enterable. The generated subtree is stamped non-editable (pure function
+of `seed=` plus the declared attrs). See `docs/caves.md` for the full spec.
+
+| attribute | default | effect |
+|---|---|---|
+| `seed` | `1` | RNG seed; same seed = identical cave. |
+| `size` | `[24, 10, 24]` | Outer rock-block dimensions `[width, height, depth]` (m); base sits on `y=0`. |
+| `chambers` | `6` | Number of chambers carved. |
+| `levels` | `2` | Stacked horizontal layers (floors). Each is its own chamber+passage network. |
+| `level_gap` | `1.5` | Solid rock kept between layers (m). |
+| `level_links` | `1` | Vertical ramps carved between each adjacent layer pair (clamped ≥ 1 when `levels > 1`). |
+| `chamber_min`, `chamber_max` | `2.5, 5.0` | Chamber radius range (m). Auto-capped to fit a layer's height. |
+| `spacing` | `2.0` | Minimum rock gap between same-layer chambers (m); keeps rooms distinct. |
+| `overlap` | `0.35` | Probability a chamber merges with a same-layer neighbour into a larger cavern. `0` = all separate, `1` = all clustered. |
+| `chamber_flatten` | `0.6` | Vertical squash (height = radius × this); < 1 keeps floors gentle. |
+| `passage_radius` | `1.1` | Tunnel radius (m). |
+| `loops` | `1` | Extra connections beyond the spanning tree, for looping layouts. |
+| `max_slope` | `45` | Maximum walkable slope (degrees); steeper passages switchback. |
+| `roughness` | `0.35` | Wall-noise amount `[0, 1]` for a natural stone finish. |
+| `blend` | `1.5` | Smooth-union radius blending chambers + passages. |
+| `margin` | `2.0` | Rock thickness kept around the void on every face (m). |
+| `resolution` | `96` | Voxel-grid resolution (32–224). Higher = finer + slower. |
+| `lod_scale` | `1.0` | Mesh-quality scale `[0.1, 1.0]`; scales rock voxel grid + decoration tessellation. Lower = fewer triangles. Layout / counts / POIs unaffected. |
+| `entrances` | `1` | Horizontal mouths punched out to a side face. |
+| `mat` | `cave_rock` | Rock material; defaults to an auto-stamped grey stone. |
+| `water_mat` | `cave_water` | Material for pools / lakes. |
+| `rock_piles`, `pools`, `lakes`, `stalagmites`, `stalactites`, `columns` | `0` | Decoration counts scattered on chamber floors / ceilings (`columns` span floor→ceiling). |
+| `mushrooms` | `0` | Mushroom-spot POI markers on chamber floors (empty nodes, no geometry). |
+| `debug_hide_shell` | `0` | Debug: slice the front (+Z) half of the rock away to see the chambers in cross-section (like `building`'s `debug_hide_roof`). |
+| `debug_show_poi` | `0` | Debug: give every point-of-interest marker a small bright per-kind `cave_poi_<kind>` sphere (colour-coded by group) so the empty markers are visible in a preview. |
+
+Beyond geometry, `cave` embeds **points of interest** as empty marker nodes
+(`role`/`tags` in glTF extras) under a `points_of_interest` group:
+`dead_end_chamber` (single-connection rooms), `column_base`, `ladder_anchor`
+(passages steeper than `max_slope`) and `mushroom_spot`. See `docs/caves.md`.
+
+Decorations are placed by querying the **real carved floor / ceiling** under
+each feature, so drips and boulders sit flush on the surface rather than the
+geometric chamber bound. `cave` accepts only `feature` children, which tune one
+decoration kind:
+
+```
+feature "<name>" (kind=stalagmite|stalactite|column|rock_pile|pool|lake,
+                  count=…, min_size=…, max_size=…, mat="<material>")
+```
+
+`kind` is required. `count` overrides the matching top-level count knob;
+`min_size`/`max_size` set the size range (m); `mat` overrides the material.
+
+```
+cave "hollow" (seed=12, size=[26, 12, 26], chambers=7, levels=2,
+               max_slope=45, entrances=2, mat="limestone",
+               stalagmites=14, stalactites=10, pools=2) {
+  feature "spires" (kind=stalagmite, min_size=0.3, max_size=1.1)
+}
+```
+
 Every primitive is authored in its local frame and positioned via
 `pos`/`rot`/`scale`. Defaults make bare `cylinder "leg"` a 1 m unit-radius
 cylinder at the origin.
