@@ -275,21 +275,26 @@ impl MogenStudioApp {
                     node_path: self.current_selection_path(i),
                 };
                 self.push_undo(i, undo_before, key);
-                // Gizmo releases are discrete events, not keystroke bursts —
-                // skip the 180 ms debounce and compile immediately so the
-                // viewport can pick up the rotated / translated / scaled
-                // scene on the very next frame. Without this, the preview
-                // clears on release and the new scene only arrives on the
-                // next idle tick, which looks to the user like the gizmo
-                // action was rejected and the value snapped back.
-                self.compile_active();
-                // Belt-and-braces: also request the debounce-boundary
-                // repaint so if something does leave `needs_compile` set
-                // (e.g. the caller wraps a batch of gizmo edits through
-                // this path), the next window still fires.
+                // Inspector DragValues fire every frame of a drag; a full
+                // recompile per frame makes the app visibly hang. Defer to
+                // the debounce while the pointer is held. Gizmo releases and
+                // deletes are discrete — compile immediately so the viewport
+                // updates on the very next frame and values don't appear to
+                // snap back.
+                let mid_drag = ctx.is_using_pointer() && !any_delete;
+                if !mid_drag {
+                    self.compile_active();
+                }
+                // Request the debounce-boundary repaint either way: an
+                // immediate compile clears `needs_compile`, but a deferred one
+                // relies on this to wake `drive_compile_debounce`.
                 ctx.request_repaint_after(COMPILE_DEBOUNCE);
                 if trace {
-                    eprintln!("[gizmo] drain done — triggered immediate compile");
+                    if mid_drag {
+                        eprintln!("[gizmo] drain done — deferred compile (mid-drag)");
+                    } else {
+                        eprintln!("[gizmo] drain done — triggered immediate compile");
+                    }
                 }
             }
         }

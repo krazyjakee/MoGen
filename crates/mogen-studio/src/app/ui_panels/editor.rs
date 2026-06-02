@@ -208,9 +208,11 @@ impl MogenStudioApp {
                         f32::INFINITY
                     };
                     let mut editor = egui::TextEdit::multiline(&mut self.files[i].source)
-                        // code_editor() implies lock_focus(true), so Tab inserts
-                        // a tab character instead of moving focus out of the
-                        // editor — the right behavior for a code surface.
+                        // code_editor() implies lock_focus(true) so Tab stays
+                        // in the editor instead of moving focus out — the right
+                        // behavior for a code surface. `handle_indent_keys`
+                        // (run above) intercepts Tab to insert two spaces
+                        // rather than the literal `\t` egui would otherwise add.
                         .code_editor()
                         .desired_rows(visible_rows)
                         .desired_width(desired_width)
