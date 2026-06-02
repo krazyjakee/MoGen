@@ -284,7 +284,6 @@ fn add_entrances(
         let dpz = block_half.z - c.center.z;
         let dnz = c.center.z + block_half.z;
         let min = dpx.min(dnx).min(dpz).min(dnz);
-        let reach = block_half.x.max(block_half.z) + cfg.margin + cfg.passage_radius + 1.0;
         let end = if min == dpx {
             Vec3::new(block_half.x + cfg.margin + 1.0, y, c.center.z)
         } else if min == dnx {
@@ -294,7 +293,6 @@ fn add_entrances(
         } else {
             Vec3::new(c.center.x, y, -(block_half.z + cfg.margin + 1.0))
         };
-        let _ = reach;
         add_capsule(carvers, start, end, cfg.passage_radius);
     }
 }

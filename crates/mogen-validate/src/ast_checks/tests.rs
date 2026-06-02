@@ -769,3 +769,165 @@ mod building_validator_tests {
         );
     }
 }
+
+mod cave_validator_tests {
+    use super::super::*;
+    use mogen_core::Severity;
+
+    fn diags_for(src: &str) -> Vec<mogen_core::Diagnostic> {
+        let ast = mogen_dsl::parse(src).expect("parse");
+        validate_ast(&ast)
+    }
+
+    const MIN_CAVE: &str = r#"
+        cave "den" (
+          seed=3,
+          size=[20, 9, 20],
+          chambers=5,
+          levels=2,
+          resolution=48,
+          entrances=1,
+        )
+    "#;
+
+    #[test]
+    fn minimum_cave_is_valid() {
+        let diags = diags_for(MIN_CAVE);
+        let errs: Vec<_> = diags
+            .iter()
+            .filter(|d| matches!(d.severity, Severity::Error))
+            .collect();
+        assert!(errs.is_empty(), "expected no errors, got: {errs:?}");
+    }
+
+    #[test]
+    fn rejects_geometry_child_in_cave() {
+        let src = r#"
+            cave "den" (seed=1, chambers=4) {
+              box "intruder" (size=[1,1,1])
+            }
+        "#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "E1201"),
+            "expected E1201 for non-feature child in cave, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_feature_kind() {
+        let src = r#"
+            cave "den" (seed=1, chambers=4) {
+              feature "x" (kind=lava, count=3)
+            }
+        "#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "E1212"),
+            "expected E1212 for unknown feature kind, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_feature_without_kind() {
+        let src = r#"
+            cave "den" (seed=1, chambers=4) {
+              feature "x" (count=3)
+            }
+        "#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "E1211"),
+            "expected E1211 when feature.kind= is absent, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_feature_with_body_block() {
+        let src = r#"
+            cave "den" (seed=1, chambers=4) {
+              feature "x" (kind=stalagmite) { box "b" (size=[1,1,1]) }
+            }
+        "#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "E1210"),
+            "expected E1210 for feature with a body block, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn warns_when_chamber_min_exceeds_chamber_max() {
+        let src = r#"cave "den" (seed=1, chambers=4, chamber_min=8, chamber_max=2)"#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "W1205"),
+            "expected W1205 when chamber_min > chamber_max, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn warns_when_seed_is_zero() {
+        let src = r#"cave "den" (seed=0, chambers=4)"#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "W1209"),
+            "expected W1209 for seed=0, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_negative_decoration_count() {
+        let src = r#"cave "den" (seed=1, chambers=4, stalagmites=-1)"#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "E1202"),
+            "expected E1202 for negative decoration count, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_non_positive_size_components() {
+        let src = r#"cave "den" (seed=1, chambers=4, size=[20, 0, 20])"#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "E1203"),
+            "expected E1203 for zero size component, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_max_slope_out_of_range() {
+        let src = r#"cave "den" (seed=1, chambers=4, max_slope=0)"#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "E1204"),
+            "expected E1204 for max_slope=0, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn warns_out_of_range_roughness() {
+        let src = r#"cave "den" (seed=1, chambers=4, roughness=1.5)"#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "W1206"),
+            "expected W1206 for roughness > 1, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn valid_feature_block_is_clean() {
+        let src = r#"
+            cave "den" (seed=2, chambers=5, stalagmites=3) {
+              feature "spikes" (kind=stalagmite, min_size=0.4, max_size=0.9)
+            }
+        "#;
+        let diags = diags_for(src);
+        let errs: Vec<_> = diags
+            .iter()
+            .filter(|d| matches!(d.severity, Severity::Error))
+            .collect();
+        assert!(errs.is_empty(), "valid feature should produce no errors: {errs:?}");
+    }
+}

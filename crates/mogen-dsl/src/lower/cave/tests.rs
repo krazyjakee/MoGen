@@ -27,6 +27,17 @@ cave "den" (
 )
 "#;
 
+const BASIC_ALT_SEED: &str = r#"
+cave "den" (
+  seed=99,
+  size=[20, 9, 20],
+  chambers=5,
+  levels=2,
+  resolution=48,
+  entrances=1,
+)
+"#;
+
 #[test]
 fn cave_emits_a_rock_shell() {
     let g = lower_src(BASIC);
@@ -90,7 +101,7 @@ fn cave_is_deterministic_under_same_seed() {
 #[test]
 fn cave_seed_changes_geometry() {
     let a = lower_src(BASIC);
-    let b = lower_src(&BASIC.replace("seed=3", "seed=99"));
+    let b = lower_src(BASIC_ALT_SEED);
     let ra = a
         .nodes
         .iter()
@@ -124,9 +135,9 @@ cave "grotto" (
 )
 "#;
     let g = lower_src(src);
-    assert!(count_role(&g, "stalagmite") >= 1);
-    assert!(count_role(&g, "stalactite") >= 1);
-    assert!(count_role(&g, "rock_pile") >= 1);
+    assert_eq!(count_role(&g, "stalagmite"), 6);
+    assert_eq!(count_role(&g, "stalactite"), 4);
+    assert_eq!(count_role(&g, "rock_pile"), 2);
     assert_eq!(count_role(&g, "pool"), 1);
     assert_eq!(count_role(&g, "lake"), 1);
 }
