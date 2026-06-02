@@ -22,6 +22,7 @@ mod modules;
 mod skylight;
 mod roof;
 mod wall_build;
+mod furnish;
 
 use anyhow::Result;
 
@@ -31,7 +32,7 @@ use crate::ast::Node;
 
 use super::circulation::CirculationPlan;
 use super::config::BuildingCfg;
-use super::layout::Floorplate;
+use super::layout::{EntranceSupport, Floorplate};
 
 #[derive(Clone, Copy, Debug)]
 #[allow(dead_code)] // `bottom_storey`/`top_storey` mirror what the wrapper
@@ -60,12 +61,13 @@ pub(super) fn emit_floor(
     circulation: &CirculationPlan,
     plate: &Floorplate,
     ctx: StoreyCtx,
+    entrance_support: &EntranceSupport,
     floor_group: NodeId,
     graph: &mut SceneGraph,
 ) -> Result<()> {
     let origin = node.origin.clone();
 
-    let plan = openings::plan_openings(cfg, plate, ctx);
+    let plan = openings::plan_openings(cfg, plate, ctx, entrance_support);
     let skylight_rects = skylight::plan_skylights(cfg, plate, ctx);
 
     let shell_group = graph.add_child(

@@ -2,6 +2,7 @@ use crate::lower::lower;
 use crate::parser::parse;
 use mogen_core::SceneGraph;
 
+mod furnish;
 mod layouts;
 mod multi_storey;
 mod roof_and_cellar;

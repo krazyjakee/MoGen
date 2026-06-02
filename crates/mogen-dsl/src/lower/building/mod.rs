@@ -170,6 +170,11 @@ fn tag_building_colliders(graph: &mut SceneGraph, start: usize) {
         if graph.nodes[i].collider.is_some() {
             continue;
         }
+        // POI markers are gameplay anchors, not collision geometry — even the
+        // optional `debug_show_poi` spheres stay collider-free, like caves.
+        if graph.nodes[i].kind == "poi" {
+            continue;
+        }
         if graph.nodes[i].mesh.is_some() {
             graph.nodes[i].collider = Some(ColliderShape::Trimesh);
         }
@@ -211,7 +216,16 @@ fn emit_storey(
         bottom_storey,
         top_storey,
     };
-    emit::emit_floor(node, cfg, &layout.circulation, &storey_plate.plate, ctx, floor_group, graph)?;
+    emit::emit_floor(
+        node,
+        cfg,
+        &layout.circulation,
+        &storey_plate.plate,
+        ctx,
+        &layout.entrance_support,
+        floor_group,
+        graph,
+    )?;
     Ok(())
 }
 

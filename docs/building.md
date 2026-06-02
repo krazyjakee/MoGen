@@ -12,10 +12,14 @@ attrs plus a seed. It is to architectural floorplates what `branch` is to
 trees: one editable wrapper, with the entire subtree below it stamped
 non-editable because the geometry is a pure function of the inputs.
 
-The user-facing surface is **empty shells only**. Furnishing (beds, desks, …)
-is not part of `building` — those compose via separate `use` calls inside the
-rooms returned by the generator, exactly like `leaf` cards sit alongside
-`branch`.
+The user-facing surface is **empty shells** plus **furnishing markers**.
+`building` never emits furniture *geometry* — but, like `cave`, it drops
+geometry-free POI markers naming the props each room should hold (a `bed` in a
+bedroom, a `stove` in a kitchen). A game-engine importer reads the marker
+`role`/`tags` and swaps in its own prefab; the actual meshes still compose via
+separate `use` calls or an engine-side furnishing pass, exactly like `leaf`
+cards sit alongside `branch`. Set `furnish=0` to suppress the markers entirely.
+See [Furnishing markers](#furnishing-markers).
 
 ---
 
@@ -82,6 +86,8 @@ building "house" (
 | `skylight` | `"skylight_simple"` | module ref | Stamped at each skylight opening. |
 | `elevators` | `0` | int ≥ 0 | Vertical shafts spanning every storey. |
 | `staircases` | `0` | int ≥ 0 | Stairwells spanning adjacent storeys (≥1 if `floors_above + floors_below > 1`). |
+| `furnish` | `1` | bool (0/1) | Emit furnishing POI markers in each room (see [Furnishing markers](#furnishing-markers)). `0` leaves rooms as bare shells. Markers carry no geometry either way. |
+| `debug_show_poi` | `0` | bool (0/1) | Debug: give every furnishing marker a small emissive sphere so the geometry-free POIs are visible in a glTF viewer, colour-coded by room category. |
 | `debug_hide_roof` | `0` | bool (0/1) | Debug: drop the top-storey ceiling slab (and its skylights) so the interior can be seen from above. |
 | `debug_render_floor` | _unset_ | signed int storey | Debug: render only the given storey index (`0` = ground, `1..` = upper, `-1..` = basement). The rendered floor gets no ceiling and vertical circulation is skipped. |
 
@@ -132,7 +138,10 @@ name (building)                       editable wrapper
     ├── rooms (group)
     │   ├── room_<n> (group)          one per room cell on this floor
     │   │   ├── interior_wall_<i> (wall)
-    │   │   └── connector "centre"    pos at room centroid
+    │   │   ├── connector "centre"    pos at room centroid
+    │   │   └── furniture (group)     furnishing POI markers (if furnish=1)
+    │   │       ├── bed_0 (poi)       role=bed, geometry-free
+    │   │       └── …
     │   └── …
     ├── openings (group)
     │   ├── door_<i> (group)          internal_door module instance
@@ -159,6 +168,82 @@ Every wall, slab, and module instance carries:
   without re-parsing names;
 - `role` set to the architectural role (`floor`, `ceiling`, `wall`, `door`,
   …) for the same reason.
+
+---
+
+## Furnishing markers
+
+When `furnish=1` (the default), each real room (not circulation cells) gets a
+`furniture` group of **points-of-interest**: transform-only nodes that name the
+props a game engine should place there. This is the same contract `cave` uses
+for mushroom spots and treasure rooms — the generator deliberately leaves the
+gameplay content out and marks *where* it goes.
+
+Each marker is:
+
+- `kind = "poi"`, with **no mesh and no collider** (it adds nothing to the
+  exported geometry or triangle budget);
+- `role = "<prop>"` — `bed`, `stove`, `server_rack`, … — the name the importer
+  keys a prefab off;
+- `tags = ["building", "poi", "furniture", "<prop>"]`;
+- a transform giving position **and yaw** in the room's local frame. Wall props
+  face into the room, corner props face the centre, ceiling fixtures sit at
+  `ceiling_height`.
+
+The parent `furniture` group carries `cat=<category>` (e.g. `cat=kitchen`) so a
+single tag lookup recovers what each room was furnished as.
+
+### Categories
+
+Which props a room gets is decided by **function**, not building type — the
+author's free-text `room_type "name"` is keyword-matched onto a category, with
+the declared `kind` as a fallback. The same tower can hold bedrooms, a server
+room, and a lobby. Recognised categories (and a sample of their props):
+
+| category | matches names containing… | sample props |
+|---|---|---|
+| bedroom | `bed`, `dorm`, `master`, `cabin`, `nursery` | bed, wardrobe, nightstand, dresser, desk |
+| bathroom | `bath`, `toilet`, `shower`, `ensuite`, `wc` | toilet, sink, bathtub, shower, vanity |
+| kitchen | `kitchen`, `galley`, `kitchenette` | counter, stove, oven, fridge, dishwasher, island |
+| pantry | `pantry`, `larder` | shelving, dry-goods rack |
+| dining | `dining`, `mess`, `canteen` | dining table, chairs, sideboard, chandelier |
+| living | `living`, `lounge`, `den`, `family room` | sofa, armchair, tv, coffee table, fireplace |
+| office | `office`, `study`, `cubicle`, `workspace` | desk, office chair, filing cabinet, whiteboard |
+| meeting | `meeting`, `conference`, `boardroom` | conference table, chairs, projector screen |
+| reception | `reception`, `waiting`, `concierge` | reception desk, waiting sofa, magazine rack |
+| lobby | `lobby`, `foyer`, `atrium`, `entrance` | bench, planters, info board, directory sign |
+| corridor | `corridor`, `hallway`, `landing`, `stair` | bench, wall art, fire extinguisher |
+| storage | `storage`, `store`, `stock`, `supply` | shelving, storage boxes, pallets |
+| closet | `closet`, `cloak`, `cupboard` | clothes rail, shelves, shoe rack |
+| garage | `garage`, `carport`, `parking` | car, workbench, tool cabinet, pegboard |
+| workshop | `workshop`, `maker`, `machine shop` | workbench, machine tool, material rack |
+| laundry | `laundry`, `washing` | washing machine, dryer, ironing board |
+| utility | `mechanical`, `boiler`, `hvac`, `electrical` | boiler, electrical panel, hvac unit |
+| server room | `server`, `data centre`, `comms`, `rack room` | server racks, network cabinet, ups, crac |
+| retail | `retail`, `shop`, `showroom`, `sales floor` | display shelves, checkout, clothing racks |
+| warehouse | `warehouse`, `depot`, `loading`, `freight` | pallet racks, forklift, packing station |
+| classroom | `classroom`, `lecture`, `seminar` | student desks, teacher desk, whiteboard |
+| library | `library`, `archive`, `reading` | bookshelves, study tables, librarian desk |
+| lab | `lab`, `research`, `cleanroom` | lab benches, fume hood, biosafety cabinet |
+| medical | `clinic`, `exam`, `surgery`, `dental` | exam table, supply cabinet, exam light |
+| ward | `ward`, `patient`, `recovery`, `icu` | hospital beds, iv stands, vitals monitors |
+| gym | `gym`, `fitness`, `workout` | treadmills, weight benches, racks, mirror wall |
+| restaurant | `restaurant`, `diner`, `cafe`, `coffee` | tables, chairs, booths, host stand |
+| bar | `bar`, `pub`, `tavern`, `saloon` | bar counter, stools, back-bar shelf, beer tap |
+| cell | `cell`, `holding`, `prison` | bunk, toilet, sink, stool |
+| generic | _anything else_ | table, chairs, shelving, plant |
+
+Prop counts scale with room area (a big office gets more desks, capped) and
+small rooms drop the lower-priority items first; a room below ~0.5 m² of usable
+floor is left unfurnished. Placement is a pure function of `seed` + the room
+rectangle, so a rebuild reproduces every marker exactly and `lod_scale`-style
+quality knobs never move them.
+
+`debug_show_poi=1` gives each marker a small emissive sphere coloured by
+category (kitchens orange, bedrooms pink, server rooms teal, …) so you can see
+the furnishing plan in any glTF viewer. The spheres are a viewing aid only —
+they keep the markers' `role`/`tags`, never get a collider, and must be turned
+off for a production bake to keep the POIs geometry-free.
 
 ---
 
@@ -565,9 +650,10 @@ small algorithm tweaks surface in PR diff.
 
 ## Out of scope (forever, unless re-scoped)
 
-- **Furnishing**. `building` produces empty shells. Beds/desks/etc. compose
-  via separate `use "bedroom_kit"` calls a user adds inside a downstream
-  scene wrapper.
+- **Furnishing *geometry***. `building` produces empty shells. It marks where
+  beds/desks/etc. belong (see [Furnishing markers](#furnishing-markers)), but
+  the meshes themselves compose via separate `use "bedroom_kit"` calls or an
+  engine-side pass that swaps each POI for a prefab.
 - **HVAC / plumbing / structural engineering**. Not represented in the scene
   graph at all.
 - **Exterior cladding variations beyond `mat_style`**. Façade variety comes

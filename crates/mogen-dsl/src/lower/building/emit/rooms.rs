@@ -77,6 +77,26 @@ pub(super) fn emit_rooms(
         if graph.nodes[cell_id.0 as usize].material.is_none() {
             inherit_material_from_chain(cell_id, graph);
         }
+
+        // Furnishing POI markers: only real rooms get props (circulation
+        // cells are walked-through, not furnished). Cloned name / copied
+        // kind end the `cfg` borrow before the `&mut graph` call.
+        if cfg.furnish {
+            if let Some(typ) = cell_type(cfg, cell) {
+                let room_name = typ.name.clone();
+                let room_kind = typ.kind;
+                super::furnish::emit_room_furnishings(
+                    cfg,
+                    cell.rect,
+                    &room_name,
+                    room_kind,
+                    cell_id,
+                    origin.as_deref(),
+                    graph,
+                );
+            }
+        }
+
         cell_ids.push(cell_id);
     }
 

@@ -107,6 +107,15 @@ pub(super) struct BuildingCfg {
     pub staircases: u32,
     pub room_types: Vec<RoomType>,
     pub adjacencies: Vec<AdjacencyRule>,
+    /// When true (the default), the furnishing pass drops transform-only POI
+    /// markers into each room naming the props a game engine should place
+    /// (bed, desk, stove, …). The markers carry no geometry — `building`
+    /// still emits empty shells. `furnish=0` suppresses the pass entirely.
+    pub furnish: bool,
+    /// Debug-only: when true, give every furnishing POI marker a small
+    /// emissive sphere so the otherwise geometry-free markers are visible in
+    /// a glTF preview. The cave analogue of the same name.
+    pub debug_show_poi: bool,
     /// Debug-only: when true, suppress the top-storey ceiling slab (and its
     /// skylights) so a flat-roof building can be inspected from above.
     pub debug_hide_roof: bool,
@@ -168,6 +177,16 @@ pub(super) fn read_cfg(node: &Node) -> Result<BuildingCfg> {
     let elevators = node.attr_number("elevators").unwrap_or(0.0).max(0.0) as u32;
     let staircases = node.attr_number("staircases").unwrap_or(0.0).max(0.0) as u32;
 
+    // Furnishing is on by default: an unfurnished building is the rarer ask,
+    // and the markers are geometry-free so they never bloat the export.
+    let furnish = node
+        .attr_number("furnish")
+        .map(|n| n.abs() > 0.5)
+        .unwrap_or(true);
+    let debug_show_poi = node
+        .attr_number("debug_show_poi")
+        .map(|n| n.abs() > 0.5)
+        .unwrap_or(false);
     let debug_hide_roof = node
         .attr_number("debug_hide_roof")
         .map(|n| n.abs() > 0.5)
@@ -247,6 +266,8 @@ pub(super) fn read_cfg(node: &Node) -> Result<BuildingCfg> {
         staircases,
         room_types,
         adjacencies,
+        furnish,
+        debug_show_poi,
         debug_hide_roof,
         debug_render_floor,
     })
