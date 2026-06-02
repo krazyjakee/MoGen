@@ -41,7 +41,7 @@ cave "hollow" (
   lod_scale = 1.0, // mesh-quality scale (0.1–1.0); lower = fewer triangles
   entrances = 1,
   mat = "limestone",
-  debug_hide_shell=0, // uncomment to hide the outer shell and see the whole cave interior
+  debug_hide_shell=1, // uncomment to hide the outer shell and see the whole cave interior
 
   stalagmites = 36,
   stalactites = 36,
@@ -49,7 +49,7 @@ cave "hollow" (
   rock_piles = 15,
   pools = 3,
   mushrooms = 24,
-  debug_show_poi=0,
+  debug_show_poi=1,
   colliders = "all" // point-of-interest markers on chamber floors
 ) {
   // Tune the drip features: smaller, sharper spikes than the defaults.
