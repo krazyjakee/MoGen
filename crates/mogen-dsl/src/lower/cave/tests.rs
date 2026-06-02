@@ -274,6 +274,25 @@ cave "poi_cave" (
         count_role(&g, "ladder_anchor") > 0,
         "inter-layer climbs should emit ladder_anchor POIs"
     );
+    // Ladder anchors are oriented to face their tunnel: at least one carries a
+    // non-identity yaw, while placement-only markers stay unrotated.
+    let ladders: Vec<_> = g
+        .nodes
+        .iter()
+        .filter(|n| n.role.as_deref() == Some("ladder_anchor"))
+        .collect();
+    assert!(
+        ladders
+            .iter()
+            .any(|n| n.transform.rotation.angle_between(glam::Quat::IDENTITY) > 1e-3),
+        "at least one ladder_anchor should be rotated toward its climb"
+    );
+    for s in &shrooms {
+        assert!(
+            s.transform.rotation.angle_between(glam::Quat::IDENTITY) < 1e-6,
+            "placement-only POIs stay unrotated"
+        );
+    }
 }
 
 #[test]

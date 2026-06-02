@@ -79,7 +79,11 @@ pub(super) struct CaveLayout {
     /// want a ladder) plus any passage whose direct line still exceeds the cap.
     /// These are the ladder / rope placement points the POI pass exposes — a
     /// game may drop a ladder here instead of walking the switchback ramp.
-    pub steep_links: Vec<Vec3>,
+    ///
+    /// Each entry is `(anchor, yaw)`: the floor position plus the Y rotation (in
+    /// radians) that makes a prefab whose forward axis is local `-Z` face back
+    /// out of the wall — toward the lower chamber the climb is approached from.
+    pub steep_links: Vec<(Vec3, f32)>,
 }
 
 pub(super) fn generate(cfg: &CaveCfg) -> CaveLayout {
@@ -145,7 +149,11 @@ fn chamber_degrees(chambers: &[Chamber], edges: &[(usize, usize)]) -> Vec<u32> {
 /// one, to the edge of the walkable floor disc — where that specific ramp
 /// begins to rise — so several climbs leaving one chamber get distinct spots.
 /// The POI pass re-marches the carved floor for the final height.
-fn steep_link_anchors(cfg: &CaveCfg, chambers: &[Chamber], edges: &[(usize, usize)]) -> Vec<Vec3> {
+fn steep_link_anchors(
+    cfg: &CaveCfg,
+    chambers: &[Chamber],
+    edges: &[(usize, usize)],
+) -> Vec<(Vec3, f32)> {
     let tan_max = cfg.max_slope.to_radians().tan();
     let mut anchors = Vec::new();
     for &(i, j) in edges {
@@ -172,10 +180,13 @@ fn steep_link_anchors(cfg: &CaveCfg, chambers: &[Chamber], edges: &[(usize, usiz
             dz = 0.0;
         }
         let r = lower.floor_radius();
-        anchors.push(Vec3::new(
-            lower.center.x + dx * r,
-            lower.floor_y(),
-            lower.center.z + dz * r,
+        // Yaw so the prefab's local -Z (forward / out-of-wall) points back
+        // toward the lower chamber the climb is approached from: -Z maps to
+        // world -(dx, dz), which is `atan2(dx, dz)` about +Y.
+        let yaw = dx.atan2(dz);
+        anchors.push((
+            Vec3::new(lower.center.x + dx * r, lower.floor_y(), lower.center.z + dz * r),
+            yaw,
         ));
     }
     anchors

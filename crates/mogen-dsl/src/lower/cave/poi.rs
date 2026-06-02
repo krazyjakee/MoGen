@@ -16,7 +16,7 @@
 //!   (`> max_slope`): a ladder / rope placement point.
 //! - `mushroom_spot` — random points on chamber floors for scattered props.
 
-use glam::Vec3;
+use glam::{Quat, Vec3};
 
 use mogen_core::{NodeId, SceneGraph, Transform, UvMode};
 use mogen_geom::icosphere_mesh;
@@ -45,7 +45,9 @@ pub(super) fn emit_points_of_interest(
 
     // Gather (kind, position) for every marker before touching the graph, so we
     // can skip emitting the group entirely when there is nothing to mark.
-    let mut markers: Vec<(&'static str, Vec3)> = Vec::new();
+    // Most markers are placement-only (identity rotation); ladder anchors carry
+    // a yaw so a prefab faces back out of the climb wall.
+    let mut markers: Vec<(&'static str, Vec3, Quat)> = Vec::new();
 
     // Dead-end chambers: one passage connection. Marker sits on the chamber
     // floor centre (field-marched, geometric fallback).
@@ -53,23 +55,27 @@ pub(super) fn emit_points_of_interest(
         if layout.chamber_degree.get(i).copied() == Some(1) {
             let y = surface_y(&field, blend, c.center.x, c.center.z, c.center.y, -0.12, march_limit(c, blend))
                 .unwrap_or_else(|| c.floor_y());
-            markers.push(("dead_end_chamber", Vec3::new(c.center.x, y, c.center.z)));
+            markers.push(("dead_end_chamber", Vec3::new(c.center.x, y, c.center.z), Quat::IDENTITY));
         }
     }
 
     // Column bases (already floor-anchored by the decoration pass).
     for &base in column_bases {
-        markers.push(("column_base", base));
+        markers.push(("column_base", base, Quat::IDENTITY));
     }
 
     // Ladder / rope anchors at the foot of every climb passage. `generate`
     // gives the floor-disc-edge XZ; re-march the carved floor for the height so
     // the marker rests on the ground like the others.
     let ladder_limit = cfg.passage_radius * 3.0 + blend + 1.0;
-    for &anchor in &layout.steep_links {
+    for &(anchor, yaw) in &layout.steep_links {
         let y = surface_y(&field, blend, anchor.x, anchor.z, anchor.y + cfg.passage_radius, -0.12, ladder_limit)
             .unwrap_or(anchor.y);
-        markers.push(("ladder_anchor", Vec3::new(anchor.x, y, anchor.z)));
+        markers.push((
+            "ladder_anchor",
+            Vec3::new(anchor.x, y, anchor.z),
+            Quat::from_rotation_y(yaw),
+        ));
     }
 
     // Mushroom spots: random points on random chamber floors.
@@ -79,7 +85,7 @@ pub(super) fn emit_points_of_interest(
         let (x, z) = pick_xz(&field, blend, c, &mut state);
         let y = surface_y(&field, blend, x, z, c.center.y, -0.12, march_limit(c, blend))
             .unwrap_or_else(|| c.floor_y());
-        markers.push(("mushroom_spot", Vec3::new(x, y, z)));
+        markers.push(("mushroom_spot", Vec3::new(x, y, z), Quat::IDENTITY));
     }
 
     if markers.is_empty() {
@@ -96,9 +102,10 @@ pub(super) fn emit_points_of_interest(
     // Stable per-kind suffixes so two markers of the same kind get distinct
     // names (column_base_0, column_base_1, …).
     let mut counts: std::collections::BTreeMap<&str, u32> = std::collections::BTreeMap::new();
-    for (kind, pos) in markers {
+    for (kind, pos, rot) in markers {
         let idx = counts.entry(kind).or_default();
-        let id = graph.add_child(group, format!("{kind}_{idx}"), "poi", Transform::from_translation(pos));
+        let xform = Transform::from_trs(pos, rot, Vec3::ONE);
+        let id = graph.add_child(group, format!("{kind}_{idx}"), "poi", xform);
         *idx += 1;
         graph.nodes[id.0 as usize].origin = origin.clone();
         graph.nodes[id.0 as usize].role = Some(kind.to_string());
