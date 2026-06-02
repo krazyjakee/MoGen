@@ -12,6 +12,7 @@
 use anyhow::{bail, Result};
 
 use crate::ast::Node;
+use crate::lower::cfg;
 
 /// The decoration kinds a cave can be populated with. Each maps to a distinct
 /// mesh builder in `decorate.rs`.
@@ -189,10 +190,7 @@ fn default_size_range(kind: DecoKind) -> (f32, f32) {
 }
 
 pub(super) fn read_cfg(node: &Node) -> Result<CaveCfg> {
-    let seed = node
-        .attr_number("seed")
-        .map(|n| (n as i64).max(1) as u32)
-        .unwrap_or(1);
+    let seed = cfg::seed(node);
     let mat_style = node.attr_string("mat_style").unwrap_or("").to_string();
 
     let size = node
@@ -200,31 +198,28 @@ pub(super) fn read_cfg(node: &Node) -> Result<CaveCfg> {
         .map(|v| [v.x.max(4.0), v.y.max(3.0), v.z.max(4.0)])
         .unwrap_or([24.0, 10.0, 24.0]);
 
-    let chambers = node.attr_number("chambers").unwrap_or(6.0).max(1.0) as u32;
-    let levels = node.attr_number("levels").unwrap_or(2.0).max(1.0) as u32;
+    let chambers = cfg::count(node, "chambers", 6.0, 1.0);
+    let levels = cfg::count(node, "levels", 2.0, 1.0);
 
-    let mut chamber_min = node.attr_number("chamber_min").unwrap_or(2.5).max(0.5);
-    let mut chamber_max = node.attr_number("chamber_max").unwrap_or(5.0).max(0.5);
+    let mut chamber_min = cfg::scalar(node, "chamber_min", 2.5, 0.5);
+    let mut chamber_max = cfg::scalar(node, "chamber_max", 5.0, 0.5);
     if chamber_min > chamber_max {
         std::mem::swap(&mut chamber_min, &mut chamber_max);
     }
-    let spacing = node.attr_number("spacing").unwrap_or(2.0).max(0.0);
-    let overlap = node.attr_number("overlap").unwrap_or(0.35).clamp(0.0, 1.0);
-    let chamber_flatten = node.attr_number("chamber_flatten").unwrap_or(0.6).clamp(0.2, 1.0);
-    let level_gap = node.attr_number("level_gap").unwrap_or(1.5).max(0.0);
-    let level_links = node.attr_number("level_links").unwrap_or(1.0).max(0.0) as u32;
+    let spacing = cfg::scalar(node, "spacing", 2.0, 0.0);
+    let overlap = cfg::scalar_clamped(node, "overlap", 0.35, 0.0, 1.0);
+    let chamber_flatten = cfg::scalar_clamped(node, "chamber_flatten", 0.6, 0.2, 1.0);
+    let level_gap = cfg::scalar(node, "level_gap", 1.5, 0.0);
+    let level_links = cfg::count(node, "level_links", 1.0, 0.0);
 
-    let passage_radius = node.attr_number("passage_radius").unwrap_or(1.1).max(0.3);
-    let loops = node.attr_number("loops").unwrap_or(1.0).max(0.0) as u32;
-    let max_slope = node.attr_number("max_slope").unwrap_or(45.0).clamp(5.0, 89.0);
-    let roughness = node.attr_number("roughness").unwrap_or(0.35).clamp(0.0, 1.0);
-    let blend = node.attr_number("blend").unwrap_or(1.5).max(0.0);
-    let margin = node.attr_number("margin").unwrap_or(2.0).max(0.5);
-    let resolution = node
-        .attr_number("resolution")
-        .map(|n| (n as u32).clamp(32, 224))
-        .unwrap_or(96);
-    let entrances = node.attr_number("entrances").unwrap_or(1.0).max(0.0) as u32;
+    let passage_radius = cfg::scalar(node, "passage_radius", 1.1, 0.3);
+    let loops = cfg::count(node, "loops", 1.0, 0.0);
+    let max_slope = cfg::scalar_clamped(node, "max_slope", 45.0, 5.0, 89.0);
+    let roughness = cfg::scalar_clamped(node, "roughness", 0.35, 0.0, 1.0);
+    let blend = cfg::scalar(node, "blend", 1.5, 0.0);
+    let margin = cfg::scalar(node, "margin", 2.0, 0.5);
+    let resolution = cfg::int_clamped(node, "resolution", 96, 32, 224);
+    let entrances = cfg::count(node, "entrances", 1.0, 0.0);
 
     let water_mat = node.attr_string("water_mat").map(|s| s.to_string());
 
@@ -235,10 +230,7 @@ pub(super) fn read_cfg(node: &Node) -> Result<CaveCfg> {
         .attr_string("colliders")
         .and_then(ColliderMode::parse)
         .unwrap_or(ColliderMode::All);
-    let water_collider = node
-        .attr_number("water_collider")
-        .map(|n| n.abs() > 0.5)
-        .unwrap_or(false);
+    let water_collider = cfg::flag(node, "water_collider", false);
 
     // Combine the cave's own `lod_scale=` attr with the file-global LOD scale
     // (the studio slider writes the top-level `lod_scale (value=…)` directive,
@@ -247,16 +239,10 @@ pub(super) fn read_cfg(node: &Node) -> Result<CaveCfg> {
     let lod_scale = (node.attr_number("lod_scale").unwrap_or(1.0)
         * crate::lower::lod::current_lod_scale())
     .clamp(0.1, 1.0);
-    let mushrooms = node.attr_number("mushrooms").unwrap_or(0.0).max(0.0) as u32;
+    let mushrooms = cfg::count(node, "mushrooms", 0.0, 0.0);
 
-    let debug_hide_shell = node
-        .attr_number("debug_hide_shell")
-        .map(|n| n.abs() > 0.5)
-        .unwrap_or(false);
-    let debug_show_poi = node
-        .attr_number("debug_show_poi")
-        .map(|n| n.abs() > 0.5)
-        .unwrap_or(false);
+    let debug_hide_shell = cfg::flag(node, "debug_hide_shell", false);
+    let debug_show_poi = cfg::flag(node, "debug_show_poi", false);
 
     let decorations = read_decorations(node)?;
 

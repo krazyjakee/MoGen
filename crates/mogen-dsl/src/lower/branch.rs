@@ -8,8 +8,10 @@ use mogen_geom::{leaf_card_mesh, spline_tube_mesh};
 
 use crate::ast::{Node, Value};
 
-use super::helpers::{inherit_material_from_ancestor, transform_from_attrs};
-use super::node::apply_metadata;
+use super::cfg;
+use super::helpers::inherit_material_from_ancestor;
+use super::procedural::{begin_procedural, finish_procedural};
+use super::rng::rand_pm;
 
 /// Coarse growth habit for the procedural tree generator. Each form picks a
 /// bundle of sensible defaults *and* selects which top-level emission path
@@ -194,18 +196,7 @@ pub(super) fn expand_branch(
 ) -> Result<NodeId> {
     let cfg = read_cfg(node, graph);
 
-    let wrapper_name = node.name.clone().unwrap_or_else(|| node.kind.clone());
-    let wrapper_transform = transform_from_attrs(node);
-    let wrapper_id = match parent {
-        None => graph.add_root(&wrapper_name, &node.kind, wrapper_transform),
-        Some(p) => graph.add_child(p, &wrapper_name, &node.kind, wrapper_transform),
-    };
-    graph.set_source_span(wrapper_id, node.span);
-    graph.nodes[wrapper_id.0 as usize].use_id = node.use_id;
-    graph.nodes[wrapper_id.0 as usize].origin = node.origin.clone();
-    apply_metadata(node, wrapper_id, graph)?;
-
-    let pre_expand_count = graph.nodes.len();
+    let (wrapper_id, pre_expand_count) = begin_procedural(node, parent, graph)?;
 
     let mut rng: u32 = node.attr_number("seed").map(|n| n as u32).unwrap_or(1).max(1);
 
@@ -229,9 +220,7 @@ pub(super) fn expand_branch(
     // The whole tree below the wrapper is procedurally derived — there's no
     // single AST span to write back to for any individual segment. The wrapper
     // itself stays editable so the user can tweak `branch` attrs.
-    for i in pre_expand_count..graph.nodes.len() {
-        graph.nodes[i].editable = false;
-    }
+    finish_procedural(graph, pre_expand_count);
 
     Ok(wrapper_id)
 }
@@ -245,16 +234,10 @@ fn read_cfg(node: &Node, graph: &SceneGraph) -> BranchCfg {
     };
     let d = form_defaults(form);
 
-    let length = node.attr_number("length").unwrap_or(d.length).max(1e-3);
-    let radius = node.attr_number("radius").unwrap_or(d.radius).max(1e-4);
-    let depth = node
-        .attr_number("depth")
-        .unwrap_or(d.depth as f32)
-        .max(0.0) as u32;
-    let splits = node
-        .attr_number("splits")
-        .unwrap_or(d.splits as f32)
-        .max(1.0) as u32;
+    let length = cfg::scalar(node, "length", d.length, 1e-3);
+    let radius = cfg::scalar(node, "radius", d.radius, 1e-4);
+    let depth = cfg::count(node, "depth", d.depth as f32, 0.0);
+    let splits = cfg::count(node, "splits", d.splits as f32, 1.0);
     let length_falloff = node.attr_number("length_falloff").unwrap_or(d.length_falloff);
     let radius_falloff = node.attr_number("radius_falloff").unwrap_or(d.radius_falloff);
     let branch_angle_rad = node
@@ -266,28 +249,16 @@ fn read_cfg(node: &Node, graph: &SceneGraph) -> BranchCfg {
     let roll_rad = node.attr_number("roll").unwrap_or(137.5).to_radians();
     let tropism = node.attr_number("tropism").unwrap_or(d.tropism);
     let bend_rad = node.attr_number("bend").unwrap_or(d.bend).to_radians();
-    let radial_segments = node.attr_number("segments").map(|n| n as u32).unwrap_or(8).max(3);
-    let samples_per_seg = node.attr_number("samples").map(|n| n as u32).unwrap_or(4).max(1);
+    let radial_segments = cfg::count(node, "segments", 8.0, 3.0);
+    let samples_per_seg = cfg::count(node, "samples", 4.0, 1.0);
     let cps_per_seg = 4usize;
-    let jitter = node.attr_number("jitter").unwrap_or(0.2).clamp(0.0, 1.0);
-    let leader_bias = node
-        .attr_number("leader_bias")
-        .unwrap_or(d.leader_bias)
-        .clamp(0.0, 1.0);
-    let multi_stem = node
-        .attr_number("multi_stem")
-        .unwrap_or(d.multi_stem as f32)
-        .max(1.0) as u32;
+    let jitter = cfg::scalar_clamped(node, "jitter", 0.2, 0.0, 1.0);
+    let leader_bias = cfg::scalar_clamped(node, "leader_bias", d.leader_bias, 0.0, 1.0);
+    let multi_stem = cfg::count(node, "multi_stem", d.multi_stem as f32, 1.0);
     let leaves = node.attr_number("leaves").map(|n| n != 0.0).unwrap_or(true);
-    let leaf_size = node.attr_number("leaf_size").unwrap_or(d.leaf_size).max(0.0);
-    let leaf_aspect = node
-        .attr_number("leaf_aspect")
-        .unwrap_or(d.leaf_aspect)
-        .max(0.05);
-    let leaf_cards = node
-        .attr_number("leaf_cards")
-        .unwrap_or(d.leaf_cards as f32)
-        .max(1.0) as u32;
+    let leaf_size = cfg::scalar(node, "leaf_size", d.leaf_size, 0.0);
+    let leaf_aspect = cfg::scalar(node, "leaf_aspect", d.leaf_aspect, 0.05);
+    let leaf_cards = cfg::count(node, "leaf_cards", d.leaf_cards as f32, 1.0);
     let leaf_material = match node.attr("leaf_mat") {
         Some(Value::String(s)) | Some(Value::Ident(s)) => {
             graph.find_material_scoped(s, node.origin.as_deref())
@@ -598,11 +569,3 @@ fn quat_from_y_to(target: Vec3) -> Quat {
     }
 }
 
-/// Linear-congruential RNG returning a [-1, 1] float. Stateful but cheap and
-/// fully deterministic given the seed — the whole point of a procedural tree
-/// is that the same seed regrows the same shape on every compile.
-fn rand_pm(state: &mut u32) -> f32 {
-    *state = state.wrapping_mul(1664525).wrapping_add(1013904223);
-    let bits = (*state >> 8) & 0x00FF_FFFF;
-    (bits as f32 / (1u32 << 24) as f32) * 2.0 - 1.0
-}

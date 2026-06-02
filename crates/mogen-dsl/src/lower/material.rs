@@ -151,6 +151,27 @@ fn register_material(node: &Node, graph: &mut SceneGraph) -> Result<()> {
     Ok(())
 }
 
+/// Stamp a set of named default materials onto the graph, skipping any a user
+/// already declared with the same name + origin (their version wins via
+/// `find_material_scoped`). Each factory is called only when the material is
+/// missing, then the canonical name's `origin` is stamped on. Shared by the
+/// procedural generators (building openings, cave rock/water) so they all honour
+/// user overrides identically.
+pub(super) fn ensure_named_defaults(
+    graph: &mut SceneGraph,
+    origin: Option<&std::path::Path>,
+    defaults: &[(&str, fn() -> Material)],
+) {
+    for (name, factory) in defaults {
+        if graph.find_material_scoped(name, origin).is_some() {
+            continue;
+        }
+        let mut mat = factory();
+        mat.origin = origin.map(|p| p.to_path_buf());
+        graph.add_material(mat);
+    }
+}
+
 fn texture_ref_attr(node: &Node, key: &str) -> Option<TextureRef> {
     let path = match node.attr(key)? {
         Value::String(s) | Value::Ident(s) => s.clone(),

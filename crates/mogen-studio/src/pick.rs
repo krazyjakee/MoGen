@@ -57,6 +57,47 @@ pub fn pick_node(
     ray_pick(mesh, ray_origin, ray_dir).map(|(_, n)| n)
 }
 
+/// Pick the nearest POI marker (`kind == "poi"`) under the cursor, ignoring
+/// any non-POI geometry in front of it. `is_poi` reports whether a flattened
+/// triangle's owning node is a POI marker.
+///
+/// POI debug spheres are scattered visualisation that frequently sits *inside*
+/// enclosing geometry — a cave's rock shell wraps every marker, and building
+/// walls hide markers in other rooms — so the depth-ordered [`pick_node`] would
+/// report the enclosing surface instead and the marker would never tooltip.
+/// Filtering the scan to POI triangles lets the nearest marker along the ray
+/// win regardless of what occludes it, the same way [`pick_light`] lets a light
+/// halo win over geometry behind it. This is what makes POI hover tooltips
+/// behave identically across every generator (cave, building, …).
+pub fn pick_poi(
+    camera: &OrbitCamera,
+    viewport_rect: Rect,
+    cursor: Pos2,
+    mesh: &FlatMesh,
+    is_poi: impl Fn(NodeId) -> bool,
+) -> Option<NodeId> {
+    if mesh.indices.is_empty() || mesh.tri_node.is_empty() {
+        return None;
+    }
+    let aspect = (viewport_rect.width() / viewport_rect.height()).max(0.01);
+    let vp = camera.view_proj(aspect);
+    let inv_vp = vp.inverse();
+
+    let u = (cursor.x - viewport_rect.min.x) / viewport_rect.width().max(1.0);
+    let v = (cursor.y - viewport_rect.min.y) / viewport_rect.height().max(1.0);
+    let ndc_x = u * 2.0 - 1.0;
+    let ndc_y = 1.0 - v * 2.0;
+
+    let ray_origin = camera.eye();
+    let far_world = unproject(&inv_vp, Vec3::new(ndc_x, ndc_y, 1.0));
+    let ray_dir = (far_world - ray_origin).normalize_or_zero();
+    if ray_dir.length_squared() < 1e-8 {
+        return None;
+    }
+
+    ray_pick_filtered(mesh, ray_origin, ray_dir, &is_poi).map(|(_, n)| n)
+}
+
 /// Combined picker. First tests `lights` as billboard halos at
 /// [`LIGHT_HALO_PIXEL_RADIUS`] pixels — a hit inside any halo wins
 /// immediately, so a user clicking the visible icon always selects the
@@ -154,6 +195,38 @@ fn ray_pick(mesh: &FlatMesh, ro: Vec3, rd: Vec3) -> Option<(f32, NodeId)> {
     best
 }
 
+/// `ray_pick` restricted to triangles whose owning node satisfies `keep`.
+/// Used by [`pick_poi`] to find the nearest POI marker along the ray while
+/// ignoring occluding geometry the predicate rejects.
+fn ray_pick_filtered(
+    mesh: &FlatMesh,
+    ro: Vec3,
+    rd: Vec3,
+    keep: &impl Fn(NodeId) -> bool,
+) -> Option<(f32, NodeId)> {
+    let stride = FLOATS_PER_VERTEX;
+    let mut best: Option<(f32, NodeId)> = None;
+    for tri_i in 0..mesh.indices.len() / 3 {
+        let node = mesh.tri_node.get(tri_i).copied().unwrap_or(NodeId(0));
+        if !keep(node) {
+            continue;
+        }
+        let i0 = mesh.indices[tri_i * 3] as usize;
+        let i1 = mesh.indices[tri_i * 3 + 1] as usize;
+        let i2 = mesh.indices[tri_i * 3 + 2] as usize;
+        let v0 = read_pos(&mesh.vertices, i0, stride);
+        let v1 = read_pos(&mesh.vertices, i1, stride);
+        let v2 = read_pos(&mesh.vertices, i2, stride);
+        if let Some(t) = intersect_tri(ro, rd, v0, v1, v2) {
+            match best {
+                Some((bt, _)) if bt <= t => {}
+                _ => best = Some((t, node)),
+            }
+        }
+    }
+    best
+}
+
 fn read_pos(vertices: &[f32], vi: usize, stride: usize) -> Vec3 {
     let base = vi * stride;
     Vec3::new(vertices[base], vertices[base + 1], vertices[base + 2])
@@ -230,6 +303,31 @@ mod tests {
             Vec3::new(0.0, 0.0, 1.0),
         );
         assert!(hit.is_none());
+    }
+
+    #[test]
+    fn poi_filter_picks_through_an_occluder() {
+        // A near "box" occludes a far "poi". The unfiltered scan returns the
+        // box (it's closer), but the POI-filtered scan ignores the box and
+        // returns the marker behind it — the cave/building tooltip case.
+        let mut scene = SceneGraph::new();
+        let occluder = scene.add_root("shell", "box", Transform::IDENTITY);
+        scene.set_mesh(occluder, unit_quad_at(Vec3::new(0.0, 0.0, 0.0)));
+        let marker = scene.add_root("bed_0", "poi", Transform::IDENTITY);
+        scene.set_mesh(marker, unit_quad_at(Vec3::new(0.0, 0.0, 1.0)));
+        let mesh = flatten(&scene, None);
+
+        let ro = Vec3::new(0.0, 0.0, -2.0);
+        let rd = Vec3::new(0.0, 0.0, 1.0);
+        assert_eq!(ray_pick(&mesh, ro, rd).map(|(_, n)| n), Some(occluder));
+
+        let kinds: std::collections::HashMap<NodeId, String> = (0..scene.nodes.len())
+            .map(|i| (NodeId(i as u32), scene.nodes[i].kind.clone()))
+            .collect();
+        let hit = ray_pick_filtered(&mesh, ro, rd, &|n| {
+            kinds.get(&n).map(|k| k == "poi").unwrap_or(false)
+        });
+        assert_eq!(hit.map(|(_, n)| n), Some(marker));
     }
 
     #[test]

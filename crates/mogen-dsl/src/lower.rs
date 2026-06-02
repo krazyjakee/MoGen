@@ -3,6 +3,7 @@ mod blob;
 mod branch;
 mod building;
 mod cave;
+mod cfg;
 pub(crate) mod connector;
 mod csg;
 mod deform;
@@ -13,7 +14,10 @@ mod light;
 mod lod;
 mod material;
 mod node;
+mod poi;
 mod primitive;
+mod procedural;
+mod rng;
 
 #[cfg(test)]
 mod tests;

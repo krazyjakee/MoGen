@@ -28,8 +28,7 @@ use glam::{Quat, Vec3};
 use mogen_core::{ColliderShape, NodeId, SceneGraph, Transform};
 
 use crate::ast::Node;
-use crate::lower::helpers::transform_from_attrs;
-use crate::lower::node::apply_metadata;
+use crate::lower::procedural::{begin_procedural, finish_procedural};
 
 use config::BuildingCfg;
 use layout::{BuildingLayout, StoreyPlate};
@@ -41,23 +40,12 @@ pub(super) fn expand_building(
 ) -> Result<NodeId> {
     let cfg = config::read_cfg(node)?;
 
-    let wrapper_name = node.name.clone().unwrap_or_else(|| node.kind.clone());
-    let wrapper_transform = transform_from_attrs(node);
-    let wrapper_id = match parent {
-        None => graph.add_root(&wrapper_name, &node.kind, wrapper_transform),
-        Some(p) => graph.add_child(p, &wrapper_name, &node.kind, wrapper_transform),
-    };
-    graph.set_source_span(wrapper_id, node.span);
-    graph.nodes[wrapper_id.0 as usize].use_id = node.use_id;
-    graph.nodes[wrapper_id.0 as usize].origin = node.origin.clone();
-    apply_metadata(node, wrapper_id, graph)?;
+    let (wrapper_id, pre_expand_count) = begin_procedural(node, parent, graph)?;
 
     // Stamp default frame / slab / glass materials before any opening module
     // is expanded — the stdlib door / window / skylight bodies reference
     // them by name. Anything the user already declared on this origin wins.
     materials::ensure_opening_defaults(graph, node.origin.as_deref());
-
-    let pre_expand_count = graph.nodes.len();
 
     let layout = layout::solve(&cfg)?;
 
@@ -129,11 +117,7 @@ pub(super) fn expand_building(
         graph,
     )?;
 
-    // Stamp the whole subtree non-editable so the inspector won't let users
-    // hand-tweak generated walls (a rebuild would wipe the edits).
-    for i in pre_expand_count..graph.nodes.len() {
-        graph.nodes[i].editable = false;
-    }
+    finish_procedural(graph, pre_expand_count);
 
     tag_building_colliders(graph, pre_expand_count);
 

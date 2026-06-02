@@ -19,6 +19,8 @@ use std::path::Path;
 
 use mogen_core::{AlphaMode, Material, SceneGraph};
 
+use crate::lower::material::ensure_named_defaults;
+
 /// Stable material name used on the wrapping opening group for entrance
 /// (exterior) door openings. Exposed so the emit pass binds the same name
 /// `ensure_opening_defaults` declares.
@@ -102,12 +104,5 @@ pub(super) fn ensure_opening_defaults(
             m
         }),
     ];
-    for (name, factory) in defaults {
-        if graph.find_material_scoped(name, origin).is_some() {
-            continue;
-        }
-        let mut mat = factory();
-        mat.origin = origin.map(|p| p.to_path_buf());
-        graph.add_material(mat);
-    }
+    ensure_named_defaults(graph, origin, defaults);
 }

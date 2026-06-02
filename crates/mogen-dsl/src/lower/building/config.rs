@@ -9,6 +9,7 @@
 use anyhow::{bail, Result};
 
 use crate::ast::{Node, Value};
+use crate::lower::cfg;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Style {
@@ -126,10 +127,7 @@ pub(super) struct BuildingCfg {
 }
 
 pub(super) fn read_cfg(node: &Node) -> Result<BuildingCfg> {
-    let seed = node
-        .attr_number("seed")
-        .map(|n| (n as i64).max(1) as u32)
-        .unwrap_or(1);
+    let seed = cfg::seed(node);
     let style = match attr_str(node, "style").as_deref() {
         Some("grid") | None => Style::Grid,
         Some("apartment-block") => Style::ApartmentBlock,
@@ -151,46 +149,34 @@ pub(super) fn read_cfg(node: &Node) -> Result<BuildingCfg> {
     };
     let mat_style = attr_str(node, "mat_style").unwrap_or_default();
 
-    let floor_area = node.attr_number("floor_area").unwrap_or(120.0).max(4.0);
+    let floor_area = cfg::scalar(node, "floor_area", 120.0, 4.0);
     let cellar_area = node
         .attr_number("cellar_area")
         .filter(|v| *v > 0.0)
         .map(|v| v.max(4.0));
-    let rooms = node.attr_number("rooms").unwrap_or(4.0).max(1.0) as u32;
-    let floors_above = node.attr_number("floors_above").unwrap_or(1.0).max(1.0) as u32;
-    let floors_below = node.attr_number("floors_below").unwrap_or(0.0).max(0.0) as u32;
-    let windows = node.attr_number("windows").unwrap_or(0.0).max(0.0) as u32;
-    let skylights = node.attr_number("skylights").unwrap_or(0.0).max(0.0) as u32;
+    let rooms = cfg::count(node, "rooms", 4.0, 1.0);
+    let floors_above = cfg::count(node, "floors_above", 1.0, 1.0);
+    let floors_below = cfg::count(node, "floors_below", 0.0, 0.0);
+    let windows = cfg::count(node, "windows", 0.0, 0.0);
+    let skylights = cfg::count(node, "skylights", 0.0, 0.0);
 
-    let ceiling_height = node.attr_number("ceiling_height").unwrap_or(2.6).max(1.5);
-    let door_w = node.attr_number("door_w").unwrap_or(0.9).max(0.4);
-    let door_h = node.attr_number("door_h").unwrap_or(2.1).max(1.4);
-    let window_w = node.attr_number("window_w").unwrap_or(1.2).max(0.3);
-    let window_h = node.attr_number("window_h").unwrap_or(1.4).max(0.3);
-    let wall_thickness = node.attr_number("wall_thickness").unwrap_or(0.12).max(0.04);
-    let ceiling_thickness = node
-        .attr_number("ceiling_thickness")
-        .unwrap_or(0.2)
-        .max(0.05);
+    let ceiling_height = cfg::scalar(node, "ceiling_height", 2.6, 1.5);
+    let door_w = cfg::scalar(node, "door_w", 0.9, 0.4);
+    let door_h = cfg::scalar(node, "door_h", 2.1, 1.4);
+    let window_w = cfg::scalar(node, "window_w", 1.2, 0.3);
+    let window_h = cfg::scalar(node, "window_h", 1.4, 0.3);
+    let wall_thickness = cfg::scalar(node, "wall_thickness", 0.12, 0.04);
+    let ceiling_thickness = cfg::scalar(node, "ceiling_thickness", 0.2, 0.05);
 
-    let entrances = node.attr_number("entrances").unwrap_or(1.0).max(1.0) as u32;
-    let elevators = node.attr_number("elevators").unwrap_or(0.0).max(0.0) as u32;
-    let staircases = node.attr_number("staircases").unwrap_or(0.0).max(0.0) as u32;
+    let entrances = cfg::count(node, "entrances", 1.0, 1.0);
+    let elevators = cfg::count(node, "elevators", 0.0, 0.0);
+    let staircases = cfg::count(node, "staircases", 0.0, 0.0);
 
     // Furnishing is on by default: an unfurnished building is the rarer ask,
     // and the markers are geometry-free so they never bloat the export.
-    let furnish = node
-        .attr_number("furnish")
-        .map(|n| n.abs() > 0.5)
-        .unwrap_or(true);
-    let debug_show_poi = node
-        .attr_number("debug_show_poi")
-        .map(|n| n.abs() > 0.5)
-        .unwrap_or(false);
-    let debug_hide_roof = node
-        .attr_number("debug_hide_roof")
-        .map(|n| n.abs() > 0.5)
-        .unwrap_or(false);
+    let furnish = cfg::flag(node, "furnish", true);
+    let debug_show_poi = cfg::flag(node, "debug_show_poi", false);
+    let debug_hide_roof = cfg::flag(node, "debug_hide_roof", false);
     let debug_render_floor = node
         .attr_number("debug_render_floor")
         .map(|n| n.round() as i32);

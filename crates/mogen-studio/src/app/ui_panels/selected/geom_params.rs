@@ -5,8 +5,18 @@
 
 use eframe::egui;
 
+use mogen_dsl::proc_schema::{self, ParamGroup, ParamKind, ProcSchema};
+
 use crate::app::util::format_inspector_scalar;
 use crate::edit::get_attr;
+
+/// Render a grid label cell, attaching `help` as hover text when present.
+fn label_with_help(ui: &mut egui::Ui, label: &str, help: Option<&str>) {
+    let r = ui.label(label);
+    if let Some(h) = help {
+        r.on_hover_text(h);
+    }
+}
 
 /// Classified source value for one scalar attribute.
 ///
@@ -89,6 +99,7 @@ fn locked_row(ui: &mut egui::Ui, label: &str, raw: &str) {
     ui.end_row();
 }
 
+#[allow(clippy::too_many_arguments)]
 fn scalar_row(
     ui: &mut egui::Ui,
     label: &str,
@@ -97,6 +108,7 @@ fn scalar_row(
     span: mogen_core::Span,
     default: f32,
     speed: f32,
+    help: Option<&str>,
     out: &mut Vec<(&'static str, String)>,
 ) {
     match field(src, span, attr) {
@@ -106,7 +118,7 @@ fn scalar_row(
                 Field::Num(n) => n,
                 _ => default,
             };
-            ui.label(label);
+            label_with_help(ui, label, help);
             let mut v = cur;
             if ui.add(egui::DragValue::new(&mut v).speed(speed)).changed() {
                 out.push((attr, format_inspector_scalar(v)));
@@ -116,6 +128,7 @@ fn scalar_row(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn int_row(
     ui: &mut egui::Ui,
     label: &str,
@@ -125,6 +138,7 @@ fn int_row(
     default: i32,
     min: i32,
     max: i32,
+    help: Option<&str>,
     out: &mut Vec<(&'static str, String)>,
 ) {
     match field(src, span, attr) {
@@ -134,7 +148,7 @@ fn int_row(
                 Field::Num(n) => n as i32,
                 _ => default,
             };
-            ui.label(label);
+            label_with_help(ui, label, help);
             let mut v = cur;
             if ui
                 .add(egui::DragValue::new(&mut v).speed(0.1).range(min..=max))
@@ -158,6 +172,7 @@ fn bool_row(
     src: &str,
     span: mogen_core::Span,
     default: bool,
+    help: Option<&str>,
     out: &mut Vec<(&'static str, String)>,
 ) {
     match field(src, span, attr) {
@@ -167,7 +182,7 @@ fn bool_row(
                 Field::Num(n) => n.abs() > 0.5,
                 _ => default,
             };
-            ui.label(label);
+            label_with_help(ui, label, help);
             let mut v = cur;
             if ui.checkbox(&mut v, "").changed() {
                 out.push((attr, if v { "1".into() } else { "0".into() }));
@@ -233,29 +248,135 @@ fn vec_row(
 /// caller's `SetAttrCanonical` writes a DSL string literal (e.g.
 /// `style="apartment-block"`). `current` is the source value with quotes
 /// already stripped; `fallback` is the lowering default shown when the attr
-/// is absent so the combo never renders blank.
+/// is absent so the combo never renders blank. Each option carries hover help.
 fn enum_row(
     ui: &mut egui::Ui,
     label: &str,
     attr: &'static str,
     current: Option<String>,
     fallback: &str,
-    options: &[&str],
+    options: &[proc_schema::EnumOption],
+    help: Option<&str>,
     out: &mut Vec<(&'static str, String)>,
 ) {
-    ui.label(label);
+    label_with_help(ui, label, help);
     let shown = current.clone().unwrap_or_else(|| fallback.to_string());
     egui::ComboBox::from_id_salt(("geom_enum", attr))
         .selected_text(&shown)
         .show_ui(ui, |ui| {
             for opt in options {
-                let selected = shown == *opt;
-                if ui.selectable_label(selected, *opt).clicked() && !selected {
-                    out.push((attr, format!("\"{opt}\"")));
+                let selected = shown == opt.value;
+                let resp = ui.selectable_label(selected, opt.value);
+                let resp = if opt.help.is_empty() {
+                    resp
+                } else {
+                    resp.on_hover_text(opt.help)
+                };
+                if resp.clicked() && !selected {
+                    out.push((attr, format!("\"{}\"", opt.value)));
                 }
             }
         });
     ui.end_row();
+}
+
+/// Schema-driven multi-component row. Unlike [`vec_row`], `defaults` carries a
+/// per-component value (so a non-uniform default like cave `size=[24,10,24]`
+/// renders correctly), and its length sets the row's arity.
+fn schema_vec_row(
+    ui: &mut egui::Ui,
+    label: &str,
+    attr: &'static str,
+    src: &str,
+    span: mogen_core::Span,
+    defaults: &[f32],
+    speed: f32,
+    help: Option<&str>,
+    out: &mut Vec<(&'static str, String)>,
+) {
+    let arity = defaults.len();
+    let mut comps = match vec_field(src, span, attr) {
+        VecField::Locked(raw) => {
+            locked_row(ui, label, &raw);
+            return;
+        }
+        VecField::Absent => defaults.to_vec(),
+        VecField::Nums(n) if n.len() == 1 => vec![n[0]; arity],
+        VecField::Nums(n) if n.len() == arity => n,
+        VecField::Nums(mut n) => {
+            // Wrong-arity: preserve authored values, padding from `defaults`.
+            let pad = defaults.last().copied().unwrap_or(0.0);
+            n.resize(arity, pad);
+            n
+        }
+    };
+    label_with_help(ui, label, help);
+    ui.horizontal(|ui| {
+        let mut emit = false;
+        for c in comps.iter_mut() {
+            if ui.add(egui::DragValue::new(c).speed(speed)).changed() {
+                emit = true;
+            }
+        }
+        if emit {
+            let body = comps
+                .iter()
+                .map(|v| format_inspector_scalar(*v))
+                .collect::<Vec<_>>()
+                .join(", ");
+            out.push((attr, format!("[{body}]")));
+        }
+    });
+    ui.end_row();
+}
+
+/// Render every parameter of a procedural generator schema as inspector rows,
+/// inserting a subheader row whenever the [`ParamGroup`] changes. This is the
+/// single generic path that replaces the former per-kind hand-written arms for
+/// `branch` / `building` / `cave`.
+fn render_schema(
+    ui: &mut egui::Ui,
+    schema: &ProcSchema,
+    src: &str,
+    span: mogen_core::Span,
+    out: &mut Vec<(&'static str, String)>,
+) -> bool {
+    let mut current_group = ParamGroup::Main;
+    for spec in schema.params {
+        if spec.group != current_group {
+            current_group = spec.group;
+            if let Some(header) = spec.group.header() {
+                ui.label("");
+                ui.label(egui::RichText::new(header).strong().weak());
+                ui.end_row();
+            }
+        }
+        match &spec.kind {
+            ParamKind::Scalar { default, speed } => {
+                scalar_row(ui, spec.label, spec.attr, src, span, *default, *speed, spec.help, out)
+            }
+            ParamKind::Int { default, min, max } => {
+                int_row(ui, spec.label, spec.attr, src, span, *default, *min, *max, spec.help, out)
+            }
+            ParamKind::Bool { default } => {
+                bool_row(ui, spec.label, spec.attr, src, span, *default, spec.help, out)
+            }
+            ParamKind::Enum { default, options } => enum_row(
+                ui,
+                spec.label,
+                spec.attr,
+                read_str(src, span, spec.attr),
+                default,
+                options,
+                spec.help,
+                out,
+            ),
+            ParamKind::Vec { defaults, speed } => schema_vec_row(
+                ui, spec.label, spec.attr, src, span, defaults, *speed, spec.help, out,
+            ),
+        }
+    }
+    !schema.params.is_empty()
 }
 
 /// Render scalar geometry-parameter rows for `kind`. Returns `true` when at
@@ -275,6 +396,13 @@ pub(in crate::app) fn geom_params_for_kind(
     span: mogen_core::Span,
     out: &mut Vec<(&'static str, String)>,
 ) -> bool {
+    // Procedural generators (`branch`, `building`, `cave`) render through the
+    // shared schema so they get a consistent sidebar and new generators are
+    // free. Primitives keep their hand-written arms below.
+    if let Some(schema) = proc_schema::schema_for(kind) {
+        return render_schema(ui, schema, src, span, out);
+    }
+
     let mut shown = false;
     match kind {
         "box" | "slab" | "post" | "panel" | "wedge" | "ellipsoid" | "rounded_box"
@@ -284,24 +412,24 @@ pub(in crate::app) fn geom_params_for_kind(
             // Kind-specific extras
             match kind {
                 "rounded_box" | "chamfered_box" => {
-                    scalar_row(ui, "Radius", "radius", src, span, 0.1, 0.005, out);
+                    scalar_row(ui, "Radius", "radius", src, span, 0.1, 0.005, None, out);
                     if kind == "rounded_box" {
-                        int_row(ui, "Segments", "segments", src, span, 4, 1, 32, out);
+                        int_row(ui, "Segments", "segments", src, span, 4, 1, 32, None, out);
                     }
                 }
                 "inset_box" => {
-                    scalar_row(ui, "Amount", "amount", src, span, 0.1, 0.005, out);
-                    scalar_row(ui, "Depth", "depth", src, span, 0.05, 0.005, out);
+                    scalar_row(ui, "Amount", "amount", src, span, 0.1, 0.005, None, out);
+                    scalar_row(ui, "Depth", "depth", src, span, 0.05, 0.005, None, out);
                 }
                 "superellipsoid" => {
-                    scalar_row(ui, "Equator", "ew", src, span, 1.0, 0.05, out);
-                    scalar_row(ui, "Meridian", "ns", src, span, 1.0, 0.05, out);
-                    int_row(ui, "Rings", "rings", src, span, 16, 2, 256, out);
-                    int_row(ui, "Segments", "segments", src, span, 24, 3, 256, out);
+                    scalar_row(ui, "Equator", "ew", src, span, 1.0, 0.05, None, out);
+                    scalar_row(ui, "Meridian", "ns", src, span, 1.0, 0.05, None, out);
+                    int_row(ui, "Rings", "rings", src, span, 16, 2, 256, None, out);
+                    int_row(ui, "Segments", "segments", src, span, 24, 3, 256, None, out);
                 }
                 "ellipsoid" => {
-                    int_row(ui, "Rings", "rings", src, span, 16, 2, 256, out);
-                    int_row(ui, "Segments", "segments", src, span, 24, 3, 256, out);
+                    int_row(ui, "Rings", "rings", src, span, 16, 2, 256, None, out);
+                    int_row(ui, "Segments", "segments", src, span, 24, 3, 256, None, out);
                 }
                 _ => {}
             }
@@ -311,154 +439,74 @@ pub(in crate::app) fn geom_params_for_kind(
             vec_row(ui, "Size", "size", src, span, 2, 1.0, 0.05, out);
             shown = true;
             if kind == "decal" {
-                scalar_row(ui, "Offset", "offset", src, span, 0.001, 0.0005, out);
+                scalar_row(ui, "Offset", "offset", src, span, 0.001, 0.0005, None, out);
             }
         }
         "cylinder" | "cone" | "half_cylinder" => {
-            scalar_row(ui, "Radius", "radius", src, span, 0.5, 0.02, out);
-            scalar_row(ui, "Height", "height", src, span, 1.0, 0.02, out);
-            int_row(ui, "Segments", "segments", src, span, 24, 3, 256, out);
+            scalar_row(ui, "Radius", "radius", src, span, 0.5, 0.02, None, out);
+            scalar_row(ui, "Height", "height", src, span, 1.0, 0.02, None, out);
+            int_row(ui, "Segments", "segments", src, span, 24, 3, 256, None, out);
             shown = true;
         }
         "sphere" | "hemisphere" => {
-            scalar_row(ui, "Radius", "radius", src, span, 0.5, 0.02, out);
+            scalar_row(ui, "Radius", "radius", src, span, 0.5, 0.02, None, out);
             let rings_default = if kind == "hemisphere" { 8 } else { 16 };
-            int_row(ui, "Rings", "rings", src, span, rings_default, 2, 256, out);
-            int_row(ui, "Segments", "segments", src, span, 24, 3, 256, out);
+            int_row(ui, "Rings", "rings", src, span, rings_default, 2, 256, None, out);
+            int_row(ui, "Segments", "segments", src, span, 24, 3, 256, None, out);
             shown = true;
         }
         "icosphere" => {
-            scalar_row(ui, "Radius", "radius", src, span, 0.5, 0.02, out);
-            int_row(ui, "Subdivisions", "subdivisions", src, span, 2, 0, 6, out);
+            scalar_row(ui, "Radius", "radius", src, span, 0.5, 0.02, None, out);
+            int_row(ui, "Subdivisions", "subdivisions", src, span, 2, 0, 6, None, out);
             shown = true;
         }
         "capsule" => {
-            scalar_row(ui, "Radius", "radius", src, span, 0.5, 0.02, out);
-            scalar_row(ui, "Height", "height", src, span, 1.0, 0.02, out);
-            int_row(ui, "Rings", "rings", src, span, 8, 2, 64, out);
-            int_row(ui, "Segments", "segments", src, span, 24, 3, 256, out);
+            scalar_row(ui, "Radius", "radius", src, span, 0.5, 0.02, None, out);
+            scalar_row(ui, "Height", "height", src, span, 1.0, 0.02, None, out);
+            int_row(ui, "Rings", "rings", src, span, 8, 2, 64, None, out);
+            int_row(ui, "Segments", "segments", src, span, 24, 3, 256, None, out);
             shown = true;
         }
         "torus" => {
-            scalar_row(ui, "Major", "major", src, span, 0.5, 0.02, out);
-            scalar_row(ui, "Minor", "minor", src, span, 0.15, 0.02, out);
-            int_row(ui, "Major segs", "major_segments", src, span, 24, 3, 256, out);
-            int_row(ui, "Minor segs", "minor_segments", src, span, 12, 3, 256, out);
+            scalar_row(ui, "Major", "major", src, span, 0.5, 0.02, None, out);
+            scalar_row(ui, "Minor", "minor", src, span, 0.15, 0.02, None, out);
+            int_row(ui, "Major segs", "major_segments", src, span, 24, 3, 256, None, out);
+            int_row(ui, "Minor segs", "minor_segments", src, span, 12, 3, 256, None, out);
             shown = true;
         }
         "torus_arc" => {
-            scalar_row(ui, "Major", "major", src, span, 0.5, 0.02, out);
-            scalar_row(ui, "Minor", "minor", src, span, 0.15, 0.02, out);
-            scalar_row(ui, "Arc\u{00b0}", "arc", src, span, 90.0, 1.0, out);
+            scalar_row(ui, "Major", "major", src, span, 0.5, 0.02, None, out);
+            scalar_row(ui, "Minor", "minor", src, span, 0.15, 0.02, None, out);
+            scalar_row(ui, "Arc\u{00b0}", "arc", src, span, 90.0, 1.0, None, out);
             shown = true;
         }
         "pyramid" => {
-            scalar_row(ui, "Radius", "radius", src, span, 0.5, 0.02, out);
-            scalar_row(ui, "Height", "height", src, span, 1.0, 0.02, out);
-            int_row(ui, "Sides", "sides", src, span, 4, 3, 64, out);
+            scalar_row(ui, "Radius", "radius", src, span, 0.5, 0.02, None, out);
+            scalar_row(ui, "Height", "height", src, span, 1.0, 0.02, None, out);
+            int_row(ui, "Sides", "sides", src, span, 4, 3, 64, None, out);
             shown = true;
         }
         "disc" => {
-            scalar_row(ui, "Radius", "radius", src, span, 0.5, 0.02, out);
-            int_row(ui, "Segments", "segments", src, span, 24, 3, 256, out);
+            scalar_row(ui, "Radius", "radius", src, span, 0.5, 0.02, None, out);
+            int_row(ui, "Segments", "segments", src, span, 24, 3, 256, None, out);
             shown = true;
         }
         "tube" => {
-            scalar_row(ui, "Outer", "outer", src, span, 0.5, 0.02, out);
-            scalar_row(ui, "Inner", "inner", src, span, 0.3, 0.02, out);
-            scalar_row(ui, "Height", "height", src, span, 1.0, 0.02, out);
-            int_row(ui, "Segments", "segments", src, span, 24, 3, 256, out);
+            scalar_row(ui, "Outer", "outer", src, span, 0.5, 0.02, None, out);
+            scalar_row(ui, "Inner", "inner", src, span, 0.3, 0.02, None, out);
+            scalar_row(ui, "Height", "height", src, span, 1.0, 0.02, None, out);
+            int_row(ui, "Segments", "segments", src, span, 24, 3, 256, None, out);
             shown = true;
         }
         "coil" => {
-            scalar_row(ui, "Radius", "radius", src, span, 0.5, 0.02, out);
-            scalar_row(ui, "Height", "height", src, span, 1.0, 0.02, out);
-            scalar_row(ui, "Turns", "turns", src, span, 3.0, 0.1, out);
-            scalar_row(ui, "Profile r", "profile_radius", src, span, 0.05, 0.005, out);
+            scalar_row(ui, "Radius", "radius", src, span, 0.5, 0.02, None, out);
+            scalar_row(ui, "Height", "height", src, span, 1.0, 0.02, None, out);
+            scalar_row(ui, "Turns", "turns", src, span, 3.0, 0.1, None, out);
+            scalar_row(ui, "Profile r", "profile_radius", src, span, 0.05, 0.005, None, out);
             shown = true;
         }
         "frustum" => {
-            scalar_row(ui, "Height", "height", src, span, 1.0, 0.02, out);
-            shown = true;
-        }
-        "branch" => {
-            enum_row(ui, "Form", "form",
-                read_str(src, span, "form"), "decurrent",
-                &["decurrent", "excurrent", "weeping", "shrub", "palm"], out);
-            scalar_row(ui, "Length", "length", src, span, 1.0, 0.02, out);
-            scalar_row(ui, "Radius", "radius", src, span, 0.05, 0.005, out);
-            int_row(ui, "Depth", "depth", src, span, 4, 1, 8, out);
-            int_row(ui, "Splits", "splits", src, span, 2, 1, 8, out);
-            scalar_row(ui, "Length falloff", "length_falloff", src, span, 0.7, 0.01, out);
-            scalar_row(ui, "Radius falloff", "radius_falloff", src, span, 0.6, 0.01, out);
-            scalar_row(ui, "Branch angle\u{00b0}", "branch_angle", src, span, 35.0, 1.0, out);
-            scalar_row(ui, "Roll\u{00b0}", "roll", src, span, 137.5, 1.0, out);
-            scalar_row(ui, "Tropism", "tropism", src, span, 0.0, 0.02, out);
-            scalar_row(ui, "Bend\u{00b0}", "bend", src, span, 10.0, 0.5, out);
-            scalar_row(ui, "Leader bias", "leader_bias", src, span, 0.0, 0.02, out);
-            int_row(ui, "Multi-stem", "multi_stem", src, span, 1, 1, 8, out);
-            int_row(ui, "Segments", "segments", src, span, 8, 3, 64, out);
-            int_row(ui, "Samples", "samples", src, span, 4, 1, 16, out);
-            int_row(ui, "Seed", "seed", src, span, 1, 1, 1_000_000, out);
-            scalar_row(ui, "Jitter", "jitter", src, span, 0.2, 0.02, out);
-            int_row(ui, "Leaves", "leaves", src, span, 1, 0, 1, out);
-            scalar_row(ui, "Leaf size", "leaf_size", src, span, 0.35, 0.01, out);
-            scalar_row(ui, "Leaf aspect", "leaf_aspect", src, span, 1.0, 0.05, out);
-            int_row(ui, "Leaf cards", "leaf_cards", src, span, 2, 1, 8, out);
-            shown = true;
-        }
-        "building" => {
-            int_row(ui, "Seed", "seed", src, span, 1, 1, 1_000_000, out);
-            enum_row(ui, "Style", "style",
-                read_str(src, span, "style"), "grid",
-                &["grid", "apartment-block", "hotel-corridor", "office-core",
-                  "radial", "organic", "maze"], out);
-            enum_row(ui, "Roof", "roof",
-                read_str(src, span, "roof"), "flat",
-                &["flat", "gabled", "pitched", "hipped", "mansard", "shed"], out);
-            scalar_row(ui, "Floor area m\u{00b2}", "floor_area", src, span, 120.0, 1.0, out);
-            int_row(ui, "Rooms", "rooms", src, span, 4, 1, 256, out);
-            int_row(ui, "Floors above", "floors_above", src, span, 1, 1, 64, out);
-            int_row(ui, "Floors below", "floors_below", src, span, 0, 0, 32, out);
-            int_row(ui, "Windows", "windows", src, span, 0, 0, 1024, out);
-            int_row(ui, "Skylights", "skylights", src, span, 0, 0, 256, out);
-            scalar_row(ui, "Ceiling height", "ceiling_height", src, span, 2.6, 0.05, out);
-            scalar_row(ui, "Door W", "door_w", src, span, 0.9, 0.02, out);
-            scalar_row(ui, "Door H", "door_h", src, span, 2.1, 0.02, out);
-            scalar_row(ui, "Window W", "window_w", src, span, 1.2, 0.02, out);
-            scalar_row(ui, "Window H", "window_h", src, span, 1.4, 0.02, out);
-            scalar_row(ui, "Wall thickness", "wall_thickness", src, span, 0.12, 0.005, out);
-            scalar_row(ui, "Ceiling thickness", "ceiling_thickness", src, span, 0.2, 0.005, out);
-            int_row(ui, "Entrances", "entrances", src, span, 1, 1, 64, out);
-            int_row(ui, "Elevators", "elevators", src, span, 0, 0, 32, out);
-            int_row(ui, "Staircases", "staircases", src, span, 0, 0, 32, out);
-
-            // Debug-only inspection toggles. Match the lowering's `debug_*`
-            // attrs in `mogen_dsl::lower::building::config` — `debug_hide_roof`
-            // drops the top-storey ceiling slab (and skylights) so the
-            // interior is visible from above; `debug_render_floor` isolates a
-            // single signed storey index, skipping vertical circulation, so
-            // one floor can be inspected without surrounding storeys;
-            // `debug_show_poi` gives every furnishing point-of-interest marker
-            // a small bright sphere so the otherwise-empty markers are visible
-            // in the preview. All are intentionally surfaced here for ad-hoc
-            // debugging.
-            ui.label("");
-            ui.label(egui::RichText::new("Debug").strong().weak());
-            ui.end_row();
-            bool_row(ui, "Hide roof", "debug_hide_roof", src, span, false, out);
-            int_row(
-                ui,
-                "Isolate storey",
-                "debug_render_floor",
-                src,
-                span,
-                0,
-                -32,
-                64,
-                out,
-            );
-            bool_row(ui, "Show POI markers", "debug_show_poi", src, span, false, out);
+            scalar_row(ui, "Height", "height", src, span, 1.0, 0.02, None, out);
             shown = true;
         }
         _ => {}

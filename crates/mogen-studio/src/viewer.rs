@@ -280,22 +280,23 @@ impl Viewer {
             // Hover tooltip for POI markers. POI nodes (`kind == "poi"`) only
             // carry a mesh — and so only appear in the pickable `FlatMesh` —
             // when `debug_show_poi` is on, so this naturally fires only while
-            // the debug spheres are visible. Skipped during camera/gizmo
-            // gestures so a drag doesn't flash tooltips.
+            // the debug spheres are visible. We pick *only* POI triangles
+            // (`pick_poi`) so a marker still tooltips when enclosing geometry
+            // sits in front of it — a cave's rock shell wraps every marker, and
+            // building walls hide markers in other rooms. Skipped during
+            // camera/gizmo gestures so a drag doesn't flash tooltips.
             if !cinema_active
                 && response.hovered()
                 && !primary_dragging
                 && !gizmo_in_progress
                 && !panning
             {
-                if let Some(cursor) = cursor_now {
-                    if let Some(id) = crate::pick::pick_node(&st.camera, rect, cursor, &st.mesh) {
-                        if let Some(scene) = st.scene.as_ref() {
-                            let node = scene.get(id);
-                            if node.kind == "poi" {
-                                hover_poi = Some(node.name.clone());
-                            }
-                        }
+                if let (Some(cursor), Some(scene)) = (cursor_now, st.scene.as_ref()) {
+                    let id = crate::pick::pick_poi(&st.camera, rect, cursor, &st.mesh, |nid| {
+                        scene.get(nid).kind == "poi"
+                    });
+                    if let Some(id) = id {
+                        hover_poi = Some(scene.get(id).name.clone());
                     }
                 }
             }

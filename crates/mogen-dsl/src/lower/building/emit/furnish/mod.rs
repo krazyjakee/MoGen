@@ -16,13 +16,13 @@
 
 mod catalog;
 
-use std::collections::BTreeMap;
 use std::path::Path;
 
 use glam::{Quat, Vec3};
 
-use mogen_core::{Material, NodeId, SceneGraph, Transform, UvMode};
-use mogen_geom::icosphere_mesh;
+use mogen_core::{NodeId, SceneGraph, Transform};
+
+use crate::lower::poi::{emit_poi_group, PoiDebug, PoiMarker};
 
 use super::super::config::{BuildingCfg, RoomKind};
 use super::super::layout::Rect2;
@@ -75,40 +75,47 @@ pub(super) fn emit_room_furnishings(
         return;
     }
 
-    let group = graph.add_child(cell_id, "furniture".to_string(), "group", Transform::IDENTITY);
-    graph.nodes[group.0 as usize].origin = origin.map(|p| p.to_path_buf());
-    graph.nodes[group.0 as usize].tags.extend([
-        "building".to_string(),
-        "furniture".to_string(),
-        format!("cat={}", cat.tag()),
-    ]);
+    // One emissive debug colour per category, so the debug spheres read as a
+    // heat-map of room function. Shared across every marker in this room.
+    let dbg_mat = debug_mat_name(cat);
+    let dbg_color = debug_color(cat);
+    let poi_markers: Vec<PoiMarker> = markers
+        .into_iter()
+        .map(|m| PoiMarker {
+            name_key: m.role.to_string(),
+            role: m.role.to_string(),
+            tags: vec![
+                "building".to_string(),
+                "poi".to_string(),
+                "furniture".to_string(),
+                m.role.to_string(),
+            ],
+            transform: Transform::from_trs(
+                Vec3::new(m.x, m.y, m.z),
+                Quat::from_rotation_y(m.yaw),
+                Vec3::ONE,
+            ),
+            debug: Some(PoiDebug {
+                mat_name: dbg_mat.clone(),
+                color: dbg_color,
+                radius: 0.12,
+            }),
+        })
+        .collect();
 
-    let mut counts: BTreeMap<&str, u32> = BTreeMap::new();
-    for m in markers {
-        let idx = counts.entry(m.role).or_default();
-        let xform = Transform::from_trs(
-            Vec3::new(m.x, m.y, m.z),
-            Quat::from_rotation_y(m.yaw),
-            Vec3::ONE,
-        );
-        let id = graph.add_child(group, format!("{}_{}", m.role, idx), "poi", xform);
-        *idx += 1;
-        graph.nodes[id.0 as usize].origin = origin.map(|p| p.to_path_buf());
-        graph.nodes[id.0 as usize].role = Some(m.role.to_string());
-        graph.nodes[id.0 as usize].tags.extend([
+    emit_poi_group(
+        graph,
+        cell_id,
+        origin,
+        "furniture",
+        &[
             "building".to_string(),
-            "poi".to_string(),
             "furniture".to_string(),
-            m.role.to_string(),
-        ]);
-        if cfg.debug_show_poi {
-            ensure_debug_mat(graph, origin, cat);
-            if let Some(mid) = graph.find_material_scoped(&debug_mat_name(cat), origin) {
-                graph.set_mesh(id, icosphere_mesh(0.12, 1, UvMode::Tile));
-                graph.set_material(id, mid);
-            }
-        }
-    }
+            format!("cat={}", cat.tag()),
+        ],
+        cfg.debug_show_poi,
+        poi_markers,
+    );
 }
 
 struct Marker {
@@ -413,23 +420,6 @@ fn furn_seed(seed: u32, rect: Rect2) -> u32 {
 
 fn debug_mat_name(cat: Category) -> String {
     format!("building_furniture_{}", cat.tag())
-}
-
-/// One emissive colour per category so the debug spheres read as a heat-map of
-/// room function. Created on demand, only when `debug_show_poi` is set.
-fn ensure_debug_mat(graph: &mut SceneGraph, origin: Option<&Path>, cat: Category) {
-    let name = debug_mat_name(cat);
-    if graph.find_material_scoped(&name, origin).is_some() {
-        return;
-    }
-    let [r, g, b] = debug_color(cat);
-    let mut m = Material::new(&name);
-    m.base_color = [r, g, b, 1.0];
-    m.emissive = [r, g, b];
-    m.emissive_strength = 2.0;
-    m.roughness = 0.5;
-    m.origin = origin.map(|p| p.to_path_buf());
-    graph.add_material(m);
 }
 
 fn debug_color(cat: Category) -> [f32; 3] {

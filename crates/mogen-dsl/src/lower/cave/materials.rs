@@ -10,6 +10,8 @@ use std::path::Path;
 
 use mogen_core::{AlphaMode, Material, MaterialShader, SceneGraph};
 
+use crate::lower::material::ensure_named_defaults;
+
 /// Default rock material for the cave shell and dry decorations.
 pub(super) const ROCK_MAT: &str = "cave_rock";
 /// Default water material for pools and lakes.
@@ -21,7 +23,7 @@ pub(super) fn poi_debug_color(kind: &str) -> [f32; 3] {
     match kind {
         "dead_end_chamber" => [1.0, 0.1, 0.7], // magenta — treasure / ambush room
         "column_base" => [0.2, 0.4, 1.0],      // deep blue — foot of a stone column
-        "ladder_anchor" => [0.6, 1.0, 0.0],    // lime — ladder / rope climb point
+        "ladder_anchor" => [0.0, 0.9, 1.0],    // cyan — ladder / rope climb point
         "mushroom_spot" => [1.0, 0.55, 0.0],   // amber — scattered floor props
         _ => [1.0, 0.85, 0.1],
     }
@@ -30,24 +32,6 @@ pub(super) fn poi_debug_color(kind: &str) -> [f32; 3] {
 /// Material name for a POI kind's debug marker (`cave_poi_<kind>`).
 pub(super) fn poi_debug_mat_name(kind: &str) -> String {
     format!("cave_poi_{kind}")
-}
-
-/// Create the per-kind POI debug material on demand (only when `debug_show_poi`
-/// actually emits marker geometry). A user-declared `cave_poi_<kind>` wins, same
-/// as the rock/water defaults.
-pub(super) fn ensure_poi_debug(graph: &mut SceneGraph, origin: Option<&Path>, kind: &str) {
-    let name = poi_debug_mat_name(kind);
-    if graph.find_material_scoped(&name, origin).is_some() {
-        return;
-    }
-    let [r, g, b] = poi_debug_color(kind);
-    let mut m = Material::new(&name);
-    m.base_color = [r, g, b, 1.0];
-    m.emissive = [r, g, b];
-    m.emissive_strength = 2.0;
-    m.roughness = 0.5;
-    m.origin = origin.map(|p| p.to_path_buf());
-    graph.add_material(m);
 }
 
 pub(super) fn ensure_defaults(graph: &mut SceneGraph, origin: Option<&Path>) {
@@ -77,12 +61,5 @@ pub(super) fn ensure_defaults(graph: &mut SceneGraph, origin: Option<&Path>) {
             m
         }),
     ];
-    for (name, factory) in defaults {
-        if graph.find_material_scoped(name, origin).is_some() {
-            continue;
-        }
-        let mut mat = factory();
-        mat.origin = origin.map(|p| p.to_path_buf());
-        graph.add_material(mat);
-    }
+    ensure_named_defaults(graph, origin, defaults);
 }

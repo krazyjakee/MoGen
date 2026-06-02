@@ -27,8 +27,7 @@ use mogen_core::{ColliderShape, NodeId, SceneGraph};
 
 use crate::ast::Node;
 use crate::lower::cave::config::ColliderMode;
-use crate::lower::helpers::transform_from_attrs;
-use crate::lower::node::apply_metadata;
+use crate::lower::procedural::{begin_procedural, finish_procedural};
 
 pub(super) fn expand_cave(
     node: &Node,
@@ -37,36 +36,21 @@ pub(super) fn expand_cave(
 ) -> Result<NodeId> {
     let cfg = config::read_cfg(node)?;
 
-    let wrapper_name = node.name.clone().unwrap_or_else(|| node.kind.clone());
-    let wrapper_transform = transform_from_attrs(node);
-    let wrapper_id = match parent {
-        None => graph.add_root(&wrapper_name, &node.kind, wrapper_transform),
-        Some(p) => graph.add_child(p, &wrapper_name, &node.kind, wrapper_transform),
-    };
-    graph.set_source_span(wrapper_id, node.span);
-    graph.nodes[wrapper_id.0 as usize].use_id = node.use_id;
-    graph.nodes[wrapper_id.0 as usize].origin = node.origin.clone();
     // Binds the user's `mat=` (rock finish) to the wrapper so the rock mesh
     // inherits it; the validator allows `mat=` on `cave` via GEOMETRY_COMMON.
-    apply_metadata(node, wrapper_id, graph)?;
+    let (wrapper_id, pre_expand_count) = begin_procedural(node, parent, graph)?;
 
     // Stamp default rock / water materials before emitting so the rock mesh
     // and water decorations can bind to them. Anything the user declared on
     // this origin wins.
     materials::ensure_defaults(graph, node.origin.as_deref());
 
-    let pre_expand_count = graph.nodes.len();
-
     let layout = generate::generate(&cfg);
     emit::emit_rock(node, &cfg, &layout, wrapper_id, graph)?;
     let column_bases = decorate::emit_decorations(node, &cfg, &layout, wrapper_id, graph);
     poi::emit_points_of_interest(node, &cfg, &layout, &column_bases, wrapper_id, graph);
 
-    // Stamp the whole generated subtree non-editable (a rebuild regenerates it
-    // from the seed, so hand edits wouldn't survive).
-    for i in pre_expand_count..graph.nodes.len() {
-        graph.nodes[i].editable = false;
-    }
+    finish_procedural(graph, pre_expand_count);
 
     tag_cave_colliders(graph, pre_expand_count, cfg.colliders, cfg.water_collider);
 

@@ -6,6 +6,7 @@ pub mod lower;
 pub mod meta;
 pub mod module;
 pub mod parser;
+pub mod proc_schema;
 pub mod skin_lower;
 pub mod stdlib;
 
