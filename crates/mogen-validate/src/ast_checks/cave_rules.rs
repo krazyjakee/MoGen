@@ -35,6 +35,20 @@ pub(super) fn check_cave(n: &Node, diags: &mut Vec<Diagnostic>) {
         }
     }
 
+    // seed=0 is silently coerced to 1 at lowering time; warn so the author
+    // knows their intent won't round-trip exactly.
+    if let Some(Value::Number(s)) = n.attr("seed") {
+        if *s <= 0.0 {
+            diags.push(
+                Diagnostic::warning(
+                    "W1209",
+                    format!("`cave.seed` must be ≥ 1 (got {s}); will be treated as 1"),
+                )
+                .with_span(n.span),
+            );
+        }
+    }
+
     // Positive counts / dimensions.
     check_min(n, "chambers", 1.0, diags);
     check_min(n, "levels", 1.0, diags);
