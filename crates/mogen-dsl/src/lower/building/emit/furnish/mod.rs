@@ -27,6 +27,7 @@ use mogen_geom::icosphere_mesh;
 use super::super::config::{BuildingCfg, RoomKind};
 use super::super::layout::Rect2;
 use super::super::rng::{rand_f01, step};
+use super::openings::{Opening, OpeningPlan};
 use catalog::{Category, Item, Place};
 
 /// Gap left between adjacent wall props, metres.
@@ -34,6 +35,9 @@ const WALL_GAP: f32 = 0.15;
 /// Keep wall props this far from the room corners so two perpendicular runs
 /// don't overlap at the join.
 const CORNER_MARGIN: f32 = 0.35;
+/// Clearance kept around each opening, beyond its half-width, so a wall prop
+/// never butts directly against a door or window.
+const OPENING_CLEAR: f32 = 0.3;
 
 /// Emit furnishing markers for one room cell. `rect` is the room's world-space
 /// rectangle; `cell_id` is the cell group, whose local origin sits at the room
@@ -44,6 +48,7 @@ pub(super) fn emit_room_furnishings(
     rect: Rect2,
     room_name: &str,
     room_kind: RoomKind,
+    plan: &OpeningPlan,
     cell_id: NodeId,
     origin: Option<&Path>,
     graph: &mut SceneGraph,
@@ -63,8 +68,9 @@ pub(super) fn emit_room_furnishings(
     let cat = catalog::classify(room_name, room_kind);
     let items = catalog::items(cat);
 
+    let keepouts = wall_keepouts(rect, plan);
     let mut state = furn_seed(cfg.seed, rect);
-    let markers = lay_out(items, area, hw, hd, cfg.ceiling_height, &mut state);
+    let markers = lay_out(items, area, hw, hd, cfg.ceiling_height, &keepouts, &mut state);
     if markers.is_empty() {
         return;
     }
@@ -144,31 +150,70 @@ impl Side {
     }
 }
 
+/// A contiguous run of free wall — the gaps left between openings. Props pack
+/// into it left-to-right starting at `cursor` (an absolute along-axis coord).
+struct FreeSpan {
+    hi: f32,
+    cursor: f32,
+}
+
 struct Wall {
     side: Side,
-    half: f32,
-    usable: f32,
-    filled: f32,
+    spans: Vec<FreeSpan>,
 }
 
 impl Wall {
-    fn new(side: Side, half: f32) -> Self {
-        let usable = (2.0 * (half - CORNER_MARGIN)).max(0.0);
-        Wall { side, half, usable, filled: 0.0 }
-    }
-    fn remaining(&self) -> f32 {
-        self.usable - self.filled
+    fn new(side: Side, half: f32, keepouts: &[(f32, f32)]) -> Self {
+        let lo = -(half - CORNER_MARGIN);
+        let hi = half - CORNER_MARGIN;
+        Wall { side, spans: free_spans(lo, hi, keepouts) }
     }
 }
 
-fn lay_out(items: &[Item], area: f32, hw: f32, hd: f32, ceiling_h: f32, state: &mut u32) -> Vec<Marker> {
+/// Subtract the opening keep-out intervals from `[lo, hi]`, returning the runs
+/// of wall left free for props. Keep-outs are clipped to the range and merged
+/// so overlapping or adjacent openings leave one gap, not several slivers.
+fn free_spans(lo: f32, hi: f32, keepouts: &[(f32, f32)]) -> Vec<FreeSpan> {
+    if hi <= lo {
+        return Vec::new();
+    }
+    let mut ks: Vec<(f32, f32)> = keepouts
+        .iter()
+        .map(|&(a, b)| (a.max(lo), b.min(hi)))
+        .filter(|&(a, b)| b > a)
+        .collect();
+    ks.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+
+    let mut spans = Vec::new();
+    let mut cur = lo;
+    for (a, b) in ks {
+        if a > cur {
+            spans.push(FreeSpan { hi: a, cursor: cur });
+        }
+        cur = cur.max(b);
+    }
+    if cur < hi {
+        spans.push(FreeSpan { hi, cursor: cur });
+    }
+    spans
+}
+
+fn lay_out(
+    items: &[Item],
+    area: f32,
+    hw: f32,
+    hd: f32,
+    ceiling_h: f32,
+    keepouts: &[Vec<(f32, f32)>; 4],
+    state: &mut u32,
+) -> Vec<Marker> {
     let mut markers = Vec::new();
 
     let mut walls = [
-        Wall::new(Side::South, hw),
-        Wall::new(Side::North, hw),
-        Wall::new(Side::West, hd),
-        Wall::new(Side::East, hd),
+        Wall::new(Side::South, hw, &keepouts[0]),
+        Wall::new(Side::North, hw, &keepouts[1]),
+        Wall::new(Side::West, hd, &keepouts[2]),
+        Wall::new(Side::East, hd, &keepouts[3]),
     ];
 
     // Corner anchors: inset diagonally so the prop clears both walls. Inward
@@ -194,12 +239,13 @@ fn lay_out(items: &[Item], area: f32, hw: f32, hd: f32, ceiling_h: f32, state: &
         match it.place {
             Place::Wall => {
                 for _ in 0..n {
-                    if let Some(wi) = pick_wall(&walls, it.width) {
-                        let wll = &mut walls[wi];
-                        let along = -(wll.half - CORNER_MARGIN) + wll.filled + 0.5 * it.width;
-                        wll.filled += it.width + WALL_GAP;
-                        let (x, z) = wll.side.place(along, hw, hd);
-                        markers.push(Marker { role: it.role, x, y: it.y, z, yaw: wll.side.yaw() });
+                    if let Some((wi, si)) = pick_wall(&walls, it.width) {
+                        let side = walls[wi].side;
+                        let span = &mut walls[wi].spans[si];
+                        let along = span.cursor + 0.5 * it.width;
+                        span.cursor += it.width + WALL_GAP;
+                        let (x, z) = side.place(along, hw, hd);
+                        markers.push(Marker { role: it.role, x, y: it.y, z, yaw: side.yaw() });
                     }
                 }
             }
@@ -236,19 +282,63 @@ fn lay_out(items: &[Item], area: f32, hw: f32, hd: f32, ceiling_h: f32, state: &
     markers
 }
 
-/// Best-fit: the wall with the most room left that still fits `width`. Ties
-/// break toward the earlier wall (south, then north, …) for determinism.
-fn pick_wall(walls: &[Wall; 4], width: f32) -> Option<usize> {
-    let mut best: Option<usize> = None;
+/// Best-fit: across every wall's free spans, the span with the most room left
+/// that still fits `width`. Ties break toward the earlier wall/span (south,
+/// then north, …) for determinism.
+fn pick_wall(walls: &[Wall; 4], width: f32) -> Option<(usize, usize)> {
+    let mut best: Option<(usize, usize)> = None;
     let mut best_rem = -1.0;
-    for (i, w) in walls.iter().enumerate() {
-        let rem = w.remaining();
-        if rem + 1e-3 >= width && rem > best_rem {
-            best = Some(i);
-            best_rem = rem;
+    for (wi, w) in walls.iter().enumerate() {
+        for (si, sp) in w.spans.iter().enumerate() {
+            let rem = sp.hi - sp.cursor;
+            if rem + 1e-3 >= width && rem > best_rem {
+                best = Some((wi, si));
+                best_rem = rem;
+            }
         }
     }
     best
+}
+
+/// For each wall (indexed South, North, West, East to match `lay_out`'s wall
+/// array), the along-axis intervals blocked by a door or window so wall props
+/// pack around them. Coordinates are in the room-local frame (origin at the
+/// room centre), matching `Side::place`'s `along` axis: local X for
+/// South/North walls, local Z for West/East walls.
+fn wall_keepouts(rect: Rect2, plan: &OpeningPlan) -> [Vec<(f32, f32)>; 4] {
+    const EDGE_EPS: f32 = 0.06;
+    let [cx, cz] = rect.centre();
+    let mut out: [Vec<(f32, f32)>; 4] = [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
+    let mut block = |o: &Opening| {
+        let half = 0.5 * o.width + OPENING_CLEAR;
+        let in_x = o.x >= rect.x_min - EDGE_EPS && o.x <= rect.x_max + EDGE_EPS;
+        let in_z = o.z >= rect.z_min - EDGE_EPS && o.z <= rect.z_max + EDGE_EPS;
+        if in_x && (o.z - rect.z_min).abs() < EDGE_EPS {
+            let a = o.x - cx;
+            out[0].push((a - half, a + half));
+        }
+        if in_x && (o.z - rect.z_max).abs() < EDGE_EPS {
+            let a = o.x - cx;
+            out[1].push((a - half, a + half));
+        }
+        if in_z && (o.x - rect.x_min).abs() < EDGE_EPS {
+            let a = o.z - cz;
+            out[2].push((a - half, a + half));
+        }
+        if in_z && (o.x - rect.x_max).abs() < EDGE_EPS {
+            let a = o.z - cz;
+            out[3].push((a - half, a + half));
+        }
+    };
+    for o in plan
+        .entrances
+        .iter()
+        .chain(&plan.interior_doors)
+        .chain(&plan.windows)
+    {
+        block(o);
+    }
+    out
 }
 
 fn place_centre(queue: &[&Item], hw: f32, hd: f32, out: &mut Vec<Marker>) {
@@ -362,5 +452,37 @@ fn debug_color(cat: Category) -> [f32; 3] {
         Gym => [0.95, 0.55, 0.15],
         Cell => [0.45, 0.45, 0.5],
         Generic => [0.75, 0.75, 0.75],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn spans(lo: f32, hi: f32, ks: &[(f32, f32)]) -> Vec<(f32, f32)> {
+        free_spans(lo, hi, ks).iter().map(|s| (s.cursor, s.hi)).collect()
+    }
+
+    #[test]
+    fn free_spans_no_openings_is_one_run() {
+        assert_eq!(spans(-2.0, 2.0, &[]), vec![(-2.0, 2.0)]);
+    }
+
+    #[test]
+    fn free_spans_splits_around_a_central_opening() {
+        // A door blocking [-0.5, 0.5] leaves a run on each side.
+        assert_eq!(spans(-2.0, 2.0, &[(-0.5, 0.5)]), vec![(-2.0, -0.5), (0.5, 2.0)]);
+    }
+
+    #[test]
+    fn free_spans_merges_overlapping_keepouts() {
+        // Two overlapping openings collapse to a single gap, not slivers.
+        assert_eq!(spans(-2.0, 2.0, &[(-0.5, 0.4), (0.2, 0.8)]), vec![(-2.0, -0.5), (0.8, 2.0)]);
+    }
+
+    #[test]
+    fn free_spans_clips_to_range_and_can_be_empty() {
+        // An opening spanning the whole wall leaves nothing to pack into.
+        assert!(spans(-1.0, 1.0, &[(-5.0, 5.0)]).is_empty());
     }
 }

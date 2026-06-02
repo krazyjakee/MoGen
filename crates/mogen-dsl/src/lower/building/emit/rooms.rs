@@ -90,6 +90,7 @@ pub(super) fn emit_rooms(
                     cell.rect,
                     &room_name,
                     room_kind,
+                    plan,
                     cell_id,
                     origin.as_deref(),
                     graph,

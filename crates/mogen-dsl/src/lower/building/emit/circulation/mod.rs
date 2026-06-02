@@ -223,22 +223,36 @@ fn emit_column_fillers(
     let door_min_length = cfg.door_w + 2.0 * cfg.wall_thickness + 0.1;
 
     for (idx, (z0, z1)) in gaps.iter().enumerate() {
-        let length = z1 - z0;
-        if length < 1e-3 {
+        if z1 - z0 < 1e-3 {
             continue;
         }
-        let z_centre = 0.5 * (z0 + z1);
-        let allow_door = length >= door_min_length;
 
         for storey_plate in &layout.storeys {
             let s = storey_plate.storey;
+
+            // Clamp the gap to this storey's own footprint. The gaps above
+            // are derived from the whole-building `layout.bounds`, but an
+            // inset storey (e.g. a cellar with `cellar_area < floor_area`)
+            // is narrower. Without clamping, the filler — and the door
+            // carved at its midpoint — would run out to the building
+            // perimeter and cantilever past the storey's actual wall into
+            // open air.
+            let z_lo = z0.max(storey_plate.plate.bounds.z_min);
+            let z_hi = z1.min(storey_plate.plate.bounds.z_max);
+            let length = z_hi - z_lo;
+            if length < 1e-3 {
+                continue;
+            }
+            let z_centre = 0.5 * (z_lo + z_hi);
+            let allow_door = length >= door_min_length;
+
             let storey_floor = s as f32 * step;
             let wall_centre_y = storey_floor + 0.5 * h;
 
             let mut local_holes: Vec<[f32; 4]> = Vec::new();
             let mut carved_door = false;
             if allow_door
-                && storey_has_adjacent_room(&storey_plate.plate, column_x, *z0, *z1)
+                && storey_has_adjacent_room(&storey_plate.plate, column_x, z_lo, z_hi)
             {
                 // Wall is rotated +π/2 around Y (local +X → world -Z), so
                 // a door at the gap's z midpoint has along = 0. Wall y

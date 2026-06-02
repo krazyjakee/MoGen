@@ -110,6 +110,117 @@ pub(super) fn entrance_side_order(seed: u32) -> [WallSide; 4] {
     order
 }
 
+/// Records the below-grade footprint so storey-0 entrance placement can
+/// keep doors over *supported* wall — a cellar wall directly beneath the
+/// ground-floor facade — instead of on a segment that overhangs a smaller
+/// cellar. Without this, an entrance can land on the overhanging stretch
+/// of a facade and read as a door jutting out into mid-air above the
+/// recessed basement.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct EntranceSupport {
+    /// The below-ground (cellar) footprint, when it is smaller than the
+    /// ground floor. `None` means every facade is grounded to grade (no
+    /// cellar, or a cellar matching the ground plate) — placement is
+    /// unrestricted, exactly as before this support record existed.
+    pub below: Option<Rect2>,
+}
+
+impl EntranceSupport {
+    pub fn none() -> Self {
+        EntranceSupport { below: None }
+    }
+
+    /// The sub-span of `side` (on the ground-floor `bounds`) that has a
+    /// cellar wall directly below it, as `(along_min, along_max)` in the
+    /// side's along-axis (x for North/South, z for East/West).
+    ///
+    /// Returns the full side span when unconstrained (`below == None`), and
+    /// `None` when this side overhangs the cellar entirely — i.e. the
+    /// ground-floor wall on that side has no coincident cellar wall to
+    /// stand on. A facade is "grounded" only where the ground wall line
+    /// coincides with the cellar's wall on the same side *and* the cellar
+    /// actually spans that stretch. Because the cellar is east-aligned
+    /// (shares the east edge, inset on the other three sides), in practice
+    /// only the east wall is grounded; the math is written per-side so it
+    /// stays correct if the alignment strategy changes.
+    fn supported_span(&self, bounds: &Rect2, side: WallSide) -> Option<(f32, f32)> {
+        let (full_lo, full_hi) = side_full_span(bounds, side);
+        let Some(below) = self.below else {
+            return Some((full_lo, full_hi));
+        };
+        let (edges_align, lo, hi) = match side {
+            WallSide::East => (
+                (below.x_max - bounds.x_max).abs() <= EDGE_EPS,
+                full_lo.max(below.z_min),
+                full_hi.min(below.z_max),
+            ),
+            WallSide::West => (
+                (below.x_min - bounds.x_min).abs() <= EDGE_EPS,
+                full_lo.max(below.z_min),
+                full_hi.min(below.z_max),
+            ),
+            WallSide::South => (
+                (below.z_min - bounds.z_min).abs() <= EDGE_EPS,
+                full_lo.max(below.x_min),
+                full_hi.min(below.x_max),
+            ),
+            WallSide::North => (
+                (below.z_max - bounds.z_max).abs() <= EDGE_EPS,
+                full_lo.max(below.x_min),
+                full_hi.min(below.x_max),
+            ),
+        };
+        if edges_align && hi - lo > EDGE_EPS {
+            Some((lo, hi))
+        } else {
+            None
+        }
+    }
+}
+
+/// Full span of `side` on `bounds` as `(along_min, along_max)`: x for
+/// North/South faces, z for East/West faces.
+pub(super) fn side_full_span(bounds: &Rect2, side: WallSide) -> (f32, f32) {
+    match side {
+        WallSide::South | WallSide::North => (bounds.x_min, bounds.x_max),
+        WallSide::East | WallSide::West => (bounds.z_min, bounds.z_max),
+    }
+}
+
+/// The facades that can host a grounded entrance, in the per-seed wall
+/// order, each paired with the supported `(along_min, along_max)` span on
+/// that side. Sides overhanging the cellar are dropped. Falls back to all
+/// four sides at full span when support is unconstrained, and also as a
+/// degenerate guard if a misconfigured cellar would otherwise leave no
+/// supported facade (so the building still gets its entrances rather than
+/// silently none). Shared by the emitter (`place_entrances`) and the
+/// layout scorer (`entrance_anchors`) so both agree on where doors land.
+pub(super) fn entrance_sides(
+    cfg: &BuildingCfg,
+    bounds: &Rect2,
+    support: &EntranceSupport,
+) -> Vec<(WallSide, f32, f32)> {
+    let order = entrance_side_order(cfg.seed);
+    let mut out: Vec<(WallSide, f32, f32)> = order
+        .iter()
+        .filter_map(|&side| {
+            support
+                .supported_span(bounds, side)
+                .map(|(lo, hi)| (side, lo, hi))
+        })
+        .collect();
+    if out.is_empty() {
+        out = order
+            .iter()
+            .map(|&side| {
+                let (lo, hi) = side_full_span(bounds, side);
+                (side, lo, hi)
+            })
+            .collect();
+    }
+    out
+}
+
 /// Kind discriminator for a `RoomCell`. Most cells are normal rooms; a
 /// minority are circulation cells (staircase or elevator) that share XY
 /// across every storey.
@@ -171,6 +282,10 @@ pub(super) struct BuildingLayout {
     pub bounds: Rect2,
     pub storeys: Vec<StoreyPlate>,
     pub circulation: CirculationPlan,
+    /// Where storey-0 entrances are allowed to land, given the cellar
+    /// footprint. Threaded to the emitter and scorer so doors stay over
+    /// supported wall.
+    pub entrance_support: EntranceSupport,
 }
 
 #[derive(Clone, Debug)]
@@ -202,6 +317,17 @@ pub(super) fn solve(cfg: &BuildingCfg) -> Result<BuildingLayout> {
         east_aligned_bounds(cellar_effective, bounds_above)
     } else {
         bounds_above
+    };
+
+    // Record the supporting footprint for storey-0 entrances. Only a
+    // smaller cellar (an explicit `cellar_area` with at least one basement
+    // storey) constrains placement; a same-size or absent cellar leaves
+    // every facade grounded, so support stays `None` and entrance
+    // placement is unchanged from the no-cellar path.
+    let entrance_support = if cfg.cellar_area.is_some() && cfg.floors_below >= 1 {
+        EntranceSupport { below: Some(bounds_below) }
+    } else {
+        EntranceSupport::none()
     };
 
     // Plan circulation against the smaller of the two plates so the column
@@ -260,6 +386,7 @@ pub(super) fn solve(cfg: &BuildingCfg) -> Result<BuildingLayout> {
             bounds,
             &circ,
             rooms_per_storey[i],
+            &entrance_support,
         )?;
         storeys.push(StoreyPlate {
             storey: *s,
@@ -271,6 +398,7 @@ pub(super) fn solve(cfg: &BuildingCfg) -> Result<BuildingLayout> {
         bounds: bounds_above,
         storeys,
         circulation: circ,
+        entrance_support,
     })
 }
 
@@ -328,6 +456,7 @@ fn solve_storey(
     full_bounds: Rect2,
     circ: &CirculationPlan,
     room_count: usize,
+    entrance_support: &EntranceSupport,
 ) -> Result<Floorplate> {
     let mut best: Option<(f32, Vec<RoomCell>)> = None;
     let storey_mix = (storey as i64).wrapping_mul(1_000_003) as u32;
@@ -361,7 +490,7 @@ fn solve_storey(
             bounds: full_bounds,
             rooms: with_circulation(room_cells.clone(), circ),
         };
-        let s = score::score(cfg, &scratch_plate);
+        let s = score::score(cfg, &scratch_plate, entrance_support);
         match &best {
             None => best = Some((s, room_cells)),
             Some((bs, _)) if s > *bs => best = Some((s, room_cells)),

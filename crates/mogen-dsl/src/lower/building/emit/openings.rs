@@ -13,7 +13,7 @@
 use super::super::circulation::CirculationPlan;
 use super::super::config::BuildingCfg;
 use super::super::layout::{
-    entrance_side_order, CellKind, Floorplate, Rect2, RoomCell, WallSide,
+    entrance_sides, CellKind, EntranceSupport, Floorplate, Rect2, RoomCell, WallSide,
 };
 use super::super::rng::{attempt_seed, rand_f01, rand_range};
 use super::StoreyCtx;
@@ -65,12 +65,13 @@ pub(super) fn plan_openings(
     cfg: &BuildingCfg,
     plate: &Floorplate,
     ctx: StoreyCtx,
+    entrance_support: &EntranceSupport,
 ) -> OpeningPlan {
     let mut plan = OpeningPlan::default();
     let mut state = attempt_seed(cfg.seed, 99u32.wrapping_add(ctx.storey as u32));
 
     if ctx.has_entrances() {
-        place_entrances(cfg, plate, &mut plan, &mut state);
+        place_entrances(cfg, plate, entrance_support, &mut plan, &mut state);
     }
 
     place_interior_doors(cfg, plate, &mut plan, &mut state);
@@ -179,61 +180,53 @@ pub(super) fn elevator_door_z(
 /// doors on every facade rather than a single-wall row. The layout
 /// scorer (`entrance_anchors`) uses the same helper so it predicts
 /// entrance positions on the same faces.
+///
+/// `support` keeps storey-0 entrances over grounded wall: when a smaller
+/// cellar sits below, `entrance_sides` drops any facade that overhangs it
+/// and clamps each remaining side to the stretch with a cellar wall
+/// beneath, so a door never juts out past the recessed basement.
 fn place_entrances(
     cfg: &BuildingCfg,
     plate: &Floorplate,
+    support: &EntranceSupport,
     plan: &mut OpeningPlan,
     state: &mut u32,
 ) {
     let count = cfg.entrances.max(1) as usize;
-    let order = entrance_side_order(cfg.seed);
-    let mut per_side: [usize; 4] = [0; 4];
+    let sides = entrance_sides(cfg, &plate.bounds, support);
+    let mut per_side = vec![0usize; sides.len()];
     for i in 0..count {
-        per_side[i % 4] += 1;
+        per_side[i % sides.len()] += 1;
     }
-    for (side_idx, &side) in order.iter().enumerate() {
+    for (side_idx, &(side, along_min, along_max)) in sides.iter().enumerate() {
         let n = per_side[side_idx];
         if n == 0 {
             continue;
         }
-        place_entrances_on_side(cfg, plate, side, n, plan, state);
+        place_entrances_on_side(cfg, &plate.bounds, side, along_min, along_max, n, plan, state);
     }
 }
 
+/// Place `count` entrances on `side`, spread evenly within the supported
+/// `[along_min, along_max]` stretch of that facade. The perpendicular wall
+/// position (`fixed`) still comes from `bounds`; only the along-axis range
+/// is constrained by the support span.
 fn place_entrances_on_side(
     cfg: &BuildingCfg,
-    plate: &Floorplate,
+    bounds: &Rect2,
     side: WallSide,
+    along_min: f32,
+    along_max: f32,
     count: usize,
     plan: &mut OpeningPlan,
     state: &mut u32,
 ) {
-    let bounds = &plate.bounds;
-    let (span, along_min, fixed, facing) = match side {
-        WallSide::South => (
-            bounds.x_max - bounds.x_min,
-            bounds.x_min,
-            bounds.z_min,
-            [0.0, 0.0, -1.0],
-        ),
-        WallSide::North => (
-            bounds.x_max - bounds.x_min,
-            bounds.x_min,
-            bounds.z_max,
-            [0.0, 0.0, 1.0],
-        ),
-        WallSide::East => (
-            bounds.z_max - bounds.z_min,
-            bounds.z_min,
-            bounds.x_max,
-            [1.0, 0.0, 0.0],
-        ),
-        WallSide::West => (
-            bounds.z_max - bounds.z_min,
-            bounds.z_min,
-            bounds.x_min,
-            [-1.0, 0.0, 0.0],
-        ),
+    let span = along_max - along_min;
+    let (fixed, facing) = match side {
+        WallSide::South => (bounds.z_min, [0.0, 0.0, -1.0]),
+        WallSide::North => (bounds.z_max, [0.0, 0.0, 1.0]),
+        WallSide::East => (bounds.x_max, [1.0, 0.0, 0.0]),
+        WallSide::West => (bounds.x_min, [-1.0, 0.0, 0.0]),
     };
     let usable = (span - 2.0 * cfg.door_w).max(0.1);
     for i in 0..count {

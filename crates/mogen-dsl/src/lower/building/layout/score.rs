@@ -11,9 +11,13 @@
 //! collide.
 
 use super::super::config::{BuildingCfg, RoomKind};
-use super::{cell_type, entrance_side_order, CellKind, Floorplate, WallSide};
+use super::{cell_type, entrance_sides, CellKind, EntranceSupport, Floorplate, WallSide};
 
-pub(super) fn score(cfg: &BuildingCfg, plate: &Floorplate) -> f32 {
+pub(super) fn score(
+    cfg: &BuildingCfg,
+    plate: &Floorplate,
+    support: &EntranceSupport,
+) -> f32 {
     let mut total = 0.0;
 
     for (i, a) in plate.rooms.iter().enumerate() {
@@ -51,7 +55,7 @@ pub(super) fn score(cfg: &BuildingCfg, plate: &Floorplate) -> f32 {
     }
 
     total += area_band_score(cfg, plate);
-    total += entrance_distance_score(cfg, plate);
+    total += entrance_distance_score(cfg, plate, support);
 
     total
 }
@@ -90,11 +94,15 @@ fn area_band_score(cfg: &BuildingCfg, plate: &Floorplate) -> f32 {
 /// floorplate (degenerate case). Mirrors `place_entrances`'s round-robin
 /// side distribution so the prior tracks where the doors will actually
 /// land, not just the canonical south face.
-fn entrance_distance_score(cfg: &BuildingCfg, plate: &Floorplate) -> f32 {
+fn entrance_distance_score(
+    cfg: &BuildingCfg,
+    plate: &Floorplate,
+    support: &EntranceSupport,
+) -> f32 {
     let max_d2 =
         (plate.bounds.width().powi(2) + plate.bounds.depth().powi(2)).max(1e-3);
     let max_d = max_d2.sqrt();
-    let anchors = entrance_anchors(cfg, plate);
+    let anchors = entrance_anchors(cfg, plate, support);
     let mut total = 0.0;
     for cell in &plate.rooms {
         if !matches!(cell.kind, CellKind::Room) {
@@ -138,64 +146,37 @@ fn entrance_distance_score(cfg: &BuildingCfg, plate: &Floorplate) -> f32 {
 /// of its share of the wall. That's the expected entrance location to
 /// within ~`door_w`; the scoring weights are soft enough that the small
 /// jitter doesn't change which layout wins.
-fn entrance_anchors(cfg: &BuildingCfg, plate: &Floorplate) -> Vec<[f32; 2]> {
+fn entrance_anchors(
+    cfg: &BuildingCfg,
+    plate: &Floorplate,
+    support: &EntranceSupport,
+) -> Vec<[f32; 2]> {
     let count = cfg.entrances.max(1) as usize;
-    let order = entrance_side_order(cfg.seed);
-    let mut per_side: [usize; 4] = [0; 4];
+    let sides = entrance_sides(cfg, &plate.bounds, support);
+    if sides.is_empty() {
+        return Vec::new();
+    }
+    let mut per_side = vec![0usize; sides.len()];
     for i in 0..count {
-        per_side[i % 4] += 1;
+        per_side[i % sides.len()] += 1;
     }
     let bounds = &plate.bounds;
     let mut anchors: Vec<[f32; 2]> = Vec::with_capacity(count);
-    let push = |anchors: &mut Vec<[f32; 2]>, along_min: f32, span: f32, n: usize, on_x: bool, fixed: f32| {
-        for i in 0..n {
-            let t = (i as f32 + 1.0) / (n as f32 + 1.0);
-            let along = along_min + t * span;
-            if on_x {
-                anchors.push([along, fixed]);
-            } else {
-                anchors.push([fixed, along]);
-            }
-        }
-    };
-    for (side_idx, side) in order.iter().enumerate() {
+    for (side_idx, &(side, along_min, along_max)) in sides.iter().enumerate() {
         let n = per_side[side_idx];
         if n == 0 {
             continue;
         }
-        match side {
-            WallSide::South => push(
-                &mut anchors,
-                bounds.x_min,
-                bounds.x_max - bounds.x_min,
-                n,
-                true,
-                bounds.z_min,
-            ),
-            WallSide::North => push(
-                &mut anchors,
-                bounds.x_min,
-                bounds.x_max - bounds.x_min,
-                n,
-                true,
-                bounds.z_max,
-            ),
-            WallSide::East => push(
-                &mut anchors,
-                bounds.z_min,
-                bounds.z_max - bounds.z_min,
-                n,
-                false,
-                bounds.x_max,
-            ),
-            WallSide::West => push(
-                &mut anchors,
-                bounds.z_min,
-                bounds.z_max - bounds.z_min,
-                n,
-                false,
-                bounds.x_min,
-            ),
+        let span = along_max - along_min;
+        for i in 0..n {
+            let t = (i as f32 + 1.0) / (n as f32 + 1.0);
+            let along = along_min + t * span;
+            anchors.push(match side {
+                WallSide::South => [along, bounds.z_min],
+                WallSide::North => [along, bounds.z_max],
+                WallSide::East => [bounds.x_max, along],
+                WallSide::West => [bounds.x_min, along],
+            });
         }
     }
     anchors
@@ -290,10 +271,10 @@ mod tests {
                 adjacent_to: adjacent_to.into_iter().map(String::from).collect(),
                 away_from: away_from.into_iter().map(String::from).collect(),
             }],
-            furnish: false,
-            debug_show_poi: false,
             debug_hide_roof: false,
             debug_render_floor: None,
+            furnish: false,
+            debug_show_poi: false,
         }
     }
 
@@ -311,7 +292,7 @@ mod tests {
                 room_cell(rect(4.0, 8.0, 0.0, 4.0), 1),
             ],
         };
-        let s = score(&cfg, &plate);
+        let s = score(&cfg, &plate, &EntranceSupport::none());
         assert!(s > 0.0, "expected positive score, got {s}");
     }
 
@@ -325,7 +306,7 @@ mod tests {
                 room_cell(rect(4.0, 8.0, 0.0, 4.0), 2),
             ],
         };
-        let s = score(&cfg, &plate);
+        let s = score(&cfg, &plate, &EntranceSupport::none());
         assert!(s < 0.0, "expected negative score, got {s}");
     }
 
@@ -340,7 +321,7 @@ mod tests {
                 RoomCell { rect: rect(4.0, 8.0, 0.0, 4.0), room_type_index: usize::MAX, kind: CellKind::Staircase, door_slots: Vec::new() },
             ],
         };
-        let s = score(&cfg, &plate);
+        let s = score(&cfg, &plate, &EntranceSupport::none());
         assert!(s <= 0.0, "circulation cells must not satisfy room adjacency, got {s}");
     }
 }

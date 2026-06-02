@@ -272,6 +272,201 @@ fn building_cellar_area_unset_reuses_ground_footprint() {
 }
 
 #[test]
+fn building_entrance_stays_over_cellar_footprint() {
+    // With a smaller, east-aligned cellar the ground floor overhangs the
+    // basement on three sides. A storey-0 entrance must land only on the
+    // facade stretch that has a cellar wall directly below it (the shared
+    // east wall), so the door never juts out past the recessed basement.
+    // Regression for the "basement door sticking out" bug.
+    let src = r#"
+        material "stone" (color=[0.6, 0.55, 0.5])
+        building "brownstone" (
+          seed=21, style="apartment-block",
+          floor_area=110, cellar_area=60, rooms=10,
+          floors_above=2, floors_below=1,
+          staircases=1, entrances=1,
+          roof="mansard", windows=6,
+          mat="stone",
+        ) {
+          room_type "bedroom" (kind=private, density=2)
+          room_type "kitchen" (kind=service, density=1)
+          room_type "living"  (kind=public,  density=2)
+        }
+    "#;
+    let g = lower_src(src);
+
+    // World XZ of a node, accumulating ancestor translations.
+    fn world_xz(g: &SceneGraph, mut i: u32) -> (f32, f32) {
+        let (mut x, mut z) = (0.0f32, 0.0f32);
+        loop {
+            let n = &g.nodes[i as usize];
+            let t = n.transform.translation;
+            x += t.x;
+            z += t.z;
+            match n.parent {
+                Some(p) => i = p.0,
+                None => break,
+            }
+        }
+        (x, z)
+    }
+
+    // Absolute XZ bounds of the basement floor slab (the cellar footprint).
+    let (mut cx_min, mut cx_max, mut cz_min, mut cz_max) =
+        (f32::INFINITY, f32::NEG_INFINITY, f32::INFINITY, f32::NEG_INFINITY);
+    let b1 = g
+        .nodes
+        .iter()
+        .position(|n| n.kind == "group" && n.name == "floor_b1")
+        .expect("basement floor group") as u32;
+    let mut found_cellar_slab = false;
+    for (i, n) in g.nodes.iter().enumerate() {
+        if n.name != "slab_floor" {
+            continue;
+        }
+        // Only the basement slab — climb parents to confirm `floor_b1`.
+        let mut cur = n.parent;
+        let mut in_b1 = false;
+        while let Some(p) = cur {
+            if p.0 == b1 {
+                in_b1 = true;
+                break;
+            }
+            cur = g.nodes[p.0 as usize].parent;
+        }
+        if !in_b1 {
+            continue;
+        }
+        found_cellar_slab = true;
+        let (ox, oz) = world_xz(&g, i as u32);
+        let m = n.mesh.as_ref().expect("slab mesh");
+        for p in &m.positions {
+            cx_min = cx_min.min(ox + p[0]);
+            cx_max = cx_max.max(ox + p[0]);
+            cz_min = cz_min.min(oz + p[2]);
+            cz_max = cz_max.max(oz + p[2]);
+        }
+    }
+    assert!(found_cellar_slab, "no basement slab found");
+
+    // The entrance group carries role `ext_door`; its transform is the
+    // door's world pose.
+    let door = g
+        .nodes
+        .iter()
+        .position(|n| n.role.as_deref() == Some("ext_door"))
+        .expect("an exterior entrance");
+    let (dx, dz) = world_xz(&g, door as u32);
+
+    // The door sits on the perimeter wall, so its position lies on the
+    // cellar slab's boundary. Allow a wall-thickness margin so a door
+    // centred on the shared wall still counts as grounded.
+    let eps = 0.2;
+    assert!(
+        dx >= cx_min - eps
+            && dx <= cx_max + eps
+            && dz >= cz_min - eps
+            && dz <= cz_max + eps,
+        "entrance at ({dx:.3}, {dz:.3}) is outside the cellar footprint \
+         x[{cx_min:.3},{cx_max:.3}] z[{cz_min:.3},{cz_max:.3}] — \
+         it overhangs the recessed basement"
+    );
+}
+
+#[test]
+fn building_cellar_interior_doors_stay_over_cellar_footprint() {
+    // The circulation column fillers (and the doors carved into them) are
+    // derived from the whole-building bounds but emitted on every storey.
+    // On an inset cellar (`cellar_area < floor_area`) a filler door at the
+    // gap's midpoint would land past the recessed basement wall and hang in
+    // open air. Regression for the "basement door sticking out" bug — the
+    // protruding panel was a cellar-level interior door, not the entrance.
+    let src = r#"
+        material "stone" (color=[0.6, 0.55, 0.5])
+        building "brownstone" (
+          seed=21, style="apartment-block",
+          floor_area=110, cellar_area=60, rooms=10,
+          floors_above=2, floors_below=1,
+          staircases=1, entrances=1,
+          roof="mansard", windows=6,
+          mat="stone",
+        ) {
+          room_type "bedroom" (kind=private, density=2)
+          room_type "kitchen" (kind=service, density=1)
+          room_type "living"  (kind=public,  density=2)
+        }
+    "#;
+    let g = lower_src(src);
+
+    fn world_xz(g: &SceneGraph, mut i: u32) -> (f32, f32) {
+        let (mut x, mut z) = (0.0f32, 0.0f32);
+        loop {
+            let n = &g.nodes[i as usize];
+            let t = n.transform.translation;
+            x += t.x;
+            z += t.z;
+            match n.parent {
+                Some(p) => i = p.0,
+                None => break,
+            }
+        }
+        (x, z)
+    }
+
+    let b1 = g
+        .nodes
+        .iter()
+        .position(|n| n.kind == "group" && n.name == "floor_b1")
+        .expect("basement floor group") as u32;
+    let under_b1 = |g: &SceneGraph, mut i: u32| -> bool {
+        while let Some(p) = g.nodes[i as usize].parent {
+            if p.0 == b1 {
+                return true;
+            }
+            i = p.0;
+        }
+        false
+    };
+
+    // Cellar footprint from the basement floor slab.
+    let (mut cx_min, mut cx_max, mut cz_min, mut cz_max) =
+        (f32::INFINITY, f32::NEG_INFINITY, f32::INFINITY, f32::NEG_INFINITY);
+    for (i, n) in g.nodes.iter().enumerate() {
+        if n.name != "slab_floor" || !under_b1(&g, i as u32) {
+            continue;
+        }
+        let (ox, oz) = world_xz(&g, i as u32);
+        let m = n.mesh.as_ref().expect("slab mesh");
+        for p in &m.positions {
+            cx_min = cx_min.min(ox + p[0]);
+            cx_max = cx_max.max(ox + p[0]);
+            cz_min = cz_min.min(oz + p[2]);
+            cz_max = cz_max.max(oz + p[2]);
+        }
+    }
+    assert!(cx_max.is_finite(), "no basement slab found");
+
+    // Every cellar interior door must sit within the basement footprint.
+    let eps = 0.2;
+    for (i, n) in g.nodes.iter().enumerate() {
+        if !n.name.starts_with("int_door_") || !under_b1(&g, i as u32) {
+            continue;
+        }
+        let (dx, dz) = world_xz(&g, i as u32);
+        assert!(
+            dx >= cx_min - eps
+                && dx <= cx_max + eps
+                && dz >= cz_min - eps
+                && dz <= cz_max + eps,
+            "cellar interior door `{}` at ({dx:.3}, {dz:.3}) is outside the \
+             cellar footprint x[{cx_min:.3},{cx_max:.3}] z[{cz_min:.3},{cz_max:.3}] \
+             — it overhangs the recessed basement",
+            n.name
+        );
+    }
+}
+
+#[test]
 fn building_t4_is_deterministic_under_same_seed() {
     let src = r#"
         material "stone" (color=[0.6, 0.55, 0.5])
