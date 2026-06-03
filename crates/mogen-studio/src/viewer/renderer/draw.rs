@@ -241,6 +241,16 @@ impl Renderer {
             if !frustum.sphere_visible(b.centroid, b.radius) {
                 continue;
             }
+            // Baked LOD: a chunk emits several overlapping variants, each with a
+            // camera-distance band. Draw only the one whose band contains the
+            // current distance so exactly one variant shows and distant chunks
+            // pay for their coarse mesh, not the full-detail one.
+            if let Some((lo, hi)) = b.lod {
+                let dist = (b.centroid - camera_pos).length();
+                if dist < lo || dist >= hi {
+                    continue;
+                }
+            }
             // Anything authored with `transmission > 0` is treated as a
             // blend batch even if its alpha_mode is Opaque: without a real
             // screen-space refraction pass, the FS will have killed the

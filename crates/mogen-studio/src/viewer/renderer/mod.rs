@@ -250,7 +250,8 @@ impl Renderer {
 
             let f = std::mem::size_of::<f32>() as i32;
             let stride = (super::flatten::FLOATS_PER_VERTEX as i32) * f;
-            // Layout matches FLOATS_PER_VERTEX: pos | normal | uv | joints | weights.
+            // Layout matches FLOATS_PER_VERTEX: pos | normal | uv | joints |
+            // weights | color.
             gl.enable_vertex_attrib_array(0);
             gl.vertex_attrib_pointer_f32(0, 3, glow::FLOAT, false, stride, 0);
             gl.enable_vertex_attrib_array(1);
@@ -261,6 +262,8 @@ impl Renderer {
             gl.vertex_attrib_pointer_f32(3, 4, glow::FLOAT, false, stride, 8 * f);
             gl.enable_vertex_attrib_array(4);
             gl.vertex_attrib_pointer_f32(4, 4, glow::FLOAT, false, stride, 12 * f);
+            gl.enable_vertex_attrib_array(5);
+            gl.vertex_attrib_pointer_f32(5, 4, glow::FLOAT, false, stride, 16 * f);
 
             gl.bind_vertex_array(None);
             gl.bind_buffer(glow::ARRAY_BUFFER, None);

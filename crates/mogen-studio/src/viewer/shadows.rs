@@ -946,6 +946,15 @@ impl ShadowSystem {
                 if !b.cast_shadow {
                     continue;
                 }
+                // Cast shadows from the finest LOD only (band starting at 0) so
+                // a chunk's overlapping coarse variants don't each redraw the
+                // same occluder into the depth map. Non-LOD geometry has no band
+                // and always casts.
+                if let Some((lo, _)) = b.lod {
+                    if lo != 0.0 {
+                        continue;
+                    }
+                }
                 if !frustum.sphere_visible(b.centroid, b.radius) {
                     continue;
                 }

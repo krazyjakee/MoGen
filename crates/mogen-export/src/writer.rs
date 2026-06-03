@@ -599,6 +599,18 @@ fn emit_node(n: &SceneNode, mesh: Option<usize>, light: Option<usize>) -> Value 
         }
         extras.insert("slot".into(), Value::Object(obj));
     }
+    if let Some(lod) = &n.lod {
+        let mut obj = serde_json::Map::new();
+        obj.insert("level".into(), json!(lod.level));
+        obj.insert("min_distance".into(), json!(lod.min_distance));
+        // The coarsest variant uses an infinite far bound (it's the permanent
+        // fallback). JSON has no infinity, so omit the key — importers read a
+        // missing `max_distance` as "no upper limit".
+        if lod.max_distance.is_finite() {
+            obj.insert("max_distance".into(), json!(lod.max_distance));
+        }
+        extras.insert("lod".into(), Value::Object(obj));
+    }
     // Default is true; only stamp the hint when the author opted out so the
     // typical case keeps the JSON chunk lean. Importers that don't recognise
     // the key fall back to "casts shadows" — the spec-default behaviour.

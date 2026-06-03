@@ -1,0 +1,37 @@
+// A chunked terrain patch: ridged-mountain height field refined by smoothing,
+// flooded to a sea level (which adds a water plane and shoreline markers), and
+// split into a 6x6 grid of independently cullable chunk meshes. Everything is a
+// deterministic function of `seed=`, so rebuilds are reproducible.
+
+meta (
+  name = "terrain",
+  description = "A chunked procedural terrain patch with ridged mountains, a sea level and POI markers",
+  tags = ["terrain", "nature", "environment", "landscape", "procedural"],
+  mogen_version = "0.1.8")
+
+material "grassland" (
+  color = [0.34, 0.42, 0.24],
+  roughness = 0.95
+)
+
+terrain "valley" (
+  seed=2,
+  size=[200, 12, 200], // width, max height, depth (metres)
+  source="island", // rolling hills (try "ridged" for mountains, "billow" for mounds)
+  octaves=3,
+  frequency=0.1,
+  persistence=0.2,
+  resolution=256, // grid divisions (rounded up to a multiple of chunks)
+  chunks = 6, // 6x6 independently culled chunk meshes
+  lod_levels=3, // 3 baked LOD meshes per chunk; coarser ones swap in with distance
+
+  smooth=5, // two box-blur passes to soften the noise
+  sea_level=0.3, // flood basins below 28% height; adds a water plane
+
+  peaks = 8, // summit POI markers
+  flat_spots = 12, // buildable flat-area POI markers
+  shore_points = 16, // shoreline POI markers
+  debug_show_poi = 1, // visualise the markers as bright spheres
+
+  colliders = "all", pos=[0, 1.2475, 0]
+)

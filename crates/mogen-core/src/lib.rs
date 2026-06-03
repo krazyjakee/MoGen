@@ -15,7 +15,9 @@ pub use aabb::{node_world_aabb, subtree_local_aabb, Aabb};
 pub use anim::{Clip, Easing, Interpolation, Joint, JointKind, Track, TrackProperty};
 pub use connector::Connector;
 pub use diagnostic::{has_errors, Diagnostic, Severity, Span};
-pub use graph::{AttachBinding, ColliderShape, ConformBinding, NodeId, SceneGraph, SceneNode, Slot};
+pub use graph::{
+    AttachBinding, ColliderShape, ConformBinding, Lod, NodeId, SceneGraph, SceneNode, Slot,
+};
 pub use gradient::{Gradient, GradientAxis, GradientKind, GradientStop};
 pub use meta::Meta;
 pub use light::{Light, LightKind};
