@@ -588,4 +588,92 @@ mod tests {
             assert!((len - 1.0).abs() < 1e-4, "normal not unit length: {len}");
         }
     }
+
+    #[test]
+    fn lod_bands_partition_range() {
+        // For every (levels, chunk_extent) combo: bands must be non-overlapping,
+        // gap-free, start at 0, and end at infinity. Exactly one band covers any
+        // given distance value.
+        for levels in 1..=4usize {
+            let extent = 10.0f32;
+            let mut bands: Vec<(f32, f32)> =
+                (0..levels).map(|l| lod_band(l, levels, extent)).collect();
+            bands.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+
+            assert_eq!(bands[0].0, 0.0, "levels={levels}: band 0 must start at 0");
+            assert!(
+                bands.last().unwrap().1.is_infinite(),
+                "levels={levels}: last band must end at infinity"
+            );
+            for w in bands.windows(2) {
+                assert!(
+                    (w[0].1 - w[1].0).abs() < 1e-5,
+                    "levels={levels}: gap/overlap between bands {:?} and {:?}",
+                    w[0],
+                    w[1]
+                );
+            }
+        }
+    }
+
+    fn make_ast_node() -> crate::ast::Node {
+        crate::ast::Node {
+            kind: "terrain".into(),
+            name: None,
+            attrs: vec![],
+            children: vec![],
+            span: Default::default(),
+            kind_span: Default::default(),
+            use_id: None,
+            origin: None,
+        }
+    }
+
+    #[test]
+    fn sea_level_emits_water_node() {
+        // When sea_level > 0 a dedicated water mesh node must be present as a
+        // child of the parent so the viewer and engine can apply the water material.
+        use mogen_core::{SceneGraph, Transform};
+        let mut c = cfg();
+        c.sea_level = 0.35;
+        let f = field::build(&c);
+        let mut graph = SceneGraph::new();
+        let parent = graph.add_root("terrain", "terrain", Transform::IDENTITY);
+        emit_chunks(&make_ast_node(), &c, &f, parent, &mut graph);
+
+        let water_nodes: Vec<_> = graph
+            .nodes
+            .iter()
+            .filter(|n| n.role.as_deref() == Some("water"))
+            .collect();
+        assert_eq!(water_nodes.len(), 1, "expected exactly one water node");
+        // Water Y should be at sea_level * amp.
+        let expected_y = c.sea_level * c.size[1];
+        let mesh = water_nodes[0].mesh.as_ref().expect("water node has no mesh");
+        for p in &mesh.positions {
+            assert!(
+                (p[1] - expected_y).abs() < 1e-4,
+                "water vertex Y {:.4} != expected {:.4}",
+                p[1],
+                expected_y
+            );
+        }
+    }
+
+    #[test]
+    fn sea_level_zero_emits_no_water_node() {
+        use mogen_core::{SceneGraph, Transform};
+        let c = cfg(); // sea_level = 0.0
+        let f = field::build(&c);
+        let mut graph = SceneGraph::new();
+        let parent = graph.add_root("terrain", "terrain", Transform::IDENTITY);
+        emit_chunks(&make_ast_node(), &c, &f, parent, &mut graph);
+
+        let water_count = graph
+            .nodes
+            .iter()
+            .filter(|n| n.role.as_deref() == Some("water"))
+            .count();
+        assert_eq!(water_count, 0, "no water node expected when sea_level=0");
+    }
 }

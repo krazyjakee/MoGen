@@ -422,8 +422,9 @@ static TERRAIN: ProcSchema = ProcSchema {
             kind: ParamKind::Scalar { default: 0.0, speed: 0.01 },
             group: Main,
             help: Some(
-                "Normalised water height [0, 0.95). Floors basins and adds a \
-                 water plane + shoreline POIs. 0 = no water.",
+                "Normalised water height [0, 0.95). Adds a flat water plane at \
+                 this height + shoreline POIs. Land keeps its real shape below \
+                 the waterline — basins are not flattened. 0 = no water.",
             ),
         },
         int("peaks", "Peak POIs", 0, 0, 1024),
