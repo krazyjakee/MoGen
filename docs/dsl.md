@@ -136,6 +136,7 @@ Every `value` on the right side of an attribute is one of:
 | form | example | notes |
 |---|---|---|
 | number | `0.5`, `-90`, `1` | parsed as `f32` |
+| length | `1.5m`, `90cm`, `18in`, `2ft` | a number with a unit suffix; normalised to metres (see [Length units](#length-units)) |
 | vec3 | `[1.0, 0.5, 0.0]` | three expressions, comma-separated |
 | list | `[0, 90]`, `[1, 2, 3, 4]` | arbitrary arity |
 | string | `"wood"` | used for names and references |
@@ -147,6 +148,39 @@ Inside `module` bodies, expressions reference parameters as `$name`.
 Operators: `+ - * /` (conventional precedence + parentheses) and the six
 comparisons. Evaluated at module-expansion time; the scene graph never
 sees `$name`.
+
+### Length units
+
+mogen's base unit is the **metre** — the glTF/Godot convention — so a bare
+number is a length in metres (`size=[0.45, 0.04, 0.45]` is a 45 cm seat).
+To write real-world dimensions directly — handy for accurate blueprints —
+append a unit suffix to any number:
+
+| suffix | unit | metres |
+|---|---|---|
+| `mm` | millimetre | `0.001` |
+| `cm` | centimetre | `0.01` |
+| `m` | metre | `1.0` |
+| `km` | kilometre | `1000.0` |
+| `in` | inch | `0.0254` |
+| `ft` | foot | `0.3048` |
+| `yd` | yard | `0.9144` |
+
+```
+box "wall"  (size=[2m, 100cm, 8in], pos=[3ft, 0, 0])
+box "joist" (height=5ft + 6in)        // units compose through arithmetic
+```
+
+The suffix is resolved to metres at **parse time**, so units flow through
+every numeric position: scalars, `vec3` components, list items, and
+`$param` arithmetic. Each component carries its own unit, so metric and
+imperial can be mixed freely within one literal or expression.
+
+Units are for **lengths only** — sizes, positions, radii, heights, offsets.
+Rotations stay in degrees, `scale` stays a unit-less multiplier, and counts
+/ weights / colours stay plain numbers; don't put a length suffix on those.
+Because everything normalises to metres, a unit literal and its metre
+equivalent lower to byte-identical geometry.
 
 ---
 

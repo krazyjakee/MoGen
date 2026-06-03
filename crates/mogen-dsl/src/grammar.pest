@@ -34,7 +34,14 @@ mul_op =  { "*" | "/" }
 // `<=` doesn't get tokenised as `<` followed by `=`.
 cmp_op =  { "<=" | ">=" | "==" | "!=" | "<" | ">" }
 
-number    = @{ "-"? ~ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+)? }
+// A numeric literal may carry an optional length-unit suffix
+// (`1.5m`, `18in`, `90cm`). Units are normalised to metres at parse time,
+// so the rest of the pipeline only ever sees plain `f32` lengths. Bare
+// numbers are unitless and treated as metres (the glTF/Godot base unit).
+// Order matters: two-letter units that share a prefix with `m` (`mm`, `cm`,
+// `km`) must precede it so `m` doesn't shadow them.
+number    = @{ "-"? ~ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+)? ~ length_unit? }
+length_unit = @{ "mm" | "cm" | "km" | "m" | "in" | "ft" | "yd" }
 string    = @{ "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
 ident     = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 param_ref = @{ "$" ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }

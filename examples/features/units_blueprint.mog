@@ -1,0 +1,36 @@
+// Real-world dimensions with length-unit suffixes — the building blocks of an
+// accurate blueprint. mogen's base unit is the metre, so a bare number is
+// metres; appending a unit converts to metres at parse time. Metric and
+// imperial mix freely, even inside one literal or expression.
+//
+//   metric:    mm  cm  m  km
+//   imperial:  in  ft  yd
+//
+// Units are for lengths only (sizes / positions / radii) — rotations stay in
+// degrees and `scale` stays a plain multiplier.
+
+material "stud"     (color=[0.80, 0.62, 0.40], roughness=0.85)
+material "drywall"  (color=[0.92, 0.92, 0.90], roughness=0.90)
+material "oak_door" (color=[0.55, 0.38, 0.20], roughness=0.70)
+material "glass"    (color=[0.70, 0.85, 0.95], roughness=0.10, transmission=0.9)
+
+scene {
+  // A gallery of dimensioned parts, not one connected assembly.
+  group "blueprint" (tags="floating") {
+
+    // --- Slab floor: 4 m x 3 m, 100 mm thick. ---
+    slab "floor" (w=4m, h=100mm, d=3m, mat="drywall")
+
+    // --- Stud wall framed in imperial: an 8 ft x 2x4 wall, studs 1.5in thick.
+    //     `5ft + 6in` shows units composing through arithmetic.            ---
+    post "stud_left"  (x=-2m,        y=0, w=1.5in, h=8ft, d=3.5in, mat="stud")
+    post "stud_right" (x=-2m + 16in, y=0, w=1.5in, h=8ft, d=3.5in, mat="stud")
+    box  "top_plate"  (from=[-2m, 8ft, -2in], to=[-2m + 16in, 8ft + 1.5in, 2in], mat="stud")
+
+    // --- Standard US interior door: 80in tall, 36in wide, 1.75in thick. ---
+    box "door" (x=1m, y=0, anchor=bottom, w=36in, h=80in, d=1.75in, mat="oak_door")
+
+    // --- A window pane sized in centimetres: 120 cm x 90 cm. ---
+    box "pane" (x=3m, y=1m, w=120cm, h=90cm, d=6mm, mat="glass")
+  }
+}
