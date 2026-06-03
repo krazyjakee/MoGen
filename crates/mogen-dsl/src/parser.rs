@@ -337,10 +337,41 @@ fn build_factor(pair: Pair<Rule>) -> Result<Expr> {
     debug_assert_eq!(pair.as_rule(), Rule::factor);
     let inner = pair.into_inner().next().unwrap();
     match inner.as_rule() {
-        Rule::number => Ok(Expr::Num(inner.as_str().parse()?)),
+        Rule::number => Ok(Expr::Num(parse_number_literal(inner.as_str())?)),
         Rule::param_ref => Ok(Expr::Param(inner.as_str().trim_start_matches('$').to_string())),
         Rule::expr => build_expr(inner),
         r => Err(anyhow!("unexpected factor rule {:?}", r)),
+    }
+}
+
+/// Conversion factor from a length-unit suffix to metres, the canonical base
+/// unit. Returns `None` for an unrecognised suffix — the grammar only admits
+/// the units listed here, so that path is purely defensive.
+fn length_unit_to_metres(unit: &str) -> Option<f32> {
+    Some(match unit {
+        "mm" => 0.001,
+        "cm" => 0.01,
+        "m" => 1.0,
+        "km" => 1000.0,
+        "in" => 0.0254,
+        "ft" => 0.3048,
+        "yd" => 0.9144,
+        _ => return None,
+    })
+}
+
+/// Parse a numeric literal, applying any trailing length-unit suffix so the
+/// returned value is always in metres. `18in` → `0.4572`, `1.5` → `1.5`.
+fn parse_number_literal(s: &str) -> Result<f32> {
+    match s.find(|c: char| c.is_ascii_alphabetic()) {
+        None => Ok(s.parse()?),
+        Some(i) => {
+            let (num, unit) = s.split_at(i);
+            let value: f32 = num.parse()?;
+            let factor = length_unit_to_metres(unit)
+                .ok_or_else(|| anyhow!("unknown length unit `{unit}`"))?;
+            Ok(value * factor)
+        }
     }
 }
 
@@ -372,7 +403,73 @@ fn unquote(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::parse;
+    use super::{parse, parse_number_literal};
+    use crate::ast::Value;
+
+    /// Pull the single attribute value off the first node of a parsed source.
+    fn first_attr(src: &str, key: &str) -> Value {
+        let nodes = parse(src).expect("source should parse");
+        nodes[0]
+            .attr(key)
+            .unwrap_or_else(|| panic!("missing attr `{key}`"))
+            .clone()
+    }
+
+    #[test]
+    fn length_units_normalise_to_metres() {
+        // Each unit converts to its metre equivalent.
+        assert!((parse_number_literal("1.5m").unwrap() - 1.5).abs() < 1e-6);
+        assert!((parse_number_literal("90cm").unwrap() - 0.9).abs() < 1e-6);
+        assert!((parse_number_literal("250mm").unwrap() - 0.25).abs() < 1e-6);
+        assert!((parse_number_literal("2km").unwrap() - 2000.0).abs() < 1e-6);
+        assert!((parse_number_literal("18in").unwrap() - 0.4572).abs() < 1e-6);
+        assert!((parse_number_literal("2ft").unwrap() - 0.6096).abs() < 1e-6);
+        assert!((parse_number_literal("1yd").unwrap() - 0.9144).abs() < 1e-6);
+        // Bare numbers are unitless metres.
+        assert!((parse_number_literal("0.45").unwrap() - 0.45).abs() < 1e-6);
+        // Negative literals keep their sign.
+        assert!((parse_number_literal("-3ft").unwrap() + 0.9144).abs() < 1e-6);
+    }
+
+    #[test]
+    fn units_flow_through_scalars_vecs_and_exprs() {
+        match first_attr("box (height=6in)\n", "height") {
+            Value::Number(n) => assert!((n - 0.1524).abs() < 1e-6),
+            other => panic!("expected Number, got {other:?}"),
+        }
+        // vec3 components each carry their own unit.
+        match first_attr("box (size=[18in, 1ft, 50cm])\n", "size") {
+            Value::Vec3(v) => {
+                assert!((v[0] - 0.4572).abs() < 1e-6);
+                assert!((v[1] - 0.3048).abs() < 1e-6);
+                assert!((v[2] - 0.5).abs() < 1e-6);
+            }
+            other => panic!("expected Vec3, got {other:?}"),
+        }
+        // Units compose through arithmetic — imperial feet+inches.
+        match first_attr("box (height=5ft + 6in)\n", "height") {
+            Value::Number(n) => assert!((n - (1.524 + 0.1524)).abs() < 1e-5),
+            other => panic!("expected Number, got {other:?}"),
+        }
+        // yd unit flows through a scalar attribute.
+        match first_attr("box (depth=2yd)\n", "depth") {
+            Value::Number(n) => assert!((n - 1.8288).abs() < 1e-6),
+            other => panic!("expected Number, got {other:?}"),
+        }
+        // Negative unit literal: pos offset should carry its sign through.
+        match first_attr("box (x=-3ft)\n", "x") {
+            Value::Number(n) => assert!((n + 0.9144).abs() < 1e-6),
+            other => panic!("expected Number, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn bare_numbers_unchanged() {
+        match first_attr("box (size=[0.45, 0.04, 0.45])\n", "size") {
+            Value::Vec3(v) => assert_eq!(v, [0.45, 0.04, 0.45]),
+            other => panic!("expected Vec3, got {other:?}"),
+        }
+    }
 
     #[test]
     fn parses_source_with_leading_bom() {

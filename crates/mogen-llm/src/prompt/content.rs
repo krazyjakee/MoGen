@@ -215,6 +215,11 @@ A `.mog` file is a sequence of nodes. Each node is:
 
 - Values: numbers, vec3 `[x,y,z]`, strings, idents, simple arithmetic with \
   `$param` references inside `module` bodies. Comments start with `//`.
+- Length units: a number may carry a unit suffix — metric `mm`/`cm`/`m`/`km` \
+  or imperial `in`/`ft`/`yd` (e.g. `18in`, `1.5m`, `size=[2m, 90cm, 8in]`). \
+  All lengths normalise to metres, so a bare number is metres. Units are for \
+  lengths/sizes/positions only — rotations stay degrees and `scale` stays a \
+  multiplier. Combine via arithmetic: `5ft + 6in`.
 - Optional top-of-file metadata: `meta (name=\"…\", version=\"1.0\", \
   description=\"…\", tags=[\"a\",\"b\"])`. Place it once, before any \
   `material`/`scene`. Do NOT write `mogen_version=` yourself — the toolchain \

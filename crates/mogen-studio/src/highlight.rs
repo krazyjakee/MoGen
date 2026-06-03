@@ -143,6 +143,9 @@ pub fn highlight(src: &str, font_id: FontId, palette: Palette, wrap_width: f32) 
                     i += 1;
                 }
             }
+            // Absorb a trailing length-unit suffix (`18in`, `1.5m`) so it
+            // colours as part of the literal rather than as a stray ident.
+            i += length_unit_len(&bytes[i..]);
             append(&mut job, &src[start..i], palette.number, &font_id);
             continue;
         }
@@ -280,6 +283,20 @@ fn is_ident_byte(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_'
 }
 
+/// Length of a length-unit suffix (`mm`/`cm`/`m`/`km`/`in`/`ft`/`yd`) at the
+/// start of `rest`, or `0` if none. Only matches when the unit is not run
+/// into a longer identifier (e.g. `instances` is not the `in` unit), mirroring
+/// the parser's atomic `number ~ length_unit?` rule.
+fn length_unit_len(rest: &[u8]) -> usize {
+    for unit in ["mm", "cm", "km", "in", "ft", "yd", "m"] {
+        let u = unit.as_bytes();
+        if rest.starts_with(u) && rest.get(u.len()).is_none_or(|b| !is_ident_byte(*b)) {
+            return u.len();
+        }
+    }
+    0
+}
+
 fn next_char_boundary(src: &str, i: usize) -> usize {
     let mut j = i + 1;
     while j < src.len() && !src.is_char_boundary(j) {
@@ -340,6 +357,28 @@ mod tests {
         let secs = sections_text(&job);
         let n = secs.iter().find(|(t, _)| t == "1.5").expect("number section");
         assert_eq!(n.1, palette().number);
+    }
+
+    #[test]
+    fn number_absorbs_length_unit_suffix() {
+        // `18in` colours as a single number token, suffix included.
+        let job = highlight("h=18in", font(), palette(), f32::INFINITY);
+        let secs = sections_text(&job);
+        let n = secs.iter().find(|(t, _)| t == "18in").expect("number-with-unit section");
+        assert_eq!(n.1, palette().number);
+        // `1.5m` likewise.
+        let job = highlight("w=1.5m", font(), palette(), f32::INFINITY);
+        assert!(sections_text(&job).iter().any(|(t, c)| t == "1.5m" && *c == palette().number));
+    }
+
+    #[test]
+    fn number_does_not_swallow_following_identifier() {
+        // `2instances` is not `2` + `in` unit — `in` runs into more ident
+        // bytes, so only the digit is the number and the word stays separate.
+        let job = highlight("2instances", font(), palette(), f32::INFINITY);
+        let secs = sections_text(&job);
+        assert!(secs.iter().any(|(t, c)| t == "2" && *c == palette().number));
+        assert!(secs.iter().any(|(t, _)| t == "instances"));
     }
 
     #[test]
