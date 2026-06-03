@@ -87,6 +87,7 @@ pub fn schema_for(kind: &str) -> Option<&'static ProcSchema> {
         "branch" => Some(&BRANCH),
         "building" => Some(&BUILDING),
         "cave" => Some(&CAVE),
+        "terrain" => Some(&TERRAIN),
         _ => None,
     }
 }
@@ -94,7 +95,7 @@ pub fn schema_for(kind: &str) -> Option<&'static ProcSchema> {
 /// Every procedural schema, for callers that want to enumerate them (tests,
 /// docs tooling).
 pub fn all() -> &'static [&'static ProcSchema] {
-    static ALL: [&ProcSchema; 3] = [&BRANCH, &BUILDING, &CAVE];
+    static ALL: [&ProcSchema; 4] = [&BRANCH, &BUILDING, &CAVE, &TERRAIN];
     &ALL
 }
 
@@ -342,6 +343,114 @@ static CAVE: ProcSchema = ProcSchema {
             help: Some(
                 "Slice the front (+Z) half of the rock shell away so the \
                  chambers are visible in cross-section.",
+            ),
+        },
+    ],
+};
+
+static TERRAIN: ProcSchema = ProcSchema {
+    kind: "terrain",
+    params: &[
+        int("seed", "Seed", 1, 1, 1_000_000),
+        ParamSpec {
+            attr: "size",
+            label: "Size",
+            kind: ParamKind::Vec { defaults: &[40.0, 6.0, 40.0], speed: 0.5 },
+            group: Main,
+            help: Some("Patch dimensions [width, amplitude(height), depth] in metres."),
+        },
+        ParamSpec {
+            attr: "source",
+            label: "Source",
+            kind: ParamKind::Enum {
+                default: "fbm",
+                options: &[
+                    EnumOption { value: "fbm", help: "Rolling hills and dunes (plain fBm)" },
+                    EnumOption { value: "ridged", help: "Sharp mountain ridges and canyons" },
+                    EnumOption { value: "billow", help: "Lumpy, rounded cloud-like mounds" },
+                    EnumOption { value: "island", help: "Central landmass falling off to water at the edges" },
+                    EnumOption { value: "voronoi", help: "Cellular crater rims and cracked basins" },
+                ],
+            },
+            group: Main,
+            help: None,
+        },
+        int("octaves", "Octaves", 4, 1, 8),
+        scalar("frequency", "Frequency", 0.06, 0.005),
+        scalar("persistence", "Persistence", 0.5, 0.02),
+        ParamSpec {
+            attr: "resolution",
+            label: "Resolution",
+            kind: ParamKind::Int { default: 128, min: 4, max: 1024 },
+            group: Main,
+            help: Some("Grid divisions per axis (rounded up to a multiple of chunks)."),
+        },
+        ParamSpec {
+            attr: "chunks",
+            label: "Chunks",
+            kind: ParamKind::Int { default: 4, min: 1, max: 16 },
+            group: Main,
+            help: Some("Per-axis chunk count; each chunk is an independently culled mesh."),
+        },
+        ParamSpec {
+            attr: "lod_levels",
+            label: "LOD levels",
+            kind: ParamKind::Int { default: 3, min: 1, max: 4 },
+            group: Main,
+            help: Some(
+                "Baked LOD meshes per chunk; coarser ones swap in with distance \
+                 to keep big terrains cheap. 1 = full detail only.",
+            ),
+        },
+        ParamSpec {
+            attr: "smooth",
+            label: "Smooth",
+            kind: ParamKind::Int { default: 0, min: 0, max: 32 },
+            group: Main,
+            help: Some("Box-blur passes over the height field (erodes jaggies)."),
+        },
+        ParamSpec {
+            attr: "terrace",
+            label: "Terrace steps",
+            kind: ParamKind::Int { default: 0, min: 0, max: 64 },
+            group: Main,
+            help: Some("Quantise height into this many bands for a stepped look (0 = off)."),
+        },
+        ParamSpec {
+            attr: "sea_level",
+            label: "Sea level",
+            kind: ParamKind::Scalar { default: 0.0, speed: 0.01 },
+            group: Main,
+            help: Some(
+                "Normalised water height [0, 0.95). Adds a flat water plane at \
+                 this height + shoreline POIs. Land keeps its real shape below \
+                 the waterline — basins are not flattened. 0 = no water.",
+            ),
+        },
+        int("peaks", "Peak POIs", 0, 0, 1024),
+        int("flat_spots", "Flat-spot POIs", 0, 0, 1024),
+        int("shore_points", "Shoreline POIs", 0, 0, 1024),
+        ParamSpec {
+            attr: "colliders",
+            label: "Surfaces",
+            kind: ParamKind::Enum {
+                default: "all",
+                options: &[
+                    EnumOption { value: "all", help: "Every terrain chunk gets a trimesh collider" },
+                    EnumOption { value: "none", help: "No colliders on terrain geometry" },
+                ],
+            },
+            group: Collider,
+            help: None,
+        },
+        ParamSpec {
+            attr: "debug_show_poi",
+            label: "Show POI markers",
+            kind: ParamKind::Bool { default: false },
+            group: Debug,
+            help: Some(
+                "Give every POI marker (peaks, flat spots, shoreline) a small \
+                 bright sphere so the otherwise-empty markers are visible.",
             ),
         },
     ],

@@ -18,6 +18,7 @@ mod poi;
 mod primitive;
 mod procedural;
 mod rng;
+mod terrain;
 
 #[cfg(test)]
 mod tests;

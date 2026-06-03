@@ -76,6 +76,26 @@ fn is_zero_f32(v: &f32) -> bool {
     *v == 0.0
 }
 
+/// Baked render-LOD metadata for one mesh node. A generator (currently
+/// `terrain`) emits several variants of the same patch — full-resolution
+/// through progressively coarser — each carrying the camera-distance band over
+/// which it should be the visible one. A viewer (MoGen Studio) or engine shows
+/// the variant whose band contains the current distance; bands across a group
+/// partition `[0, ∞)` so exactly one variant draws at any distance. Exported to
+/// glTF `extras.lod` so importers (e.g. Godot's `VisibilityRange`) can wire
+/// range-based swapping without re-deriving the thresholds.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub struct Lod {
+    /// Detail rank: `0` is the finest mesh, higher numbers are coarser.
+    pub level: u32,
+    /// Camera distance (m) at or beyond which this variant becomes visible.
+    pub min_distance: f32,
+    /// Camera distance (m) beyond which this variant hands off to the next,
+    /// coarser one. `f32::INFINITY` for the coarsest variant (always the
+    /// fallback at extreme range).
+    pub max_distance: f32,
+}
+
 /// Records that a node's local transform was set by an `attach` pass.
 /// `anchor` / `rotation` are what attach computed *before* composing the
 /// user's `pos=` / `rot=` on top — the viewport editor subtracts these out
@@ -178,6 +198,12 @@ pub struct SceneNode {
     /// can't.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub slot: Option<Slot>,
+    /// Baked render-LOD band for this mesh node. Set on the per-chunk variants
+    /// emitted by `terrain`; `None` for ordinary geometry that always draws.
+    /// Drives camera-distance variant selection in the viewer and exports to
+    /// `extras.lod` for engine `VisibilityRange` wiring.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lod: Option<Lod>,
     /// Whether this node's mesh contributes to the realtime shadow pre-pass and
     /// to the exported `extras.cast_shadow` hint downstream importers read.
     /// Defaults to `true`; set `cast_shadow=0` in the DSL to opt a node out
@@ -279,6 +305,7 @@ impl Default for SceneNode {
             connectors: Vec::new(),
             collider: None,
             slot: None,
+            lod: None,
             cast_shadow: true,
             tags: Vec::new(),
             role: None,

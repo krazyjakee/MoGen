@@ -75,10 +75,12 @@ pub struct ClipSummary {
 }
 
 /// Number of f32s per vertex in the interleaved VBO:
-/// pos(3) | normal(3) | uv(2) | joints(4) | weights(4) = 16.
-/// The base colour used to live in the vertex stream; with PBR materials we
-/// upload it as a per-batch uniform instead.
-pub const FLOATS_PER_VERTEX: usize = 16;
+/// pos(3) | normal(3) | uv(2) | joints(4) | weights(4) | color(4) = 20.
+/// The PBR base colour is a per-batch uniform; `color` here is the optional
+/// per-vertex `COLOR_0` channel (terrain grass/rock/sand/mud bake, gradient
+/// ramps). Vertices from meshes without `COLOR_0` get an opaque-white colour so
+/// the shader can always multiply by it unconditionally.
+pub const FLOATS_PER_VERTEX: usize = 20;
 
 /// Upper bound on joints per skin that we'll ship to the shader. The uniform
 /// palette is a `mat4[MAX_JOINTS]` so every batch pays this much regardless of
@@ -342,13 +344,16 @@ pub fn flatten_with_worlds(
                             [1.0, 0.0, 0.0, 0.0],
                         )
                     };
+                    // Per-vertex COLOR_0; opaque white when the mesh carries
+                    // none, so the shader's unconditional multiply is a no-op.
+                    let c = mesh.colors.get(vi).copied().unwrap_or([1.0, 1.0, 1.0, 1.0]);
                     min = min.min(p);
                     max = max.max(p);
                     bmin = bmin.min(p);
                     bmax = bmax.max(p);
                     vertices.extend_from_slice(&[
                         p.x, p.y, p.z, n.x, n.y, n.z, uv[0], uv[1], j[0], j[1], j[2], j[3], w[0],
-                        w[1], w[2], w[3],
+                        w[1], w[2], w[3], c[0], c[1], c[2], c[3],
                     ]);
                 }
                 let idx_before = indices.len();

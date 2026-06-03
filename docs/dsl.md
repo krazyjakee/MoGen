@@ -588,6 +588,70 @@ Every primitive is authored in its local frame and positioned via
 `pos`/`rot`/`scale`. Defaults make bare `cylinder "leg"` a 1 m unit-radius
 cylinder at the origin.
 
+### Terrain
+
+`terrain` is a procedural heightfield generator. One node expands into a grid of
+independently cullable **chunk meshes** sampled from a coherent noise field, then
+refined by an ordered chain of retouch passes (smoothing → terracing). The field
+is normalised `0..1` and scaled by the height component of `size`; adjacent
+chunks share boundary grid lines so seams are crack-free. `sea_level` does not
+reshape the land — the terrain keeps its real shape underwater and the sea is a
+flat plane laid on top. The generated subtree is stamped non-editable (a pure
+function of `seed=` plus the declared attrs).
+
+| attribute | default | effect |
+|---|---|---|
+| `seed` | `1` | RNG seed; same seed = identical terrain. |
+| `size` | `[40, 6, 40]` | Patch dimensions `[width, max_height, depth]` (m). `max_height` scales the normalised field; the patch is centred on the origin. |
+| `source` | `fbm` | Noise shape: `fbm` (rolling hills), `ridged` (sharp mountain ridges), `billow` (rounded mounds), `island` (central landmass falling off to water at the edges — pair with `sea_level`), `voronoi` (cellular crater rims and cracked basins). |
+| `octaves` | `4` | Noise octaves summed; more = finer detail. |
+| `frequency` | `0.06` | Base noise frequency; higher = more, smaller features. |
+| `persistence` | `0.5` | Per-octave amplitude falloff `[0, 1]`; higher = rougher. |
+| `resolution` | `128` | Grid divisions across the patch (4–1024); rounded up to a multiple of `chunks`. |
+| `chunks` | `4` | Splits the patch into a `chunks × chunks` grid of separately cullable meshes (1–16). |
+| `lod_levels` | `3` | Baked render-LOD meshes per chunk (1–4). Level 0 is full detail; each higher level halves the sampling stride and takes over at a greater camera distance. `1` = full detail only, no distance swapping. |
+| `smooth` | `0` | Box-blur passes (0–32) applied to soften the raw noise. |
+| `terrace` | `0` | Quantise heights into this many stepped bands (0 = off, 0–64). |
+| `sea_level` | `0.0` | Normalised waterline height `[0, 1]`; adds a flat water plane at this height and enables shoreline POIs. Land keeps its real shape underwater (basins are not flattened). |
+| `peaks` | `0` | Number of summit POI markers placed on local maxima. |
+| `flat_spots` | `0` | Number of buildable-flat-area POI markers (flattest neighbourhoods above sea level). |
+| `shore_points` | `0` | Number of shoreline POI markers at the water's edge (requires `sea_level > 0`). |
+| `colliders` | `none` | `all` adds a trimesh collider to every chunk; `none` is visual-only. |
+| `lod_scale` | `1.0` | Mesh-quality scale `[0.1, 1.0]`; scales effective resolution. Lower = fewer triangles. POIs / sea level unaffected. |
+| `mat` | `terrain_ground` | Ground material; defaults to an auto-stamped **white** PBR finish (the surface colour comes from the per-vertex bake below, which multiplies the base colour). A custom `mat=` tints the whole bake. |
+| `debug_show_poi` | `0` | Debug: give every POI marker a small bright per-kind `terrain_poi_<kind>` sphere so the empty markers are visible in a preview. |
+
+Every chunk vertex carries a **baked surface colour** in `COLOR_0` (glTF
+per-vertex colour, which multiplies the white ground material): a grass→rock
+blend driven by slope (steep faces turn to bare rock) plus, when `sea_level > 0`,
+sand hugging the waterline that fades to dark mud on the submerged floor. The
+look therefore travels as plain glTF — no engine shader is required — and an
+engine is still free to layer a runtime slope/height shader on top.
+
+Beyond geometry, `terrain` embeds **points of interest** as empty marker nodes
+(`role`/`tags` in glTF extras) under a `points_of_interest` group: `peak`
+(summit local maxima), `flat_spot` (buildable flat areas above sea level), and
+`shoreline` (cells at the water's edge). Markers spread out so no two land on the
+same feature.
+
+Each chunk emits `lod_levels` overlapping mesh variants named
+`chunk_<i>_<j>_lod<n>`, every variant tagged with a camera-distance band in glTF
+`extras.lod` (`{ level, min_distance, max_distance }`). The bands partition
+`[0, ∞)`, so exactly one variant is the active one at any distance: MoGen Studio's
+viewer shows it (and frustum-culls per chunk), and an engine importer can wire the
+same ranges into Godot `VisibilityRange`. Only the finest variant (level 0) carries
+the trimesh collider and casts shadows; coarser variants are visual stand-ins, ringed
+by a downward skirt so a neighbouring chunk at a different LOD can't open a crack in
+the surface.
+
+```
+terrain "valley" (seed=7, size=[80, 14, 80], source="fbm",
+                  octaves=5, frequency=0.04, resolution=192, chunks=6,
+                  lod_levels=3, smooth=2, sea_level=0.28,
+                  peaks=8, flat_spots=12, shore_points=16,
+                  colliders="all", mat="grassland")
+```
+
 ---
 
 ## Materials

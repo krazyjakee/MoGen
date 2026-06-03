@@ -44,6 +44,50 @@ fn flatten_groups_nodes_by_material_id() {
 }
 
 #[test]
+fn flatten_emits_color_0_with_white_default() {
+    // A mesh with COLOR_0 forwards its colours into the vertex stream; a mesh
+    // without one gets opaque white so the shader's unconditional multiply by
+    // v_color is a no-op.
+    let mut scene = SceneGraph::new();
+    let mat = scene.add_material(material_with_texture("m", None));
+
+    let colored = scene.add_root("colored", "primitive", Transform::IDENTITY);
+    let mut cm = quad_mesh();
+    cm.colors = vec![
+        [0.1, 0.2, 0.3, 1.0],
+        [0.4, 0.5, 0.6, 1.0],
+        [0.7, 0.8, 0.9, 1.0],
+        [1.0, 0.0, 0.5, 1.0],
+    ];
+    scene.set_mesh(colored, cm);
+    scene.set_material(colored, mat);
+
+    let plain = scene.add_root("plain", "primitive", Transform::IDENTITY);
+    scene.set_mesh(plain, quad_mesh());
+    scene.set_material(plain, mat);
+
+    let mesh = flatten(&scene, None);
+    let stride = FLOATS_PER_VERTEX;
+    // Colour is the last 4 floats of each vertex.
+    let color_at = |v: usize| {
+        let b = v * stride + 16;
+        [
+            mesh.vertices[b],
+            mesh.vertices[b + 1],
+            mesh.vertices[b + 2],
+            mesh.vertices[b + 3],
+        ]
+    };
+    // Both quads share a material, so they coalesce; the colored quad's verts
+    // come first (root order), then the plain quad's white verts.
+    assert_eq!(color_at(0), [0.1, 0.2, 0.3, 1.0]);
+    assert_eq!(color_at(3), [1.0, 0.0, 0.5, 1.0]);
+    for v in 4..8 {
+        assert_eq!(color_at(v), [1.0, 1.0, 1.0, 1.0], "plain quad vert {v}");
+    }
+}
+
+#[test]
 fn flatten_skinned_mesh_emits_skin_batch_and_identity_palette_at_bind() {
     use mogen_core::Skin;
 

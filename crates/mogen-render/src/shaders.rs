@@ -4,6 +4,7 @@ layout (location = 1) in vec3 a_normal;
 layout (location = 2) in vec2 a_uv;
 layout (location = 3) in vec4 a_joints;
 layout (location = 4) in vec4 a_weights;
+layout (location = 5) in vec4 a_color;
 
 uniform mat4 u_viewproj;
 // Per-batch matrix palette. Rigid batches use single-bone weights
@@ -19,6 +20,7 @@ uniform int u_shader_mode;
 out vec3 v_world_pos;
 out vec3 v_normal;
 out vec2 v_uv;
+out vec4 v_color;
 
 void main() {
     // Clamp defensively: huge skins get their palette truncated on the CPU
@@ -38,6 +40,7 @@ void main() {
     v_world_pos = pos4.xyz;
     v_normal = n;
     v_uv = a_uv;
+    v_color = a_color;
 }
 "#;
 
@@ -45,6 +48,7 @@ pub(super) const FS_SRC: &str = r#"#version 330 core
 in vec3 v_world_pos;
 in vec3 v_normal;
 in vec2 v_uv;
+in vec4 v_color;
 out vec4 frag;
 
 uniform vec3 u_camera_pos;
@@ -232,8 +236,10 @@ void brdf_direct(vec3 N, vec3 V, vec3 L, vec3 albedo, float metallic, float roug
 
 void main() {
     vec2 uv = v_uv;
-    // Gather material samples.
-    vec4 base_sample = vec4(u_base_color, u_base_color_alpha);
+    // Gather material samples. Per-vertex COLOR_0 multiplies the base colour
+    // per the glTF spec (white default when the mesh has no colour channel),
+    // so the terrain grass/rock/sand/mud bake shows on a white base material.
+    vec4 base_sample = vec4(u_base_color, u_base_color_alpha) * v_color;
     if (u_use_base_tex == 1) {
         base_sample *= texture(u_base_tex, uv);
     }

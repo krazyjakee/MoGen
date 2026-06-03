@@ -18,6 +18,7 @@ pub const KNOWN_KINDS: &[&str] = &[
     "branch",
     "building", "room_type", "adjacency",
     "cave", "feature",
+    "terrain",
     "decal",
     "module", "use", "import",
     "union", "difference", "intersect",
@@ -225,6 +226,14 @@ pub fn attrs_for_kind(kind: &str) -> &'static [&'static str] {
             "debug_hide_shell", "debug_show_poi",
         ],
         "feature" => &["kind", "count", "min_size", "max_size", "mat"],
+        "terrain" => &[
+            "seed", "mat_style", "size", "source",
+            "octaves", "frequency", "persistence",
+            "resolution", "chunks", "lod_levels",
+            "smooth", "terrace", "sea_level",
+            "colliders", "peaks", "flat_spots", "shore_points",
+            "lod_scale", "debug_show_poi",
+        ],
         "decal" => &[
             "size", "prompt", "image", "tint", "roughness", "offset",
             // Curved-surface shortcut: synthesizes a `conform` patch under
@@ -490,6 +499,24 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         ("feature", "count")
         | ("feature", "min_size")
         | ("feature", "max_size") => "number",
+        ("terrain", "size") => "vec3",
+        ("terrain", "source")
+        | ("terrain", "mat_style")
+        | ("terrain", "colliders") => "string",
+        ("terrain", "octaves")
+        | ("terrain", "frequency")
+        | ("terrain", "persistence")
+        | ("terrain", "resolution")
+        | ("terrain", "chunks")
+        | ("terrain", "lod_levels")
+        | ("terrain", "smooth")
+        | ("terrain", "terrace")
+        | ("terrain", "sea_level")
+        | ("terrain", "peaks")
+        | ("terrain", "flat_spots")
+        | ("terrain", "shore_points")
+        | ("terrain", "lod_scale")
+        | ("terrain", "debug_show_poi") => "number",
         ("cylinder", "radius")
         | ("cylinder", "height")
         | ("cylinder", "segments")

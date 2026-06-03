@@ -99,6 +99,14 @@ pub struct DrawBatch {
     /// shaders (e.g. `Water`) take a dedicated branch in the FS keyed by
     /// `MaterialShader::shader_id`.
     pub shader: MaterialShader,
+    /// Baked render-LOD band `(min_distance, max_distance)` copied off the
+    /// node's [`mogen_core::Lod`]. When `Some`, the renderer draws this batch
+    /// only while the camera distance to `centroid` falls within the band, so a
+    /// chunk's coarse variants swap in with distance. `None` for ordinary
+    /// geometry, which always draws. Nodes carrying a `lod` are flattened into
+    /// their own batch (one node each) so the band — and per-chunk culling —
+    /// apply at chunk granularity.
+    pub lod: Option<(f32, f32)>,
 }
 
 /// One entry per clip, for UI menus.
@@ -114,10 +122,12 @@ pub struct ClipSummary {
 }
 
 /// Number of f32s per vertex in the interleaved VBO:
-/// pos(3) | normal(3) | uv(2) | joints(4) | weights(4) = 16.
-/// The base colour used to live in the vertex stream; with PBR materials we
-/// upload it as a per-batch uniform instead.
-pub const FLOATS_PER_VERTEX: usize = 16;
+/// pos(3) | normal(3) | uv(2) | joints(4) | weights(4) | color(4) = 20.
+/// The PBR base colour is a per-batch uniform; `color` here is the optional
+/// per-vertex `COLOR_0` channel (terrain grass/rock/sand/mud bake, gradient
+/// ramps). Vertices from meshes without `COLOR_0` get an opaque-white colour so
+/// the shader can always multiply by it unconditionally.
+pub const FLOATS_PER_VERTEX: usize = 20;
 
 /// Upper bound on joints per skin that we'll ship to the shader. The uniform
 /// palette is a `mat4[MAX_JOINTS]` so every batch pays this much regardless of
@@ -162,10 +172,11 @@ pub enum PaletteSource {
 /// animation tick without rewriting the VBO.
 #[derive(Default)]
 pub struct FlatMesh {
-    /// Interleaved: pos (3) | normal (3) | uv (2) | joints (4) | weights (4) =
-    /// 16 f32 per vertex. Joints are stored as f32 so the interleaved VBO stays
-    /// single-type; the shader `ivec4`-casts them. For rigid vertices,
-    /// `joints[0]` is the index into the batch's palette (`weights = [1,0,0,0]`).
+    /// Interleaved: pos (3) | normal (3) | uv (2) | joints (4) | weights (4) |
+    /// color (4) = 20 f32 per vertex. Joints are stored as f32 so the
+    /// interleaved VBO stays single-type; the shader `ivec4`-casts them. For
+    /// rigid vertices, `joints[0]` is the index into the batch's palette
+    /// (`weights = [1,0,0,0]`). `color` is per-vertex `COLOR_0` (white default).
     pub vertices: Vec<f32>,
     pub indices: Vec<u32>,
     /// Draw order. Each batch covers a contiguous index range belonging to a
@@ -274,7 +285,10 @@ pub fn flatten_with_worlds(
     // shadow-homogeneous so the pre-pass can `continue` on a single per-batch
     // bool instead of walking node ids back through the scene. BTreeMap so
     // traversal order is stable across rebuilds.
-    type GroupKey = (Option<u32>, Option<u32>, bool);
+    // The 4th key element isolates every LOD-tagged node into its own batch (by
+    // node id) so its distance band — and tight per-chunk cull sphere — apply
+    // individually; ordinary geometry shares `None` and merges as before.
+    type GroupKey = (Option<u32>, Option<u32>, bool, Option<u32>);
     let mut groups: BTreeMap<GroupKey, Vec<usize>> = BTreeMap::new();
     for (i, node) in scene.nodes.iter().enumerate() {
         if node.mesh.is_none() {
@@ -282,7 +296,11 @@ pub fn flatten_with_worlds(
         }
         let skin_id = node.skin.map(|s| s.0);
         let mat_id = node.material.map(|m| m.0);
-        groups.entry((skin_id, mat_id, node.cast_shadow)).or_default().push(i);
+        let lod_key = node.lod.map(|_| i as u32);
+        groups
+            .entry((skin_id, mat_id, node.cast_shadow, lod_key))
+            .or_default()
+            .push(i);
     }
 
     let mut vertices: Vec<f32> = Vec::new();
@@ -294,7 +312,7 @@ pub fn flatten_with_worlds(
     let mut min = Vec3::splat(f32::INFINITY);
     let mut max = Vec3::splat(f32::NEG_INFINITY);
 
-    for ((skin_id, mat_id, cast_shadow), node_ids) in groups {
+    for ((skin_id, mat_id, cast_shadow, _lod_key), node_ids) in groups {
         let material = mat_id.and_then(|id| scene.materials.get(id as usize));
         let uv_scale = material.map(|m| m.uv_scale).unwrap_or([1.0, 1.0]);
         let is_skinned = skin_id.is_some();
@@ -318,6 +336,11 @@ pub fn flatten_with_worlds(
         };
 
         for chunk in chunks {
+            // A LOD-isolated group holds exactly one node; read its band here.
+            let lod = chunk
+                .first()
+                .and_then(|&i| scene.nodes[i].lod)
+                .map(|l| (l.min_distance, l.max_distance));
             let batch_start = indices.len() as u32;
             let mut bmin = Vec3::splat(f32::INFINITY);
             let mut bmax = Vec3::splat(f32::NEG_INFINITY);
@@ -395,13 +418,16 @@ pub fn flatten_with_worlds(
                             [1.0, 0.0, 0.0, 0.0],
                         )
                     };
+                    // Per-vertex COLOR_0; opaque white when the mesh carries
+                    // none, so the shader's unconditional multiply is a no-op.
+                    let c = mesh.colors.get(vi).copied().unwrap_or([1.0, 1.0, 1.0, 1.0]);
                     min = min.min(p);
                     max = max.max(p);
                     bmin = bmin.min(p);
                     bmax = bmax.max(p);
                     vertices.extend_from_slice(&[
                         p.x, p.y, p.z, n.x, n.y, n.z, uv[0], uv[1], j[0], j[1], j[2], j[3], w[0],
-                        w[1], w[2], w[3],
+                        w[1], w[2], w[3], c[0], c[1], c[2], c[3],
                     ]);
                 }
                 let idx_before = indices.len();
@@ -529,6 +555,7 @@ pub fn flatten_with_worlds(
                 material_id: mat_id,
                 cast_shadow,
                 shader,
+                lod,
             });
         }
     }
