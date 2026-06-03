@@ -421,7 +421,7 @@ mod tests {
         assert!((parse_number_literal("1.5m").unwrap() - 1.5).abs() < 1e-6);
         assert!((parse_number_literal("90cm").unwrap() - 0.9).abs() < 1e-6);
         assert!((parse_number_literal("250mm").unwrap() - 0.25).abs() < 1e-6);
-        assert!((parse_number_literal("2km").unwrap() - 2000.0).abs() < 1e-3);
+        assert!((parse_number_literal("2km").unwrap() - 2000.0).abs() < 1e-6);
         assert!((parse_number_literal("18in").unwrap() - 0.4572).abs() < 1e-6);
         assert!((parse_number_literal("2ft").unwrap() - 0.6096).abs() < 1e-6);
         assert!((parse_number_literal("1yd").unwrap() - 0.9144).abs() < 1e-6);
@@ -449,6 +449,16 @@ mod tests {
         // Units compose through arithmetic — imperial feet+inches.
         match first_attr("box (height=5ft + 6in)\n", "height") {
             Value::Number(n) => assert!((n - (1.524 + 0.1524)).abs() < 1e-5),
+            other => panic!("expected Number, got {other:?}"),
+        }
+        // yd unit flows through a scalar attribute.
+        match first_attr("box (depth=2yd)\n", "depth") {
+            Value::Number(n) => assert!((n - 1.8288).abs() < 1e-6),
+            other => panic!("expected Number, got {other:?}"),
+        }
+        // Negative unit literal: pos offset should carry its sign through.
+        match first_attr("box (x=-3ft)\n", "x") {
+            Value::Number(n) => assert!((n + 0.9144).abs() < 1e-6),
             other => panic!("expected Number, got {other:?}"),
         }
     }
