@@ -30,6 +30,7 @@ use mogen_core::{ColliderShape, Lod, Mesh, NodeId, SceneGraph, Transform};
 use mogen_geom::recompute_normals;
 
 use crate::ast::Node;
+use crate::lower::material::bind_inherited_or_default;
 
 use super::carve::{Hole, HoleCap};
 use super::config::{ColliderMode, TerrainCfg};
@@ -681,17 +682,7 @@ fn bind_material(
     origin: Option<&std::path::Path>,
     graph: &mut SceneGraph,
 ) {
-    let mut cur = graph.nodes[id.0 as usize].parent;
-    while let Some(p) = cur {
-        if let Some(m) = graph.nodes[p.0 as usize].material {
-            graph.set_material(id, m);
-            return;
-        }
-        cur = graph.nodes[p.0 as usize].parent;
-    }
-    if let Some(mid) = graph.find_material_scoped(default_name, origin) {
-        graph.set_material(id, mid);
-    }
+    bind_inherited_or_default(id, default_name, origin, graph);
 }
 
 #[cfg(test)]

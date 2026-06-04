@@ -74,8 +74,9 @@ pub(super) struct DungeonCfg {
     /// Number of `prop_spot` POI markers scattered on room floors.
     pub prop_spots: u32,
     /// Mesh-quality scale `(0, 1]`; compounds with the file-global `lod_scale`.
-    /// Dungeon geometry is already low-poly boxes, so this only trims a uniform
-    /// detail factor; layout, counts and POIs are unchanged.
+    /// Dungeon geometry is fixed-poly box meshes so lod_scale has no effect on
+    /// triangle count; it is stored here so the attribute round-trips without
+    /// error and a future geometry-detail pass can read it.
     pub lod_scale: f32,
     /// Debug-only: omit the topmost deck (the roof) so the rooms are visible
     /// from above in a preview. Mirrors `cave.debug_hide_shell`.

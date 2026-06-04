@@ -3,6 +3,7 @@ use mogen_core::{SceneGraph, Transform};
 use super::config::{ColliderMode, DungeonCfg};
 use super::{emit, generate, materials, poi};
 use crate::ast::Node;
+use crate::lower::procedural::finish_procedural;
 
 fn ast_node() -> Node {
     Node {
@@ -49,8 +50,10 @@ fn build(c: &DungeonCfg) -> SceneGraph {
     let parent = graph.add_root("dungeon", "dungeon", Transform::IDENTITY);
     materials::ensure_defaults(&mut graph, None);
     let layout = generate::generate(c);
+    let pre = graph.nodes.len();
     emit::emit(&node, c, &layout, parent, &mut graph);
     poi::emit_pois(&node, c, &layout, parent, &mut graph);
+    finish_procedural(&mut graph, pre);
     graph
 }
 
@@ -282,4 +285,91 @@ fn spawn_marker_present_on_ground() {
         .filter(|n| n.role.as_deref() == Some("spawn"))
         .count();
     assert_eq!(spawns, 1, "expected exactly one spawn marker");
+}
+
+#[test]
+fn dungeon_subtree_is_non_editable() {
+    let graph = build(&cfg(1));
+    // Every mesh node generated below the wrapper must be non-editable —
+    // a rebuild from the seed would wipe any hand-edit.
+    for n in &graph.nodes {
+        if n.mesh.is_some() {
+            assert!(!n.editable, "generated mesh {:?} should be non-editable", n.role);
+        }
+    }
+}
+
+#[test]
+fn colliders_none_leaves_everything_collider_free() {
+    let mut c = cfg(1);
+    c.colliders = ColliderMode::None;
+    let graph = build(&c);
+    assert!(
+        graph.nodes.iter().all(|n| n.collider.is_none()),
+        "colliders=None should leave every dungeon node collider-free"
+    );
+}
+
+#[test]
+fn colliders_all_adds_trimesh_to_every_solid() {
+    let c = cfg(1); // ColliderMode::All by default
+    let graph = build(&c);
+    let solids: Vec<_> = graph
+        .nodes
+        .iter()
+        .filter(|n| n.mesh.is_some())
+        .collect();
+    assert!(!solids.is_empty(), "expected mesh nodes");
+    for n in &solids {
+        assert!(
+            n.collider.is_some(),
+            "colliders=All: solid {:?} should carry a collider",
+            n.role
+        );
+    }
+}
+
+#[test]
+fn seed_changes_room_layout() {
+    let c1 = cfg(1);
+    let mut c2 = cfg(1);
+    c2.seed = 42;
+    let a = generate::generate(&c1);
+    let b = generate::generate(&c2);
+    let positions_a: Vec<_> = a.rooms.iter().map(|r| (r.x0, r.z0)).collect();
+    let positions_b: Vec<_> = b.rooms.iter().map(|r| (r.x0, r.z0)).collect();
+    assert_ne!(
+        positions_a, positions_b,
+        "different seeds should produce different room layouts"
+    );
+}
+
+#[test]
+fn prop_spots_are_placed() {
+    let mut c = cfg(1);
+    c.prop_spots = 5;
+    let graph = build(&c);
+    let spots = graph
+        .nodes
+        .iter()
+        .filter(|n| n.role.as_deref() == Some("prop_spot"))
+        .count();
+    assert_eq!(spots, 5, "expected exactly 5 prop_spot markers");
+    // POI markers carry no geometry.
+    for n in graph.nodes.iter().filter(|n| n.role.as_deref() == Some("prop_spot")) {
+        assert!(n.mesh.is_none(), "prop_spot markers carry no geometry");
+    }
+}
+
+#[test]
+fn ceilings_false_emits_no_ceiling_nodes() {
+    let mut c = cfg(2);
+    c.ceilings = false;
+    let graph = build(&c);
+    let ceilings = graph
+        .nodes
+        .iter()
+        .filter(|n| n.role.as_deref() == Some("ceiling"))
+        .count();
+    assert_eq!(ceilings, 0, "ceilings=false should emit no ceiling nodes");
 }

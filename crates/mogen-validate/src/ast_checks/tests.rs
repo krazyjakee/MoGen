@@ -1048,3 +1048,131 @@ mod terrain_validator_tests {
         );
     }
 }
+
+mod dungeon_validator_tests {
+    use super::super::*;
+    use mogen_core::Severity;
+
+    fn diags_for(src: &str) -> Vec<mogen_core::Diagnostic> {
+        let ast = mogen_dsl::parse(src).expect("parse");
+        validate_ast(&ast)
+    }
+
+    const MIN_DUNGEON: &str = r#"
+        dungeon "keep" (
+          seed = 7,
+          size = [48, 4, 48],
+          cell = 4,
+          levels = 1,
+          rooms = 4,
+        )
+    "#;
+
+    #[test]
+    fn minimum_dungeon_is_valid() {
+        let diags = diags_for(MIN_DUNGEON);
+        let errs: Vec<_> = diags
+            .iter()
+            .filter(|d| matches!(d.severity, Severity::Error))
+            .collect();
+        assert!(errs.is_empty(), "expected no errors for minimal dungeon, got: {errs:?}");
+    }
+
+    #[test]
+    fn rejects_body_block_in_dungeon() {
+        let src = r#"
+            dungeon "keep" (seed=1) {
+              box "intruder" (size=[1, 1, 1])
+            }
+        "#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "E1601"),
+            "expected E1601 for body block in dungeon, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_zero_cell_size() {
+        let src = r#"
+            dungeon "keep" (seed=1, cell=0)
+        "#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "E1602"),
+            "expected E1602 for zero cell size, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_zero_wall_thickness() {
+        let src = r#"
+            dungeon "keep" (seed=1, wall_thickness=0)
+        "#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "E1602"),
+            "expected E1602 for zero wall_thickness, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_colliders_value() {
+        let src = r#"
+            dungeon "keep" (seed=1, colliders="aabb")
+        "#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "E1607"),
+            "expected E1607 for unknown colliders value, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn warns_room_min_exceeds_room_max() {
+        let src = r#"
+            dungeon "keep" (seed=1, room_min=6, room_max=2)
+        "#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "W1605"),
+            "expected W1605 when room_min > room_max, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn warns_collider_attr_ignored() {
+        let src = r#"
+            dungeon "keep" (seed=1, collider="aabb")
+        "#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "W1608"),
+            "expected W1608 for collider= on dungeon (use colliders=), got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_levels_below_one() {
+        let src = r#"
+            dungeon "keep" (seed=1, levels=0)
+        "#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "E1610"),
+            "expected E1610 for levels=0, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn warns_out_of_range_lod_scale() {
+        let src = r#"
+            dungeon "keep" (seed=1, lod_scale=2.0)
+        "#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "W1606"),
+            "expected W1606 for lod_scale > 1.0, got: {diags:?}"
+        );
+    }
+}

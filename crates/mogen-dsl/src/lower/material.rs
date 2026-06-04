@@ -2,7 +2,7 @@ use anyhow::{anyhow, bail, Result};
 
 use mogen_core::{
     AlphaMode, Gradient, GradientAxis, GradientKind, GradientStop, Material, MaterialShader,
-    SceneGraph, TextureRef, UvMode,
+    NodeId, SceneGraph, TextureRef, UvMode,
 };
 
 use crate::ast::{GradientDef, Node, Value};
@@ -169,6 +169,28 @@ pub(super) fn ensure_named_defaults(
         let mut mat = factory();
         mat.origin = origin.map(|p| p.to_path_buf());
         graph.add_material(mat);
+    }
+}
+
+/// Bind a node to the nearest ancestor `mat=` if one exists, else fall back to
+/// the named default material on this origin. Used by procedural emitters that
+/// want to inherit a user-supplied `mat=` on their wrapper node.
+pub(super) fn bind_inherited_or_default(
+    id: NodeId,
+    default_name: &str,
+    origin: Option<&std::path::Path>,
+    graph: &mut SceneGraph,
+) {
+    let mut cur = graph.nodes[id.0 as usize].parent;
+    while let Some(p) = cur {
+        if let Some(m) = graph.nodes[p.0 as usize].material {
+            graph.set_material(id, m);
+            return;
+        }
+        cur = graph.nodes[p.0 as usize].parent;
+    }
+    if let Some(mid) = graph.find_material_scoped(default_name, origin) {
+        graph.set_material(id, mid);
     }
 }
 

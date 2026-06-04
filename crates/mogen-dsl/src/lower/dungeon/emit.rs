@@ -22,6 +22,7 @@ use mogen_core::{ColliderShape, NodeId, SceneGraph, Transform, UvMode};
 use mogen_geom::box_mesh;
 
 use crate::ast::Node;
+use crate::lower::material::bind_inherited_or_default;
 
 use super::config::{ColliderMode, DungeonCfg};
 use super::generate::DungeonLayout;
@@ -69,10 +70,10 @@ pub(super) fn emit(
     let top_deck = layout.levels;
     for k in 0..=top_deck {
         // Isolation renders only the floor slab of the chosen level (no roof or
-        // ceiling); otherwise drop the roof when configured.
+        // ceiling); otherwise drop the roof when debug_hide_roof is set.
         match isolate {
             Some(l) if k != l => continue,
-            None if k == top_deck && (!cfg.ceilings || cfg.debug_hide_roof) => continue,
+            None if k == top_deck && cfg.debug_hide_roof => continue,
             _ => {}
         }
         for j in 0..gd {
@@ -88,6 +89,12 @@ pub(super) fn emit(
                     continue;
                 }
                 if !(below || above) {
+                    continue;
+                }
+                // ceilings=false: open-topped levels — skip any cell that would
+                // be a pure ceiling (below=true, above=false). This covers both
+                // intermediate decks and the top-level roof.
+                if !cfg.ceilings && !above {
                     continue;
                 }
                 // A staircase punches the floor deck of the level it rises into.
@@ -243,24 +250,11 @@ fn add_box(
     bind_material(id, default_mat, node.origin.as_deref(), graph);
 }
 
-/// Bind a node to the nearest ancestor `mat=` if one exists (so the user can
-/// theme the whole dungeon with `mat=` on the wrapper), else fall back to the
-/// named default material on this origin. Mirrors `terrain::emit::bind_material`.
 fn bind_material(
     id: NodeId,
     default_name: &str,
     origin: Option<&std::path::Path>,
     graph: &mut SceneGraph,
 ) {
-    let mut cur = graph.nodes[id.0 as usize].parent;
-    while let Some(p) = cur {
-        if let Some(m) = graph.nodes[p.0 as usize].material {
-            graph.set_material(id, m);
-            return;
-        }
-        cur = graph.nodes[p.0 as usize].parent;
-    }
-    if let Some(mid) = graph.find_material_scoped(default_name, origin) {
-        graph.set_material(id, mid);
-    }
+    bind_inherited_or_default(id, default_name, origin, graph);
 }
