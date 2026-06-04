@@ -236,6 +236,10 @@ pub(super) fn check_anim_required(n: &Node, diags: &mut Vec<Diagnostic>) {
         "adjacency" => super::building_rules::check_adjacency(n, diags),
         "cave" => super::cave_rules::check_cave(n, diags),
         "feature" => super::cave_rules::check_feature(n, diags),
+        "terrain" => super::terrain_rules::check_terrain(n, diags),
+        "hole" => super::terrain_rules::check_hole(n, diags),
+        "road" => super::terrain_rules::check_road(n, diags),
+        "dungeon" => super::dungeon_rules::check_dungeon(n, diags),
         "light" => {
             let kind = n.attr("kind").and_then(as_string_or_ident);
             match kind {

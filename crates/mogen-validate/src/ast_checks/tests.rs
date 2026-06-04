@@ -931,3 +931,120 @@ mod cave_validator_tests {
         assert!(errs.is_empty(), "valid feature should produce no errors: {errs:?}");
     }
 }
+
+mod terrain_validator_tests {
+    use super::super::*;
+    use mogen_core::Severity;
+
+    fn diags_for(src: &str) -> Vec<mogen_core::Diagnostic> {
+        let ast = mogen_dsl::parse(src).expect("parse");
+        validate_ast(&ast)
+    }
+
+    const TERRAIN_WITH_CARVING: &str = r#"
+        terrain "ground" (
+          seed=4,
+          size=[40, 6, 40],
+          source=fbm,
+          resolution=64,
+          chunks=2,
+        ) {
+          hole ( at=[0, 0], radius=6, depth=4, cap="floor" )
+          road ( path=[[-18, 0], [18, 0]], width=4 )
+        }
+    "#;
+
+    #[test]
+    fn terrain_with_hole_and_road_is_valid() {
+        let diags = diags_for(TERRAIN_WITH_CARVING);
+        let errs: Vec<_> = diags
+            .iter()
+            .filter(|d| matches!(d.severity, Severity::Error))
+            .collect();
+        assert!(errs.is_empty(), "expected no errors, got: {errs:?}");
+    }
+
+    #[test]
+    fn rejects_geometry_child_in_terrain() {
+        let src = r#"
+            terrain "ground" (seed=1, size=[40, 6, 40]) {
+              box "intruder" (size=[1, 1, 1])
+            }
+        "#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "E1501"),
+            "expected E1501 for non-carving child in terrain, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_hole_without_footprint() {
+        let src = r#"
+            terrain "ground" (seed=1, size=[40, 6, 40]) {
+              hole ( at=[0, 0], depth=4 )
+            }
+        "#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "E1503"),
+            "expected E1503 when hole has no footprint, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_hole_with_both_footprints() {
+        let src = r#"
+            terrain "ground" (seed=1, size=[40, 6, 40]) {
+              hole ( at=[0, 0], radius=6, size=[4, 4] )
+            }
+        "#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "E1504"),
+            "expected E1504 when hole has both radius and size, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_hole_cap() {
+        let src = r#"
+            terrain "ground" (seed=1, size=[40, 6, 40]) {
+              hole ( at=[0, 0], radius=6, cap="lid" )
+            }
+        "#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "E1507"),
+            "expected E1507 for unknown hole cap, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_road_without_path() {
+        let src = r#"
+            terrain "ground" (seed=1, size=[40, 6, 40]) {
+              road ( width=4 )
+            }
+        "#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "E1509"),
+            "expected E1509 when road has no path, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_road_with_single_waypoint() {
+        let src = r#"
+            terrain "ground" (seed=1, size=[40, 6, 40]) {
+              road ( path=[[0, 0]], width=4 )
+            }
+        "#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "E1510"),
+            "expected E1510 when road has fewer than two waypoints, got: {diags:?}"
+        );
+    }
+}

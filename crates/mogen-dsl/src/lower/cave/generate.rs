@@ -84,6 +84,12 @@ pub(super) struct CaveLayout {
     /// radians) that makes a prefab whose forward axis is local `-Z` face back
     /// out of the wall — toward the lower chamber the climb is approached from.
     pub steep_links: Vec<(Vec3, f32)>,
+    /// One entry per punched entrance: `(chamber_index, yaw)`. The chamber hosts
+    /// the mouth (its centre XZ is where the opening was cut); `yaw` is the Y
+    /// rotation that points a prefab's local `-Z` (forward) out through the wall,
+    /// so a placed gate/door faces the open world. The POI pass marches the
+    /// carved floor at the chamber centre for the marker height.
+    pub entrances: Vec<(usize, f32)>,
 }
 
 pub(super) fn generate(cfg: &CaveCfg) -> CaveLayout {
@@ -115,7 +121,7 @@ pub(super) fn generate(cfg: &CaveCfg) -> CaveLayout {
     }
 
     // Entrances: punch horizontal mouths out through the nearest side face.
-    add_entrances(&mut carvers, &chambers, cfg, block_half);
+    let entrances = add_entrances(&mut carvers, &chambers, cfg, block_half);
 
     let chamber_degree = chamber_degrees(&chambers, &edges);
     let steep_links = steep_link_anchors(cfg, &chambers, &edges);
@@ -127,6 +133,7 @@ pub(super) fn generate(cfg: &CaveCfg) -> CaveLayout {
         block_center,
         chamber_degree,
         steep_links,
+        entrances,
     }
 }
 
@@ -561,14 +568,16 @@ fn add_passage(carvers: &mut Vec<BlobChild>, a: Vec3, b: Vec3, radius: f32, max_
 
 /// Punch `entrances` horizontal mouths out through the nearest side face,
 /// hosted on the highest chambers so the openings land on the top layer.
+/// Returns one `(chamber_index, yaw)` per mouth for the POI pass: `yaw` points a
+/// prefab's local `-Z` (forward) out through the wall (toward the open world).
 fn add_entrances(
     carvers: &mut Vec<BlobChild>,
     chambers: &[Chamber],
     cfg: &CaveCfg,
     block_half: Vec3,
-) {
+) -> Vec<(usize, f32)> {
     if cfg.entrances == 0 || chambers.is_empty() {
-        return;
+        return Vec::new();
     }
     // Highest chambers first (mouths open onto the top layer).
     let mut order: Vec<usize> = (0..chambers.len()).collect();
@@ -580,6 +589,7 @@ fn add_entrances(
             .unwrap_or(std::cmp::Ordering::Equal)
     });
 
+    let mut anchors = Vec::new();
     for &idx in order.iter().take(cfg.entrances as usize) {
         let c = &chambers[idx];
         // Opening centre sits a passage-radius above the chamber floor so the
@@ -593,17 +603,25 @@ fn add_entrances(
         let dpz = block_half.z - c.center.z;
         let dnz = c.center.z + block_half.z;
         let min = dpx.min(dnx).min(dpz).min(dnz);
-        let end = if min == dpx {
-            Vec3::new(block_half.x + cfg.margin + 1.0, y, c.center.z)
+        // Outward horizontal direction toward the chosen face.
+        let (end, out): (Vec3, (f32, f32)) = if min == dpx {
+            (Vec3::new(block_half.x + cfg.margin + 1.0, y, c.center.z), (1.0, 0.0))
         } else if min == dnx {
-            Vec3::new(-(block_half.x + cfg.margin + 1.0), y, c.center.z)
+            (Vec3::new(-(block_half.x + cfg.margin + 1.0), y, c.center.z), (-1.0, 0.0))
         } else if min == dpz {
-            Vec3::new(c.center.x, y, block_half.z + cfg.margin + 1.0)
+            (Vec3::new(c.center.x, y, block_half.z + cfg.margin + 1.0), (0.0, 1.0))
         } else {
-            Vec3::new(c.center.x, y, -(block_half.z + cfg.margin + 1.0))
+            (Vec3::new(c.center.x, y, -(block_half.z + cfg.margin + 1.0)), (0.0, -1.0))
         };
         add_capsule(carvers, start, end, cfg.passage_radius);
+
+        // Yaw so the prefab's local -Z faces out through the wall. With
+        // `Quat::from_rotation_y(a)`, local -Z maps to world -(sin a, cos a), so
+        // to send -Z → out we set a = atan2(-out.x, -out.z).
+        let yaw = (-out.0).atan2(-out.1);
+        anchors.push((idx, yaw));
     }
+    anchors
 }
 
 /// An ellipsoid carver at `center` with the given half-extents, yawed by `rot`.

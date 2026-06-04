@@ -121,6 +121,48 @@ mogen-dsl  ──parse──►  AST  ──validate_ast──►  lower  ──
   - `theme.rs` — five colour-scheme presets (Dark, Light, Sunset, Nord, HighContrast)
     persisted by label and applied to egui visuals.
 
+## Procedural generators
+
+The node kinds `branch` (plants/trees), `building`, `cave`, `terrain`, and `dungeon` are a
+distinct class of DSL node: a single declaration expands into a whole subtree of geometry. They
+are not ordinary geometry nodes — each is a deterministic *function of its attributes*, and they
+all share one infrastructure layer so they look and behave identically in the CLI and in Studio.
+Live under `crates/mogen-dsl/src/lower/` (`branch.rs` is a single file; the rest are directories
+with `mod.rs` / `config.rs` / `emit.rs` / `materials.rs` / `poi.rs`). Dispatch happens by node
+kind in `lower/node.rs`.
+
+What makes them special, and the contracts every generator must honour:
+
+- **Seed-driven determinism.** Each reads a `seed=` attr (floored at 1) and draws from the shared
+  LCG in `lower/rng.rs`. `mix_seed(base, salt)` derives independent sub-streams per phase
+  (layout / emit / decorate) so adding a draw in one phase never perturbs another. Same seed +
+  same attrs ⇒ byte-identical geometry. Never introduce nondeterminism (HashMap iteration order,
+  wall-clock, thread races) into a generator.
+- **Editable wrapper + frozen subtree.** Every generator follows
+  `begin_procedural()` → emit subtree → `finish_procedural()` (`lower/procedural.rs`). The wrapper
+  node carries the user's transform/span/metadata and stays `editable=true`; *everything* emitted
+  beneath it is stamped `editable=false`, because a rebuild from the seed would wipe any hand-edit.
+  Studio's pick logic redirects clicks on frozen geometry up to the editable wrapper.
+- **Schema-driven UI, zero per-kind Studio code.** Editable parameters are declared once as a
+  `ProcSchema` in `crates/mogen-dsl/src/proc_schema.rs` (per-param type, range, enum options,
+  group, hover help). Studio renders the inspector grid generically from that schema
+  (`app/ui_panels/selected/geom_params.rs`) — there are no hand-written per-generator UI arms.
+  Adding a generator (or a param) means extending the schema, not the GUI. A drift-guard test
+  asserts every enum option still lowers. Studio has no explicit "regenerate" button: editing an
+  attr rewrites the `.mog` source, recompiles, and the whole subtree is re-emitted.
+- **POI markers as the gameplay interface.** Generators emit transform-only "points of interest"
+  (`lower/poi.rs`, `emit_poi_group()`) under a `points_of_interest` group — e.g. cave entrances,
+  building furniture slots, dungeon spawn/treasure/stairs. Each carries `role` + `tags` that
+  export to glTF `node.extras`, so the engine can find and populate them. POIs are deterministic
+  and **LOD-invariant** (same anchors at every detail level); optionally visualised as coloured
+  debug spheres when `debug_show_poi=1`.
+- **Shared support layer.** Config reading (`lower/cfg.rs`: `seed`/`flag`/`count`/`scalar` with
+  consistent clamping), scoped material defaults (`ensure_named_defaults()` — user-declared names
+  win over generator defaults, scoped by file origin), and LOD scaling (`lower/lod.rs` guards that
+  compound a file-level `lod_scale` with per-node `lod=`) are centralised so all five stay
+  consistent. Keep new generators on these helpers rather than re-rolling RNG/config/material/POI
+  logic locally.
+
 ## Conventions
 
 - Coordinate system is glTF-standard: right-handed, +Y up, -Z forward.

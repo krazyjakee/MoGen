@@ -7,6 +7,7 @@ mod cfg;
 pub(crate) mod connector;
 mod csg;
 mod deform;
+mod dungeon;
 mod gradient_bake;
 mod helpers;
 mod layout;

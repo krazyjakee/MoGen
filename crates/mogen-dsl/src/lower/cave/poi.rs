@@ -8,7 +8,9 @@
 //! Markers are a deterministic function of the same `seed=` as the geometry,
 //! and are unaffected by `lod_scale` — a low-detail bake keeps the same POIs.
 //!
-//! Four kinds:
+//! Five kinds:
+//! - `entrance` — the floor under each mouth punched out to a side face: where a
+//!   game drops a gate / door, oriented so its forward axis faces the open world.
 //! - `dead_end_chamber` — a chamber the passage graph touches exactly once
 //!   (one way in/out): a natural treasure room or ambush spot.
 //! - `column_base` — the floor anchor of each stone column.
@@ -61,6 +63,17 @@ pub(super) fn emit_points_of_interest(
             }),
         });
     };
+
+    // Entrances: the floor under each side-face mouth. The mouth was punched at
+    // the chamber centre XZ, so march that column for the carved floor height —
+    // same as a dead-end marker — and carry the outward-facing yaw.
+    for &(ci, yaw) in &layout.entrances {
+        if let Some(c) = layout.chambers.get(ci) {
+            let y = surface_y(&field, blend, c.center.x, c.center.z, c.center.y, -0.12, march_limit(c, blend))
+                .unwrap_or_else(|| c.floor_y());
+            push("entrance", Vec3::new(c.center.x, y, c.center.z), Quat::from_rotation_y(yaw));
+        }
+    }
 
     // Dead-end chambers: one passage connection. Marker sits on the chamber
     // floor centre (field-marched, geometric fallback).

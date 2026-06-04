@@ -1,0 +1,41 @@
+// A multi-level dungeon crawl: rectangular rooms placed on a tile grid, joined
+// by axis-aligned corridors, stacked into three floors that staircases connect.
+// Everything is a deterministic function of `seed=`, so rebuilds reproduce the
+// same layout. Walls, floors and ceilings are watertight box meshes; interior
+// doorways are gaps in the walls and one ground-level room opens to the outside
+// through the perimeter wall. POI markers flag the entrance, spawn, treasure
+// rooms and stair landings for the game engine.
+
+meta (
+  name = "dungeon",
+  description = "A three-level grid dungeon with rooms, corridors and staircases for dungeon-crawler games",
+  tags = ["dungeon", "building", "environment", "procedural", "crawler"],
+  mogen_version = "0.1.8")
+
+dungeon "keep" (
+  seed = 7,
+  size = [56, 4, 56], // footprint [width(x), room_height(y), depth(z)] in metres
+  cell = 4, // grid cell edge length in metres
+
+  levels = 3, // three stacked floors …
+  stairs = 1, // … each pair linked by a staircase
+
+  rooms = 7, // target rooms per level (best-effort placement)
+  room_min = 2, // room side length range, in cells
+  room_max = 5,
+  spacing = 1, // minimum rock gap between rooms, in cells
+
+  corridor_width = 1,
+  loops = 1, // one extra corridor beyond the spanning tree, per level
+
+  wall_thickness = 0.4,
+  floor_thickness = 0.4,
+  ceilings = 1, // closed ceilings (also serve as the next floor's deck)
+
+  prop_spots = 8, // scatter prop-placement POI markers on room floors
+  colliders = "all", // trimesh colliders on every solid surface
+
+  debug_hide_roof=0, // hide the topmost deck so the top floor is visible in preview
+  debug_show_poi = 1
+
+)

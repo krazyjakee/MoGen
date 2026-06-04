@@ -64,6 +64,9 @@ pub(super) fn lower_into(
     if node.kind == "terrain" {
         return super::terrain::expand_terrain(node, parent, graph);
     }
+    if node.kind == "dungeon" {
+        return super::dungeon::expand_dungeon(node, parent, graph);
+    }
     if node.kind == "light" {
         return lower_light(node, parent, graph);
     }

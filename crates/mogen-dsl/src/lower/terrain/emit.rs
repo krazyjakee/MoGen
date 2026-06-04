@@ -24,13 +24,14 @@
 //! watertight-by-construction rule applies to these seams rather than to a
 //! sealed volume.
 
-use glam::Vec3;
+use glam::{Vec2, Vec3};
 
 use mogen_core::{ColliderShape, Lod, Mesh, NodeId, SceneGraph, Transform};
 use mogen_geom::recompute_normals;
 
 use crate::ast::Node;
 
+use super::carve::{Hole, HoleCap};
 use super::config::{ColliderMode, TerrainCfg};
 use super::field::HeightField;
 use super::materials::{GROUND_MAT, WATER_MAT};
@@ -59,6 +60,8 @@ const COL_ROCK: [f32; 3] = [0.42, 0.40, 0.37];
 const COL_SAND: [f32; 3] = [0.76, 0.70, 0.50];
 /// Dark mud on the submerged floor.
 const COL_MUD: [f32; 3] = [0.28, 0.22, 0.16];
+/// Dirt / gravel road surface — what a flattened `road` corridor tints toward.
+const COL_ROAD: [f32; 3] = [0.30, 0.26, 0.21];
 
 /// Width of the sandy shore band, as a fraction of the patch height `amp`. Land
 /// within this height of the waterline reads as sand; below it fades to mud.
@@ -102,6 +105,7 @@ pub(super) fn emit_chunks(
     node: &Node,
     cfg: &TerrainCfg,
     field: &HeightField,
+    holes: &[Hole],
     parent: NodeId,
     graph: &mut SceneGraph,
 ) {
@@ -150,6 +154,7 @@ pub(super) fn emit_chunks(
                 let stride = 1usize << level;
                 let mesh = build_chunk_lod_mesh(
                     field,
+                    holes,
                     i0,
                     j0,
                     spc,
@@ -227,6 +232,7 @@ fn lod_band(level: usize, levels: usize, chunk_extent: f32) -> (f32, f32) {
 #[allow(clippy::too_many_arguments)]
 fn build_chunk_lod_mesh(
     field: &HeightField,
+    holes: &[Hole],
     i0: usize,
     j0: usize,
     spc: usize,
@@ -248,6 +254,9 @@ fn build_chunk_lod_mesh(
     let mut positions: Vec<[f32; 3]> = Vec::with_capacity(nv * nv);
     let mut uvs: Vec<[f32; 2]> = Vec::with_capacity(nv * nv);
     let mut normals: Vec<[f32; 3]> = Vec::with_capacity(nv * nv);
+    // Road intensity per emitted vertex (grid verts read `field.road_mask`; the
+    // skirt / hole-wall / hole-floor verts appended later are plain terrain → 0).
+    let mut road_w: Vec<f32> = Vec::with_capacity(nv * nv);
     for lj in 0..nv {
         let j = j0 + lj * stride;
         let wz = world_z(j);
@@ -260,12 +269,47 @@ fn build_chunk_lod_mesh(
             // Analytic normal from the fine field — identical for this (i, j)
             // in every chunk and LOD, so shared edges shade seamlessly.
             normals.push(field_normal(field, i, j, amp, dx, dz));
+            road_w.push(field.road_mask[j * field.n + i]);
         }
     }
+
+    // Surface height at a fine grid sample, in world Y.
+    let surf_y = |i: usize, j: usize| field.at(i, j) * amp;
+    // The hole (if any) whose footprint contains world XZ point `(x, z)`.
+    let hole_at = |x: f32, z: f32| holes.iter().find(|h| h.footprint.contains(x, z));
 
     let mut indices: Vec<u32> = Vec::with_capacity(step * step * 6 + step * 4 * 6);
     for lj in 0..step {
         for li in 0..step {
+            // Fine-grid corners of this LOD cell and its world-XZ centre.
+            let gia = i0 + li * stride;
+            let gib = gia + stride;
+            let gja = j0 + lj * stride;
+            let gjb = gja + stride;
+            let (xa, xb) = (world_x(gia), world_x(gib));
+            let (za, zb) = (world_z(gja), world_z(gjb));
+            let ccx = 0.5 * (xa + xb);
+            let ccz = 0.5 * (za + zb);
+
+            // Cells whose centre falls in a hole are dropped from the surface;
+            // a `floor` cap seals them with a flat quad at the pit floor.
+            if let Some(h) = hole_at(ccx, ccz) {
+                if h.cap == HoleCap::Floor {
+                    append_floor(
+                        &mut positions,
+                        &mut uvs,
+                        &mut normals,
+                        &mut road_w,
+                        &mut indices,
+                        [(xa, za), (xb, za), (xa, zb), (xb, zb)],
+                        h.floor_y,
+                        cx,
+                        cz,
+                    );
+                }
+                continue;
+            }
+
             let a = (lj * nv + li) as u32;
             let b = a + 1;
             let c = a + nv as u32;
@@ -277,6 +321,65 @@ fn build_chunk_lod_mesh(
             indices.push(a);
             indices.push(dd);
             indices.push(b);
+
+            // Rim walls: where a neighbouring cell is dropped (its centre is in a
+            // hole), drop a vertical wall from this cell's shared edge to that
+            // hole's floor. The kept side owns the wall, so each rim edge is
+            // walled exactly once even across chunk boundaries.
+            let cellw = xb - xa;
+            let celld = zb - za;
+            // East / West / North / South neighbour centres + shared edge.
+            let edges: [(f32, f32, Vec2, (f32, f32, f32), (f32, f32, f32)); 4] = [
+                // East: edge at x = xb.
+                (
+                    ccx + cellw,
+                    ccz,
+                    Vec2::new(1.0, 0.0),
+                    (xb, za, surf_y(gib, gja)),
+                    (xb, zb, surf_y(gib, gjb)),
+                ),
+                // West: edge at x = xa.
+                (
+                    ccx - cellw,
+                    ccz,
+                    Vec2::new(-1.0, 0.0),
+                    (xa, za, surf_y(gia, gja)),
+                    (xa, zb, surf_y(gia, gjb)),
+                ),
+                // North: edge at z = zb.
+                (
+                    ccx,
+                    ccz + celld,
+                    Vec2::new(0.0, 1.0),
+                    (xa, zb, surf_y(gia, gjb)),
+                    (xb, zb, surf_y(gib, gjb)),
+                ),
+                // South: edge at z = za.
+                (
+                    ccx,
+                    ccz - celld,
+                    Vec2::new(0.0, -1.0),
+                    (xa, za, surf_y(gia, gja)),
+                    (xb, za, surf_y(gib, gja)),
+                ),
+            ];
+            for (nx, nz, into, p0, p1) in edges {
+                if let Some(hn) = hole_at(nx, nz) {
+                    append_wall(
+                        &mut positions,
+                        &mut uvs,
+                        &mut normals,
+                        &mut road_w,
+                        &mut indices,
+                        p0,
+                        p1,
+                        hn.floor_y,
+                        cx,
+                        cz,
+                        into,
+                    );
+                }
+            }
         }
     }
 
@@ -294,6 +397,7 @@ fn build_chunk_lod_mesh(
                 &mut positions,
                 &mut uvs,
                 &mut normals,
+                &mut road_w,
                 &mut indices,
                 &run,
                 cx,
@@ -314,11 +418,22 @@ fn build_chunk_lod_mesh(
 
     // Bake the grass/rock/sand/mud blend into COLOR_0 using the analytic normals
     // (slope) and each vertex's world height. Positions are local to the chunk
-    // centre but Y is already world-space, so it pairs with waterline.
+    // centre but Y is already world-space, so it pairs with waterline. Road
+    // corridors then tint toward the dirt/gravel surface colour by intensity.
     let colors = positions
         .iter()
         .zip(&normals)
-        .map(|(p, nrm)| surface_color(p[1], nrm[1], waterline, amp, has_water))
+        .zip(&road_w)
+        .map(|((p, nrm), &rw)| {
+            let base = surface_color(p[1], nrm[1], waterline, amp, has_water);
+            if rw <= 0.0 {
+                base
+            } else {
+                let c = Vec3::new(base[0], base[1], base[2])
+                    .lerp(Vec3::from(COL_ROAD), rw.clamp(0.0, 1.0));
+                [c.x, c.y, c.z, 1.0]
+            }
+        })
         .collect();
 
     Mesh {
@@ -400,10 +515,12 @@ fn field_normal(field: &HeightField, i: usize, j: usize, amp: f32, dx: f32, dz: 
 /// wall uses its own duplicated vertices (flat-shaded, no normals shared with
 /// the surface rim) so the top surface keeps clean up-facing normals. The point
 /// order is chosen by the caller so the emitted triangles face outward.
+#[allow(clippy::too_many_arguments)]
 fn append_skirt(
     positions: &mut Vec<[f32; 3]>,
     uvs: &mut Vec<[f32; 2]>,
     normals: &mut Vec<[f32; 3]>,
+    road_w: &mut Vec<f32>,
     indices: &mut Vec<u32>,
     run: &[(f32, f32, f32)],
     cx: f32,
@@ -432,8 +549,82 @@ fn append_skirt(
         let nrm = (t1 - t0).cross(d1 - t0).normalize_or_zero();
         let nrm = [nrm.x, nrm.y, nrm.z];
         normals.extend([nrm, nrm, nrm, nrm]);
+        road_w.extend([0.0, 0.0, 0.0, 0.0]);
         indices.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
     }
+}
+
+/// Append one vertical rim wall for a dropped hole cell. `p0`/`p1` are the two
+/// shared-edge endpoints as `(world_x, world_z, surface_y)`; the wall drops from
+/// them to `floor_y`. `into` is the horizontal direction pointing into the hole;
+/// the winding is chosen so the wall faces that way (visible from inside the pit).
+#[allow(clippy::too_many_arguments)]
+fn append_wall(
+    positions: &mut Vec<[f32; 3]>,
+    uvs: &mut Vec<[f32; 2]>,
+    normals: &mut Vec<[f32; 3]>,
+    road_w: &mut Vec<f32>,
+    indices: &mut Vec<u32>,
+    p0: (f32, f32, f32),
+    p1: (f32, f32, f32),
+    floor_y: f32,
+    cx: f32,
+    cz: f32,
+    into: Vec2,
+) {
+    let base = positions.len() as u32;
+    let t0 = Vec3::new(p0.0 - cx, p0.2, p0.1 - cz);
+    let t1 = Vec3::new(p1.0 - cx, p1.2, p1.1 - cz);
+    let b1 = Vec3::new(p1.0 - cx, floor_y, p1.1 - cz);
+    let b0 = Vec3::new(p0.0 - cx, floor_y, p0.1 - cz);
+    positions.push(t0.into());
+    positions.push(t1.into());
+    positions.push(b1.into());
+    positions.push(b0.into());
+    uvs.push([p0.0 / TERRAIN_UV_TILE, p0.1 / TERRAIN_UV_TILE]);
+    uvs.push([p1.0 / TERRAIN_UV_TILE, p1.1 / TERRAIN_UV_TILE]);
+    uvs.push([p1.0 / TERRAIN_UV_TILE, p1.1 / TERRAIN_UV_TILE]);
+    uvs.push([p0.0 / TERRAIN_UV_TILE, p0.1 / TERRAIN_UV_TILE]);
+
+    let mut nrm = (t1 - t0).cross(b1 - t0).normalize_or_zero();
+    let horiz = Vec3::new(into.x, 0.0, into.y);
+    // Order the quad so its front face points into the hole.
+    let (i0, i1, i2, i3) = if nrm.dot(horiz) >= 0.0 {
+        (base, base + 1, base + 2, base + 3)
+    } else {
+        nrm = -nrm;
+        (base + 3, base + 2, base + 1, base)
+    };
+    let nn = [nrm.x, nrm.y, nrm.z];
+    normals.extend([nn, nn, nn, nn]);
+    road_w.extend([0.0, 0.0, 0.0, 0.0]);
+    indices.extend([i0, i1, i2, i0, i2, i3]);
+}
+
+/// Append a flat floor quad sealing a dropped `cap="floor"` cell at `floor_y`.
+/// `corners` are the cell's four world-XZ corners in `(a=min, b=+x, c=+z, d=max)`
+/// order; the winding matches the surface (CCW from +Y).
+#[allow(clippy::too_many_arguments)]
+fn append_floor(
+    positions: &mut Vec<[f32; 3]>,
+    uvs: &mut Vec<[f32; 2]>,
+    normals: &mut Vec<[f32; 3]>,
+    road_w: &mut Vec<f32>,
+    indices: &mut Vec<u32>,
+    corners: [(f32, f32); 4],
+    floor_y: f32,
+    cx: f32,
+    cz: f32,
+) {
+    let base = positions.len() as u32;
+    for (wx, wz) in corners {
+        positions.push([wx - cx, floor_y, wz - cz]);
+        uvs.push([wx / TERRAIN_UV_TILE, wz / TERRAIN_UV_TILE]);
+        normals.push([0.0, 1.0, 0.0]);
+        road_w.push(0.0);
+    }
+    // corners = [a(min), b(+x), c(+z), d(max)]; CCW from +Y: a,c,d and a,d,b.
+    indices.extend([base, base + 2, base + 3, base, base + 3, base + 1]);
 }
 
 /// A single flat water quad spanning the whole patch at the sea-level height.
@@ -549,7 +740,7 @@ mod tests {
         let cx = 0.5 * (world_x(i0) + world_x(i0 + spc));
         let cz = 0.5 * (world_z(j0) + world_z(j0 + spc));
         build_chunk_lod_mesh(
-            f, i0, j0, spc, 1, amp, dx, dz, &world_x, &world_z, cx, cz, 0.0, 0.0, false,
+            f, &[], i0, j0, spc, 1, amp, dx, dz, &world_x, &world_z, cx, cz, 0.0, 0.0, false,
         )
     }
 
@@ -639,7 +830,7 @@ mod tests {
         let f = field::build(&c);
         let mut graph = SceneGraph::new();
         let parent = graph.add_root("terrain", "terrain", Transform::IDENTITY);
-        emit_chunks(&make_ast_node(), &c, &f, parent, &mut graph);
+        emit_chunks(&make_ast_node(), &c, &f, &[], parent, &mut graph);
 
         let water_nodes: Vec<_> = graph
             .nodes
@@ -667,7 +858,7 @@ mod tests {
         let f = field::build(&c);
         let mut graph = SceneGraph::new();
         let parent = graph.add_root("terrain", "terrain", Transform::IDENTITY);
-        emit_chunks(&make_ast_node(), &c, &f, parent, &mut graph);
+        emit_chunks(&make_ast_node(), &c, &f, &[], parent, &mut graph);
 
         let water_count = graph
             .nodes

@@ -21,6 +21,7 @@ pub(super) const WATER_MAT: &str = "cave_water";
 /// yellow blob. Unknown kinds fall back to the original amber.
 pub(super) fn poi_debug_color(kind: &str) -> [f32; 3] {
     match kind {
+        "entrance" => [0.2, 1.0, 0.4],         // green — cave mouth / door spot
         "dead_end_chamber" => [1.0, 0.1, 0.7], // magenta — treasure / ambush room
         "column_base" => [0.2, 0.4, 1.0],      // deep blue — foot of a stone column
         "ladder_anchor" => [0.0, 0.9, 1.0],    // cyan — ladder / rope climb point

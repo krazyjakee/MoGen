@@ -8,8 +8,10 @@
 mod building_rules;
 mod cave_rules;
 mod collect;
+mod dungeon_rules;
 mod rules;
 mod schema;
+mod terrain_rules;
 
 #[cfg(test)]
 mod tests;

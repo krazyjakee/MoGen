@@ -296,6 +296,42 @@ cave "poi_cave" (
 }
 
 #[test]
+fn cave_emits_entrance_pois() {
+    // Each punched mouth (default entrances=1) gets a floor `entrance` POI,
+    // oriented to face out of the wall, with no geometry/collider of its own.
+    let src = r#"
+cave "mouthy" (
+  seed=3,
+  size=[28, 14, 28],
+  chambers=8,
+  levels=2,
+  resolution=48,
+  entrances=2,
+)
+"#;
+    let g = lower_src(src);
+    let entrances: Vec<_> = g
+        .nodes
+        .iter()
+        .filter(|n| n.role.as_deref() == Some("entrance"))
+        .collect();
+    assert_eq!(entrances.len(), 2, "one entrance POI per punched mouth");
+    for e in &entrances {
+        assert!(e.mesh.is_none(), "entrance POI carries no geometry");
+        assert!(e.collider.is_none(), "entrance POI carries no collider");
+        assert!(e.tags.iter().any(|t| t == "poi"), "entrance tagged for the importer");
+    }
+    // Mouths cut to a side face are oriented (non-identity yaw) so a placed
+    // door faces outward.
+    assert!(
+        entrances
+            .iter()
+            .any(|n| n.transform.rotation.angle_between(glam::Quat::IDENTITY) > 1e-3),
+        "at least one entrance should be rotated to face its wall"
+    );
+}
+
+#[test]
 fn cave_debug_show_poi_visualizes_markers() {
     let base = r#"
 cave "poi_cave" (
