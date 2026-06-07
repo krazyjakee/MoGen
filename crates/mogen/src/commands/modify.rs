@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
+use crate::refine_render::render_dsl_to_png;
 use anyhow::{anyhow, bail, Context, Result};
 use mogen_llm::{
     apply_style_to_prompt, compose_coder_prompt, embed_seed_header, format_imports_preserve_block,
@@ -9,7 +10,6 @@ use mogen_llm::{
     summarize_imports, visual_refine, GenerateConfig, ImageInput, Provider, RepairConfig, Style,
     ThinkingLevel, Usage, EDIT_BLOCK_INSTRUCTIONS,
 };
-use crate::refine_render::render_dsl_to_png;
 
 use crate::commands::build::build;
 use crate::common::{
@@ -109,10 +109,8 @@ pub(crate) fn modify(args: ModifyArgs) -> Result<()> {
     // `use "X"` will be in its local frame so composition prompts ("position
     // the items on the scene") don't end up with overlapping or floating
     // placements.
-    let imports_block = format_imports_preserve_block(&summarize_imports(
-        &existing,
-        args.input.parent(),
-    ));
+    let imports_block =
+        format_imports_preserve_block(&summarize_imports(&existing, args.input.parent()));
     let imports_block = match imports_block {
         Some(s) => format!("{s}\n"),
         None => String::new(),
@@ -141,9 +139,7 @@ pub(crate) fn modify(args: ModifyArgs) -> Result<()> {
         let plan_outcome = match generate_plan(&client, &planner_cfg, &args.prompt) {
             Ok(o) => o,
             Err(e) => {
-                pb.abandon_with_message(format!(
-                    "modify: {provider_label} planner error — {e}"
-                ));
+                pb.abandon_with_message(format!("modify: {provider_label} planner error — {e}"));
                 return Err(anyhow!("{}: planner: {e}", provider_label.to_lowercase()));
             }
         };
@@ -166,7 +162,8 @@ pub(crate) fn modify(args: ModifyArgs) -> Result<()> {
     // `--rewrite` opts back into the legacy full-file path.
     let edit_mode = !args.rewrite;
     let trimmed_existing = existing.trim_end();
-    let shared_constraints = "Make the smallest edit that satisfies the request. Do not rename, reorder, \
+    let shared_constraints =
+        "Make the smallest edit that satisfies the request. Do not rename, reorder, \
 reformat, or restyle parts the modification does not touch — preserve their \
 names, materials, transforms, connectors, attaches, joints, clips, and \
 tracks verbatim. Do not \"improve\" unrelated geometry.\n\n\
@@ -229,7 +226,13 @@ Existing file:\n\n{existing}",
         scene_path: Some(args.input.display().to_string()),
         session_id: None,
     };
-    attach_system_instruction(&mut cfg, &client, args.cached_content, args.no_cache, "modify");
+    attach_system_instruction(
+        &mut cfg,
+        &client,
+        args.cached_content,
+        args.no_cache,
+        "modify",
+    );
 
     let total_attempts = args.max_repair_iters + 1;
     let mut pb = Spinner::new(
@@ -291,10 +294,7 @@ Existing file:\n\n{existing}",
         );
         for iter in 0..args.auto_refine {
             let label = format!("refine {}/{}", iter + 1, args.auto_refine);
-            let mut pb = Spinner::new(
-                &format!("modify: rendering for {label}"),
-                LLM_FLAVORS,
-            );
+            let mut pb = Spinner::new(&format!("modify: rendering for {label}"), LLM_FLAVORS);
 
             let png = match render_dsl_to_png(&outcome.dsl, Some(&resolved_dsl_out)) {
                 Ok(bytes) => bytes,
@@ -328,14 +328,16 @@ Existing file:\n\n{existing}",
                 data: png,
             };
 
-            // Z.ai vision auto-swap. The Modify pass on Z.ai runs against
-            // a text model (`glm-5.1` by default); the Reviewer needs to
-            // read the rendered PNG, so it has to route through
-            // `glm-5v-turbo` instead. Mirrors the Studio-side override
-            // in `app/util/llm.rs::run_llm_refine`.
+            // Provider-specific vision auto-swaps. Some providers expose
+            // separate text and image-understanding model ids; route the
+            // Reviewer through the documented vision model when it needs to
+            // read the rendered PNG. Mirrors the Studio-side override in
+            // `app/util/llm.rs::run_llm`.
             let mut refine_cfg = cfg.clone();
             if provider == Provider::Zai {
                 refine_cfg.model = mogen_llm::ZAI_DEFAULT_VISION_MODEL.to_string();
+            } else if provider == Provider::Xiaomi {
+                refine_cfg.model = mogen_llm::XIAOMI_DEFAULT_VISION_MODEL.to_string();
             }
             let refined = match visual_refine(
                 &client,
@@ -425,8 +427,7 @@ Existing file:\n\n{existing}",
     let dsl_path = resolved_dsl_out;
     let out_path = resolved_out;
 
-    fs::write(&dsl_path, &wrapped)
-        .with_context(|| format!("writing {}", dsl_path.display()))?;
+    fs::write(&dsl_path, &wrapped).with_context(|| format!("writing {}", dsl_path.display()))?;
 
     build(dsl_path, out_path, None)
 }

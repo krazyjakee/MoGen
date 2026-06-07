@@ -277,6 +277,18 @@ pub struct Settings {
     /// Z.ai fast-model override. Empty → [`mogen_llm::zai_chat::DEFAULT_FAST_MODEL`].
     #[serde(default)]
     pub zai_chat_fast_model: String,
+    /// Xiaomi MiMo API key. Empty → fall back to the `XIAOMI_API_KEY` env var.
+    #[serde(default)]
+    pub xiaomi_api_key: String,
+
+    /// Xiaomi MiMo thinking-model override. Empty → [`mogen_llm::xiaomi::DEFAULT_MODEL`]
+    /// (`mimo-v2.5-pro`).
+    #[serde(default)]
+    pub xiaomi_model: String,
+
+    /// Xiaomi MiMo fast-model override. Empty → [`mogen_llm::xiaomi::DEFAULT_FAST_MODEL`].
+    #[serde(default)]
+    pub xiaomi_fast_model: String,
 
     /// Persisted 3D viewport background colour, as `[r, g, b]` 0..=255. `None`
     /// falls back to [`DEFAULT_VIEWER_BG_RGB`] — a neutral charcoal that
@@ -550,8 +562,7 @@ impl Settings {
     /// field, then saves settings.json so any in-memory mutations
     /// alongside the sign-out also land.
     pub fn clear_moghub_session(&mut self) -> Result<(), String> {
-        moghub_session::clear_session()
-            .map_err(|e| format!("remove moghub session: {e}"))?;
+        moghub_session::clear_session().map_err(|e| format!("remove moghub session: {e}"))?;
         self.moghub_session.clear();
         self.save()
     }

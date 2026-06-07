@@ -2,7 +2,7 @@
 //! UI can swap in a class-specific affordance ("Open Settings", "Retry")
 //! instead of dumping the error's `Display` output verbatim.
 //!
-//! The mapping is provider-agnostic — all four backends funnel into the same
+//! The mapping is provider-agnostic — every backend funnels into the same
 //! [`ProviderError`] variants in `mogen-llm`, so the studio doesn't need to
 //! match on per-provider error enums.
 
@@ -35,7 +35,8 @@ pub(super) fn classify(err: &ProviderError) -> LlmErrorInfo {
             headline: "The connection timed out".into(),
             detail: format!(
                 "The provider did not respond in time. This usually means a slow or flaky \
-                 link, a captive portal, or a stalled server. Try again. ({s})"
+                 link, a captive portal, or a stalled server. Try again; if it keeps \
+                 happening, lower the Thinking setting or switch to a faster model. ({s})"
             ),
             class: LlmErrorClass::Network,
             retryable: true,
@@ -89,11 +90,10 @@ pub(super) fn classify(err: &ProviderError) -> LlmErrorInfo {
             if is_recitation {
                 LlmErrorInfo {
                     headline: "Model declined to produce content".into(),
-                    detail:
-                        "The provider's recitation filter rejected every attempt. Try a \
+                    detail: "The provider's recitation filter rejected every attempt. Try a \
                          different style description or rename/reword the material so the \
                          prompt does not resemble training data."
-                            .into(),
+                        .into(),
                     class: LlmErrorClass::ContentBlocked,
                     retryable: true,
                     action: None,
@@ -149,10 +149,9 @@ fn classify_api(status: u16, message: &str) -> LlmErrorInfo {
         401 | 403 if msg_lower.contains("api key") || msg_lower.contains("authentication") => {
             LlmErrorInfo {
                 headline: "API key rejected".into(),
-                detail:
-                    "The provider refused the request as unauthenticated. Open Preferences… \
+                detail: "The provider refused the request as unauthenticated. Open Preferences… \
                      and paste a valid key, or verify the matching environment variable is set."
-                        .into(),
+                    .into(),
                 class: LlmErrorClass::InvalidKey,
                 retryable: false,
                 action: None,
@@ -229,7 +228,10 @@ mod tests {
 
     #[test]
     fn classify_429_is_retryable() {
-        let err = ProviderError::Api { status: 429, message: "rate".into() };
+        let err = ProviderError::Api {
+            status: 429,
+            message: "rate".into(),
+        };
         let info = classify(&err);
         assert!(matches!(info.class, LlmErrorClass::RateLimited));
         assert!(info.retryable);
@@ -237,7 +239,10 @@ mod tests {
 
     #[test]
     fn classify_500_is_retryable() {
-        let err = ProviderError::Api { status: 503, message: "down".into() };
+        let err = ProviderError::Api {
+            status: 503,
+            message: "down".into(),
+        };
         let info = classify(&err);
         assert!(matches!(info.class, LlmErrorClass::ServerError));
         assert!(info.retryable);
@@ -245,7 +250,9 @@ mod tests {
 
     #[test]
     fn classify_missing_key_not_retryable() {
-        let info = classify(&ProviderError::MissingApiKey { var: "GEMINI_API_KEY" });
+        let info = classify(&ProviderError::MissingApiKey {
+            var: "GEMINI_API_KEY",
+        });
         assert!(!info.retryable);
         assert_eq!(info.class, LlmErrorClass::MissingKey);
         assert!(info.headline.contains("GEMINI_API_KEY"));
@@ -271,11 +278,12 @@ mod tests {
     }
 
     #[test]
-    fn classify_timeout_uses_specific_headline() {
+    fn classify_timeout_uses_specific_headline_and_hint() {
         let info = classify(&ProviderError::Timeout("operation timed out".into()));
         assert_eq!(info.class, LlmErrorClass::Network);
         assert!(info.retryable);
         assert!(info.headline.to_ascii_lowercase().contains("timed out"));
+        assert!(info.detail.contains("lower the Thinking setting"));
     }
 
     #[test]

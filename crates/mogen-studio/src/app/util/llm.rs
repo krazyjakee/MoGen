@@ -6,9 +6,9 @@ use mogen_llm::{
     apply_style_to_prompt, cacheable_block, default_cache_path, embed_seed_header,
     format_imports_preserve_block, generate_edits_with_repair, generate_with_repair, inline_block,
     parse_prompt_header, parse_seed_header, parse_style_header, repair_message,
-    resolve_or_create_cache, stamp_style_header, summarize_imports, validate_text,
-    GenerateConfig, GoogleCredential, ImageInput, LlmClient, OAuthBundle, Provider, RepairConfig,
-    StdlibIndex, Style, ThinkingLevel, Usage, DEFAULT_TTL_SECONDS, EDIT_BLOCK_INSTRUCTIONS,
+    resolve_or_create_cache, stamp_style_header, summarize_imports, validate_text, GenerateConfig,
+    GoogleCredential, ImageInput, LlmClient, OAuthBundle, Provider, RepairConfig, StdlibIndex,
+    Style, ThinkingLevel, Usage, DEFAULT_TTL_SECONDS, EDIT_BLOCK_INSTRUCTIONS,
 };
 
 use crate::app::error_class::classify;
@@ -83,8 +83,7 @@ fn attach_system_instruction(
                 DEFAULT_TTL_SECONDS,
             ) {
                 Ok(name) => {
-                    let idx =
-                        StdlibIndex::from_registry(mogen_dsl::stdlib_registry());
+                    let idx = StdlibIndex::from_registry(mogen_dsl::stdlib_registry());
                     cfg.cached_content = Some(name);
                     cfg.system_instruction = Some(inline_block(&idx));
                     return;
@@ -98,6 +97,17 @@ fn attach_system_instruction(
         }
     }
     cfg.system_instruction = Some((**sys_instr).clone());
+}
+
+fn apply_provider_vision_model_override(cfg: &mut GenerateConfig, provider: Provider) {
+    if cfg.user_images.is_empty() {
+        return;
+    }
+    if provider == Provider::Zai {
+        cfg.model = mogen_llm::ZAI_DEFAULT_VISION_MODEL.to_string();
+    } else if provider == Provider::Xiaomi {
+        cfg.model = mogen_llm::XIAOMI_DEFAULT_VISION_MODEL.to_string();
+    }
 }
 
 /// Resolved credential for one LLM call. Carries either an API key (any
@@ -137,9 +147,9 @@ impl Credential {
     pub(in crate::app) fn api_key_or_empty(&self) -> String {
         match self {
             Credential::ApiKey(k) => k.clone(),
-            Credential::Zai(_)
-            | Credential::GeminiOAuth(_)
-            | Credential::AntigravityOAuth(_) => String::new(),
+            Credential::Zai(_) | Credential::GeminiOAuth(_) | Credential::AntigravityOAuth(_) => {
+                String::new()
+            }
         }
     }
 }
@@ -187,18 +197,22 @@ pub(in crate::app) fn build_provider_client(
         (Provider::Gemini, Credential::AntigravityOAuth(bundle)) => {
             LlmClient::gemini_from_credential(GoogleCredential::AntigravityOAuth(bundle))
         }
-        (Provider::ClaudeCode, cred) => {
-            LlmClient::with_base_url(provider, cred.api_key_or_empty(), &endpoints.claude_code_path)
-        }
+        (Provider::ClaudeCode, cred) => LlmClient::with_base_url(
+            provider,
+            cred.api_key_or_empty(),
+            &endpoints.claude_code_path,
+        ),
         (Provider::Zai, cred) => {
             LlmClient::with_base_url(provider, cred.api_key_or_empty(), &endpoints.zai_base_url)
         }
         (Provider::Ollama, cred) if !endpoints.ollama_base_url.trim().is_empty() => {
-            LlmClient::with_base_url(provider, cred.api_key_or_empty(), &endpoints.ollama_base_url)
+            LlmClient::with_base_url(
+                provider,
+                cred.api_key_or_empty(),
+                &endpoints.ollama_base_url,
+            )
         }
-        (Provider::OpenAiCompat, cred)
-            if !endpoints.openai_compat_base_url.trim().is_empty() =>
-        {
+        (Provider::OpenAiCompat, cred) if !endpoints.openai_compat_base_url.trim().is_empty() => {
             LlmClient::with_base_url(
                 provider,
                 cred.api_key_or_empty(),
@@ -479,6 +493,12 @@ pub(in crate::app) fn run_llm(
         // keeps the visual reference while it fixes validator errors.
         cfg.user_images.push(img);
     }
+    // Provider-specific vision auto-swaps. Some providers expose separate
+    // text and image-understanding model ids, while the Studio's dropdown
+    // stores the text default. When an image is attached, route every pass
+    // (planner and coder) through the documented vision model so the user
+    // doesn't have to remember a hidden model switch.
+    apply_provider_vision_model_override(&mut cfg, provider);
 
     // Architect (planner) pass. Only meaningful when (a) the user opted in,
     // (b) the call is Generate, and (c) there's a text prompt to plan
@@ -487,8 +507,7 @@ pub(in crate::app) fn run_llm(
     // Mirrors `crates/mogen/src/commands/generate.rs:109-130` (the CLI's
     // `--plan` two-phase shape).
     let plan_prompt_text = prompt.trim().to_string();
-    let want_plan =
-        kind == LlmKind::Generate && run_cfg.plan && !plan_prompt_text.is_empty();
+    let want_plan = kind == LlmKind::Generate && run_cfg.plan && !plan_prompt_text.is_empty();
     let mut prefix_usage = Usage::default();
     let mut prefix_calls: u32 = 0;
     if want_plan {
@@ -502,10 +521,7 @@ pub(in crate::app) fn run_llm(
             Ok(po) => {
                 prefix_usage = po.usage.clone();
                 prefix_calls = 1;
-                cfg.user_prompt = mogen_llm::compose_coder_prompt(
-                    &plan_prompt_text,
-                    &po.plan,
-                );
+                cfg.user_prompt = mogen_llm::compose_coder_prompt(&plan_prompt_text, &po.plan);
             }
             Err(e) => {
                 let info = classify(&e);
@@ -514,7 +530,7 @@ pub(in crate::app) fn run_llm(
                     diagnostics: Vec::new(),
                     usage: prefix_usage,
                     calls: prefix_calls,
-                    model: run_cfg.model,
+                    model: cfg.model.clone(),
                     image_calls: 0,
                     retry_prompt: Some(prompt),
                     error: Some(info),
@@ -524,16 +540,7 @@ pub(in crate::app) fn run_llm(
         }
     }
 
-    // Z.ai vision auto-swap. The Studio's per-provider model dropdown
-    // pins a *text* model id (`glm-5.1`); when the user attaches an
-    // image we have to route through `glm-5v-turbo` instead — the text
-    // models can't see the image and the call would 400 on a
-    // mismatched-input shape. The override is intentional and silent;
-    // a future user staring at "why isn't my custom model used?" should
-    // find this comment.
-    if provider == Provider::Zai && !cfg.user_images.is_empty() {
-        cfg.model = mogen_llm::ZAI_DEFAULT_VISION_MODEL.to_string();
-    }
+    let effective_model = cfg.model.clone();
 
     send_progress(LlmProgress::Status(format!(
         "calling {} ({}) — thinking={:?}",
@@ -587,21 +594,16 @@ pub(in crate::app) fn run_llm(
                 "done — {} call(s), {} tokens",
                 total_calls, total_usage.total_tokens
             )));
-            let wrapped = embed_seed_header(
-                &outcome.dsl,
-                seed,
-                &header_prompt,
-                Some(run_cfg.thinking),
-            );
             let wrapped =
-                mogen_dsl::stamp_mogen_version(&wrapped, env!("CARGO_PKG_VERSION"));
+                embed_seed_header(&outcome.dsl, seed, &header_prompt, Some(run_cfg.thinking));
+            let wrapped = mogen_dsl::stamp_mogen_version(&wrapped, env!("CARGO_PKG_VERSION"));
             let wrapped = stamp_style_header(&wrapped, effective_style);
             LlmOutcome {
                 dsl: wrapped,
                 diagnostics: outcome.diagnostics,
                 usage: total_usage,
                 calls: total_calls,
-                model: run_cfg.model,
+                model: effective_model,
                 image_calls: 0,
                 retry_prompt: Some(prompt),
                 error: None,
@@ -615,7 +617,7 @@ pub(in crate::app) fn run_llm(
                 diagnostics: Vec::new(),
                 usage: prefix_usage,
                 calls: prefix_calls,
-                model: run_cfg.model,
+                model: effective_model,
                 image_calls: 0,
                 retry_prompt: Some(prompt),
                 error: Some(info),
@@ -631,4 +633,33 @@ pub(in crate::app) fn pick_default_seed() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos() as u64)
         .unwrap_or(0x5EED)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn xiaomi_image_calls_use_vision_model_before_planning() {
+        let mut cfg = GenerateConfig::new("describe");
+        cfg.model = "mimo-v2.5-pro".into();
+        cfg.user_images.push(ImageInput {
+            mime_type: "image/png".into(),
+            data: vec![1],
+        });
+
+        apply_provider_vision_model_override(&mut cfg, Provider::Xiaomi);
+
+        assert_eq!(cfg.model, mogen_llm::XIAOMI_DEFAULT_VISION_MODEL);
+    }
+
+    #[test]
+    fn text_only_calls_keep_configured_model() {
+        let mut cfg = GenerateConfig::new("describe");
+        cfg.model = "mimo-v2.5-pro".into();
+
+        apply_provider_vision_model_override(&mut cfg, Provider::Xiaomi);
+
+        assert_eq!(cfg.model, "mimo-v2.5-pro");
+    }
 }

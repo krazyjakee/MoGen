@@ -245,9 +245,10 @@ path. It's safe to edit by hand — Studio reloads on next launch.
 
 | key | meaning |
 |---|---|
-| `gemini_api_key` | API key used by every LLM action. |
-| `gemini_model` | Heavy model id. Empty → `gemini-pro-latest`. |
-| `gemini_fast_model` | Fast model id used for low-stakes rewrites (Prompt Enhancer). Empty → `gemini-flash-latest`. |
+| `gemini_api_key` | Gemini API key used by Gemini API-key LLM actions and Gemini texture generation. |
+| `openai_api_key` / `anthropic_api_key` / `fireworks_api_key` / `zai_api_key` / `xiaomi_api_key` | API keys for the matching text provider. Empty fields fall back to that provider's env var. |
+| `gemini_model` / `openai_model` / `anthropic_model` / `fireworks_model` / `zai_chat_model` / `xiaomi_model` | Heavy model id for the matching provider. Empty → provider default. |
+| `gemini_fast_model` / `openai_fast_model` / `anthropic_fast_model` / `fireworks_fast_model` / `zai_chat_fast_model` / `xiaomi_fast_model` | Fast model id used for low-stakes rewrites (Prompt Enhancer). Empty → provider fast default. |
 | `gemini_temperature` | Sampling temperature. `null` → library default (`0.3`). |
 | `thinking_level` | `low` / `medium` / `high` / `xhigh`. Empty → library default (`high`). |
 | `max_repair_iters` | LLM repair budget. `null` → library default (`2`). |

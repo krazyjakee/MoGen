@@ -26,6 +26,9 @@ pub enum ProviderSlot {
     /// model is `glm-5.1`. The same API key drives the `glm-image` texture
     /// path — see [`super::ImageProvider::ZAI`].
     Zai,
+    /// Xiaomi MiMo Open Platform. OpenAI-compatible Chat Completions; default
+    /// model is `mimo-v2.5-pro`, with `mimo-v2.5` used for image inputs.
+    Xiaomi,
     /// Generic OpenAI-compatible local server (llama.cpp, LM Studio, any
     /// `/v1/chat/completions` host). The user supplies an arbitrary base URL
     /// in Preferences; routes through [`Provider::OpenAiCompat`]. Keyless by
@@ -46,6 +49,7 @@ impl ProviderSlot {
             ProviderSlot::Fireworks => "fireworks",
             ProviderSlot::Zai => "zai",
             ProviderSlot::OpenAiCompat => "openai-compat",
+            ProviderSlot::Xiaomi => "xiaomi",
         }
     }
 
@@ -60,6 +64,7 @@ impl ProviderSlot {
             ProviderSlot::Fireworks => "Fireworks AI Firepass",
             ProviderSlot::Zai => "Z.ai (GLM)",
             ProviderSlot::OpenAiCompat => "OpenAI-compatible (local)",
+            ProviderSlot::Xiaomi => "Xiaomi MiMo",
         }
     }
 
@@ -77,6 +82,7 @@ impl ProviderSlot {
             "claude-code" | "claude_code" | "claudecode" | "cc" => Some(Self::ClaudeCode),
             "fireworks" | "fireworks-ai" | "firepass" | "kimi" => Some(Self::Fireworks),
             "zai" | "z-ai" | "z.ai" | "zhipu" | "glm" => Some(Self::Zai),
+            "xiaomi" | "mimo" | "xiaomimimo" | "xiaomi-mimo" | "xiaomi_mimo" => Some(Self::Xiaomi),
             "openai-compat" | "openai-compatible" | "openai_compat" | "local-openai"
             | "lmstudio" | "lm-studio" | "llamacpp" | "llama-cpp" | "llama.cpp" => {
                 Some(Self::OpenAiCompat)
@@ -98,6 +104,7 @@ impl ProviderSlot {
             ProviderSlot::Fireworks => Provider::Fireworks,
             ProviderSlot::Zai => Provider::Zai,
             ProviderSlot::OpenAiCompat => Provider::OpenAiCompat,
+            ProviderSlot::Xiaomi => Provider::Xiaomi,
         }
     }
 
@@ -116,9 +123,9 @@ impl Default for ProviderSlot {
 
 /// Order in which provider slots appear in the Options dropdown. Both
 /// Gemini auth modes are listed up front because Gemini is the historical
-/// default and the only image-capable backend; the OAuth slot is the path
-/// users with paid Antigravity plans will reach for.
-pub const PROVIDER_SLOTS: [ProviderSlot; 9] = [
+/// default; the OAuth slot is the path users with paid Antigravity plans
+/// will reach for.
+pub const PROVIDER_SLOTS: [ProviderSlot; 10] = [
     ProviderSlot::GeminiApiKey,
     ProviderSlot::GeminiOAuth,
     ProviderSlot::OpenAI,
@@ -128,6 +135,7 @@ pub const PROVIDER_SLOTS: [ProviderSlot; 9] = [
     ProviderSlot::ClaudeCode,
     ProviderSlot::Fireworks,
     ProviderSlot::Zai,
+    ProviderSlot::Xiaomi,
 ];
 
 /// Default thinking model when the active slot is `GeminiOAuth` and no

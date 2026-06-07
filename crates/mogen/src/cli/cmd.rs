@@ -104,13 +104,13 @@ pub(crate) enum Cmd {
         seed: Option<u64>,
         /// LLM provider. For Gemini, credentials are resolved via `--auth`
         /// (default `auto`) and `mogen auth login` (gemini-cli or
-        /// Antigravity OAuth) or `GEMINI_API_KEY`. Other providers use the
-        /// matching `*_API_KEY` env var (`OPENAI_API_KEY` / `ANTHROPIC_API_KEY`
-        /// / `OLLAMA_API_KEY`); Ollama is keyless by default.
+        /// Antigravity OAuth) or `GEMINI_API_KEY`. Other cloud providers use
+        /// their matching `*_API_KEY` env var (`OPENAI_API_KEY`,
+        /// `ANTHROPIC_API_KEY`, `XIAOMI_API_KEY`, ...); Ollama is keyless by default.
         #[arg(long, value_enum, default_value_t = ProviderArg::Auto)]
         provider: ProviderArg,
         /// Model name. When omitted, falls back to the provider's default
-        /// (Gemini Pro / GPT-4o / Claude Sonnet / llama3.1).
+        /// (Gemini Pro / GPT / Claude Sonnet / MiMo Pro / llama3.1).
         #[arg(long)]
         model: Option<String>,
         /// Print the generated DSL but skip compilation and GLB output.
@@ -163,7 +163,7 @@ pub(crate) enum Cmd {
         /// `N` times. Each iteration runs through the full validate +
         /// repair loop, so the final file is still guaranteed to compile.
         /// `0` (the default) skips refinement entirely. Requires a
-        /// vision-capable provider (currently Gemini only).
+        /// vision-capable provider.
         #[arg(long, default_value_t = 0, value_parser = clap::value_parser!(u32).range(0..=10))]
         auto_refine: u32,
     },

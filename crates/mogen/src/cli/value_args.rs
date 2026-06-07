@@ -103,6 +103,9 @@ pub(crate) enum ProviderArg {
     /// Z.ai (Zhipu) GLM family via the OpenAI-compatible chat endpoint.
     /// Default model is `glm-5.1`; set `ZAI_API_KEY`.
     Zai,
+    /// Xiaomi MiMo Open Platform via its OpenAI-compatible chat endpoint.
+    /// Default model is `mimo-v2.5-pro`; set `XIAOMI_API_KEY`.
+    Xiaomi,
 }
 
 impl From<ProviderArg> for Provider {
@@ -120,6 +123,7 @@ impl From<ProviderArg> for Provider {
             ProviderArg::ClaudeCode => Provider::ClaudeCode,
             ProviderArg::Fireworks => Provider::Fireworks,
             ProviderArg::Zai => Provider::Zai,
+            ProviderArg::Xiaomi => Provider::Xiaomi,
         }
     }
 }
@@ -139,7 +143,8 @@ impl From<ProviderArg> for crate::common::GeminiAuthMode {
             | ProviderArg::Ollama
             | ProviderArg::ClaudeCode
             | ProviderArg::Fireworks
-            | ProviderArg::Zai => GeminiAuthMode::Auto,
+            | ProviderArg::Zai
+            | ProviderArg::Xiaomi => GeminiAuthMode::Auto,
         }
     }
 }

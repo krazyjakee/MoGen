@@ -17,6 +17,7 @@ use crate::google_oauth::OAuthBundle;
 use crate::ollama::{OllamaClient, OllamaError};
 use crate::openai::{OpenAIClient, OpenAIError};
 use crate::types::{GenerateConfig, GenerateResponse};
+use crate::xiaomi::{XiaomiClient, XiaomiError};
 use crate::zai_chat::{ZaiChatClient, ZaiChatError};
 
 /// How the user's Google credential is supplied. Surfaced in the CLI's
@@ -59,6 +60,10 @@ pub enum Provider {
     /// Z.ai (Zhipu AI) GLM family. OpenAI-compatible Chat Completions at
     /// `api.z.ai/api/paas/v4/chat/completions`. Default model is `glm-5.1`.
     Zai,
+    /// Xiaomi MiMo Open Platform. OpenAI-compatible Chat Completions at
+    /// `api.xiaomimimo.com/v1/chat/completions`. Default model is
+    /// `mimo-v2.5-pro`.
+    Xiaomi,
     /// Generic OpenAI-compatible Chat Completions endpoint, aimed at local
     /// runtimes (llama.cpp's `server`, LM Studio, etc.) that expose
     /// `POST {base_url}/chat/completions`. Reuses the [`OpenAIClient`]; the
@@ -88,6 +93,7 @@ impl Provider {
             Provider::Fireworks => "fireworks",
             Provider::Zai => "zai",
             Provider::OpenAiCompat => "openai-compat",
+            Provider::Xiaomi => "xiaomi",
         }
     }
 
@@ -102,6 +108,7 @@ impl Provider {
             Provider::Fireworks => "Fireworks AI Firepass",
             Provider::Zai => "Z.ai (GLM)",
             Provider::OpenAiCompat => "OpenAI-compatible (local)",
+            Provider::Xiaomi => "Xiaomi MiMo",
         }
     }
 
@@ -118,6 +125,7 @@ impl Provider {
             Provider::Fireworks => "Fireworks AI Firepass",
             Provider::Zai => "Z.ai",
             Provider::OpenAiCompat => "OpenAI-compatible",
+            Provider::Xiaomi => "Xiaomi MiMo",
         }
     }
 
@@ -133,6 +141,7 @@ impl Provider {
             "claude-code" | "claude_code" | "claudecode" | "cc" => Some(Self::ClaudeCode),
             "fireworks" | "fireworks-ai" | "firepass" | "kimi" => Some(Self::Fireworks),
             "zai" | "z-ai" | "z.ai" | "zhipu" | "glm" => Some(Self::Zai),
+            "xiaomi" | "mimo" | "xiaomimimo" | "xiaomi-mimo" | "xiaomi_mimo" => Some(Self::Xiaomi),
             "openai-compat" | "openai-compatible" | "openai_compat" | "local-openai"
             | "lmstudio" | "lm-studio" | "llamacpp" | "llama-cpp" | "llama.cpp" => {
                 Some(Self::OpenAiCompat)
@@ -156,6 +165,7 @@ impl Provider {
             Provider::Fireworks => "FIREWORKS_API_KEY",
             Provider::Zai => "ZAI_API_KEY",
             Provider::OpenAiCompat => "OPENAI_COMPAT_API_KEY",
+            Provider::Xiaomi => "XIAOMI_API_KEY",
         }
     }
 
@@ -171,6 +181,7 @@ impl Provider {
             Provider::Fireworks => crate::fireworks::DEFAULT_MODEL,
             Provider::Zai => crate::zai_chat::DEFAULT_MODEL,
             Provider::OpenAiCompat => OPENAI_COMPAT_DEFAULT_MODEL,
+            Provider::Xiaomi => crate::xiaomi::DEFAULT_MODEL,
         }
     }
 
@@ -186,6 +197,7 @@ impl Provider {
             Provider::Fireworks => crate::fireworks::DEFAULT_FAST_MODEL,
             Provider::Zai => crate::zai_chat::DEFAULT_FAST_MODEL,
             Provider::OpenAiCompat => OPENAI_COMPAT_DEFAULT_MODEL,
+            Provider::Xiaomi => crate::xiaomi::DEFAULT_FAST_MODEL,
         }
     }
 
@@ -206,8 +218,9 @@ impl Provider {
     /// back to the model). Today: Gemini, OpenAI (all current `gpt-4o`/
     /// `gpt-4.1`/`gpt-5`/`gpt-5.5` models are multimodal), Z.ai
     /// (`glm-5v-turbo`), Fireworks (Kimi K2.5/K2.6 are native multimodal),
-    /// and Claude Code (`claude --print` resolves filesystem-path image
-    /// references via the model's built-in `Read` tool).
+    /// Xiaomi MiMo (`mimo-v2.5`), and Claude Code (`claude --print`
+    /// resolves filesystem-path image references via the model's built-in
+    /// `Read` tool).
     ///
     /// This is **not** about image *generation* (the textures pipeline) —
     /// that lives behind the `ImageProvider` enum in the Studio settings.
@@ -218,6 +231,7 @@ impl Provider {
                 | Provider::OpenAI
                 | Provider::Zai
                 | Provider::Fireworks
+                | Provider::Xiaomi
                 | Provider::ClaudeCode
         )
     }
@@ -244,7 +258,7 @@ impl fmt::Display for Provider {
 /// Provider-agnostic error type emitted by [`LlmClient::generate`]. Each
 /// per-provider error variant is mapped into one of these on the way out so
 /// callers (the repair loop, the Studio classifier) don't need to match on
-/// four error enums.
+/// each backend's error enum.
 ///
 /// Network failures are split into [`Self::Offline`] / [`Self::Timeout`] /
 /// [`Self::Tls`] / [`Self::Transport`] so the UI can show "you appear to be
@@ -278,7 +292,10 @@ pub enum ProviderError {
     #[error("invalid response: {0}")]
     InvalidResponse(String),
     #[error("provider {provider} does not support {feature}")]
-    Unsupported { provider: Provider, feature: &'static str },
+    Unsupported {
+        provider: Provider,
+        feature: &'static str,
+    },
     /// OAuth subsystem failure (refresh failed, project missing, store
     /// corrupted). The body carries the [`crate::google_oauth::OAuthError`]
     /// message verbatim so the CLI can show the actionable hint.
@@ -289,7 +306,9 @@ pub enum ProviderError {
 impl From<GeminiError> for ProviderError {
     fn from(e: GeminiError) -> Self {
         match e {
-            GeminiError::MissingApiKey => Self::MissingApiKey { var: "GEMINI_API_KEY" },
+            GeminiError::MissingApiKey => Self::MissingApiKey {
+                var: "GEMINI_API_KEY",
+            },
             GeminiError::Transport(err) => classify_reqwest(&err),
             GeminiError::Api { status, message } => Self::Api { status, message },
             GeminiError::EmptyResponse => Self::EmptyResponse,
@@ -311,7 +330,9 @@ impl From<GeminiError> for ProviderError {
 impl From<OpenAIError> for ProviderError {
     fn from(e: OpenAIError) -> Self {
         match e {
-            OpenAIError::MissingApiKey => Self::MissingApiKey { var: "OPENAI_API_KEY" },
+            OpenAIError::MissingApiKey => Self::MissingApiKey {
+                var: "OPENAI_API_KEY",
+            },
             OpenAIError::Transport(err) => classify_reqwest(&err),
             OpenAIError::Api { status, message } => Self::Api { status, message },
             OpenAIError::EmptyResponse => Self::EmptyResponse,
@@ -324,11 +345,15 @@ impl From<OpenAIError> for ProviderError {
 impl From<AnthropicError> for ProviderError {
     fn from(e: AnthropicError) -> Self {
         match e {
-            AnthropicError::MissingApiKey => Self::MissingApiKey { var: "ANTHROPIC_API_KEY" },
+            AnthropicError::MissingApiKey => Self::MissingApiKey {
+                var: "ANTHROPIC_API_KEY",
+            },
             AnthropicError::Transport(err) => classify_reqwest(&err),
             AnthropicError::Api { status, message } => Self::Api { status, message },
             AnthropicError::EmptyResponse => Self::EmptyResponse,
-            AnthropicError::BudgetExceeded { used, budget } => Self::BudgetExceeded { used, budget },
+            AnthropicError::BudgetExceeded { used, budget } => {
+                Self::BudgetExceeded { used, budget }
+            }
             AnthropicError::InvalidResponse(s) => Self::InvalidResponse(s),
         }
     }
@@ -349,11 +374,15 @@ impl From<OllamaError> for ProviderError {
 impl From<FireworksError> for ProviderError {
     fn from(e: FireworksError) -> Self {
         match e {
-            FireworksError::MissingApiKey => Self::MissingApiKey { var: "FIREWORKS_API_KEY" },
+            FireworksError::MissingApiKey => Self::MissingApiKey {
+                var: "FIREWORKS_API_KEY",
+            },
             FireworksError::Transport(err) => classify_reqwest(&err),
             FireworksError::Api { status, message } => Self::Api { status, message },
             FireworksError::EmptyResponse => Self::EmptyResponse,
-            FireworksError::BudgetExceeded { used, budget } => Self::BudgetExceeded { used, budget },
+            FireworksError::BudgetExceeded { used, budget } => {
+                Self::BudgetExceeded { used, budget }
+            }
             FireworksError::InvalidResponse(s) => Self::InvalidResponse(s),
         }
     }
@@ -368,6 +397,21 @@ impl From<ZaiChatError> for ProviderError {
             ZaiChatError::EmptyResponse => Self::EmptyResponse,
             ZaiChatError::BudgetExceeded { used, budget } => Self::BudgetExceeded { used, budget },
             ZaiChatError::InvalidResponse(s) => Self::InvalidResponse(s),
+        }
+    }
+}
+
+impl From<XiaomiError> for ProviderError {
+    fn from(e: XiaomiError) -> Self {
+        match e {
+            XiaomiError::MissingApiKey => Self::MissingApiKey {
+                var: "XIAOMI_API_KEY",
+            },
+            XiaomiError::Transport(err) => classify_reqwest(&err),
+            XiaomiError::Api { status, message } => Self::Api { status, message },
+            XiaomiError::EmptyResponse => Self::EmptyResponse,
+            XiaomiError::BudgetExceeded { used, budget } => Self::BudgetExceeded { used, budget },
+            XiaomiError::InvalidResponse(s) => Self::InvalidResponse(s),
         }
     }
 }
@@ -469,6 +513,7 @@ pub enum LlmClient {
     ClaudeCode(ClaudeCodeClient),
     Fireworks(FireworksClient),
     Zai(ZaiChatClient),
+    Xiaomi(XiaomiClient),
     /// Generic OpenAI-compatible local server. Same wire client as
     /// [`Self::OpenAI`]; kept as a distinct variant so [`Self::provider`]
     /// reports `OpenAiCompat` (separate model/key settings, no cloud
@@ -490,6 +535,7 @@ impl LlmClient {
             Provider::ClaudeCode => LlmClient::ClaudeCode(ClaudeCodeClient::new()),
             Provider::Fireworks => LlmClient::Fireworks(FireworksClient::new(api_key)),
             Provider::Zai => LlmClient::Zai(ZaiChatClient::new(api_key)),
+            Provider::Xiaomi => LlmClient::Xiaomi(XiaomiClient::new(api_key)),
             Provider::OpenAiCompat => LlmClient::OpenAiCompat(OpenAIClient::new(api_key)),
         }
     }
@@ -501,9 +547,7 @@ impl LlmClient {
     pub fn gemini_from_credential(credential: GoogleCredential) -> Self {
         match credential {
             GoogleCredential::ApiKey(key) => LlmClient::Gemini(GeminiClient::new(key)),
-            GoogleCredential::OAuth(bundle) => {
-                LlmClient::Gemini(GeminiClient::from_oauth(bundle))
-            }
+            GoogleCredential::OAuth(bundle) => LlmClient::Gemini(GeminiClient::from_oauth(bundle)),
             GoogleCredential::AntigravityOAuth(bundle) => {
                 LlmClient::Gemini(GeminiClient::from_antigravity_oauth(bundle))
             }
@@ -552,6 +596,7 @@ impl LlmClient {
                 LlmClient::Fireworks(FireworksClient::with_base_url(api_key, base_url))
             }
             Provider::Zai => LlmClient::Zai(ZaiChatClient::with_base_url(api_key, base_url)),
+            Provider::Xiaomi => LlmClient::Xiaomi(XiaomiClient::with_base_url(api_key, base_url)),
             Provider::OpenAiCompat => {
                 LlmClient::OpenAiCompat(OpenAIClient::with_base_url(api_key, base_url))
             }
@@ -568,6 +613,7 @@ impl LlmClient {
             LlmClient::ClaudeCode(_) => Provider::ClaudeCode,
             LlmClient::Fireworks(_) => Provider::Fireworks,
             LlmClient::Zai(_) => Provider::Zai,
+            LlmClient::Xiaomi(_) => Provider::Xiaomi,
             LlmClient::OpenAiCompat(_) => Provider::OpenAiCompat,
         }
     }
@@ -612,6 +658,7 @@ impl LlmClient {
             LlmClient::ClaudeCode(c) => c.generate(cfg).map_err(Into::into),
             LlmClient::Fireworks(c) => c.generate(cfg).map_err(Into::into),
             LlmClient::Zai(c) => c.generate(cfg).map_err(Into::into),
+            LlmClient::Xiaomi(c) => c.generate(cfg).map_err(Into::into),
             LlmClient::OpenAiCompat(c) => c.generate(cfg).map_err(Into::into),
         };
 
@@ -651,9 +698,7 @@ impl LlmClient {
                             &usage,
                             &cfg.spend_context,
                             false,
-                            Some(format!(
-                                "budget exceeded: {used} > {budget}"
-                            )),
+                            Some(format!("budget exceeded: {used} > {budget}")),
                         );
                         crate::spend::record(rec);
                     }
@@ -690,6 +735,7 @@ mod tests {
             Provider::ClaudeCode,
             Provider::Fireworks,
             Provider::Zai,
+            Provider::Xiaomi,
             Provider::OpenAiCompat,
         ] {
             assert_eq!(Provider::parse(p.key()), Some(p));
@@ -709,12 +755,20 @@ mod tests {
         assert_eq!(Provider::parse("Z.AI"), Some(Provider::Zai));
         assert_eq!(Provider::parse("zhipu"), Some(Provider::Zai));
         assert_eq!(Provider::parse("glm"), Some(Provider::Zai));
+        assert_eq!(Provider::parse("MiMo"), Some(Provider::Xiaomi));
+        assert_eq!(Provider::parse("xiaomi-mimo"), Some(Provider::Xiaomi));
         assert_eq!(Provider::parse("lmstudio"), Some(Provider::OpenAiCompat));
         assert_eq!(Provider::parse("LM-Studio"), Some(Provider::OpenAiCompat));
         assert_eq!(Provider::parse("llama.cpp"), Some(Provider::OpenAiCompat));
         assert_eq!(Provider::parse("llamacpp"), Some(Provider::OpenAiCompat));
-        assert_eq!(Provider::parse("local-openai"), Some(Provider::OpenAiCompat));
-        assert_eq!(Provider::parse("openai-compatible"), Some(Provider::OpenAiCompat));
+        assert_eq!(
+            Provider::parse("local-openai"),
+            Some(Provider::OpenAiCompat)
+        );
+        assert_eq!(
+            Provider::parse("openai-compatible"),
+            Some(Provider::OpenAiCompat)
+        );
         assert_eq!(Provider::parse("wat"), None);
     }
 
@@ -734,14 +788,15 @@ mod tests {
         // real key on disk (env or settings file) sees this pass on CI but
         // fail locally. Point `MOGEN_SETTINGS` at a guaranteed-absent path so
         // the settings-store fallback reads nothing.
-        let missing_settings =
-            std::env::temp_dir().join("mogen-test-nonexistent-settings.json");
+        let missing_settings = std::env::temp_dir().join("mogen-test-nonexistent-settings.json");
         std::env::remove_var("OPENAI_API_KEY");
         std::env::set_var("MOGEN_SETTINGS", &missing_settings);
         let result = LlmClient::from_env(Provider::OpenAI);
         std::env::remove_var("MOGEN_SETTINGS");
         match result {
-            Err(ProviderError::MissingApiKey { var: "OPENAI_API_KEY" }) => {}
+            Err(ProviderError::MissingApiKey {
+                var: "OPENAI_API_KEY",
+            }) => {}
             Err(other) => panic!("wrong error: {other}"),
             Ok(_) => panic!("expected MissingApiKey but got Ok"),
         }
@@ -768,9 +823,8 @@ mod tests {
     fn from_env_succeeds_for_ollama_without_key() {
         // Ollama tolerates a blank key; this should construct a client.
         std::env::remove_var("OLLAMA_API_KEY");
-        let c = LlmClient::from_env(Provider::Ollama).unwrap_or_else(|_| {
-            panic!("ollama should work keyless")
-        });
+        let c = LlmClient::from_env(Provider::Ollama)
+            .unwrap_or_else(|_| panic!("ollama should work keyless"));
         assert_eq!(c.provider(), Provider::Ollama);
     }
 
@@ -779,9 +833,8 @@ mod tests {
         // OpenAiCompat is keyless (local servers need no token); from_env
         // must succeed without consulting OPENAI_COMPAT_API_KEY.
         std::env::remove_var("OPENAI_COMPAT_API_KEY");
-        let c = LlmClient::from_env(Provider::OpenAiCompat).unwrap_or_else(|_| {
-            panic!("openai-compat should work keyless")
-        });
+        let c = LlmClient::from_env(Provider::OpenAiCompat)
+            .unwrap_or_else(|_| panic!("openai-compat should work keyless"));
         assert_eq!(c.provider(), Provider::OpenAiCompat);
     }
 }

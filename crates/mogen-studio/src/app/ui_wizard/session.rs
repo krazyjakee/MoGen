@@ -51,7 +51,9 @@ impl MogenStudioApp {
         };
         let (tx, rx) = std::sync::mpsc::channel();
         let prompt_draft = state.prompt.clone();
-        let status = "Choose where wizard artefacts (objects, references, state.json) will be saved.".to_string();
+        let status =
+            "Choose where wizard artefacts (objects, references, state.json) will be saved."
+                .to_string();
         self.wizard = Some(WizardSession {
             state,
             rx,
@@ -548,6 +550,7 @@ impl MogenStudioApp {
     pub(in crate::app) fn build_wizard_run_config(&self) -> WizardRunConfig {
         WizardRunConfig {
             model: self.settings.provider_model(),
+            provider: self.settings.provider(),
             thinking: self.settings.thinking_level(),
             temperature: self.settings.temperature(),
             max_repair_iters: self.settings.max_repair_iters(),
@@ -561,7 +564,9 @@ impl MogenStudioApp {
         }
     }
 
-    pub(in crate::app) fn resolve_wizard_text_client(&mut self) -> Option<(mogen_llm::LlmClient, Arc<String>)> {
+    pub(in crate::app) fn resolve_wizard_text_client(
+        &mut self,
+    ) -> Option<(mogen_llm::LlmClient, Arc<String>)> {
         let slot = self.settings.provider_slot();
         let provider = slot.to_provider();
         let cred = self.resolve_credential()?;
@@ -581,9 +586,7 @@ impl MogenStudioApp {
             Credential::GeminiOAuth(bundle) => Some(ImageClient::Gemini(
                 mogen_llm::GeminiClient::from_oauth(bundle),
             )),
-            Credential::ApiKey(key) => Some(ImageClient::Gemini(
-                mogen_llm::GeminiClient::new(key),
-            )),
+            Credential::ApiKey(key) => Some(ImageClient::Gemini(mogen_llm::GeminiClient::new(key))),
         }
     }
 

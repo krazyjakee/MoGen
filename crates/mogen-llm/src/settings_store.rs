@@ -48,6 +48,8 @@ pub struct ApiKeys {
     pub fireworks_api_key: String,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub zai_api_key: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub xiaomi_api_key: String,
     /// When `Some(true)` (or absent — defaults to true), Z.ai chat calls
     /// route through the dedicated GLM Coding Plan endpoint
     /// (`/api/coding/paas/v4`). When `Some(false)`, use the general PaaS
@@ -90,6 +92,7 @@ pub fn read_api_key(provider: Provider) -> Option<String> {
         Provider::Ollama => &keys.ollama_api_key,
         Provider::Fireworks => &keys.fireworks_api_key,
         Provider::Zai => &keys.zai_api_key,
+        Provider::Xiaomi => &keys.xiaomi_api_key,
         Provider::ClaudeCode | Provider::OpenAiCompat => return None,
     };
     let trimmed = raw.trim();
@@ -130,6 +133,7 @@ mod tests {
         assert_eq!(keys.gemini_api_key, "abc123");
         assert_eq!(keys.openai_api_key, "");
         assert_eq!(keys.zai_api_key, "");
+        assert_eq!(keys.xiaomi_api_key, "");
     }
 
     #[test]
@@ -140,7 +144,8 @@ mod tests {
             "anthropic_api_key": "a",
             "ollama_api_key": "ol",
             "fireworks_api_key": "f",
-            "zai_api_key": "z"
+            "zai_api_key": "z",
+            "xiaomi_api_key": "x"
         }"#;
         let keys: ApiKeys = serde_json::from_str(json).unwrap();
         assert_eq!(keys.gemini_api_key, "g");
@@ -149,6 +154,7 @@ mod tests {
         assert_eq!(keys.ollama_api_key, "ol");
         assert_eq!(keys.fireworks_api_key, "f");
         assert_eq!(keys.zai_api_key, "z");
+        assert_eq!(keys.xiaomi_api_key, "x");
     }
 
     #[test]

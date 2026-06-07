@@ -23,7 +23,9 @@ use super::{claim_pending_batch, object_missing, reference_missing, WizardBusy, 
 impl MogenStudioApp {
     pub(in crate::app) fn start_wizard_brief(&mut self, ctx: &egui::Context) {
         let Some((client, sys)) = self.resolve_wizard_text_client() else {
-            self.wizard_set_error("Provider credentials missing — open Preferences and sign in.".into());
+            self.wizard_set_error(
+                "Provider credentials missing — open Preferences and sign in.".into(),
+            );
             return;
         };
         let provider = self.settings.provider_slot().to_provider();
@@ -52,7 +54,7 @@ impl MogenStudioApp {
         if has_image && !provider.supports_images() {
             session.error = Some(format!(
                 "{} can't read images — switch to a vision provider (Gemini, OpenAI, \
-                 Anthropic…) in Preferences, or clear the source image.",
+                 Xiaomi MiMo, Z.ai, Fireworks, or Claude Code) in Preferences, or clear the source image.",
                 provider.label()
             ));
             return;
@@ -81,7 +83,9 @@ impl MogenStudioApp {
 
     pub(in crate::app) fn start_wizard_manifest(&mut self, ctx: &egui::Context) {
         let Some((client, sys)) = self.resolve_wizard_text_client() else {
-            self.wizard_set_error("Provider credentials missing — open Preferences and sign in.".into());
+            self.wizard_set_error(
+                "Provider credentials missing — open Preferences and sign in.".into(),
+            );
             return;
         };
         let cfg = self.build_wizard_run_config();
@@ -122,7 +126,8 @@ impl MogenStudioApp {
                 s.auto_continue_refs = false;
             }
             self.wizard_set_error(
-                "Image generation needs a Gemini or Z.ai credential — check Preferences › Image.".into(),
+                "Image generation needs a Gemini or Z.ai credential — check Preferences › Image."
+                    .into(),
             );
             return;
         };
@@ -194,7 +199,10 @@ impl MogenStudioApp {
         let Some(session) = self.wizard.as_mut() else {
             return;
         };
-        let out = session.state.references_dir().join(format!("{}.png", obj.id));
+        let out = session
+            .state
+            .references_dir()
+            .join(format!("{}.png", obj.id));
         let tx = session.tx.clone();
         let ctx_clone = ctx.clone();
         let id = obj.id.clone();
@@ -211,7 +219,8 @@ impl MogenStudioApp {
     pub(in crate::app) fn start_wizard_one_reference(&mut self, ctx: &egui::Context, id: String) {
         let Some(client) = self.resolve_wizard_image_client() else {
             self.wizard_set_error(
-                "Image generation needs a Gemini or Z.ai credential — check Preferences › Image.".into(),
+                "Image generation needs a Gemini or Z.ai credential — check Preferences › Image."
+                    .into(),
             );
             return;
         };
@@ -262,7 +271,9 @@ impl MogenStudioApp {
             if let Some(s) = self.wizard.as_mut() {
                 s.auto_continue_objects = false;
             }
-            self.wizard_set_error("Provider credentials missing — open Preferences and sign in.".into());
+            self.wizard_set_error(
+                "Provider credentials missing — open Preferences and sign in.".into(),
+            );
             return;
         }
         let cfg = self.build_wizard_run_config();
@@ -343,7 +354,11 @@ impl MogenStudioApp {
         });
     }
 
-    pub(in crate::app) fn start_wizard_regenerate_object(&mut self, ctx: &egui::Context, id: String) {
+    pub(in crate::app) fn start_wizard_regenerate_object(
+        &mut self,
+        ctx: &egui::Context,
+        id: String,
+    ) {
         let cfg = self.build_wizard_run_config();
         // Drop the existing .mog and reserve the worker slot up-front so the
         // regenerated object can't collide with an auto-continue tick that
@@ -399,7 +414,9 @@ impl MogenStudioApp {
 
     pub(in crate::app) fn start_wizard_object_review(&mut self, ctx: &egui::Context, id: String) {
         let Some((client, sys)) = self.resolve_wizard_text_client() else {
-            self.wizard_set_error("Provider credentials missing — open Preferences and sign in.".into());
+            self.wizard_set_error(
+                "Provider credentials missing — open Preferences and sign in.".into(),
+            );
             return;
         };
         let provider = self.settings.provider_slot().to_provider();
@@ -423,9 +440,14 @@ impl MogenStudioApp {
         // reference image as a stand-in so the review stage works even
         // before the user has rebuilt thumbnails. (A rendered thumbnail
         // can replace this once thumb_path is wired up.)
-        let img_path = obj.thumb_path.clone().or_else(|| obj.reference_image.clone());
+        let img_path = obj
+            .thumb_path
+            .clone()
+            .or_else(|| obj.reference_image.clone());
         let Some(img_path) = img_path else {
-            session.error = Some(format!("No image available for {id} — generate a reference first."));
+            session.error = Some(format!(
+                "No image available for {id} — generate a reference first."
+            ));
             return;
         };
         let Ok(image_bytes) = std::fs::read(&img_path) else {
@@ -447,7 +469,9 @@ impl MogenStudioApp {
 
     pub(in crate::app) fn start_wizard_scene_review(&mut self, ctx: &egui::Context) {
         let Some((client, sys)) = self.resolve_wizard_text_client() else {
-            self.wizard_set_error("Provider credentials missing — open Preferences and sign in.".into());
+            self.wizard_set_error(
+                "Provider credentials missing — open Preferences and sign in.".into(),
+            );
             return;
         };
         let provider = self.settings.provider_slot().to_provider();
@@ -463,13 +487,15 @@ impl MogenStudioApp {
             return;
         };
         let Some(thumb) = session.state.scene_thumb.clone() else {
-            session.error = Some(
-                "No scene screenshot yet — assemble + render the scene first.".into(),
-            );
+            session.error =
+                Some("No scene screenshot yet — assemble + render the scene first.".into());
             return;
         };
         let Ok(bytes) = std::fs::read(&thumb) else {
-            session.error = Some(format!("Couldn't read scene screenshot at {}", thumb.display()));
+            session.error = Some(format!(
+                "Couldn't read scene screenshot at {}",
+                thumb.display()
+            ));
             return;
         };
         let mime = guess_image_mime(&thumb);
@@ -499,8 +525,7 @@ impl MogenStudioApp {
                 return;
             };
             let Some(asm_path) = session.state.assembly_path.clone() else {
-                session.error =
-                    Some("No assembly file to edit — build the scene first.".into());
+                session.error = Some("No assembly file to edit — build the scene first.".into());
                 return;
             };
             let manifest = session.state.manifest.clone();

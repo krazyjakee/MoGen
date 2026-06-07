@@ -34,8 +34,8 @@ A few flag patterns repeat across every LLM-driven subcommand
 
 | flag | meaning |
 |---|---|
-| `--api-key <KEY>` | Override `GEMINI_API_KEY` for this invocation. |
-| `--model <NAME>` | Gemini model id. Default `gemini-pro-latest` for text. For `textures`, the default depends on credentials: `gemini-3-pro-image-preview` when authenticated via OAuth (paid plan), otherwise `gemini-2.5-flash-image`. Pass `gemini-3.1-flash-image-preview` (or any other image model) to override. |
+| `--api-key <KEY>` | Override the active provider's API-key env var for this invocation (`GEMINI_API_KEY`, `OPENAI_API_KEY`, `XIAOMI_API_KEY`, etc.). |
+| `--model <NAME>` | Provider model id. Defaults to the selected provider's text model (`gemini-pro-latest`, `mimo-v2.5-pro`, etc.). For `textures`, the default depends on credentials: `gemini-3-pro-image-preview` when authenticated via OAuth (paid plan), otherwise `gemini-2.5-flash-image`. Pass `gemini-3.1-flash-image-preview` (or any other image model) to override. |
 | `--temperature <N>` | Sampling temperature. Library default is `0.3` when omitted. |
 | `--thinking <low\|medium\|high\|xhigh>` | Cap server-side reasoning. `low` = 512 tokens, `medium` = 2048, `high` = 8192 (default), `xhigh` = 24576 (slowest, most careful). |
 | `--style <ps1\|n64\|low-poly\|high-detail\|arcade\|voxel\|cel-shaded\|stylized-fantasy\|cyberpunk\|pixel-art>` | Visual-style hint. Prepends a "## Style" guidance block to the prompt and stamps `meta(style="…")` into the saved DSL. Sticky across `modify` / `animate` / `repair` runs — once stamped, those subcommands inherit the style from the file unless `--style` is passed again to override. Omit to send the prompt unchanged. |
@@ -401,10 +401,10 @@ mogen bench [--prompts <file>] [common LLM flags]
 | flag | meaning |
 |---|---|
 | `--prompts` | File with one prompt per line. `#` starts a comment. Defaults to `benches/prompts.txt`. |
-| `--model` | Gemini model id. Default `gemini-pro-latest`. |
+| `--model` | Provider model id. Defaults to the selected provider's text model. |
 | `--max-repair-iters` | Default `2`. |
 | `--budget-tokens` | Per-prompt token cap. |
-| `--api-key` | Override `GEMINI_API_KEY`. |
+| `--api-key` | Override the active provider's API-key env var. |
 | `--no-cache` | Disable the system-instruction cache. |
 | `--thinking` | Default `high`. |
 
@@ -583,7 +583,8 @@ mogen moghub publish examples/furniture/chair.mog --new --visibility unlisted  #
 
 | variable | meaning |
 |---|---|
-| `GEMINI_API_KEY` | Required by `generate` / `modify` / `animate` / `repair` / `textures` / `bench` unless `--api-key` is passed. |
+| `GEMINI_API_KEY` | Default provider key for `generate` / `modify` / `animate` / `repair` / `bench`; also used by `textures` unless OAuth or Z.ai image generation is selected. |
+| `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `FIREWORKS_API_KEY` / `ZAI_API_KEY` / `XIAOMI_API_KEY` | API keys for the matching `--provider` value; `--api-key` overrides them for one call. |
 | `MOGEN_CACHE_DIR` | Where the system-instruction cache is stored. Defaults to `$HOME/.cache/mogen/`. |
 | `MOGEN_GOLDENS_UPDATE` | When set during tests, regenerates the golden snapshots used by the validator and exporter test suites. |
 | `MOGEN_GLTF_VALIDATOR` | Path to an external glTF validator binary. When set, the build pipeline runs the output GLB through it as an additional smoke check. |

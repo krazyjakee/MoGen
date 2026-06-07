@@ -68,11 +68,7 @@ impl TextPricing {
         }
     }
 
-    pub const fn tiered(
-        threshold: u32,
-        short: (f64, f64, f64),
-        long: (f64, f64, f64),
-    ) -> Self {
+    pub const fn tiered(threshold: u32, short: (f64, f64, f64), long: (f64, f64, f64)) -> Self {
         Self {
             input_per_mtok: short.0,
             output_per_mtok: short.1,
@@ -166,17 +162,21 @@ pub fn text_price_for_model(model: &str) -> TextPricing {
     }
 
     // --- Gemini 2.5 family.
-    if m.starts_with("gemini-pro") || m.contains("2.5-pro") || m.contains("2-5-pro") {
+    if m.starts_with("gemini-pro")
+        || (m.starts_with("gemini") && (m.contains("2.5-pro") || m.contains("2-5-pro")))
+    {
         return TextPricing::tiered(
             DEFAULT_LONG_CONTEXT_THRESHOLD,
             (1.25, 10.00, 0.125),
             (2.50, 15.00, 0.25),
         );
     }
-    if m.contains("flash-lite") {
+    if m.starts_with("gemini") && m.contains("flash-lite") {
         return TextPricing::flat(0.10, 0.40, 0.01);
     }
-    if m.starts_with("gemini-flash") || m.contains("2.5-flash") || m.contains("2-5-flash") {
+    if m.starts_with("gemini-flash")
+        || (m.starts_with("gemini") && (m.contains("2.5-flash") || m.contains("2-5-flash")))
+    {
         return TextPricing::flat(0.30, 2.50, 0.03);
     }
 
@@ -218,6 +218,17 @@ pub fn text_price_for_model(model: &str) -> TextPricing {
         return TextPricing::flat(0.50, 1.50, 0.10);
     }
 
+    // --- Xiaomi MiMo family. Overseas pay-as-you-go rates, USD/M tokens.
+    if m.contains("mimo-v2.5-pro") || m.contains("mimo-v2-pro") {
+        return TextPricing::flat(0.435, 0.87, 0.0036);
+    }
+    if m.contains("mimo-v2.5") || m.contains("mimo-v2-omni") {
+        return TextPricing::flat(0.14, 0.28, 0.0028);
+    }
+    if m.contains("mimo-v2-flash") {
+        return TextPricing::flat(0.10, 0.30, 0.01);
+    }
+
     // --- Local / unknown — bill at zero so the meter stays honest.
     TextPricing::flat(0.0, 0.0, 0.0)
 }
@@ -226,17 +237,22 @@ pub fn text_price_for_model(model: &str) -> TextPricing {
 pub fn image_price_for_model(model: &str) -> ImagePricing {
     let m = model.to_ascii_lowercase();
     if m.contains("flash-image") || m.contains("nano-banana") {
-        return ImagePricing { per_image_usd: 0.039 };
+        return ImagePricing {
+            per_image_usd: 0.039,
+        };
     }
     if m.contains("imagen") {
-        return ImagePricing { per_image_usd: 0.04 };
+        return ImagePricing {
+            per_image_usd: 0.04,
+        };
     }
     if m.contains("glm-image") {
-        return ImagePricing { per_image_usd: 0.03 };
+        return ImagePricing {
+            per_image_usd: 0.03,
+        };
     }
     ImagePricing { per_image_usd: 0.0 }
 }
-
 
 /// Baseline pricing seeded into the `pricing` table on first run. Each row
 /// captures the public list price for a model `mogen-llm` talks to today.
@@ -320,13 +336,17 @@ pub const SEED: &[PricingSeed] = &[
         provider: "gemini",
         model: "gemini-2.5-flash-image",
         text: None,
-        image: Some(ImagePricing { per_image_usd: 0.039 }),
+        image: Some(ImagePricing {
+            per_image_usd: 0.039,
+        }),
     },
     PricingSeed {
         provider: "gemini",
         model: "imagen-4.0-generate-001",
         text: None,
-        image: Some(ImagePricing { per_image_usd: 0.04 }),
+        image: Some(ImagePricing {
+            per_image_usd: 0.04,
+        }),
     },
     // --- OpenAI.
     PricingSeed {
@@ -396,7 +416,28 @@ pub const SEED: &[PricingSeed] = &[
         provider: "zai",
         model: "glm-image",
         text: None,
-        image: Some(ImagePricing { per_image_usd: 0.03 }),
+        image: Some(ImagePricing {
+            per_image_usd: 0.03,
+        }),
+    },
+    // --- Xiaomi MiMo.
+    PricingSeed {
+        provider: "xiaomi",
+        model: "mimo-v2.5-pro",
+        text: Some(TextPricing::flat(0.435, 0.87, 0.0036)),
+        image: None,
+    },
+    PricingSeed {
+        provider: "xiaomi",
+        model: "mimo-v2.5",
+        text: Some(TextPricing::flat(0.14, 0.28, 0.0028)),
+        image: None,
+    },
+    PricingSeed {
+        provider: "xiaomi",
+        model: "mimo-v2-flash",
+        text: Some(TextPricing::flat(0.10, 0.30, 0.01)),
+        image: None,
     },
     // --- Ollama (local). Always zero.
     PricingSeed {
@@ -463,6 +504,21 @@ mod tests {
     }
 
     #[test]
+    fn xiaomi_pricing_matches_overseas_rates() {
+        let p = text_price_for_model("mimo-v2.5-pro");
+        assert!((p.input_per_mtok - 0.435).abs() < 1e-9);
+        assert!((p.output_per_mtok - 0.87).abs() < 1e-9);
+        assert!((p.cached_input_per_mtok - 0.0036).abs() < 1e-9);
+
+        let flash = text_price_for_model("mimo-v2-flash");
+        assert!((flash.input_per_mtok - 0.10).abs() < 1e-9);
+        assert!((flash.output_per_mtok - 0.30).abs() < 1e-9);
+
+        let hypothetical_flash_lite = text_price_for_model("mimo-v2.5-flash-lite");
+        assert!((hypothetical_flash_lite.input_per_mtok - 0.14).abs() < 1e-9);
+        assert!((hypothetical_flash_lite.output_per_mtok - 0.28).abs() < 1e-9);
+    }
+    #[test]
     fn unknown_model_costs_nothing() {
         let p = text_price_for_model("homebrewed-llama");
         assert_eq!(p, TextPricing::flat(0.0, 0.0, 0.0));
@@ -473,5 +529,6 @@ mod tests {
         assert!(SEED.iter().any(|r| r.model == "gemini-pro-latest"));
         assert!(SEED.iter().any(|r| r.model == "gemini-2.5-flash-image"));
         assert!(SEED.iter().any(|r| r.provider == "openai"));
+        assert!(SEED.iter().any(|r| r.provider == "xiaomi"));
     }
 }
