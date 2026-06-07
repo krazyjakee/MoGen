@@ -488,11 +488,13 @@ mod tests {
         // ~700 bytes total; cap raised 31_000 → 32_000. The cave
         // `lod_scale`/`columns`/`mushrooms` attributes plus the `column`
         // feature kind added ~150 bytes of auto-rendered allowlist entries;
-        // cap raised 32_000 → 33_000.
+        // cap raised 32_000 → 33_000. The `dungeon` generator kind plus its
+        // attributes (incl. `debug_render_floor`) added ~200 bytes of
+        // auto-rendered allowlist entries; cap raised 33_000 → 34_000.
         let s = cacheable_block();
         assert!(
-            s.len() < 33_000,
-            "cacheable_block grew to {} bytes — cap is 33_000. Reference \
+            s.len() < 34_000,
+            "cacheable_block grew to {} bytes — cap is 34_000. Reference \
              material that grows without bound should be fetched on demand, \
              not pinned in the cache.",
             s.len()

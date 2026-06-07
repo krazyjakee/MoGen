@@ -34,4 +34,15 @@ terrain "valley" (
   debug_show_poi = 1, // visualise the markers as bright spheres
 
   colliders = "all", pos=[0, 1.2475, 0]
-)
+) {
+  // A sealed pit (e.g. a quarry floor) — vertical rim walls plus a flat cap.
+  hole ( at=[-30, -20], radius=14, depth=6, cap="floor" )
+
+  // An open shaft a basement or cave mouth can plug into — rim walls only,
+  // bottom left open.
+  hole ( at=[40, 30], radius=10, depth=8, cap="open" )
+
+  // A dirt road threading across the valley: the corridor is flattened to a
+  // smoothed profile and tinted toward the road colour.
+  road ( path=[[-90, -60], [-20, -10], [30, 20], [90, 70]], width=8, shoulder=5 )
+}

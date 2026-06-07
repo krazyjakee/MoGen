@@ -18,7 +18,8 @@ pub const KNOWN_KINDS: &[&str] = &[
     "branch",
     "building", "room_type", "adjacency",
     "cave", "feature",
-    "terrain",
+    "terrain", "hole", "road",
+    "dungeon",
     "decal",
     "module", "use", "import",
     "union", "difference", "intersect",
@@ -124,6 +125,9 @@ pub fn common_attrs_for_kind(kind: &str) -> &'static [&'static str] {
         // generator owns where their geometry lands. `feature` plays the same
         // role for `cave` (it tunes one decoration kind).
         | "room_type" | "adjacency" | "feature"
+        // `hole` and `road` are pure carving directives parented under
+        // `terrain` — footprint/path data only, no transforms or materials.
+        | "hole" | "road"
         // Control-flow constructs are pre-expansion only — they don't
         // accept transforms or material binding, just their control attrs.
         | "if" | "else" | "for" => &[],
@@ -234,6 +238,16 @@ pub fn attrs_for_kind(kind: &str) -> &'static [&'static str] {
             "colliders", "peaks", "flat_spots", "shore_points",
             "lod_scale", "debug_show_poi",
         ],
+        "dungeon" => &[
+            "seed", "mat_style", "size", "cell", "levels", "rooms",
+            "room_min", "room_max", "spacing", "corridor_width", "loops",
+            "stairs", "wall_thickness", "floor_thickness", "ceilings",
+            "colliders", "prop_spots", "lod_scale",
+            "debug_hide_roof", "debug_render_floor", "debug_show_poi",
+        ],
+        // `terrain` carving children.
+        "hole" => &["at", "radius", "size", "depth", "cap"],
+        "road" => &["path", "width", "shoulder"],
         "decal" => &[
             "size", "prompt", "image", "tint", "roughness", "offset",
             // Curved-surface shortcut: synthesizes a `conform` patch under
@@ -517,6 +531,30 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         | ("terrain", "shore_points")
         | ("terrain", "lod_scale")
         | ("terrain", "debug_show_poi") => "number",
+        ("dungeon", "size") => "vec3",
+        ("dungeon", "mat_style") | ("dungeon", "colliders") => "string",
+        ("dungeon", "cell")
+        | ("dungeon", "levels")
+        | ("dungeon", "rooms")
+        | ("dungeon", "room_min")
+        | ("dungeon", "room_max")
+        | ("dungeon", "spacing")
+        | ("dungeon", "corridor_width")
+        | ("dungeon", "loops")
+        | ("dungeon", "stairs")
+        | ("dungeon", "wall_thickness")
+        | ("dungeon", "floor_thickness")
+        | ("dungeon", "ceilings")
+        | ("dungeon", "prop_spots")
+        | ("dungeon", "lod_scale")
+        | ("dungeon", "debug_hide_roof")
+        | ("dungeon", "debug_render_floor")
+        | ("dungeon", "debug_show_poi") => "number",
+        ("hole", "at") | ("hole", "size") => "pair",
+        ("hole", "radius") | ("hole", "depth") => "number",
+        ("hole", "cap") => "string",
+        ("road", "path") => "list",
+        ("road", "width") | ("road", "shoulder") => "number",
         ("cylinder", "radius")
         | ("cylinder", "height")
         | ("cylinder", "segments")
@@ -696,6 +734,10 @@ pub(super) fn value_matches(v: &Value, expected: &str) -> bool {
         (Value::Number(_), "number or vec2") => true,
         (Value::List(v), "number or vec2") if v.len() == 2 => true,
         (Value::ListExpr(v), "number or vec2") if v.len() == 2 => true,
+        // Strict 2-element pair (e.g. `hole.at=[x, z]`); unlike "number or vec2"
+        // this rejects a bare scalar.
+        (Value::List(v), "pair") if v.len() == 2 => true,
+        (Value::ListExpr(v), "pair") if v.len() == 2 => true,
         (Value::String(_), "string") => true,
         (Value::Ident(_), "string") => true,
         (Value::List(_) | Value::ListExpr(_) | Value::ListVec3(_) | Value::ListPair(_) | Value::ListQuad(_), "list") => true,

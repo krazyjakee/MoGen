@@ -1,5 +1,5 @@
 //! Public parameter schema for the procedural generators (`branch`,
-//! `building`, `cave`).
+//! `building`, `cave`, `terrain`, `dungeon`).
 //!
 //! Each generator is, from the editor's point of view, a flat list of named
 //! attributes with a type, a default, an edit range, and a group. This module
@@ -88,6 +88,7 @@ pub fn schema_for(kind: &str) -> Option<&'static ProcSchema> {
         "building" => Some(&BUILDING),
         "cave" => Some(&CAVE),
         "terrain" => Some(&TERRAIN),
+        "dungeon" => Some(&DUNGEON),
         _ => None,
     }
 }
@@ -95,7 +96,7 @@ pub fn schema_for(kind: &str) -> Option<&'static ProcSchema> {
 /// Every procedural schema, for callers that want to enumerate them (tests,
 /// docs tooling).
 pub fn all() -> &'static [&'static ProcSchema] {
-    static ALL: [&ProcSchema; 4] = [&BRANCH, &BUILDING, &CAVE, &TERRAIN];
+    static ALL: [&ProcSchema; 5] = [&BRANCH, &BUILDING, &CAVE, &TERRAIN, &DUNGEON];
     &ALL
 }
 
@@ -451,6 +452,114 @@ static TERRAIN: ProcSchema = ProcSchema {
             help: Some(
                 "Give every POI marker (peaks, flat spots, shoreline) a small \
                  bright sphere so the otherwise-empty markers are visible.",
+            ),
+        },
+    ],
+};
+
+static DUNGEON: ProcSchema = ProcSchema {
+    kind: "dungeon",
+    params: &[
+        int("seed", "Seed", 1, 1, 1_000_000),
+        ParamSpec {
+            attr: "size",
+            label: "Size",
+            kind: ParamKind::Vec { defaults: &[48.0, 4.0, 48.0], speed: 0.5 },
+            group: Main,
+            help: Some(
+                "Footprint + clearance [width, room height, depth] in metres. \
+                 Width/depth set the grid footprint (\u{00f7} cell); room height \
+                 is one level's floor-to-ceiling clearance.",
+            ),
+        },
+        ParamSpec {
+            attr: "cell",
+            label: "Cell",
+            kind: ParamKind::Scalar { default: 4.0, speed: 0.1 },
+            group: Main,
+            help: Some("Grid cell edge length in metres; rooms and corridors snap to this lattice."),
+        },
+        int("levels", "Levels", 1, 1, 16),
+        int("stairs", "Stairs", 1, 0, 16),
+        int("rooms", "Rooms", 6, 1, 64),
+        int("room_min", "Room min", 2, 1, 64),
+        int("room_max", "Room max", 5, 1, 64),
+        ParamSpec {
+            attr: "spacing",
+            label: "Spacing",
+            kind: ParamKind::Int { default: 1, min: 0, max: 16 },
+            group: Main,
+            help: Some("Minimum rock gap between rooms of the same level, in cells."),
+        },
+        ParamSpec {
+            attr: "corridor_width",
+            label: "Corridor width",
+            kind: ParamKind::Int { default: 1, min: 1, max: 8 },
+            group: Main,
+            help: Some("Corridor width in cells."),
+        },
+        ParamSpec {
+            attr: "loops",
+            label: "Loops",
+            kind: ParamKind::Int { default: 1, min: 0, max: 64 },
+            group: Main,
+            help: Some("Extra corridor connections beyond the spanning tree, per level."),
+        },
+        scalar("wall_thickness", "Wall thickness", 0.4, 0.005),
+        scalar("floor_thickness", "Floor thickness", 0.4, 0.005),
+        ParamSpec {
+            attr: "ceilings",
+            label: "Ceilings",
+            kind: ParamKind::Bool { default: true },
+            group: Main,
+            help: Some(
+                "Emit ceiling decks (each deck doubles as the next level's floor). \
+                 Off = open-topped levels.",
+            ),
+        },
+        int("prop_spots", "Prop spots", 0, 0, 1024),
+        ParamSpec {
+            attr: "colliders",
+            label: "Surfaces",
+            kind: ParamKind::Enum {
+                default: "all",
+                options: &[
+                    EnumOption {
+                        value: "all",
+                        help: "Trimesh collider on every solid surface (decks, walls, steps)",
+                    },
+                    EnumOption { value: "none", help: "No colliders on any dungeon geometry" },
+                ],
+            },
+            group: Collider,
+            help: None,
+        },
+        ParamSpec {
+            attr: "debug_hide_roof",
+            label: "Hide roof",
+            kind: ParamKind::Bool { default: false },
+            group: Debug,
+            help: Some("Omit the topmost deck so the rooms are visible from above in a preview."),
+        },
+        ParamSpec {
+            attr: "debug_render_floor",
+            label: "Isolate level",
+            kind: ParamKind::Int { default: 0, min: 0, max: 64 },
+            group: Debug,
+            help: Some(
+                "Render only this level index (0 = ground), with no ceiling and \
+                 only the staircases that touch it, to peek inside one floor.",
+            ),
+        },
+        ParamSpec {
+            attr: "debug_show_poi",
+            label: "Show POI markers",
+            kind: ParamKind::Bool { default: false },
+            group: Debug,
+            help: Some(
+                "Give every POI marker (spawn, treasure rooms, stair landings, prop \
+                 spots) a small bright sphere so the otherwise-empty markers are \
+                 visible in the preview.",
             ),
         },
     ],

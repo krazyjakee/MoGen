@@ -634,6 +634,41 @@ Beyond geometry, `terrain` embeds **points of interest** as empty marker nodes
 `shoreline` (cells at the water's edge). Markers spread out so no two land on the
 same feature.
 
+#### Carving children: `hole` and `road`
+
+A `terrain` body accepts only `hole` and `road` declarations (any other child is
+an error — geometry parented here would be dropped). Both carve the same shared
+height field, so chunk seams, skirts and POIs stay consistent with the result.
+
+**`hole`** drops the surface inside a footprint and walls the rim, punching a real
+void into the baked mesh that a basement or cave mouth can slot into.
+
+| attribute | default | effect |
+|---|---|---|
+| `at` | `[0, 0]` | Footprint centre `[x, z]` in patch-local metres. |
+| `radius` | — | Circular footprint radius (m). Give **either** `radius` **or** `size`, not both. |
+| `size` | — | Rectangular footprint `[w, d]` (m). |
+| `depth` | `4` | How far below the rim the floor sits (m). |
+| `cap` | `open` | `open` = vertical rim walls drop to the floor depth, bottom left open (plug it with a basement/cave). `floor` = walls plus a flat floor quad = a fully sealed, watertight pit. |
+
+**`road`** flattens a corridor along a polyline to a smoothed longitudinal
+profile (staying at the terrain's own height — no trench), and tints the corridor
+toward a dirt/gravel colour baked into `COLOR_0`.
+
+| attribute | default | effect |
+|---|---|---|
+| `path` | — | Required centreline `[[x, z], [x, z], …]` (≥ 2 waypoints), patch-local metres. |
+| `width` | `3` | Flattened corridor width (m). |
+| `shoulder` | `= width/2` | Extra blend distance (m) outside the flat corridor where the road eases back into the surrounding terrain. |
+
+```
+terrain "valley" (seed=2, size=[200, 12, 200], source="island", chunks=6) {
+  hole ( at=[-30, -20], radius=14, depth=6, cap="floor" )  // sealed pit
+  hole ( at=[40, 30], radius=10, depth=8, cap="open" )     // open shaft
+  road ( path=[[-90, -60], [-20, -10], [30, 20], [90, 70]], width=8, shoulder=5 )
+}
+```
+
 Each chunk emits `lod_levels` overlapping mesh variants named
 `chunk_<i>_<j>_lod<n>`, every variant tagged with a camera-distance band in glTF
 `extras.lod` (`{ level, min_distance, max_distance }`). The bands partition
@@ -650,6 +685,68 @@ terrain "valley" (seed=7, size=[80, 14, 80], source="fbm",
                   lod_levels=3, smooth=2, sea_level=0.28,
                   peaks=8, flat_spots=12, shore_points=16,
                   colliders="all", mat="grassland")
+```
+
+---
+
+### Dungeon
+
+`dungeon` is a procedural layout generator for dungeon-crawler levels. Where
+`cave` carves an organic void from a smooth field, a dungeon is a **tile grid**:
+axis-aligned rectangular rooms placed on a `cell`-metre lattice, joined by
+straight/L-shaped corridors, stacked into `levels` floors that real staircase
+geometry connects. Walls, floors and ceilings are clean **box meshes** and
+doorways are gaps in the walls — the whole layout is watertight by construction.
+The node takes no body block; the generated subtree is stamped non-editable (a
+pure function of `seed=` plus the declared attrs).
+
+| attribute | default | effect |
+|---|---|---|
+| `seed` | `1` | RNG seed; same seed = identical layout. `0` is coerced to `1`. |
+| `size` | `[48, 4, 48]` | Footprint + clearance `[width(x), room_height(y), depth(z)]` (m). `width`/`depth` set the grid footprint (÷ `cell`); `room_height` is one level's floor-to-ceiling clearance. |
+| `cell` | `4` | Grid cell edge length (m). Rooms and corridors quantise to this lattice so walls always meet flush. |
+| `levels` | `1` | Stacked floors. `1` is single-storey; higher values stack independent room layouts linked by staircases. |
+| `stairs` | `1` | Staircases between each pair of adjacent levels. |
+| `rooms` | `6` | Target room count per level (placement is best-effort within the grid). |
+| `room_min` | `2` | Room side length range in cells (inclusive). `room_min > room_max` is swapped. |
+| `room_max` | `5` | — |
+| `spacing` | `1` | Minimum rock gap kept between rooms of the same level, in cells. |
+| `corridor_width` | `1` | Corridor width in cells. |
+| `loops` | `1` | Extra corridor connections beyond the spanning tree, per level (creates loops). |
+| `wall_thickness` | `0.4` | Wall thickness (m). |
+| `floor_thickness` | `0.4` | Floor / ceiling deck thickness (m). |
+| `ceilings` | `1` | Emit ceiling decks (each deck doubles as the next level's floor). `0` = open-topped levels. |
+| `prop_spots` | `0` | Number of `prop_spot` POI markers scattered on room floors. |
+| `colliders` | `all` | `all` adds a trimesh collider to every solid surface (decks, walls, steps); `none` is visual-only. |
+| `lod_scale` | `1.0` | Mesh-quality scale `[0.1, 1.0]`; compounds with the file-global `lod_scale`. Layout, counts and POIs are unaffected. |
+| `debug_hide_roof` | `0` | Debug: omit the topmost deck (roof) so rooms are visible from above in a preview. |
+| `debug_render_floor` | _(unset)_ | Debug: render only this level index (`0` = ground), with no ceiling and only the staircases that touch it, to peek inside one floor. Out-of-range values render every level. |
+| `debug_show_poi` | `0` | Debug: give every POI marker a small bright per-kind `dungeon_poi_<kind>` sphere so the empty markers show in a preview. |
+
+Geometry is built from **decks**: deck `k` is simultaneously the floor of level
+`k` and the ceiling of level `k-1`, so there are no duplicate slabs. Every
+walkable cell — including staircase landings — is covered, so the top level is
+fully roofed and stairwells are enclosed. Staircases punch an opening through
+the upper deck and fill it with a flight of small (~0.18 m riser) steps sized
+for in-game use. One ground-level room gets an **exterior doorway**: a one-cell
+floor stub runs out to the grid border and the perimeter wall there is left
+open, so the dungeon has a clear way in. Walls are extended by `wall_thickness`
+at their ends so corners always close — no holes. A single material pair
+(`dungeon_floor`, `dungeon_stone`) is auto-stamped if you don't supply `mat=`.
+
+Beyond geometry, `dungeon` embeds **points of interest** as empty marker nodes
+(`role`/`tags` in glTF extras) under a `points_of_interest` group: `entrance`
+(the exterior doorway, oriented facing out), `spawn` (the room the entrance
+leads into), `treasure_room` (other dead-end rooms), `stair_top` /
+`stair_bottom` (staircase landings), and `prop_spot` (scattered room-floor
+slots). An engine reads these to place the player, loot, transitions and props.
+
+```
+dungeon "keep" (seed=7, size=[56, 4, 56], cell=4,
+                levels=3, stairs=1,
+                rooms=7, room_min=2, room_max=5, spacing=1,
+                corridor_width=1, loops=1,
+                prop_spots=8, colliders="all")
 ```
 
 ---

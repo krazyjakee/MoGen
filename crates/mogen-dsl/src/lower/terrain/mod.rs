@@ -10,11 +10,15 @@
 //! (peaks / flat spots / shoreline). The intermediate `HeightField` is built
 //! once and shared by emit and POI so both read identical heights.
 
+mod carve;
 mod config;
 mod emit;
 mod field;
 mod materials;
 mod poi;
+
+#[cfg(test)]
+mod tests;
 
 use anyhow::Result;
 
@@ -36,8 +40,14 @@ pub(super) fn expand_terrain(
 
     materials::ensure_defaults(graph, node.origin.as_deref());
 
-    let field = field::build(&cfg);
-    emit::emit_chunks(node, &cfg, &field, wrapper_id, graph);
+    let mut field = field::build(&cfg);
+    // Roads flatten the field before emit so the chunk seams/skirts stay valid;
+    // holes are applied during emit (cells dropped + rim walled). Both read the
+    // wrapper's child declarations.
+    let roads = carve::read_roads(node);
+    carve::carve_roads(&mut field, &cfg, &roads);
+    let holes = carve::read_holes(node, &cfg, &field);
+    emit::emit_chunks(node, &cfg, &field, &holes, wrapper_id, graph);
     poi::emit_pois(node, &cfg, &field, wrapper_id, graph);
 
     finish_procedural(graph, pre_expand_count);

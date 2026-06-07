@@ -22,6 +22,11 @@ pub(super) struct HeightField {
     pub n: usize,
     /// Length-`n*n` height values, row-major (`h[j * n + i]`, i over X, j over Z).
     pub h: Vec<f32>,
+    /// Length-`n*n` road intensity in `[0, 1]`, row-major like `h`. `0` away from
+    /// any road, ramping to `1` on the flattened corridor centre (see
+    /// `carve::carve_roads`). `emit.rs` reads it to tint COLOR_0 toward the road
+    /// surface colour. All-zero when no `road` children are declared.
+    pub road_mask: Vec<f32>,
 }
 
 impl HeightField {
@@ -64,7 +69,11 @@ pub(super) fn build(cfg: &TerrainCfg) -> HeightField {
         }
     }
 
-    let mut field = HeightField { n, h };
+    let mut field = HeightField {
+        n,
+        h,
+        road_mask: vec![0.0; n * n],
+    };
 
     for _ in 0..cfg.smooth {
         smooth_once(&mut field);
