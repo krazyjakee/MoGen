@@ -44,6 +44,12 @@ examples/furniture/table.glb        -filter -diff -merge binary
 examples/weapons/sword.glb          -filter -diff -merge binary
 examples/vehicles/drone.glb         -filter -diff -merge binary
 examples/buildings/simple_house.glb -filter -diff -merge binary
+examples/features/coil_spring.glb        -filter -diff -merge binary
+examples/features/bezier_fender.glb      -filter -diff -merge binary
+examples/features/units_blueprint.glb    -filter -diff -merge binary
+examples/nature/wave_water.glb           -filter -diff -merge binary
+examples/nature/heightfield_terrain.glb  -filter -diff -merge binary
+examples/nature/metaball_blob.glb        -filter -diff -merge binary
 
 # Godot-adjacent binary assets (the repo lives under godot-projects/)
 *.tres      text
