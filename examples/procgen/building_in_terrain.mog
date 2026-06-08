@@ -1,0 +1,109 @@
+// Walkable terrain with a building dropped into a hole cut to its exact
+// footprint: you can roam the terrain, step in the front door, and take the
+// stairs down to a basement that sits *below* ground level without the terrain
+// surface ever showing through the floor — because the patch has a real void
+// punched where the building stands.
+//
+// The trick is making the void's rim coincide with the building's outer walls
+// so there is neither a gap (a moat you could see down into) nor an overhang
+// (terrain poking up inside the basement). Two facts make that exact:
+//
+//   1. A `building` footprint is a pure function of its inputs. The outer plate
+//      is  (w + 2*wall_thickness) x (d + 2*wall_thickness)  centred on `pos`,
+//      where the layout solver picks a sqrt(2) aspect:
+//          d = sqrt(floor_area / sqrt(2)),   w = sqrt(floor_area * sqrt(2)).
+//      With floor_area=120 and wall_thickness=0.2 that is an outer plate of
+//      13.42711 x 9.611559 m, i.e. walls at  x = +-6.713556,  z = +-4.805779.
+//
+//   2. `terrain` carves a `hole` by dropping every grid cell whose *centre*
+//      lands inside the footprint, so the void edge always falls on a terrain
+//      grid line. We therefore size the patch so a grid line lands exactly on
+//      each wall: the grid is `resolution` cells across `size`, so we pick
+//          size_x = wall_x / 16 * resolution     (a grid line 16 cells out)
+//          size_z = wall_z / 12 * resolution     (a grid line 12 cells out)
+//      and set the hole to the building's outer plate.
+//
+//      The cell counts (16, 12) are *multiples of 4* on purpose. A coarser LOD
+//      samples the grid at stride 2^level, and a cell is dropped only when its
+//      (now coarser) centre lands inside the footprint. If a wall sat on an odd
+//      grid line, the drop boundary would shift by up to a cell at LOD1/LOD2 —
+//      opening a thin ring gap around the building that appears only at
+//      distance (when a coarse LOD swaps in) and vanishes up close. Making each
+//      wall land on a line divisible by the coarsest stride
+//      `2^(lod_levels-1) = 4` keeps the rim on the wall *identically at every
+//      LOD*, so there is no LOD-swap gap. The patch centre (grid line 60) is
+//      itself a multiple of 4, so `60 +- {16,12}` stays aligned.
+//
+// A noise field is never flat, so a short, wide `road` centred on the plot
+// grades the build pad to a single height (its dirt tint reads as a graded
+// foundation apron) — that is what lets the ground floor meet the grass flush
+// on every side. `pos.y` on the building is then just that pad height.
+
+meta (
+  name = "building_in_terrain",
+  description = "A walkable terrain patch with a basement building set into a hole cut to its exact footprint",
+  tags = ["terrain", "building", "basement", "hole", "procedural", "environment"],
+  mogen_version = "0.1.8")
+
+material "grassland" (color=[0.34, 0.42, 0.24], roughness=0.95)
+material "plaster"   (color=[0.92, 0.91, 0.88], roughness=0.85)
+material "warm_wood" (color=[0.55, 0.38, 0.22], roughness=0.75)
+material "tile"      (color=[0.86, 0.86, 0.83], roughness=0.35)
+material "oak"       (color=[0.62, 0.45, 0.28], roughness=0.70)
+
+// --- the ground ------------------------------------------------------------
+// Gentle rolling relief you can roam; the build pad itself is flattened by the
+// road below. The patch is sized (see header) so grid lines fall exactly on
+// the building's outer walls.
+terrain "ground" (
+  seed=7,
+  size=[50.35167, 5, 48.057795], // width, max height, depth (metres) — see header
+  source="fbm",
+  octaves=3,
+  frequency=0.05,
+  persistence=0.4,
+  resolution=120,               // 120 cells across each axis (multiple of chunks)
+  chunks=6,
+  lod_levels=3,
+  smooth=4,
+  colliders="all",
+  mat="grassland",
+  pos=[0, 0, 0]
+) {
+  // Grade the build pad flat: a stubby, wide road centred on the plot forces
+  // the surrounding cells to one height and blends out over the shoulder.
+  road ( path=[[-2, 0], [2, 0]], width=18, shoulder=8 )
+
+  // Void for the building, cut to its outer plate. cap="open" leaves the
+  // bottom open so the basement plugs straight in; depth clears the basement
+  // floor so no terrain rim wall ever rises into the lower storey.
+  hole ( at=[0, 0], size=[13.42711, 9.611559], depth=8, cap="open" )
+}
+
+// --- the building ----------------------------------------------------------
+// Centred on the hole. floors_below=1 gives a basement; the staircase lets you
+// walk down into it. pos.y is set to the terrain's height at the centre so the
+// ground floor sits flush with the surrounding grass (tuned below).
+building "house" (
+  seed=4,
+  style="apartment-block",
+  floor_area=120,
+  wall_thickness=0.2,
+  rooms=10,
+  floors_above=2,
+  floors_below=1,
+  windows=12,
+  entrances=1,
+  staircases=1,
+  ceiling_height=2.6,
+  roof="pitched",
+  mat="plaster",
+  pos=[0, 1.14, 0] // pad height from the graded road — ground floor sits flush
+) {
+  room_type "bedroom" (kind=private, density=4, mat="warm_wood")
+  room_type "kitchen" (kind=service, density=2, mat="tile")
+  room_type "living"  (kind=public,  density=3, mat="oak")
+  room_type "storage" (kind=utility, density=2, mat="plaster")
+
+  adjacency "kitchen" (adjacent_to=["living"], away_from=["bedroom"])
+}

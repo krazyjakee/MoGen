@@ -17,6 +17,7 @@ use crate::lower::building::config::BuildingCfg;
 use crate::lower::building::emit::openings::elevator_door_z;
 use crate::lower::building::emit::wall_build::wall_with_holes;
 use crate::lower::building::layout::{CellKind, Rect2, StoreyPlate};
+use crate::lower::poi::{emit_poi_group, PoiDebug, PoiMarker};
 
 /// Thickness of the N/E/S solid shaft walls and the per-storey west pieces.
 /// Kept thin to minimise visual weight while still providing a watertight
@@ -88,7 +89,70 @@ pub(super) fn emit_elevator(
         graph,
         &origin,
     );
+    emit_elevator_stop_pois(
+        cfg,
+        bottom_storey,
+        top_storey,
+        y_centre,
+        shaft_group,
+        graph,
+        &origin,
+    );
     Ok(())
+}
+
+/// One transform-only POI per served storey marking where the elevator cab
+/// stops on that floor. Lets an engine drop its own elevator model and know
+/// each floor's stop height. Anchored at the shaft centre on the storey's
+/// floor surface, facing the (west) shaft door onto the adjacent room.
+fn emit_elevator_stop_pois(
+    cfg: &BuildingCfg,
+    bottom_storey: i32,
+    top_storey: i32,
+    y_centre: f32,
+    group: NodeId,
+    graph: &mut SceneGraph,
+    origin: &Option<std::path::PathBuf>,
+) {
+    let step = cfg.ceiling_height + cfg.ceiling_thickness;
+    // Door is on the west (−X) face; point the marker's +Z forward at it.
+    let facing = Quat::from_rotation_arc(Vec3::Z, Vec3::NEG_X);
+    let mut markers: Vec<PoiMarker> = Vec::new();
+    for s in bottom_storey..=top_storey {
+        // Floor surface (world) sits at s*step; the group is centred at
+        // y_centre, so the marker's group-local Y is s*step − y_centre.
+        let local_y = s as f32 * step - y_centre;
+        markers.push(PoiMarker {
+            name_key: "elevator_stop".into(),
+            role: "elevator_stop".into(),
+            tags: vec![
+                "building".into(),
+                "poi".into(),
+                "elevator".into(),
+                "elevator_stop".into(),
+                format!("floor={s}"),
+            ],
+            transform: Transform::from_trs(Vec3::new(0.0, local_y, 0.0), facing, Vec3::ONE),
+            debug: Some(PoiDebug {
+                mat_name: "building_poi_elevator_stop".into(),
+                color: [0.80, 0.25, 0.95],
+                radius: 0.12,
+            }),
+        });
+    }
+    emit_poi_group(
+        graph,
+        group,
+        origin.as_deref(),
+        "elevator_stops",
+        &[
+            "building".into(),
+            "elevator".into(),
+            "points_of_interest".into(),
+        ],
+        cfg.debug_show_poi,
+        markers,
+    );
 }
 
 /// Per-storey west wall pieces for the elevator. Each piece is one

@@ -243,6 +243,7 @@ mod tests {
             windows: 0,
             skylights: 0,
             roof: Roof::Flat,
+            roof_overhang: None,
             ceiling_height: 2.6,
             door_w: 0.9,
             door_h: 2.1,

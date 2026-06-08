@@ -25,10 +25,11 @@ pub(super) enum Style {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Roof {
     Flat,
-    /// Gable along the longer axis (the v1 axis-aligned implementation treats
-    /// `pitched` as a synonym of `gabled`: sloped end-faces would require non-
-    /// axis-aligned vertices we have nowhere to round-trip through).
+    /// Gable along the longer axis, eaves flush with the perimeter walls.
     Gabled,
+    /// Same gable profile as [`Roof::Gabled`] but with the eaves overhanging
+    /// the walls (the slopes continue past the wall line and droop below the
+    /// wall top); the vertical gable end-walls stay flush.
     Pitched,
     Hipped,
     Mansard,
@@ -92,6 +93,11 @@ pub(super) struct BuildingCfg {
     pub windows: u32,
     pub skylights: u32,
     pub roof: Roof,
+    /// Horizontal projection of the roof eaves past the perimeter walls, in
+    /// metres. `None` lets the roof kind choose its default (`pitched` → a
+    /// modest overhang, `gabled` → flush). `Some` overrides for any sloped
+    /// roof. Only consumed by the gable/pitched path today.
+    pub roof_overhang: Option<f32>,
     pub ceiling_height: f32,
     pub door_w: f32,
     pub door_h: f32,
@@ -147,6 +153,7 @@ pub(super) fn read_cfg(node: &Node) -> Result<BuildingCfg> {
         Some("shed") => Roof::Shed,
         Some(other) => bail!("unsupported building roof \"{other}\""),
     };
+    let roof_overhang = node.attr_number("roof_overhang").filter(|v| *v >= 0.0);
     let mat_style = attr_str(node, "mat_style").unwrap_or_default();
 
     let floor_area = cfg::scalar(node, "floor_area", 120.0, 4.0);
@@ -236,6 +243,7 @@ pub(super) fn read_cfg(node: &Node) -> Result<BuildingCfg> {
         windows,
         skylights,
         roof,
+        roof_overhang,
         ceiling_height,
         door_w,
         door_h,

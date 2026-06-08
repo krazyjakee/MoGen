@@ -32,6 +32,13 @@ use super::StoreyCtx;
 /// tweak can land as a separate attr if authoring demand appears.
 const DEFAULT_PITCH_DEG: f32 = 30.0;
 
+/// Horizontal projection of `pitched` roof eaves past the perimeter walls.
+/// `gabled` stays flush to the walls (overhang 0); `pitched` continues the
+/// slope planes outward by this much on all sides — the classic
+/// eaves-overhang house silhouette. The ridge height is unchanged; the eaves
+/// extend out and droop below the wall top by `overhang * tan(pitch)`.
+const EAVE_OVERHANG: f32 = 0.4;
+
 pub(super) fn emit_roof(
     node: &Node,
     cfg: &BuildingCfg,
@@ -82,15 +89,26 @@ pub(super) fn emit_roof(
     match cfg.roof {
         Roof::Flat => unreachable!(),
         Roof::Shed => emit_shed(roof_group, graph, &origin, w, d, roof_h)?,
-        Roof::Pitched | Roof::Gabled => emit_gabled(
-            roof_group,
-            graph,
-            &origin,
-            w,
-            d,
-            roof_h,
-            cfg.wall_thickness,
-        )?,
+        Roof::Gabled | Roof::Pitched => {
+            // `roof_overhang` overrides the per-kind default: `pitched` is
+            // "gabled with overhanging eaves", `gabled` is flush.
+            let default_overhang = match cfg.roof {
+                Roof::Pitched => EAVE_OVERHANG,
+                _ => 0.0,
+            };
+            let overhang = cfg.roof_overhang.unwrap_or(default_overhang).max(0.0);
+            emit_gabled(
+                roof_group,
+                graph,
+                &origin,
+                w,
+                d,
+                roof_h,
+                cfg.wall_thickness,
+                overhang,
+                pitch,
+            )?
+        }
         Roof::Hipped => emit_hipped(roof_group, graph, &origin, w, d, roof_h)?,
         Roof::Mansard => emit_mansard(roof_group, graph, &origin, w, d, pitch)?,
     }
@@ -118,6 +136,13 @@ fn emit_shed(
 /// footprint is square the ridge defaults to the X axis (the wider /
 /// equal-length axis comes first alphabetically — keeps the gabled house
 /// example reproducible).
+///
+/// `overhang` projects the eaves outward past the perimeter walls on every
+/// side (the `pitched` variant; `gabled` passes 0). The slope planes are
+/// continued at the same `pitch`, so the ridge height is unchanged and the
+/// eaves droop below the wall top by `overhang * tan(pitch)`. The gable
+/// end-walls stay on the actual wall line (`x = ±w/2`), with the slopes
+/// overhanging them as a rake.
 fn emit_gabled(
     parent: NodeId,
     graph: &mut SceneGraph,
@@ -126,7 +151,19 @@ fn emit_gabled(
     d: f32,
     h: f32,
     wall_thickness: f32,
+    overhang: f32,
+    pitch: f32,
 ) -> Result<()> {
+    // Eave footprint = wall footprint grown by the overhang on each side.
+    // `drop` is how far the eave plane falls below the wall top to keep the
+    // slope continuous; the wedge gains that height so the ridge stays put.
+    let drop = overhang * pitch.tan();
+    let w_eave = w + 2.0 * overhang;
+    let d_eave = d + 2.0 * overhang;
+    let wedge_h = h + drop;
+    // Wedge-centre Y: lifts the wedge so its base (eave plane) lands at
+    // y = -drop. With overhang 0 this is the original 0.5*h (flush gable).
+    let eave_y = 0.5 * wedge_h - drop;
     // Ridge runs along the longer axis. Two wedges face each other across
     // the ridge — each is half-width on the short axis and sits over its
     // half of the footprint.
@@ -143,7 +180,7 @@ fn emit_gabled(
         //    ridge (z=0) — exactly the default wedge orientation, no rotation.
         //  - South half (z ∈ [-d/2, 0]): slope rises from south-eave (low z) to
         //    ridge — mirror the wedge along Z by rotating 180° around Y.
-        let wedge = [w, h, 0.5 * d];
+        let wedge = [w_eave, wedge_h, 0.5 * d_eave];
         let rot_north = Quat::IDENTITY;
         let rot_south = Quat::from_rotation_y(std::f32::consts::PI);
         (wedge, rot_south, rot_north, AxisAlong::X)
@@ -153,7 +190,7 @@ fn emit_gabled(
         //  - East half (x ∈ [0, w/2]): rotate -90° around Y so default +Z body
         //    swings to +X, slope rising from east-eave to ridge.
         //  - West half: rotate +90° around Y for the mirror.
-        let wedge = [d, h, 0.5 * w];
+        let wedge = [d_eave, wedge_h, 0.5 * w_eave];
         let rot_east = Quat::from_rotation_y(-std::f32::consts::FRAC_PI_2);
         let rot_west = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
         (wedge, rot_west, rot_east, AxisAlong::Z)
@@ -162,13 +199,13 @@ fn emit_gabled(
     // Position the two wedges centred on their half-footprints.
     let (left_offset, right_offset) = match gable_axis {
         AxisAlong::X => (
-            // Left = negative Z half, centre at z = -d/4.
-            Vec3::new(0.0, 0.5 * h, -0.25 * d),
-            Vec3::new(0.0, 0.5 * h, 0.25 * d),
+            // Left = negative Z half, centre at z = -d_eave/4.
+            Vec3::new(0.0, eave_y, -0.25 * d_eave),
+            Vec3::new(0.0, eave_y, 0.25 * d_eave),
         ),
         AxisAlong::Z => (
-            Vec3::new(-0.25 * w, 0.5 * h, 0.0),
-            Vec3::new(0.25 * w, 0.5 * h, 0.0),
+            Vec3::new(-0.25 * w_eave, eave_y, 0.0),
+            Vec3::new(0.25 * w_eave, eave_y, 0.0),
         ),
     };
 
@@ -197,25 +234,34 @@ fn emit_gabled(
         slope_rot_right,
     );
 
-    // Gable end walls: triangular extrusions flush with the perimeter
-    // walls on the short axis. The contour is built in XZ (the extrude
-    // pipeline's natural plane) with the apex at Z=h; we then rotate it
-    // up via -90° around X so the apex ends up at +Y. For ridge_along_z
-    // we additionally rotate 90° around Y to swap the gable into the
-    // perpendicular plane.
+    // Gable end walls: triangular extrusions that cap the two ends of the
+    // ridge, flush with the perimeter walls perpendicular to the ridge. The
+    // contour is built in XZ (the extrude pipeline's natural plane) with the
+    // apex at Z=h; we then rotate it up via -90° around X so the apex ends up
+    // at +Y. For ridge_along_x the gable plane faces ±X, so we additionally
+    // rotate 90° around Y to swap the gable into the perpendicular plane; for
+    // ridge_along_z the up-rotated triangle already faces ±Z.
+    // With overhang the gable wall sits fully beneath the solid slope, so its
+    // slanted top faces are coplanar with the roof's outer slope surface and
+    // z-fight (a stitched line along the rake). Drop it a hair so those faces
+    // recede inside the solid wedge that backs them — no z-fight, and no hole
+    // because the wedge fills the sliver above. Flush gables (overhang 0)
+    // straddle the wedge's own end cap and need no tuck.
+    let gable_tuck = if overhang > 0.0 { 0.04 } else { 0.0 };
+    let gy = -gable_tuck;
     let up = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
     let (gable_pos_a, gable_pos_b, gable_rot, gable_width) = match gable_axis {
         AxisAlong::X => (
-            Vec3::new(0.0, 0.0, 0.5 * d),
-            Vec3::new(0.0, 0.0, -0.5 * d),
-            up,
-            w,
-        ),
-        AxisAlong::Z => (
-            Vec3::new(0.5 * w, 0.0, 0.0),
-            Vec3::new(-0.5 * w, 0.0, 0.0),
+            Vec3::new(0.5 * w, gy, 0.0),
+            Vec3::new(-0.5 * w, gy, 0.0),
             Quat::from_rotation_y(std::f32::consts::FRAC_PI_2) * up,
             d,
+        ),
+        AxisAlong::Z => (
+            Vec3::new(0.0, gy, 0.5 * d),
+            Vec3::new(0.0, gy, -0.5 * d),
+            up,
+            w,
         ),
     };
     let triangle = gable_triangle(gable_width, h);

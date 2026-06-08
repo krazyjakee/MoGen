@@ -1,6 +1,20 @@
 use super::{count_kind, count_role, has_tag, lower_src, slab_ceiling_count, ROOFTEST_SRC};
 use mogen_core::SceneGraph;
 
+/// Max absolute XZ coordinate across all roof-slope mesh vertices (local
+/// frame, but slope nodes are only translated — not rotated about Y for
+/// ridge_along_x — so local X directly equals world X for that case).
+/// Used to compare overhang extent between `gabled` and `pitched`.
+fn max_slope_vertex_abs(g: &SceneGraph) -> f32 {
+    g.nodes
+        .iter()
+        .filter(|n| n.role.as_deref() == Some("roof"))
+        .filter_map(|n| n.mesh.as_ref())
+        .flat_map(|m| m.positions.iter())
+        .map(|p| p[0].abs().max(p[2].abs()))
+        .fold(0.0_f32, f32::max)
+}
+
 #[test]
 fn building_roof_gabled_smoke() {
     let src = ROOFTEST_SRC.replace("ROOFKIND", "gabled");
@@ -20,6 +34,48 @@ fn building_roof_gabled_smoke() {
         slab_ceiling_count(&g),
         0,
         "non-flat roof must not emit a top-storey ceiling slab"
+    );
+}
+
+#[test]
+fn pitched_roof_wedge_wider_than_gabled() {
+    // `pitched` defaults to EAVE_OVERHANG (0.4 m) past the perimeter walls;
+    // `gabled` is flush. The slope meshes must be measurably wider.
+    let gabled_ext = max_slope_vertex_abs(&lower_src(&ROOFTEST_SRC.replace("ROOFKIND", "gabled")));
+    let pitched_ext = max_slope_vertex_abs(&lower_src(&ROOFTEST_SRC.replace("ROOFKIND", "pitched")));
+    assert!(
+        pitched_ext > gabled_ext + 0.2,
+        "pitched slope ({pitched_ext:.3}) should extend past gabled ({gabled_ext:.3}) by ≥ 0.2 m"
+    );
+}
+
+#[test]
+fn roof_overhang_zero_forces_flush_pitched_roof() {
+    // `roof_overhang=0` on a `pitched` roof must override the default and
+    // produce the same slope extent as a plain `gabled` roof.
+    let gabled_ext = max_slope_vertex_abs(&lower_src(&ROOFTEST_SRC.replace("ROOFKIND", "gabled")));
+    let flush_src = ROOFTEST_SRC
+        .replace("ROOFKIND", "pitched")
+        .replace("roof=\"pitched\"", "roof=\"pitched\", roof_overhang=0");
+    let flush_ext = max_slope_vertex_abs(&lower_src(&flush_src));
+    assert!(
+        (flush_ext - gabled_ext).abs() < 1e-3,
+        "pitched with roof_overhang=0 ({flush_ext:.3}) must match gabled flush extent ({gabled_ext:.3})"
+    );
+}
+
+#[test]
+fn roof_overhang_applies_to_gabled_roof() {
+    // An explicit `roof_overhang` on a `gabled` roof (which defaults to 0)
+    // must widen the slopes by the specified amount.
+    let flush_ext = max_slope_vertex_abs(&lower_src(&ROOFTEST_SRC.replace("ROOFKIND", "gabled")));
+    let wide_src = ROOFTEST_SRC
+        .replace("ROOFKIND", "gabled")
+        .replace("roof=\"gabled\"", "roof=\"gabled\", roof_overhang=0.6");
+    let wide_ext = max_slope_vertex_abs(&lower_src(&wide_src));
+    assert!(
+        wide_ext > flush_ext + 0.4,
+        "gabled with roof_overhang=0.6 ({wide_ext:.3}) should extend past flush ({flush_ext:.3}) by ≥ 0.4 m"
     );
 }
 

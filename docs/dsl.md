@@ -477,7 +477,8 @@ spec, supported styles/roof shapes, and tranche status.
 | `floors_below` | `0` | Basement storeys. |
 | `windows` | `0` | Total above-ground window count; distributed across above-ground storeys. Basements get none. |
 | `skylights` | `0` | Top-storey ceiling cutouts. |
-| `roof` | `"flat"` | Roof shape; T1-T2 only supports `flat`. |
+| `roof` | `"flat"` | Roof shape: `flat`, `pitched`, `gabled`, `hipped`, `mansard`, `shed`. |
+| `roof_overhang` | _unset_ | Eaves projection past the walls (m) for `gabled`/`pitched`. Unset → `gabled` flush, `pitched` modest default. |
 | `ceiling_height` | `2.6` | Clear height per storey (m). |
 | `door_w`, `door_h` | `0.9, 2.1` | Door opening dimensions (m). |
 | `window_w`, `window_h` | `1.2, 1.4` | Window opening dimensions (m, medium class). Small = ×0.6, large = ×1.4. |
@@ -515,6 +516,18 @@ building "house" (seed=4, style="apartment-block",
   adjacency "kitchen"  (adjacent_to=["living"])
 }
 ```
+
+Beyond geometry, `building` embeds **points of interest** as empty marker
+nodes (`role`/`tags` in glTF extras) so an engine can place its own content:
+`entrance` / `door` / `window` opening slots, per-room furniture markers when
+`furnish=1` (`bed`, `desk`, …), and per-floor **vertical-circulation** anchors
+— `stair_access` (one per storey, at each floor's stair entry platform) and
+`elevator_stop` (one per served storey, anchored at the shaft centre on the
+floor surface where the cab stops). Each circulation marker faces its shaft
+door and carries a `floor=<n>` tag, so you can drop your own stairwell /
+elevator models knowing exactly where each floor connects. `debug_show_poi=1`
+gives every marker a small bright `building_poi_<role>` sphere so the
+otherwise geometry-free anchors show in a preview.
 
 ### Cave
 
