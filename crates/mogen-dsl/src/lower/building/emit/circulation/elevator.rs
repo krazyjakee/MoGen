@@ -91,7 +91,6 @@ pub(super) fn emit_elevator(
     );
     emit_elevator_stop_pois(
         cfg,
-        storeys,
         bottom_storey,
         top_storey,
         y_centre,
@@ -106,10 +105,8 @@ pub(super) fn emit_elevator(
 /// stops on that floor. Lets an engine drop its own elevator model and know
 /// each floor's stop height. Anchored at the shaft centre on the storey's
 /// floor surface, facing the (west) shaft door onto the adjacent room.
-#[allow(clippy::too_many_arguments)]
 fn emit_elevator_stop_pois(
     cfg: &BuildingCfg,
-    storeys: &[StoreyPlate],
     bottom_storey: i32,
     top_storey: i32,
     y_centre: f32,
@@ -121,11 +118,7 @@ fn emit_elevator_stop_pois(
     // Door is on the west (−X) face; point the marker's +Z forward at it.
     let facing = Quat::from_rotation_arc(Vec3::Z, Vec3::NEG_X);
     let mut markers: Vec<PoiMarker> = Vec::new();
-    for sp in storeys {
-        let s = sp.storey;
-        if s < bottom_storey || s > top_storey {
-            continue;
-        }
+    for s in bottom_storey..=top_storey {
         // Floor surface (world) sits at s*step; the group is centred at
         // y_centre, so the marker's group-local Y is s*step − y_centre.
         let local_y = s as f32 * step - y_centre;

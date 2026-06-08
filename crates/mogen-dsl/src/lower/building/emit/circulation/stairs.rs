@@ -213,7 +213,9 @@ pub(super) fn emit_staircase(
         cell_w, cell_d, total_h, adj_n, adj_e, adj_s, enclosure, graph, &origin,
     );
 
-    emit_stair_access_pois(cfg, cell_d, bottom_storey, top_storey, step_h, stair_group, graph, &origin);
+    emit_stair_access_pois(
+        cfg, cell_d, bottom_storey, top_storey, step_h, stair_group, graph, &origin,
+    );
     Ok(())
 }
 
