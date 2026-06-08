@@ -1028,3 +1028,83 @@ fn debug_render_floor_isolates_a_single_storey() {
         wrapper.tags
     );
 }
+
+#[test]
+fn staircase_emits_one_access_poi_per_storey() {
+    let g = lower_src(MULTI_FLOOR_SRC);
+    // 3 storeys (b1, 0, 1) → one stair_access marker each.
+    let access = super::count_role(&g, "stair_access");
+    assert_eq!(
+        access, 3,
+        "expected one stair_access POI per storey, got {access}"
+    );
+    // Each marker is geometry-free and carries its signed floor index.
+    for n in g.nodes.iter().filter(|n| n.role.as_deref() == Some("stair_access")) {
+        assert_eq!(n.kind, "poi", "stair_access marker should be a poi node");
+        assert!(n.mesh.is_none(), "stair_access POI must stay geometry-free");
+        assert!(
+            n.tags.iter().any(|t| t.starts_with("floor=")),
+            "stair_access POI should carry a floor=<n> tag, got {:?}",
+            n.tags
+        );
+    }
+}
+
+#[test]
+fn elevator_emits_one_stop_poi_per_storey() {
+    let g = lower_src(MULTI_FLOOR_SRC);
+    // 3 served storeys (b1, 0, 1) → one elevator_stop marker each.
+    let stops = super::count_role(&g, "elevator_stop");
+    assert_eq!(
+        stops, 3,
+        "expected one elevator_stop POI per served storey, got {stops}"
+    );
+    for n in g.nodes.iter().filter(|n| n.role.as_deref() == Some("elevator_stop")) {
+        assert_eq!(n.kind, "poi", "elevator_stop marker should be a poi node");
+        assert!(n.mesh.is_none(), "elevator_stop POI must stay geometry-free");
+        assert!(
+            n.tags.iter().any(|t| t.starts_with("floor=")),
+            "elevator_stop POI should carry a floor=<n> tag, got {:?}",
+            n.tags
+        );
+    }
+}
+
+#[test]
+fn circulation_pois_land_on_floor_surfaces() {
+    // Both stair-access and elevator-stop markers should resolve to the
+    // floor datum of their storey (world Y = storey * step). The markers
+    // are nested under group transforms, so accumulate ancestor Y.
+    let g = lower_src(MULTI_FLOOR_SRC);
+    let step = 2.6 + 0.2; // ceiling_height + ceiling_thickness defaults.
+    let world_y = |mut idx: usize| -> f32 {
+        let mut y = 0.0;
+        loop {
+            y += g.nodes[idx].transform.translation.y;
+            match g.nodes[idx].parent {
+                Some(p) => idx = p.0 as usize,
+                None => break,
+            }
+        }
+        y
+    };
+    for (i, n) in g.nodes.iter().enumerate() {
+        let role = n.role.as_deref();
+        if role != Some("stair_access") && role != Some("elevator_stop") {
+            continue;
+        }
+        let floor: i32 = n
+            .tags
+            .iter()
+            .find_map(|t| t.strip_prefix("floor="))
+            .and_then(|s| s.parse().ok())
+            .expect("circulation POI missing floor=<n> tag");
+        let expected = floor as f32 * step;
+        let got = world_y(i);
+        assert!(
+            (got - expected).abs() < 1e-3,
+            "{:?} on floor {floor} should sit at world y={expected}, got {got}",
+            n.name
+        );
+    }
+}

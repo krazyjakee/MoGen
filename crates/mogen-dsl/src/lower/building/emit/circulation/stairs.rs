@@ -14,6 +14,7 @@ use crate::ast::Node;
 use crate::lower::building::circulation::{CirculationCell, STAIR_ENTRY_DEPTH, STAIR_LANDING_DEPTH};
 use crate::lower::building::config::BuildingCfg;
 use crate::lower::building::layout::StoreyPlate;
+use crate::lower::poi::{emit_poi_group, PoiDebug, PoiMarker};
 use crate::module::expand_modules;
 
 /// Target riser height in metres. Used for step-count calculations in both
@@ -211,7 +212,67 @@ pub(super) fn emit_staircase(
     emit_shaft_enclosure(
         cell_w, cell_d, total_h, adj_n, adj_e, adj_s, enclosure, graph, &origin,
     );
+
+    emit_stair_access_pois(cfg, cell_d, bottom_storey, top_storey, step_h, stair_group, graph, &origin);
     Ok(())
+}
+
+/// One transform-only POI per storey marking where the staircase meets each
+/// floor — the south entry/exit platform that every storey's slab preserves.
+/// Lets an engine drop its own stair model and know each floor's access point.
+/// Faces the (west) shaft door onto the adjacent room.
+#[allow(clippy::too_many_arguments)]
+fn emit_stair_access_pois(
+    cfg: &BuildingCfg,
+    cell_d: f32,
+    bottom_storey: i32,
+    top_storey: i32,
+    step_h: f32,
+    group: NodeId,
+    graph: &mut SceneGraph,
+    origin: &Option<std::path::PathBuf>,
+) {
+    // Centre of the south entry platform in the stair group's local frame
+    // (the group is centred on the cell in XZ, with Y = 0).
+    let entry_z = -0.5 * cell_d + 0.5 * STAIR_ENTRY_DEPTH;
+    let facing = Quat::from_rotation_arc(Vec3::Z, Vec3::NEG_X);
+    let mut markers: Vec<PoiMarker> = Vec::new();
+    for s in bottom_storey..=top_storey {
+        markers.push(PoiMarker {
+            name_key: "stair_access".into(),
+            role: "stair_access".into(),
+            tags: vec![
+                "building".into(),
+                "poi".into(),
+                "staircase".into(),
+                "stair_access".into(),
+                format!("floor={s}"),
+            ],
+            transform: Transform::from_trs(
+                Vec3::new(0.0, s as f32 * step_h, entry_z),
+                facing,
+                Vec3::ONE,
+            ),
+            debug: Some(PoiDebug {
+                mat_name: "building_poi_stair_access".into(),
+                color: [0.30, 0.90, 0.45],
+                radius: 0.12,
+            }),
+        });
+    }
+    emit_poi_group(
+        graph,
+        group,
+        origin.as_deref(),
+        "stair_access_pois",
+        &[
+            "building".into(),
+            "staircase".into(),
+            "points_of_interest".into(),
+        ],
+        cfg.debug_show_poi,
+        markers,
+    );
 }
 
 #[allow(clippy::too_many_arguments)]

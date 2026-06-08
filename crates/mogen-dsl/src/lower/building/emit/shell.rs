@@ -144,38 +144,32 @@ fn emit_slab(
     let mesh = if holes_xz.is_empty() {
         base
     } else {
-        // The cutout is padded PER AXIS to avoid two failure modes at once:
+        // The cutout is inflated by a tiny epsilon on every XY edge — just
+        // enough to avoid coplanar-face artefacts in the CSG difference —
+        // and never more, so the cutout stops at the cell boundary.
         //
-        // 1. On axes where the hole touches the floorplate bounds (e.g. a
-        //    staircase in the east-side circulation column has its east
-        //    edge flush with `bounds.x_max`), the cutout must extend
-        //    through the perimeter wall thickness so the resulting slab
-        //    shows a clean U-shaped opening rather than a coplanar-face
-        //    sliver of intact slab clinging to the wall.
-        // 2. On interior axes the cutout must NOT inflate the hole, or
-        //    the slab loses a visible strip outside the actual cell —
-        //    e.g. the staircase entry strip narrows by `pad_xy`, leaving
-        //    a horizontal gap where neither the slab nor the top stair
-        //    tread is present at the user-facing y.
-        //
-        // The vertical inflation is small and symmetric so the cutout
-        // pokes through the top and bottom of the slab regardless.
+        // Crucially we must NOT extend the cutout outward through the
+        // perimeter wall thickness, even when a hole edge is flush with the
+        // floorplate bounds (e.g. the east-column staircase, whose east edge
+        // sits on `bounds.x_max` — the interior face of the east wall). The
+        // slab footprint runs a wall-thickness past `bounds` so its rim sits
+        // under the perimeter walls; that under-wall strip is the only thing
+        // bridging the gap between one storey's wall and the next, so its
+        // exposed edge is what seals the exterior envelope at each floor
+        // division. Punching the cutout through it (the old `exit_pad`)
+        // removed that strip wherever a stair/elevator touched a wall,
+        // opening a ceiling_thickness-tall hole straight through the
+        // building's outer shell — visible as a gap in the floor-line band.
+        // The strip is hidden behind the perimeter wall from inside the
+        // shaft, so keeping it costs nothing and keeps the shell watertight.
         let eps = 1e-3f32;
-        let exit_pad = wt + 0.01;
-        let bound_pad = |hole_edge: f32, slab_edge: f32| -> f32 {
-            if (hole_edge - slab_edge).abs() <= eps {
-                exit_pad
-            } else {
-                eps
-            }
-        };
         let cutouts: Vec<Mesh> = holes_xz
             .iter()
             .map(|r| {
-                let pad_xmin = bound_pad(r.x_min, bounds.x_min);
-                let pad_xmax = bound_pad(r.x_max, bounds.x_max);
-                let pad_zmin = bound_pad(r.z_min, bounds.z_min);
-                let pad_zmax = bound_pad(r.z_max, bounds.z_max);
+                let pad_xmin = eps;
+                let pad_xmax = eps;
+                let pad_zmin = eps;
+                let pad_zmax = eps;
                 let hw = (r.width() + pad_xmin + pad_xmax).max(1e-4);
                 let hd = (r.depth() + pad_zmin + pad_zmax).max(1e-4);
                 let hcx = 0.5 * ((r.x_min - pad_xmin) + (r.x_max + pad_xmax)) - cx;

@@ -74,6 +74,7 @@ building "house" (
 | `windows` | `0` | int ≥ 0 | Total above-ground window count; the layout picks exterior wall edges and assigns a size class per window. |
 | `skylights` | `0` | int ≥ 0 | Top-floor ceiling holes. |
 | `roof` | `"flat"` | enum | `flat`, `pitched`, `gabled`, `hipped`, `mansard`, `shed`. |
+| `roof_overhang` | _unset_ | m | Eaves projection past the perimeter walls for `gabled`/`pitched`. Unset lets the kind choose: `gabled` flush (0), `pitched` a modest default. Set to override either (e.g. `roof_overhang=0` on a pitched roof, or a wide overhang on a gabled one). |
 | `ceiling_height` | `2.6` | m | Per-storey clear height. |
 | `door_w`, `door_h` | `0.9, 2.1` | m | Internal door opening size. External doors reuse the same dimensions in v1. |
 | `window_w`, `window_h` | `1.2, 1.4` | m | Window opening size (medium class). Small = 0.6×size, large = 1.4×size. |
@@ -87,7 +88,7 @@ building "house" (
 | `elevators` | `0` | int ≥ 0 | Vertical shafts spanning every storey. |
 | `staircases` | `0` | int ≥ 0 | Stairwells spanning adjacent storeys (≥1 if `floors_above + floors_below > 1`). |
 | `furnish` | `1` | bool (0/1) | Emit furnishing POI markers in each room (see [Furnishing markers](#furnishing-markers)). `0` leaves rooms as bare shells. Markers carry no geometry either way. |
-| `debug_show_poi` | `0` | bool (0/1) | Debug: give every furnishing and door/window marker a small emissive sphere so the geometry-free POIs are visible in a glTF viewer, colour-coded by category/role. |
+| `debug_show_poi` | `0` | bool (0/1) | Debug: give every furnishing, door/window, and per-floor stair/elevator marker a small emissive sphere so the geometry-free POIs are visible in a glTF viewer, colour-coded by category/role. |
 | `debug_hide_roof` | `0` | bool (0/1) | Debug: drop the top-storey ceiling slab (and its skylights) so the interior can be seen from above. |
 | `debug_render_floor` | _unset_ | signed int storey | Debug: render only the given storey index (`0` = ground, `1..` = upper, `-1..` = basement). The rendered floor gets no ceiling and vertical circulation is skipped. |
 
@@ -153,8 +154,16 @@ name (building)                       editable wrapper
     │   ├── door_0 (poi)              role=door, geometry-free
     │   └── window_0 (poi)            role=window, geometry-free
     └── circulation (group)
-        ├── stair_<n> (group)
+        ├── staircase_<n> (group)
+        │   ├── … flights / landings / shaft_walls
+        │   └── stair_access_pois (group)   per-floor stair POI markers
+        │       ├── stair_access_0 (poi)    role=stair_access, tag floor=<n>
+        │       └── …
         └── elevator_<n> (group)
+            ├── … shaft walls / per-storey west pieces
+            └── elevator_stops (group)      per-floor elevator POI markers
+                ├── elevator_stop_0 (poi)   role=elevator_stop, tag floor=<n>
+                └── …
 └── roof (group)                      style-driven; top-floor ceiling becomes roof
 ```
 
@@ -277,6 +286,40 @@ interior doors yellow, windows cyan). Skylights keep their existing
 `extras.slot` wrapper and are not given a POI marker. The opening's
 width/height still live on the module-instance group's `slot` block; the POI
 carries pose + role only, matching the furnishing-marker contract.
+
+## Stair & elevator POIs
+
+Vertical circulation is modelled as generic geometry (switchback flights, shaft
+walls, per-storey doors), but a game usually wants its *own* stairwell and
+elevator models. So each circulation cell also drops a **per-floor** set of
+points-of-interest — the same transform-only contract as the markers above —
+naming where every storey connects:
+
+- **Staircase** — a `stair_access_pois` group under `staircase_<n>`, with one
+  `stair_access` marker per storey (`bottom..=top`). Each sits at that floor's
+  south entry/exit platform (the intact strip of slab every storey preserves)
+  on the floor surface, facing the shaft door. Drop your own stair model and
+  use these to know where the run meets each floor.
+- **Elevator** — an `elevator_stops` group under `elevator_<n>`, with one
+  `elevator_stop` marker per served storey. Each is anchored at the shaft centre
+  on that floor's surface, facing the (west) shaft door — i.e. exactly **where
+  the cab should stop** and where the doors open. Place your own elevator model
+  at the bottom and drive it between these stop heights.
+
+Each marker is:
+
+- `kind = "poi"`, with **no mesh and no collider** by default;
+- `role` = `stair_access` or `elevator_stop`;
+- `tags` = `["building", "poi", "staircase", "stair_access", "floor=<n>"]` /
+  `["building", "poi", "elevator", "elevator_stop", "floor=<n>"]` — the
+  `floor=<n>` tag carries the signed storey index (basements negative) so an
+  importer can match a model to the right level without arithmetic;
+- a transform giving the floor-level pose with local **+Z** facing the shaft
+  door, matching the opening-marker convention.
+
+Like the other POIs these are always emitted (here gated only by the
+`staircases=` / `elevators=` counts) and stay geometry-free; `debug_show_poi=1`
+gives them a bright sphere (stair access green, elevator stops magenta).
 
 ---
 
@@ -430,7 +473,8 @@ in v1.
 | `roof=` | construction |
 |---|---|
 | `shed` | one `wedge_mesh` spanning the whole footprint, sloping south→north |
-| `pitched` / `gabled` | two `wedge_mesh` halves meeting at a ridge along the longer axis, plus two triangular end-walls extruded from `extrude_mesh` flush with the perimeter walls. `pitched` is a synonym of `gabled` in v1 — sloped end-faces would require non-axis-aligned vertices we have no representation for |
+| `gabled` | two `wedge_mesh` halves meeting at a ridge along the longer axis, plus two triangular end-walls extruded from `extrude_mesh` flush with the perimeter walls |
+| `pitched` | same gable profile as `gabled`, but the slope planes are continued past the wall line so the eaves overhang on all sides (and droop below the wall top by `overhang * tan(pitch)`). The ridge height is unchanged and the vertical gable end-walls stay flush; the slopes overhang them as a rake |
 | `hipped` | one `frustum_mesh` whose top edge collapses to an apex (square footprint) or a ridge along the longer axis (rectangular footprint) — four slopes from a single watertight mesh |
 | `mansard` | two stacked frustums: a steep ~60° lower tier and a shallow upper tier tapering to a short ridge (Second Empire profile) |
 

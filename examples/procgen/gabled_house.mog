@@ -5,6 +5,8 @@
 // skylight cutouts on non-flat roofs (the validator warns with W1114 if
 // you try).
 
+meta (mogen_version = "0.1.8")
+
 material "warm_wood" (color=[0.55, 0.38, 0.22], roughness=0.85)
 material "plaster"   (color=[0.94, 0.92, 0.88], roughness=0.85)
 material "tile"      (color=[0.90, 0.90, 0.88], roughness=0.40)
@@ -19,7 +21,7 @@ building "gabled_house" (
   entrances=1,
   windows=6,
   ceiling_height=2.6,
-  mat="plaster",
+  mat="plaster", debug_show_poi=1
 ) {
   room_type "bedroom" (kind=private, density=2, mat="warm_wood")
   room_type "living"  (kind=public,  density=2, mat="warm_wood")

@@ -193,8 +193,8 @@ static BUILDING: ProcSchema = ProcSchema {
                 default: "flat",
                 options: &[
                     EnumOption { value: "flat", help: "Flat slab roof" },
-                    EnumOption { value: "gabled", help: "Two slopes meeting at a ridge" },
-                    EnumOption { value: "pitched", help: "Synonym of gabled (axis-aligned)" },
+                    EnumOption { value: "gabled", help: "Two slopes meeting at a ridge, eaves flush with the walls" },
+                    EnumOption { value: "pitched", help: "Gable with eaves overhanging the walls" },
                     EnumOption { value: "hipped", help: "Slopes on all four sides" },
                     EnumOption { value: "mansard", help: "Double-slope (steep lower) roof" },
                     EnumOption { value: "shed", help: "Single slope (lean-to)" },
@@ -202,6 +202,16 @@ static BUILDING: ProcSchema = ProcSchema {
             },
             group: Main,
             help: None,
+        },
+        ParamSpec {
+            attr: "roof_overhang",
+            label: "Roof overhang",
+            kind: ParamKind::Scalar { default: 0.0, speed: 0.01 },
+            group: Main,
+            help: Some(
+                "Eaves projection past the walls (m) for gabled/pitched roofs. \
+                 0 = flush; pitched defaults to a modest overhang when unset.",
+            ),
         },
         scalar("floor_area", "Floor area m\u{00b2}", 120.0, 1.0),
         int("rooms", "Rooms", 4, 1, 256),
@@ -256,7 +266,8 @@ static BUILDING: ProcSchema = ProcSchema {
             kind: ParamKind::Bool { default: false },
             group: Debug,
             help: Some(
-                "Give every furnishing POI marker a small bright sphere so the \
+                "Give every POI marker (furniture, openings, and per-floor \
+                 stair / elevator anchors) a small bright sphere so the \
                  otherwise geometry-free markers are visible in the preview.",
             ),
         },
