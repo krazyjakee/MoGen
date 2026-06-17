@@ -129,7 +129,7 @@ uniform vec3 u_sun_color;
 //   u_light_color: linear RGB pre-multiplied by `intensity`
 //   u_light_range: distance cutoff for point/spot; 0 = unlimited
 //   u_light_cone:  (cos(inner), cos(outer)) for spot; (1,1) otherwise
-const int MAX_LIGHTS = 8;
+const int MAX_LIGHTS = 16; // keep in sync with MAX_LIGHTS in lights.rs
 uniform int u_num_lights;
 uniform int u_light_kind[MAX_LIGHTS];
 uniform vec3 u_light_pos[MAX_LIGHTS];

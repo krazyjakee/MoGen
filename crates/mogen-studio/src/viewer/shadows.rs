@@ -749,13 +749,21 @@ impl ShadowSystem {
             gl.enable(glow::CULL_FACE);
             gl.cull_face(glow::FRONT);
             gl.front_face(glow::CCW);
-            // Slope-scaled polygon offset to push depth values away from
-            // the camera, masking acne on near-tangent surfaces. Constants
-            // tuned for the 512–2048 maps the quality presets allocate; a
-            // smaller bias keeps contact shadows from drifting away from the
-            // caster's feet.
+            // Slope-scaled polygon offset to push depth values away from the
+            // camera, masking acne on near-tangent surfaces. The required bias
+            // scales with shadow-map texel size: a low-res 512 map has large
+            // texels and needs a bigger offset to stay acne-free, while a 2048
+            // map can run a much tighter bias, keeping contact shadows pinned
+            // to the caster's feet instead of peter-panning away. Tune per
+            // resolution rather than using one compromise value for all.
+            let (po_factor, po_units) = match self.resolution {
+                r if r >= 2048 => (1.25, 2.0),
+                r if r >= 1024 => (2.0, 3.0),
+                r if r >= 512 => (3.0, 4.0),
+                _ => (1.5, 2.5),
+            };
             gl.enable(glow::POLYGON_OFFSET_FILL);
-            gl.polygon_offset(1.5, 2.5);
+            gl.polygon_offset(po_factor, po_units);
             gl.viewport(0, 0, self.resolution, self.resolution);
             gl.bind_vertex_array(Some(vao));
 

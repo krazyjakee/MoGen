@@ -52,9 +52,16 @@ void main() {
     vec3 P = v_near + t * dir;
 
     // Write proper per-fragment depth so the scene occludes the grid the
-    // same way it would a real ground plane.
+    // same way it would a real ground plane. Geometry resting exactly on
+    // Y = 0 (a ground plane, a box's bottom face) would otherwise tie this
+    // depth under LEQUAL and shimmer frame-to-frame. glPolygonOffset can't
+    // help here — it doesn't apply to a manually written gl_FragDepth — so
+    // nudge the grid a hair farther from the camera. Coincident floor
+    // geometry then wins the depth test deterministically (no z-fighting),
+    // while the bias is far too small to hide the grid over empty space.
+    const float DEPTH_BIAS = 1e-4;
     vec4 clip = u_viewproj * vec4(P, 1.0);
-    gl_FragDepth = clamp(clip.z / clip.w * 0.5 + 0.5, 0.0, 1.0);
+    gl_FragDepth = clamp(clip.z / clip.w * 0.5 + 0.5 + DEPTH_BIAS, 0.0, 1.0);
 
     // Two banded scales: 1-unit minor + 10-unit major lines. As the camera
     // pulls back, the minor band's fwidth widens past the line spacing and

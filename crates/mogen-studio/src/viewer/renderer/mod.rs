@@ -533,13 +533,26 @@ impl Renderer {
     /// of the rest-pose-baked vertex stream is that this is the only GPU
     /// upload required when the pose moves.
     pub fn upload_palettes(&mut self, palettes: &[SkinPalette]) {
+        // Shadow maps are world-space, so a pose refresh only invalidates them
+        // when a matrix actually moved. `update_palettes` recomputes from
+        // scratch every tick, so an animation that is "active" but landed on
+        // the same frame — or a gizmo drag tick where the pointer didn't move
+        // enough to change the transform — yields byte-identical palettes
+        // (recompute is deterministic). In that case the depth pre-pass (up to
+        // 6 passes on High) is pure waste and we skip it. When anything did
+        // change, every caster is rebuilt as before — rigid included, since a
+        // moved rigid node's silhouette is just as stale as a skinned one.
+        let changed = self.palettes.len() != palettes.len()
+            || self
+                .palettes
+                .iter()
+                .zip(palettes)
+                .any(|(cached, next)| cached.joint_matrices != next.joint_matrices);
         self.palettes.clear();
         self.palettes.extend_from_slice(palettes);
-        // Pose changed — skinned silhouettes in the depth maps are now
-        // stale. Rigid-only scenes pay one redundant rebuild per gizmo
-        // drag tick, which is cheap relative to picking apart "did any
-        // matrix actually change" here.
-        self.shadows_dirty = true;
+        if changed {
+            self.shadows_dirty = true;
+        }
     }
 
     pub fn destroy(&mut self, gl: &glow::Context) {
