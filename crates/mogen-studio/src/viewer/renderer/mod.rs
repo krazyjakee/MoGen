@@ -662,6 +662,30 @@ impl Renderer {
             .draw(gl, viewproj, eye, viewport_height, &self.lights, selected);
     }
 
+    /// Draw a gold wireframe outline over every node in `selected` that has
+    /// contributed geometry to the current flat mesh. Reuses the collider
+    /// flat-colour shader and the main scene VAO — no extra VBO needed.
+    pub fn draw_selection_overlay(
+        &self,
+        gl: &glow::Context,
+        viewproj: glam::Mat4,
+        node_runs: &[(u32, u32, mogen_core::NodeId)],
+        selected: &[mogen_core::NodeId],
+    ) {
+        if selected.is_empty() || node_runs.is_empty() {
+            return;
+        }
+        let runs: Vec<(u32, u32, bool)> = node_runs
+            .iter()
+            .filter(|&&(_, _, node)| selected.contains(&node))
+            .map(|&(start, count, _)| (start, count, true))
+            .collect();
+        if !runs.is_empty() {
+            self.colliders_overlay
+                .draw_trimesh_runs(gl, viewproj, self.vao, &runs);
+        }
+    }
+
     /// Draw the collider overlay. AABB colliders come in as
     /// [`ColliderInstance`]s (built by [`super::colliders_gl::collect`]);
     /// trimesh/convex colliders are drawn by re-rendering the node's mesh in

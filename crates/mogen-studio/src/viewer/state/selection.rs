@@ -83,6 +83,7 @@ pub(crate) fn replace_selection_cycling(
     st: &mut ViewerState,
     leaf: NodeId,
     cursor: egui::Pos2,
+    pixels_per_point: f32,
 ) {
     let Some(scene) = st.scene.as_ref().map(Arc::clone) else {
         replace_selection(st, Some(leaf));
@@ -121,7 +122,7 @@ pub(crate) fn replace_selection_cycling(
     let same_target = match st.pick_cycle {
         Some(pc) => {
             pc.leaf == leaf
-                && (pc.cursor - cursor).length() <= PICK_CYCLE_RADIUS_PX
+                && (pc.cursor - cursor).length() <= PICK_CYCLE_RADIUS_PX / pixels_per_point.max(0.1)
         }
         None => false,
     };
