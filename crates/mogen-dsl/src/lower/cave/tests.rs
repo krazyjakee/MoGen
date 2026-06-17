@@ -541,3 +541,67 @@ cave "spring" (seed=1, size=[18, 8, 18], chambers=4, resolution=40, pools=2)
         .iter()
         .any(|n| n.role.as_deref() == Some("pool") && n.material == Some(water)));
 }
+
+#[test]
+fn cave_rock_has_valid_triplanar_uvs() {
+    let g = lower_src(BASIC);
+    let mesh = g
+        .nodes
+        .iter()
+        .find(|n| n.role.as_deref() == Some("cave_rock"))
+        .and_then(|n| n.mesh.as_ref())
+        .expect("cave_rock mesh");
+
+    // After per-triangle unwelding, UVs and positions must be parallel.
+    assert!(
+        mesh.has_uvs(),
+        "cave rock must have UV data (triplanar_uvs not applied?)"
+    );
+
+    // Full unweld: every triangle gets its own 3 vertices, so vertex count is
+    // always a multiple of 3 and equals 3 × triangle-count.
+    assert_eq!(
+        mesh.positions.len() % 3,
+        0,
+        "unwelded rock should have positions.len() divisible by 3"
+    );
+    assert_eq!(
+        mesh.positions.len(),
+        mesh.indices.len(),
+        "unwelded rock: vertex count must equal index count"
+    );
+
+    // Per-triangle UV-plane consistency: the two UVs produced by projecting
+    // a shared vertex from the same face normal must be equal to within
+    // floating-point rounding.  Verify by re-deriving each face's dominant
+    // axis and confirming all three vertex UVs are compatible.
+    let inv = 1.0_f32 / 5.0; // ROCK_UV_TILE = 5.0
+    for tri in mesh.indices.chunks_exact(3) {
+        let [i0, i1, i2] = [tri[0] as usize, tri[1] as usize, tri[2] as usize];
+        let p = |i: usize| glam::Vec3::from(mesh.positions[i]);
+        let (p0, p1, p2) = (p(i0), p(i1), p(i2));
+        let face_n = (p1 - p0).cross(p2 - p0).normalize_or_zero();
+        let (ax, ay, az) = (face_n.x.abs(), face_n.y.abs(), face_n.z.abs());
+        // What the project closure would have produced for each vertex:
+        let expected = |pt: glam::Vec3| -> [f32; 2] {
+            let (u, v) = if ay >= ax && ay >= az {
+                (pt.x, pt.z)
+            } else if ax >= az {
+                (pt.z, pt.y)
+            } else {
+                (pt.x, pt.y)
+            };
+            [u * inv, v * inv]
+        };
+        for (i, pt) in [(i0, p0), (i1, p1), (i2, p2)] {
+            let got = mesh.uvs[i];
+            let want = expected(pt);
+            assert!(
+                (got[0] - want[0]).abs() < 1e-5 && (got[1] - want[1]).abs() < 1e-5,
+                "vertex {i} UV mismatch: got {:?}, want {:?}",
+                got,
+                want
+            );
+        }
+    }
+}

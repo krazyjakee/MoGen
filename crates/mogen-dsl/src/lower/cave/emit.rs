@@ -129,6 +129,9 @@ fn strip_outer_hull(mesh: &Mesh, layout: &CaveLayout, cfg: &CaveCfg, res: u32) -
 /// compact vertex range so the exporter sees no orphaned vertices.
 fn compact(src: &Mesh, indices: &[u32]) -> Mesh {
     use std::collections::HashMap;
+    debug_assert!(src.joints.is_empty(), "compact: joints would be lost");
+    debug_assert!(src.weights.is_empty(), "compact: weights would be lost");
+    debug_assert!(src.colors.is_empty(), "compact: colors would be lost");
     let mut remap: HashMap<u32, u32> = HashMap::new();
     let mut out = Mesh::default();
     let has_uv = !src.uvs.is_empty();
@@ -193,7 +196,19 @@ fn triplanar_uvs(mesh: &mut Mesh, tile: f32) {
     let mut positions = Vec::with_capacity(n_tris * 3);
     let mut normals = Vec::with_capacity(n_tris * 3);
     let mut uvs = Vec::with_capacity(n_tris * 3);
+    let mut colors: Vec<[f32; 4]> = if mesh.colors.is_empty() {
+        Vec::new()
+    } else {
+        Vec::with_capacity(n_tris * 3)
+    };
     let mut indices = Vec::with_capacity(n_tris * 3);
+
+    // Cave rock is always static and never receives a gradient bake, so the
+    // per-vertex ancillary buffers should be empty.  Assert here so a future
+    // caller that populates them finds out before the unweld silently drops
+    // the data.
+    debug_assert!(mesh.joints.is_empty(), "triplanar_uvs: joints would be lost by unweld");
+    debug_assert!(mesh.weights.is_empty(), "triplanar_uvs: weights would be lost by unweld");
 
     for tri in mesh.indices.chunks_exact(3) {
         let [i0, i1, i2] = [tri[0] as usize, tri[1] as usize, tri[2] as usize];
@@ -205,8 +220,8 @@ fn triplanar_uvs(mesh: &mut Mesh, tile: f32) {
         // Geometric (face) normal — robust against the per-vertex smooth
         // normals disagreeing across the triangle. Degenerate tris fall back
         // to XZ; their zero area makes the choice invisible anyway.
-        let fn_ = (p1 - p0).cross(p2 - p0).normalize_or_zero();
-        let (ax, ay, az) = (fn_.x.abs(), fn_.y.abs(), fn_.z.abs());
+        let face_normal = (p1 - p0).cross(p2 - p0).normalize_or_zero();
+        let (ax, ay, az) = (face_normal.x.abs(), face_normal.y.abs(), face_normal.z.abs());
         let project = |p: Vec3| -> [f32; 2] {
             let (u, v) = if ay >= ax && ay >= az {
                 (p.x, p.z) // floor / ceiling
@@ -222,6 +237,9 @@ fn triplanar_uvs(mesh: &mut Mesh, tile: f32) {
         for &i in &[i0, i1, i2] {
             positions.push(mesh.positions[i]);
             normals.push(mesh.normals[i]);
+            if !colors.is_empty() {
+                colors.push(mesh.colors[i]);
+            }
         }
         uvs.push(project(p0));
         uvs.push(project(p1));
@@ -232,6 +250,7 @@ fn triplanar_uvs(mesh: &mut Mesh, tile: f32) {
     mesh.positions = positions;
     mesh.normals = normals;
     mesh.uvs = uvs;
+    mesh.colors = colors;
     mesh.indices = indices;
 }
 
