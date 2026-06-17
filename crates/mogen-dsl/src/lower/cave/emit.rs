@@ -169,28 +169,70 @@ fn bind_rock_material(id: NodeId, origin: Option<&std::path::Path>, graph: &mut 
 /// projects onto, giving consistent stone detail at any block size.
 const ROCK_UV_TILE: f32 = 5.0;
 
-/// Recompute the rock's UVs with a per-vertex triplanar projection: each vertex
-/// projects onto the world plane its normal most faces (XZ for floors/ceilings,
-/// XY or ZY for walls), scaled so the texture tiles every `tile` metres. This
-/// replaces the flat XZ planar UVs that stretch vertically on cavity walls.
+/// Recompute the rock's UVs with a per-*triangle* triplanar projection: each
+/// face projects all three of its vertices onto the world plane its geometric
+/// normal most faces (XZ for floors/ceilings, XY or ZY for walls), scaled so
+/// the texture tiles every `tile` metres.
+///
+/// The plane is chosen once per triangle (from the face normal) rather than
+/// per vertex. A per-vertex choice lets a single triangle straddle two regimes
+/// — one vertex on XZ, another on XY — and the exporter then interpolates two
+/// incompatible projections across the face, shearing the texture into chevron
+/// streaks along the wandering plane boundary. Picking per face keeps every
+/// triangle's UVs internally consistent, so the only seams left are the hard
+/// breaks where differently-projected faces meet (~45°), which the tileable
+/// REPEAT maps hide.
+///
+/// Selecting per face means a vertex shared by faces on different planes needs
+/// two different UVs, so the mesh is unwelded into independent triangles. The
+/// smooth per-vertex normals are preserved (duplicated), so only the vertex
+/// count grows — shading and watertight geometry are unchanged.
 fn triplanar_uvs(mesh: &mut Mesh, tile: f32) {
     let inv = 1.0 / tile.max(1e-3);
-    mesh.uvs = mesh
-        .positions
-        .iter()
-        .zip(&mesh.normals)
-        .map(|(p, n)| {
-            let (ax, ay, az) = (n[0].abs(), n[1].abs(), n[2].abs());
+    let n_tris = mesh.indices.len() / 3;
+    let mut positions = Vec::with_capacity(n_tris * 3);
+    let mut normals = Vec::with_capacity(n_tris * 3);
+    let mut uvs = Vec::with_capacity(n_tris * 3);
+    let mut indices = Vec::with_capacity(n_tris * 3);
+
+    for tri in mesh.indices.chunks_exact(3) {
+        let [i0, i1, i2] = [tri[0] as usize, tri[1] as usize, tri[2] as usize];
+        let (p0, p1, p2) = (
+            Vec3::from(mesh.positions[i0]),
+            Vec3::from(mesh.positions[i1]),
+            Vec3::from(mesh.positions[i2]),
+        );
+        // Geometric (face) normal — robust against the per-vertex smooth
+        // normals disagreeing across the triangle. Degenerate tris fall back
+        // to XZ; their zero area makes the choice invisible anyway.
+        let fn_ = (p1 - p0).cross(p2 - p0).normalize_or_zero();
+        let (ax, ay, az) = (fn_.x.abs(), fn_.y.abs(), fn_.z.abs());
+        let project = |p: Vec3| -> [f32; 2] {
             let (u, v) = if ay >= ax && ay >= az {
-                (p[0], p[2]) // floor / ceiling
+                (p.x, p.z) // floor / ceiling
             } else if ax >= az {
-                (p[2], p[1]) // wall facing ±X
+                (p.z, p.y) // wall facing ±X
             } else {
-                (p[0], p[1]) // wall facing ±Z
+                (p.x, p.y) // wall facing ±Z
             };
             [u * inv, v * inv]
-        })
-        .collect();
+        };
+
+        let base = positions.len() as u32;
+        for &i in &[i0, i1, i2] {
+            positions.push(mesh.positions[i]);
+            normals.push(mesh.normals[i]);
+        }
+        uvs.push(project(p0));
+        uvs.push(project(p1));
+        uvs.push(project(p2));
+        indices.extend_from_slice(&[base, base + 1, base + 2]);
+    }
+
+    mesh.positions = positions;
+    mesh.normals = normals;
+    mesh.uvs = uvs;
+    mesh.indices = indices;
 }
 
 /// Displace every vertex along its normal by low-frequency value noise. The
