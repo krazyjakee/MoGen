@@ -110,6 +110,7 @@ fn commit_gizmo_drag_with_track_binding_emits_axis_from_to() {
             span,
             property: TrackProperty::Rotation,
         }),
+        others: Vec::new(),
     });
     let edits = commit_gizmo_drag(&mut st);
     assert_eq!(edits.len(), 3, "expected axis/from/to triple, got {edits:?}");
@@ -169,6 +170,7 @@ clip "pose" (seconds=1.0) {
             span,
             property: TrackProperty::Rotation,
         }),
+        others: Vec::new(),
     });
     let edits = commit_gizmo_drag(&mut st);
     assert_eq!(edits.len(), 3);

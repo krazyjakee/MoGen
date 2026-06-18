@@ -3,7 +3,7 @@
 
 use super::super::state::{
     apply_gizmo_drag, commit_gizmo_drag, snap_rotate_delta, snap_scale_factor,
-    snap_translate_delta, GizmoDrag, PendingEdit, ViewerState, SCALE_SNAP_STEP,
+    snap_translate_delta, GizmoDrag, GizmoTarget, PendingEdit, ViewerState, SCALE_SNAP_STEP,
 };
 use glam::{Mat4, Quat, Vec3};
 use mogen_core::{NodeId, Transform};
@@ -56,6 +56,7 @@ fn commit_gizmo_drag_is_noop_with_zero_delta() {
         start_ray_dir: Vec3::Z,
         delta: 0.0,
         track_binding: None,
+        others: Vec::new(),
     });
     assert!(commit_gizmo_drag(&mut st).is_empty());
 }
@@ -78,6 +79,7 @@ fn commit_gizmo_drag_translate_emits_full_pos_vec3() {
         start_ray_dir: Vec3::Z,
         delta: 0.75,
         track_binding: None,
+        others: Vec::new(),
     });
     let mut edits = commit_gizmo_drag(&mut st).into_iter();
     let Some(PendingEdit::SetAttrCanonical {
@@ -97,6 +99,54 @@ fn commit_gizmo_drag_translate_emits_full_pos_vec3() {
 }
 
 #[test]
+fn commit_gizmo_drag_translate_applies_to_every_selected_node() {
+    // Shift-click multi-select: the gizmo is anchored to the primary
+    // (`node`) but the drag must move every selected node by the same
+    // world-space delta. `others` carries each secondary node's own start
+    // state, so the +0.5-on-Y delta lands on both.
+    let mut st = ViewerState::default();
+    st.gizmo_drag = Some(GizmoDrag {
+        node: NodeId(1),
+        axis: crate::gizmo::Axis::Y,
+        mode: crate::gizmo::GizmoMode::Translate,
+        start_transform: Transform::from_trs(
+            Vec3::new(0.0, 1.0, 0.0),
+            Quat::IDENTITY,
+            Vec3::ONE,
+        ),
+        start_origin: Vec3::ZERO,
+        parent_start_world: Mat4::IDENTITY,
+        start_ray_origin: Vec3::ZERO,
+        start_ray_dir: Vec3::Z,
+        delta: 0.5,
+        track_binding: None,
+        others: vec![GizmoTarget {
+            node: NodeId(2),
+            start_transform: Transform::from_trs(
+                Vec3::new(3.0, 0.0, 0.0),
+                Quat::IDENTITY,
+                Vec3::ONE,
+            ),
+            parent_start_world: Mat4::IDENTITY,
+        }],
+    });
+    let edits = commit_gizmo_drag(&mut st);
+    assert_eq!(edits.len(), 2, "one edit per selected node, got {edits:?}");
+    let PendingEdit::SetAttrCanonical { node, attr, value, .. } = &edits[0] else {
+        panic!("expected SetAttrCanonical for primary");
+    };
+    assert_eq!(*node, NodeId(1), "primary node committed first");
+    assert_eq!(attr, "pos");
+    assert_eq!(value, "[0, 1.5, 0]");
+    let PendingEdit::SetAttrCanonical { node, attr, value, .. } = &edits[1] else {
+        panic!("expected SetAttrCanonical for secondary");
+    };
+    assert_eq!(*node, NodeId(2), "secondary node moved in lockstep");
+    assert_eq!(attr, "pos");
+    assert_eq!(value, "[3, 0.5, 0]", "same +0.5 Y delta applied");
+}
+
+#[test]
 fn commit_gizmo_drag_rotate_emits_euler_vec3() {
     let mut st = ViewerState::default();
     st.gizmo_drag = Some(GizmoDrag {
@@ -110,6 +160,7 @@ fn commit_gizmo_drag_rotate_emits_euler_vec3() {
         start_ray_dir: Vec3::Z,
         delta: 45.0_f32.to_radians(),
         track_binding: None,
+        others: Vec::new(),
     });
     let mut edits = commit_gizmo_drag(&mut st).into_iter();
     let Some(PendingEdit::SetAttrCanonical {
@@ -147,6 +198,7 @@ fn translate_drag_pulls_world_delta_through_rotated_parent() {
         start_ray_dir: Vec3::Z,
         delta: 1.0,
         track_binding: None,
+        others: Vec::new(),
     });
     let edits = commit_gizmo_drag(&mut st);
     let Some(PendingEdit::SetAttrCanonical { value, .. }) = edits.into_iter().next() else {
@@ -173,6 +225,7 @@ fn translate_drag_compensates_for_parent_scale() {
         start_ray_dir: Vec3::Z,
         delta: 1.0,
         track_binding: None,
+        others: Vec::new(),
     });
     let edits = commit_gizmo_drag(&mut st);
     let Some(PendingEdit::SetAttrCanonical { value, .. }) = edits.into_iter().next() else {
@@ -202,6 +255,7 @@ fn rotate_drag_conjugates_through_rotated_parent() {
         start_ray_dir: Vec3::Z,
         delta: 30.0_f32.to_radians(),
         track_binding: None,
+        others: Vec::new(),
     });
     let edits = commit_gizmo_drag(&mut st);
     let Some(PendingEdit::SetAttrCanonical { value, .. }) = edits.into_iter().next() else {
@@ -225,6 +279,7 @@ fn rotate_drag_conjugates_through_rotated_parent() {
         start_ray_dir: Vec3::Z,
         delta: 30.0_f32.to_radians(),
         track_binding: None,
+        others: Vec::new(),
     });
     let local = apply_gizmo_drag(st.gizmo_drag.as_ref().unwrap());
     let world_rot = parent_rot * local.rotation;
@@ -273,6 +328,7 @@ fn commit_gizmo_drag_translate_relative_placed_emits_axis_shortcuts() {
         start_ray_dir: Vec3::Z,
         delta: 0.75,
         track_binding: None,
+        others: Vec::new(),
     });
     let edits = commit_gizmo_drag(&mut st);
     assert_eq!(edits.len(), 3, "expected three shortcut edits, got {edits:?}");
