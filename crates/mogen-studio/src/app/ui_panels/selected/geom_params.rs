@@ -330,6 +330,95 @@ fn schema_vec_row(
     ui.end_row();
 }
 
+/// Seed a length-`levels` count array from a single scalar `n`, placed at the
+/// top slot when `at_top` (cave surface) or slot 0 otherwise (dungeon ground).
+fn seed_level_counts(levels: usize, n: i32, at_top: bool) -> Vec<i32> {
+    let levels = levels.max(1);
+    let mut v = vec![0; levels];
+    let idx = if at_top { levels - 1 } else { 0 };
+    v[idx] = n.max(0);
+    v
+}
+
+/// Per-level integer-array row: one DragValue per level (arity read live from
+/// `levels_attr`), written back as `attr=[a, b, …]`. A bare scalar seeds one
+/// slot (see [`seed_level_counts`]); an expression / `$param` locks the row.
+#[allow(clippy::too_many_arguments)]
+fn level_counts_row(
+    ui: &mut egui::Ui,
+    label: &str,
+    attr: &'static str,
+    src: &str,
+    span: mogen_core::Span,
+    levels_attr: &str,
+    levels_default: i32,
+    max_per_level: i32,
+    scalar_at_top: bool,
+    help: Option<&str>,
+    out: &mut Vec<(&'static str, String)>,
+) {
+    // Slot count tracks the live `levels` value (clamped to a sane editor cap).
+    let levels = match field(src, span, levels_attr) {
+        Field::Num(n) => (n.round() as i32).clamp(1, 16),
+        _ => levels_default.clamp(1, 16),
+    } as usize;
+
+    // Resolve the current per-level counts from source.
+    let mut counts: Vec<i32> = match get_attr(src, span, attr) {
+        None => seed_level_counts(levels, 1, scalar_at_top),
+        Some(s) => {
+            let t = s.trim();
+            if let Some(inner) = t.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+                let parsed: Option<Vec<f32>> = inner
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|p| !p.is_empty())
+                    .map(|p| p.parse::<f32>().ok())
+                    .collect();
+                match parsed {
+                    Some(v) => v.iter().map(|x| x.max(0.0) as i32).collect(),
+                    None => {
+                        locked_row(ui, label, t);
+                        return;
+                    }
+                }
+            } else {
+                match t.parse::<f32>() {
+                    Ok(n) => seed_level_counts(levels, n.max(0.0) as i32, scalar_at_top),
+                    Err(_) => {
+                        locked_row(ui, label, t);
+                        return;
+                    }
+                }
+            }
+        }
+    };
+    counts.resize(levels, 0);
+
+    label_with_help(ui, label, help);
+    ui.horizontal_wrapped(|ui| {
+        let mut changed = false;
+        for (i, c) in counts.iter_mut().enumerate() {
+            let resp = ui
+                .add(
+                    egui::DragValue::new(c)
+                        .speed(0.1)
+                        .range(0..=max_per_level)
+                        .prefix(format!("{i}:")),
+                )
+                .on_hover_text(format!("Level {i} (0 = lowest)"));
+            if resp.changed() {
+                changed = true;
+            }
+        }
+        if changed {
+            let body = counts.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", ");
+            out.push((attr, format!("[{body}]")));
+        }
+    });
+    ui.end_row();
+}
+
 /// Render every parameter of a procedural generator schema as inspector rows,
 /// inserting a subheader row whenever the [`ParamGroup`] changes. This is the
 /// single generic path that replaces the former per-kind hand-written arms for
@@ -373,6 +462,24 @@ fn render_schema(
             ),
             ParamKind::Vec { defaults, speed } => schema_vec_row(
                 ui, spec.label, spec.attr, src, span, defaults, *speed, spec.help, out,
+            ),
+            ParamKind::LevelCounts {
+                levels_attr,
+                levels_default,
+                max_per_level,
+                scalar_at_top,
+            } => level_counts_row(
+                ui,
+                spec.label,
+                spec.attr,
+                src,
+                span,
+                levels_attr,
+                *levels_default,
+                *max_per_level,
+                *scalar_at_top,
+                spec.help,
+                out,
             ),
         }
     }

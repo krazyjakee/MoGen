@@ -1,13 +1,14 @@
-// A traversable multi-floor cave: chambers carved across two vertical levels
+// A traversable multi-floor cave: chambers carved across four vertical bands
 // and linked by slope-capped passages, populated with stalagmites, stalactites,
 // a rock pile and a small pool. Everything is a deterministic function of
-// `seed=`, so rebuilds are reproducible. See docs/caves.md for the full surface.
+// `seed=`, so rebuilds are reproducible. The `entrances` array opens side mouths
+// on the bands you choose (here the lowest and the surface). See docs/caves.md.
 
 meta (
   name = "cave",
-  description = "A traversable multi-floor cave with chambers, sloped passages, stalagmites, stalactites and a pool",
+  description = "A traversable multi-floor cave with chambers, sloped passages, per-band entrances, stalagmites, stalactites and a pool",
   tags = ["cave", "nature", "environment", "dungeon", "procedural"],
-  mogen_version = "0.1.8")
+  mogen_version = "0.1.9")
 
 lod_scale (value=0.6)
 
@@ -39,7 +40,9 @@ cave "hollow" (
   margin = 2.5,
   resolution = 128,
   lod_scale = 1.0, // mesh-quality scale (0.1–1.0); lower = fewer triangles
-  entrances = 1,
+  // side mouths per band (index 0 = lowest): one down low to meet a dungeon or
+  // pit, one up top for the surface. Middle bands stay sealed.
+  entrances = [1, 0, 0, 1],
   mat = "limestone",
   debug_hide_shell=1, // uncomment to hide the outer shell and see the whole cave interior
 

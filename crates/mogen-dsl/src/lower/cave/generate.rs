@@ -591,7 +591,7 @@ fn add_entrances(
         by_level.entry(c.level).or_default().push(i);
     }
 
-    let mut punch_band = |level_idxs: &[usize], count: usize, used: &mut [bool], anchors: &mut Vec<(usize, f32)>, carvers: &mut Vec<BlobChild>| {
+    let punch_band = |level_idxs: &[usize], count: usize, used: &mut [bool], anchors: &mut Vec<(usize, f32)>, carvers: &mut Vec<BlobChild>| {
         if count == 0 {
             return;
         }
