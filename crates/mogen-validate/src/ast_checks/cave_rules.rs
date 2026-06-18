@@ -65,7 +65,6 @@ pub(super) fn check_cave(n: &Node, diags: &mut Vec<Diagnostic>) {
     // Non-negative counts.
     for key in [
         "loops",
-        "entrances",
         "level_gap",
         "level_links",
         "rock_piles",
@@ -84,6 +83,20 @@ pub(super) fn check_cave(n: &Node, diags: &mut Vec<Diagnostic>) {
                 );
             }
         }
+    }
+
+    // `entrances` is a scalar count or a per-band array; every count must be ≥ 0.
+    let entrance_counts: &[f32] = match n.attr("entrances") {
+        Some(Value::Number(v)) => std::slice::from_ref(v),
+        Some(Value::Vec3(a)) => a.as_slice(),
+        Some(Value::List(v)) => v.as_slice(),
+        _ => &[],
+    };
+    if entrance_counts.iter().any(|v| *v < 0.0) {
+        diags.push(
+            Diagnostic::error("E1202", "`cave.entrances` counts must each be ≥ 0".to_string())
+                .with_span(n.span),
+        );
     }
 
     // `size=[w, h, d]` must be a vec3 of positive numbers.

@@ -32,6 +32,7 @@ fn cfg(levels: u32) -> DungeonCfg {
         corridor_width: 1,
         loops: 1,
         stairs: 1,
+        entrances_per_floor: vec![1],
         wall_thickness: 0.4,
         floor_thickness: 0.4,
         ceilings: true,
@@ -166,9 +167,9 @@ fn meshes_are_non_degenerate() {
 #[test]
 fn entrance_is_carved_and_marked() {
     let layout = generate::generate(&cfg(1));
-    let e = layout
-        .entrance
-        .expect("expected an exterior entrance on the ground level");
+    assert_eq!(layout.entrances.len(), 1, "expected one ground entrance by default");
+    let e = layout.entrances[0];
+    assert_eq!(e.level, 0, "default entrance should be on the ground level");
     // The threshold sits on the grid border and is walkable floor.
     let on_border = e.i == 0 || e.i == layout.gw - 1 || e.j == 0 || e.j == layout.gd - 1;
     assert!(on_border, "entrance not on the grid border: {e:?}");
@@ -181,6 +182,19 @@ fn entrance_is_carved_and_marked() {
         .filter(|n| n.role.as_deref() == Some("entrance"))
         .count();
     assert_eq!(entrances, 1, "expected exactly one entrance marker");
+}
+
+#[test]
+fn entrances_per_floor_selects_specific_levels() {
+    // [1, 0, 1] → a door on the ground and top floors, none on the middle.
+    let mut c = cfg(3);
+    c.entrances_per_floor = vec![1, 0, 1];
+    let layout = generate::generate(&c);
+    let levels: Vec<usize> = layout.entrances.iter().map(|e| e.level).collect();
+    assert!(levels.contains(&0), "expected a ground-floor entrance: {levels:?}");
+    assert!(levels.contains(&2), "expected a top-floor entrance: {levels:?}");
+    assert!(!levels.contains(&1), "middle floor should have no entrance: {levels:?}");
+    assert_eq!(levels.len(), 2, "expected exactly two entrances: {levels:?}");
 }
 
 #[test]

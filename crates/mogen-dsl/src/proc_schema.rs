@@ -307,7 +307,16 @@ static CAVE: ProcSchema = ProcSchema {
             group: Main,
             help: Some("Voxel-grid resolution (samples along the longest axis)."),
         },
-        int("entrances", "Entrances", 1, 0, 16),
+        ParamSpec {
+            attr: "entrances",
+            label: "Entrances",
+            kind: ParamKind::Int { default: 1, min: 0, max: 16 },
+            group: Main,
+            help: Some(
+                "Side mouths on the surface (top) band. For per-band control set an \
+                 array in the code view, e.g. entrances=[1, 0, 1] (index 0 = lowest band).",
+            ),
+        },
         int("mushrooms", "Mushrooms", 0, 0, 256),
         ParamSpec {
             attr: "colliders",
@@ -492,6 +501,16 @@ static DUNGEON: ProcSchema = ProcSchema {
         },
         int("levels", "Levels", 1, 1, 16),
         int("stairs", "Stairs", 1, 0, 16),
+        ParamSpec {
+            attr: "entrances",
+            label: "Entrances",
+            kind: ParamKind::Int { default: 1, min: 0, max: 16 },
+            group: Main,
+            help: Some(
+                "Exterior doorways on the ground floor. For per-floor control set \
+                 an array in the code view, e.g. entrances=[1, 0, 2] (index 0 = ground).",
+            ),
+        },
         int("rooms", "Rooms", 6, 1, 64),
         int("room_min", "Room min", 2, 1, 64),
         int("room_max", "Room max", 5, 1, 64),

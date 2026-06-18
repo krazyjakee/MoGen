@@ -49,12 +49,14 @@ pub(super) struct Stair {
     pub cells: Vec<(i32, i32)>,
 }
 
-/// An exterior doorway carved through the perimeter wall of a ground-level
-/// room. A one-cell floor stub runs from the room out to the grid border;
-/// `(i, j)` is that border threshold cell and `(di, dj)` the outward direction
-/// whose perimeter wall the emit pass drops to open the door.
+/// An exterior doorway carved through the perimeter wall of a room. A one-cell
+/// floor stub runs from the room out to the grid border; `(i, j)` is that border
+/// threshold cell and `(di, dj)` the outward direction whose perimeter wall the
+/// emit pass drops to open the door. `level` is the floor it sits on (`0` =
+/// ground).
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Entrance {
+    pub level: usize,
     pub i: i32,
     pub j: i32,
     pub di: i32,
@@ -84,8 +86,9 @@ pub(super) struct DungeonLayout {
     pub stairs: Vec<Stair>,
     /// Corridor connections per room index (into `rooms`); degree 1 == dead end.
     pub room_degree: Vec<u32>,
-    /// The ground-level exterior doorway, when one could be placed.
-    pub entrance: Option<Entrance>,
+    /// Exterior doorways, as many per floor as `cfg.entrances_per_floor` asks
+    /// for (and as many as fit). Empty when none could be placed.
+    pub entrances: Vec<Entrance>,
 }
 
 impl DungeonLayout {
@@ -154,77 +157,122 @@ pub(super) fn generate(cfg: &DungeonCfg) -> DungeonLayout {
         rooms,
         stairs: Vec::new(),
         room_degree,
-        entrance: None,
+        entrances: Vec::new(),
     };
 
     // --- staircases between adjacent levels -------------------------------
     place_stairs(cfg, &mut layout);
 
-    // --- exterior entrance on the ground level ----------------------------
-    layout.entrance = place_entrance(&mut layout);
+    // --- exterior entrances -----------------------------------------------
+    layout.entrances = place_entrances(cfg, &mut layout);
 
     layout
 }
 
-/// Carve an exterior doorway on the ground level: pick a ground-level room
-/// (preferring a dead end so the entrance is a defensible vestibule), run a
-/// one-cell floor stub from its nearest side straight out to the grid border,
-/// and return the threshold cell + outward direction. The emit pass drops the
-/// perimeter wall on that edge and the POI pass marks the threshold.
-fn place_entrance(layout: &mut DungeonLayout) -> Option<Entrance> {
+/// Carve exterior doorways per floor from `cfg.entrances_per_floor` (index 0 =
+/// ground). Each is a one-cell floor stub from a room's nearest side out to the
+/// grid border; the emit pass drops the perimeter wall on that edge and the POI
+/// pass marks the threshold.
+fn place_entrances(cfg: &DungeonCfg, layout: &mut DungeonLayout) -> Vec<Entrance> {
+    let mut out = Vec::new();
+    for level in 0..layout.levels {
+        let want = cfg.entrances_per_floor.get(level).copied().unwrap_or(0) as usize;
+        place_level_entrances(layout, level, want, &mut out);
+    }
+    out
+}
+
+/// Place up to `want` doorways on `level`, preferring dead-end rooms (so an
+/// entrance is a defensible vestibule) and shorter border stubs, spreading
+/// across distinct rooms before reusing one. Carves each stub and appends the
+/// resulting `Entrance`s to `out`.
+fn place_level_entrances(
+    layout: &mut DungeonLayout,
+    level: usize,
+    want: usize,
+    out: &mut Vec<Entrance>,
+) {
+    if want == 0 {
+        return;
+    }
     let gw = layout.gw;
     let gd = layout.gd;
-    let ground: Vec<usize> = layout
+    let rooms: Vec<usize> = layout
         .rooms
         .iter()
         .enumerate()
-        .filter(|(_, r)| r.level == 0)
+        .filter(|(_, r)| r.level == level)
         .map(|(i, _)| i)
         .collect();
-    if ground.is_empty() {
-        return None;
+    if rooms.is_empty() {
+        return;
     }
 
-    // Prefer ground-level dead ends; fall back to any ground room.
-    let dead_ends: Vec<usize> = ground
-        .iter()
-        .copied()
-        .filter(|&i| layout.room_degree[i] == 1)
-        .collect();
-    let candidates = if dead_ends.is_empty() {
-        &ground
-    } else {
-        &dead_ends
-    };
-
-    // Choose the (room, side) with the smallest gap to the border so the entry
-    // stub is as short as possible.
-    let mut best: Option<(usize, i32, i32, i32)> = None; // (room, di, dj, gap)
-    for &ri in candidates {
+    // Every (room, side) candidate with its gap to the border. Dead-end rooms
+    // sort first so they are picked before through-rooms; then by shortest gap;
+    // then by room/direction for a stable, deterministic order.
+    let mut cands: Vec<(bool, i32, usize, i32, i32)> = Vec::new(); // (not_dead_end, gap, room, di, dj)
+    for &ri in &rooms {
         let r = layout.rooms[ri];
+        let dead_end = layout.room_degree[ri] == 1;
         let sides = [
-            (-1, 0, r.x0),                  // west
-            (1, 0, gw - 1 - (r.x0 + r.w)),  // east
-            (0, -1, r.z0),                  // north
-            (0, 1, gd - 1 - (r.z0 + r.d)),  // south
+            (-1, 0, r.x0),                 // west
+            (1, 0, gw - 1 - (r.x0 + r.w)), // east
+            (0, -1, r.z0),                 // north
+            (0, 1, gd - 1 - (r.z0 + r.d)), // south
         ];
         for (di, dj, gap) in sides {
             if gap < 0 {
                 continue;
             }
-            if best.map(|(_, _, _, bg)| gap < bg).unwrap_or(true) {
-                best = Some((ri, di, dj, gap));
+            cands.push((!dead_end, gap, ri, di, dj));
+        }
+    }
+    cands.sort();
+
+    // Greedy pick: first pass takes one doorway per distinct room; a second pass
+    // allows a room to host another (distinct side) if we still need more.
+    let mut chosen: Vec<(usize, i32, i32)> = Vec::new();
+    let mut used_rooms = std::collections::BTreeSet::new();
+    for &(_, _, ri, di, dj) in &cands {
+        if chosen.len() >= want {
+            break;
+        }
+        if used_rooms.insert(ri) {
+            chosen.push((ri, di, dj));
+        }
+    }
+    if chosen.len() < want {
+        for &(_, _, ri, di, dj) in &cands {
+            if chosen.len() >= want {
+                break;
+            }
+            if !chosen.iter().any(|&(cr, cdi, cdj)| cr == ri && cdi == di && cdj == dj) {
+                chosen.push((ri, di, dj));
             }
         }
     }
-    let (ri, di, dj, _) = best?;
-    let r = layout.rooms[ri];
-    let grid = &mut layout.grids[0];
 
-    // Carve a one-cell-wide floor stub from the room edge out to the border,
-    // along the room's centre line on the chosen axis, and record the border
-    // threshold cell.
-    let (ti, tj) = if di != 0 {
+    for (ri, di, dj) in chosen {
+        let (ti, tj) = carve_stub(layout, level, ri, di, dj);
+        out.push(Entrance { level, i: ti, j: tj, di, dj, room: ri });
+    }
+}
+
+/// Carve a one-cell floor stub from room `ri` on `level` straight out to the
+/// grid border along the chosen axis, returning the border threshold cell.
+fn carve_stub(
+    layout: &mut DungeonLayout,
+    level: usize,
+    ri: usize,
+    di: i32,
+    dj: i32,
+) -> (i32, i32) {
+    let gw = layout.gw;
+    let gd = layout.gd;
+    let r = layout.rooms[ri];
+    let grid = &mut layout.grids[level];
+    if di != 0 {
         let j = r.z0 + r.d / 2;
         let (lo, hi) = if di < 0 {
             (0, r.x0 - 1)
@@ -246,15 +294,7 @@ fn place_entrance(layout: &mut DungeonLayout) -> Option<Entrance> {
             grid.floor[(j * gw + i) as usize] = true;
         }
         (i, if dj < 0 { 0 } else { gd - 1 })
-    };
-
-    Some(Entrance {
-        i: ti,
-        j: tj,
-        di,
-        dj,
-        room: ri,
-    })
+    }
 }
 
 /// Best-effort random placement of `cfg.rooms` non-overlapping rectangles inside

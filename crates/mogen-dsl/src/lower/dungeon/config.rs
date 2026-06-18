@@ -13,7 +13,7 @@
 //! `spacing`), the corridor shape (`corridor_width` + `loops`), and the
 //! vertical structure (`levels` + `stairs`).
 
-use crate::ast::Node;
+use crate::ast::{Node, Value};
 use crate::lower::cfg;
 
 /// Which generated surfaces get a trimesh collider for the game engine.
@@ -63,6 +63,12 @@ pub(super) struct DungeonCfg {
     pub loops: u32,
     /// Staircases carved between each pair of adjacent levels.
     pub stairs: u32,
+    /// Exterior doorways per floor, indexed by level (`0` = ground). A scalar
+    /// `entrances=N` reads as `[N]` (N doors on the ground only); an array
+    /// `entrances=[1, 0, 2]` sets each floor independently — the hook for opening
+    /// a chosen storey onto an adjacent cave mouth or ledge. Floors past the end
+    /// of the array get none.
+    pub entrances_per_floor: Vec<u32>,
     /// Wall thickness in metres.
     pub wall_thickness: f32,
     /// Floor / ceiling deck thickness in metres.
@@ -113,6 +119,7 @@ pub(super) fn read_cfg(node: &Node) -> DungeonCfg {
     let corridor_width = cfg::int_clamped(node, "corridor_width", 1, 1, 8);
     let loops = cfg::count(node, "loops", 1.0, 0.0);
     let stairs = cfg::count(node, "stairs", 1.0, 0.0);
+    let entrances_per_floor = read_entrances_per_floor(node);
 
     let wall_thickness = cfg::scalar(node, "wall_thickness", 0.4, 0.05);
     let floor_thickness = cfg::scalar(node, "floor_thickness", 0.4, 0.05);
@@ -148,6 +155,7 @@ pub(super) fn read_cfg(node: &Node) -> DungeonCfg {
         corridor_width,
         loops,
         stairs,
+        entrances_per_floor,
         wall_thickness,
         floor_thickness,
         ceilings,
@@ -157,5 +165,20 @@ pub(super) fn read_cfg(node: &Node) -> DungeonCfg {
         debug_hide_roof,
         debug_render_floor,
         debug_show_poi,
+    }
+}
+
+/// Read the per-floor exterior-doorway counts. Accepts a scalar `entrances=N`
+/// (N doors on the ground floor, floor 0) or an array `entrances=[g, f1, f2, …]`
+/// (one count per level, index 0 = ground). The grammar lowers a 3-element
+/// bracket literal to `Vec3` rather than `List`, so both are accepted. Absent ⇒
+/// one ground doorway, matching the historic default. Negatives clamp to 0.
+fn read_entrances_per_floor(node: &Node) -> Vec<u32> {
+    let to_counts = |xs: &[f32]| xs.iter().map(|v| v.max(0.0) as u32).collect();
+    match node.attr("entrances") {
+        Some(Value::Number(n)) => vec![n.max(0.0) as u32],
+        Some(Value::Vec3(a)) => to_counts(a),
+        Some(Value::List(v)) => to_counts(v),
+        _ => vec![1],
     }
 }

@@ -563,7 +563,7 @@ of `seed=` plus the declared attrs). See `docs/caves.md` for the full spec.
 | `margin` | `2.0` | Rock thickness kept around the void on every face (m). |
 | `resolution` | `96` | Voxel-grid resolution (32–224). Higher = finer + slower. |
 | `lod_scale` | `1.0` | Mesh-quality scale `[0.1, 1.0]`; scales rock voxel grid + decoration tessellation. Lower = fewer triangles. Layout / counts / POIs unaffected. |
-| `entrances` | `1` | Horizontal mouths punched out to a side face. |
+| `entrances` | `1` | Horizontal mouths punched to a side face. A scalar `N` opens `N` on the surface (top) band; an array `[b0, b1, …]` opens them per band from the bottom up (index `0` = lowest), so e.g. `entrances=[1, 0, 1]` connects a chosen storey to an adjacent dungeon. Bands past the array end get none; mouths prefer chambers nearest a wall. |
 | `mat` | `cave_rock` | Rock material; defaults to an auto-stamped grey stone. |
 | `water_mat` | `cave_water` | Material for pools / lakes. |
 | `rock_piles`, `pools`, `lakes`, `stalagmites`, `stalactites`, `columns` | `0` | Decoration counts scattered on chamber floors / ceilings (`columns` span floor→ceiling). |
@@ -720,6 +720,7 @@ pure function of `seed=` plus the declared attrs).
 | `cell` | `4` | Grid cell edge length (m). Rooms and corridors quantise to this lattice so walls always meet flush. |
 | `levels` | `1` | Stacked floors. `1` is single-storey; higher values stack independent room layouts linked by staircases. |
 | `stairs` | `1` | Staircases between each pair of adjacent levels. |
+| `entrances` | `1` | Exterior doorways through the perimeter wall. A scalar `N` puts `N` on the ground floor; an array `[g, f1, f2, …]` sets each floor independently (index `0` = ground), so e.g. `entrances=[1, 0, 2]` opens a chosen storey onto an adjacent cave mouth or ledge. Floors past the array end get none; doors prefer dead-end rooms and the shortest border stub. |
 | `rooms` | `6` | Target room count per level (placement is best-effort within the grid). |
 | `room_min` | `2` | Room side length range in cells (inclusive). `room_min > room_max` is swapped. |
 | `room_max` | `5` | — |
@@ -741,9 +742,11 @@ Geometry is built from **decks**: deck `k` is simultaneously the floor of level
 walkable cell — including staircase landings — is covered, so the top level is
 fully roofed and stairwells are enclosed. Staircases punch an opening through
 the upper deck and fill it with a flight of small (~0.18 m riser) steps sized
-for in-game use. One ground-level room gets an **exterior doorway**: a one-cell
-floor stub runs out to the grid border and the perimeter wall there is left
-open, so the dungeon has a clear way in. Walls are extended by `wall_thickness`
+for in-game use. Each **exterior doorway** is a one-cell floor stub run out to
+the grid border with the perimeter wall there left open, so the dungeon has a
+clear way in; `entrances` controls how many per floor (a scalar for the ground
+floor, or a per-floor array) so a raised storey can open onto an adjacent cave
+mouth or ledge. Walls are extended by `wall_thickness`
 at their ends so corners always close — no holes. A single material pair
 (`dungeon_floor`, `dungeon_stone`) is auto-stamped if you don't supply `mat=`.
 

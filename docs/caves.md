@@ -61,8 +61,11 @@ The pipeline, all seeded from `seed=`:
    exceeds the angle cap** — even when linking distant floors.
 
 5. **Entrances.** `entrances` horizontal mouths are punched out through the
-   nearest side face, hosted on the highest chambers so they open onto the top
-   layer. This is what makes the otherwise-enclosed block enterable.
+   nearest side face. A scalar `entrances=N` hosts them on the topmost band so
+   they open onto the surface, which is what makes the otherwise-enclosed block
+   enterable. An array `entrances=[b0, b1, …]` instead opens that many on each
+   band from the bottom up (index 0 = lowest), choosing the chambers nearest a
+   wall, so a chosen storey can open onto an adjacent dungeon or pit.
 
 6. **Roughening.** The shell is displaced along its normals by bounded,
    low-frequency value noise (`roughness`) for a natural stone finish. The
@@ -173,7 +176,7 @@ cave "hollow" (
 | `margin` | `2.0` | Rock thickness around the void (m). |
 | `resolution` | `96` | Voxel-grid resolution, clamped `[32, 224]`. |
 | `lod_scale` | `1.0` | Mesh-quality scale, clamped `[0.1, 1.0]`. Scales rock voxel grid + decoration tessellation; lower = fewer triangles. Layout / counts / POIs unaffected. |
-| `entrances` | `1` | Mouths punched out to a side face. |
+| `entrances` | `1` | Mouths to a side face: scalar = count on the surface (top) band; array `[b0, b1, …]` = per band from the bottom up. |
 | `mat` | `cave_rock` | Rock material (auto-stamped grey stone if undeclared). |
 | `mat_style` | `""` | Free-text style hint forwarded to texture generation. |
 | `water_mat` | `cave_water` | Pool / lake material. |
