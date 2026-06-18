@@ -147,6 +147,80 @@ fn commit_gizmo_drag_translate_applies_to_every_selected_node() {
 }
 
 #[test]
+fn commit_gizmo_drag_rotate_applies_to_every_selected_node() {
+    // Same-delta rotate should emit one edit per selected node, each about
+    // its own origin (independent quaternion composition).
+    let mut st = ViewerState::default();
+    st.gizmo_drag = Some(GizmoDrag {
+        node: NodeId(1),
+        axis: crate::gizmo::Axis::Y,
+        mode: crate::gizmo::GizmoMode::Rotate,
+        start_transform: Transform::IDENTITY,
+        start_origin: Vec3::ZERO,
+        parent_start_world: Mat4::IDENTITY,
+        start_ray_origin: Vec3::ZERO,
+        start_ray_dir: Vec3::Z,
+        delta: 45.0_f32.to_radians(),
+        track_binding: None,
+        others: vec![GizmoTarget {
+            node: NodeId(3),
+            start_transform: Transform::IDENTITY,
+            parent_start_world: Mat4::IDENTITY,
+        }],
+    });
+    let edits = commit_gizmo_drag(&mut st);
+    assert_eq!(edits.len(), 2, "one rot edit per selected node, got {edits:?}");
+    let PendingEdit::SetAttrCanonical { node, attr, value, .. } = &edits[0] else {
+        panic!("expected SetAttrCanonical for primary");
+    };
+    assert_eq!(*node, NodeId(1));
+    assert_eq!(attr, "rot");
+    assert_eq!(value, "[0, 45, 0]");
+    let PendingEdit::SetAttrCanonical { node, attr, value, .. } = &edits[1] else {
+        panic!("expected SetAttrCanonical for secondary");
+    };
+    assert_eq!(*node, NodeId(3));
+    assert_eq!(attr, "rot");
+    assert_eq!(value, "[0, 45, 0]", "same Y-rotation applied to secondary");
+}
+
+#[test]
+fn commit_gizmo_drag_scale_applies_to_every_selected_node() {
+    let mut st = ViewerState::default();
+    st.gizmo_drag = Some(GizmoDrag {
+        node: NodeId(1),
+        axis: crate::gizmo::Axis::Y,
+        mode: crate::gizmo::GizmoMode::Scale,
+        start_transform: Transform::from_trs(Vec3::ZERO, Quat::IDENTITY, Vec3::ONE),
+        start_origin: Vec3::ZERO,
+        parent_start_world: Mat4::IDENTITY,
+        start_ray_origin: Vec3::ZERO,
+        start_ray_dir: Vec3::Z,
+        delta: 2.0, // scale factor
+        track_binding: None,
+        others: vec![GizmoTarget {
+            node: NodeId(4),
+            start_transform: Transform::from_trs(Vec3::ZERO, Quat::IDENTITY, Vec3::ONE * 3.0),
+            parent_start_world: Mat4::IDENTITY,
+        }],
+    });
+    let edits = commit_gizmo_drag(&mut st);
+    assert_eq!(edits.len(), 2, "one scale edit per selected node, got {edits:?}");
+    let PendingEdit::SetAttrCanonical { node, attr, value, .. } = &edits[0] else {
+        panic!("expected SetAttrCanonical for primary");
+    };
+    assert_eq!(*node, NodeId(1));
+    assert_eq!(attr, "scale");
+    assert_eq!(value, "[1, 2, 1]", "primary Y scale doubled");
+    let PendingEdit::SetAttrCanonical { node, attr, value, .. } = &edits[1] else {
+        panic!("expected SetAttrCanonical for secondary");
+    };
+    assert_eq!(*node, NodeId(4));
+    assert_eq!(attr, "scale");
+    assert_eq!(value, "[3, 6, 3]", "secondary Y scale doubled from its own start");
+}
+
+#[test]
 fn commit_gizmo_drag_rotate_emits_euler_vec3() {
     let mut st = ViewerState::default();
     st.gizmo_drag = Some(GizmoDrag {

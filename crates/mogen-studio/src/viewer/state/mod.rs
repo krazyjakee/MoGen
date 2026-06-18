@@ -336,9 +336,14 @@ impl ViewerState {
             }
             // Multi-select: move every other selected node by the same delta
             // so the preview matches what the commit will write back.
-            for target in &drag.others {
-                if let Some(t) = locals.get_mut(target.node.0 as usize) {
-                    *t = apply_gizmo_drag_to(drag, target.start_transform, target.parent_start_world);
+            // Track-bound drags target a single track header; `others` are
+            // not committed on that path so don't move them in the preview
+            // either — a moving preview with no matching commit is misleading.
+            if drag.track_binding.is_none() {
+                for target in &drag.others {
+                    if let Some(t) = locals.get_mut(target.node.0 as usize) {
+                        *t = apply_gizmo_drag_to(drag, target.start_transform, target.parent_start_world);
+                    }
                 }
             }
         }

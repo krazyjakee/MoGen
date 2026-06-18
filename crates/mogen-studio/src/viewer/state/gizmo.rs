@@ -474,8 +474,8 @@ pub(crate) fn commit_gizmo_drag(st: &mut ViewerState) -> Vec<PendingEdit> {
     // hierarchy.
     let mut edits = transform_writeback_edits(st, drag.node, drag.mode, final_local);
     for target in &drag.others {
-        let final_local = apply_gizmo_drag_to(drag, target.start_transform, target.parent_start_world);
-        edits.extend(transform_writeback_edits(st, target.node, drag.mode, final_local));
+        let other_local = apply_gizmo_drag_to(drag, target.start_transform, target.parent_start_world);
+        edits.extend(transform_writeback_edits(st, target.node, drag.mode, other_local));
     }
     edits
 }
