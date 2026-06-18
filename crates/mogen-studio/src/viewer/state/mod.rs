@@ -28,7 +28,7 @@ pub use capture::{
     ImposterRequest, ImposterViewOverlay,
 };
 #[allow(unused_imports)]
-pub use gizmo::{GizmoDrag, PendingEdit, TrackBinding};
+pub use gizmo::{GizmoDrag, GizmoTarget, PendingEdit, TrackBinding};
 #[allow(unused_imports)]
 pub use selection::{is_import_wrapper, PickCycle};
 
@@ -37,7 +37,7 @@ pub use selection::{is_import_wrapper, PickCycle};
 // `state.rs` so this refactor is invisible to call sites.
 #[allow(unused_imports)]
 pub(crate) use gizmo::{
-    apply_gizmo_drag, aspect_for, begin_gizmo_drag, commit_gizmo_drag,
+    apply_gizmo_drag, apply_gizmo_drag_to, aspect_for, begin_gizmo_drag, commit_gizmo_drag,
     find_active_constant_track, gizmo_handles_supported, snap_rotate_delta, snap_scale_factor,
     snap_translate_delta, track_property_for_gizmo, update_gizmo_drag, ROTATE_SNAP_STEP_DEG,
     SCALE_SNAP_STEP, TRANSLATE_SNAP_STEP,
@@ -333,6 +333,13 @@ impl ViewerState {
         if let Some(drag) = &self.gizmo_drag {
             if let Some(t) = locals.get_mut(drag.node.0 as usize) {
                 *t = apply_gizmo_drag(drag);
+            }
+            // Multi-select: move every other selected node by the same delta
+            // so the preview matches what the commit will write back.
+            for target in &drag.others {
+                if let Some(t) = locals.get_mut(target.node.0 as usize) {
+                    *t = apply_gizmo_drag_to(drag, target.start_transform, target.parent_start_world);
+                }
             }
         }
         locals
