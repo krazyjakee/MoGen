@@ -1,9 +1,11 @@
 //! Screen-space picking: convert a cursor position into the `NodeId` of the
 //! triangle under the cursor. Runs on CPU against `FlatMesh::tri_node`.
 //!
-//! v1 is a flat Möller–Trumbore scan. Typical preview scenes are well under
-//! 200k tris so the linear sweep is fine; if a prompt regression shows big
-//! scenes pay for this per click, drop in a BVH without changing the API.
+//! Triangles are tested with Möller–Trumbore, accelerated by a median-split
+//! [`Bvh`] built lazily per `FlatMesh` (see [`crate::viewer::FlatMesh`]). The
+//! tree is exact — it visits the same triangles a flat scan would, just far
+//! fewer — so big procedural scenes no longer stall on a per-click linear
+//! sweep while small scenes pay a negligible one-time build.
 //!
 //! Light nodes carry no geometry, so [`pick_node_or_light`] augments the
 //! triangle scan with a separate billboard pass: each light's halo is a
@@ -172,27 +174,11 @@ fn unproject(inv_vp: &Mat4, ndc: Vec3) -> Vec3 {
     Vec3::new(p.x / p.w, p.y / p.w, p.z / p.w)
 }
 
-/// Walk every triangle, Möller–Trumbore, keep the nearest positive-t hit.
-/// TODO: BVH if a scene with > 200k tris starts showing up in prompts.
+/// Nearest positive-t triangle hit along the ray, accelerated by the mesh's
+/// lazily-built [`Bvh`]. The BVH is exact (it tests the same triangles a flat
+/// scan would, just far fewer of them), so results match the old linear sweep.
 fn ray_pick(mesh: &FlatMesh, ro: Vec3, rd: Vec3) -> Option<(f32, NodeId)> {
-    let stride = FLOATS_PER_VERTEX;
-    let mut best: Option<(f32, NodeId)> = None;
-    for tri_i in 0..mesh.indices.len() / 3 {
-        let i0 = mesh.indices[tri_i * 3] as usize;
-        let i1 = mesh.indices[tri_i * 3 + 1] as usize;
-        let i2 = mesh.indices[tri_i * 3 + 2] as usize;
-        let v0 = read_pos(&mesh.vertices, i0, stride);
-        let v1 = read_pos(&mesh.vertices, i1, stride);
-        let v2 = read_pos(&mesh.vertices, i2, stride);
-        if let Some(t) = intersect_tri(ro, rd, v0, v1, v2) {
-            let node = mesh.tri_node.get(tri_i).copied().unwrap_or(NodeId(0));
-            match best {
-                Some((bt, _)) if bt <= t => {}
-                _ => best = Some((t, node)),
-            }
-        }
-    }
-    best
+    mesh.picking_bvh().raycast(mesh, ro, rd, None)
 }
 
 /// `ray_pick` restricted to triangles whose owning node satisfies `keep`.
@@ -204,27 +190,235 @@ fn ray_pick_filtered(
     rd: Vec3,
     keep: &impl Fn(NodeId) -> bool,
 ) -> Option<(f32, NodeId)> {
-    let stride = FLOATS_PER_VERTEX;
-    let mut best: Option<(f32, NodeId)> = None;
-    for tri_i in 0..mesh.indices.len() / 3 {
-        let node = mesh.tri_node.get(tri_i).copied().unwrap_or(NodeId(0));
-        if !keep(node) {
-            continue;
+    mesh.picking_bvh()
+        .raycast(mesh, ro, rd, Some(keep as &dyn Fn(NodeId) -> bool))
+}
+
+/// Median-split bounding-volume hierarchy over a flattened triangle soup.
+///
+/// Built once per `FlatMesh` (see [`FlatMesh::picking_bvh`]) and queried by
+/// the screen-space picker. Nodes are stored in a flat arena; an interior node
+/// references its two children by arena index, a leaf references a contiguous
+/// run of triangles in `tri_order` (indices into the mesh's triangle list).
+pub(crate) struct Bvh {
+    nodes: Vec<BvhNode>,
+    /// Triangle indices grouped so each leaf owns a contiguous slice.
+    tri_order: Vec<u32>,
+}
+
+struct BvhNode {
+    bmin: Vec3,
+    bmax: Vec3,
+    /// Leaf: start offset into `tri_order`. Interior: left child arena index.
+    a: u32,
+    /// Leaf: triangle count (> 0). Interior: right child arena index (`b` is
+    /// only a count when `leaf` is set, so the two never collide).
+    b: u32,
+    leaf: bool,
+}
+
+/// Triangles per leaf. Small enough that the per-leaf linear test is cheap,
+/// large enough to keep the tree shallow.
+const BVH_LEAF_TRIS: usize = 4;
+
+fn axis_val(v: Vec3, axis: usize) -> f32 {
+    match axis {
+        0 => v.x,
+        1 => v.y,
+        _ => v.z,
+    }
+}
+
+impl Bvh {
+    pub(crate) fn build(vertices: &[f32], indices: &[u32], stride: usize) -> Bvh {
+        let tri_count = indices.len() / 3;
+        let mut tri_min = Vec::with_capacity(tri_count);
+        let mut tri_max = Vec::with_capacity(tri_count);
+        let mut centroid = Vec::with_capacity(tri_count);
+        for t in 0..tri_count {
+            let v0 = read_pos(vertices, indices[t * 3] as usize, stride);
+            let v1 = read_pos(vertices, indices[t * 3 + 1] as usize, stride);
+            let v2 = read_pos(vertices, indices[t * 3 + 2] as usize, stride);
+            let mn = v0.min(v1).min(v2);
+            let mx = v0.max(v1).max(v2);
+            tri_min.push(mn);
+            tri_max.push(mx);
+            centroid.push((mn + mx) * 0.5);
         }
-        let i0 = mesh.indices[tri_i * 3] as usize;
-        let i1 = mesh.indices[tri_i * 3 + 1] as usize;
-        let i2 = mesh.indices[tri_i * 3 + 2] as usize;
-        let v0 = read_pos(&mesh.vertices, i0, stride);
-        let v1 = read_pos(&mesh.vertices, i1, stride);
-        let v2 = read_pos(&mesh.vertices, i2, stride);
-        if let Some(t) = intersect_tri(ro, rd, v0, v1, v2) {
-            match best {
-                Some((bt, _)) if bt <= t => {}
-                _ => best = Some((t, node)),
+        let mut tri_order: Vec<u32> = (0..tri_count as u32).collect();
+        let mut nodes: Vec<BvhNode> = Vec::new();
+        if tri_count > 0 {
+            build_node(
+                &mut nodes,
+                &mut tri_order,
+                &tri_min,
+                &tri_max,
+                &centroid,
+                0,
+                tri_count,
+            );
+        }
+        Bvh { nodes, tri_order }
+    }
+
+    /// Nearest triangle hit along the ray, optionally restricted to triangles
+    /// whose owning node satisfies `keep`. Returns `(t, node)`.
+    pub(crate) fn raycast(
+        &self,
+        mesh: &FlatMesh,
+        ro: Vec3,
+        rd: Vec3,
+        keep: Option<&dyn Fn(NodeId) -> bool>,
+    ) -> Option<(f32, NodeId)> {
+        if self.nodes.is_empty() {
+            return None;
+        }
+        let stride = FLOATS_PER_VERTEX;
+        let inv = Vec3::new(1.0 / rd.x, 1.0 / rd.y, 1.0 / rd.z);
+        let mut best: Option<(f32, NodeId)> = None;
+        let mut stack: Vec<u32> = Vec::with_capacity(64);
+        stack.push(0);
+        while let Some(ni) = stack.pop() {
+            let node = &self.nodes[ni as usize];
+            let Some(t_enter) = slab(node.bmin, node.bmax, ro, inv) else {
+                continue;
+            };
+            // Whole sub-tree is farther than the current best hit — skip it.
+            if let Some((bt, _)) = best {
+                if t_enter > bt {
+                    continue;
+                }
+            }
+            if node.leaf {
+                for k in node.a..node.a + node.b {
+                    let tri_i = self.tri_order[k as usize] as usize;
+                    let node_id = mesh.tri_node.get(tri_i).copied().unwrap_or(NodeId(0));
+                    if let Some(f) = keep {
+                        if !f(node_id) {
+                            continue;
+                        }
+                    }
+                    let i0 = mesh.indices[tri_i * 3] as usize;
+                    let i1 = mesh.indices[tri_i * 3 + 1] as usize;
+                    let i2 = mesh.indices[tri_i * 3 + 2] as usize;
+                    let v0 = read_pos(&mesh.vertices, i0, stride);
+                    let v1 = read_pos(&mesh.vertices, i1, stride);
+                    let v2 = read_pos(&mesh.vertices, i2, stride);
+                    if let Some(t) = intersect_tri(ro, rd, v0, v1, v2) {
+                        match best {
+                            Some((bt, _)) if bt <= t => {}
+                            _ => best = Some((t, node_id)),
+                        }
+                    }
+                }
+            } else {
+                stack.push(node.a);
+                stack.push(node.b);
             }
         }
+        best
     }
-    best
+}
+
+/// Ray vs AABB slab test. Returns the entry distance (clamped to 0 when the
+/// ray starts inside) or `None` on a miss. `inv` is the component-wise
+/// reciprocal of the ray direction.
+fn slab(bmin: Vec3, bmax: Vec3, ro: Vec3, inv: Vec3) -> Option<f32> {
+    let t1 = (bmin - ro) * inv;
+    let t2 = (bmax - ro) * inv;
+    let tmin = t1.min(t2);
+    let tmax = t1.max(t2);
+    let t_enter = tmin.max_element();
+    let t_exit = tmax.min_element();
+    if t_exit >= t_enter.max(0.0) {
+        Some(t_enter.max(0.0))
+    } else {
+        None
+    }
+}
+
+/// Recursively build a node covering `tri_order[start..start + count]`, pushing
+/// it (and its descendants) onto `nodes`. Returns the node's arena index.
+fn build_node(
+    nodes: &mut Vec<BvhNode>,
+    tri_order: &mut [u32],
+    tri_min: &[Vec3],
+    tri_max: &[Vec3],
+    centroid: &[Vec3],
+    start: usize,
+    count: usize,
+) -> u32 {
+    let mut bmin = Vec3::splat(f32::INFINITY);
+    let mut bmax = Vec3::splat(f32::NEG_INFINITY);
+    for &ti in &tri_order[start..start + count] {
+        bmin = bmin.min(tri_min[ti as usize]);
+        bmax = bmax.max(tri_max[ti as usize]);
+    }
+    let node_idx = nodes.len() as u32;
+    nodes.push(BvhNode {
+        bmin,
+        bmax,
+        a: start as u32,
+        b: count as u32,
+        leaf: true,
+    });
+    if count <= BVH_LEAF_TRIS {
+        return node_idx;
+    }
+
+    // Split on the axis of greatest centroid spread, at the centroid midpoint.
+    let mut cmin = Vec3::splat(f32::INFINITY);
+    let mut cmax = Vec3::splat(f32::NEG_INFINITY);
+    for &ti in &tri_order[start..start + count] {
+        cmin = cmin.min(centroid[ti as usize]);
+        cmax = cmax.max(centroid[ti as usize]);
+    }
+    let extent = cmax - cmin;
+    let axis = if extent.x >= extent.y && extent.x >= extent.z {
+        0
+    } else if extent.y >= extent.z {
+        1
+    } else {
+        2
+    };
+    if axis_val(extent, axis) < 1e-8 {
+        return node_idx; // all centroids coincide — keep as a leaf
+    }
+    let mid = (axis_val(cmin, axis) + axis_val(cmax, axis)) * 0.5;
+
+    let slice = &mut tri_order[start..start + count];
+    let mut left = 0usize;
+    for j in 0..slice.len() {
+        if axis_val(centroid[slice[j] as usize], axis) < mid {
+            slice.swap(left, j);
+            left += 1;
+        }
+    }
+    // Degenerate midpoint split (everything on one side): fall back to a median
+    // split so we always make progress and the tree stays balanced.
+    if left == 0 || left == count {
+        slice.sort_unstable_by(|&p, &q| {
+            axis_val(centroid[p as usize], axis)
+                .partial_cmp(&axis_val(centroid[q as usize], axis))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        left = count / 2;
+    }
+
+    let left_child = build_node(nodes, tri_order, tri_min, tri_max, centroid, start, left);
+    let right_child = build_node(
+        nodes,
+        tri_order,
+        tri_min,
+        tri_max,
+        centroid,
+        start + left,
+        count - left,
+    );
+    nodes[node_idx as usize].a = left_child;
+    nodes[node_idx as usize].b = right_child;
+    nodes[node_idx as usize].leaf = false;
+    node_idx
 }
 
 fn read_pos(vertices: &[f32], vi: usize, stride: usize) -> Vec3 {
@@ -341,5 +535,60 @@ mod tests {
 
         let hit = ray_pick(&mesh, Vec3::new(0.0, 0.0, -2.0), Vec3::new(0.0, 0.0, 1.0));
         assert_eq!(hit.map(|(_, n)| n), Some(near));
+    }
+
+    /// Brute-force reference: the linear Möller–Trumbore scan the BVH replaces.
+    fn brute_pick(mesh: &FlatMesh, ro: Vec3, rd: Vec3) -> Option<(f32, NodeId)> {
+        let stride = FLOATS_PER_VERTEX;
+        let mut best: Option<(f32, NodeId)> = None;
+        for tri_i in 0..mesh.indices.len() / 3 {
+            let i0 = mesh.indices[tri_i * 3] as usize;
+            let i1 = mesh.indices[tri_i * 3 + 1] as usize;
+            let i2 = mesh.indices[tri_i * 3 + 2] as usize;
+            let v0 = read_pos(&mesh.vertices, i0, stride);
+            let v1 = read_pos(&mesh.vertices, i1, stride);
+            let v2 = read_pos(&mesh.vertices, i2, stride);
+            if let Some(t) = intersect_tri(ro, rd, v0, v1, v2) {
+                let node = mesh.tri_node.get(tri_i).copied().unwrap_or(NodeId(0));
+                match best {
+                    Some((bt, _)) if bt <= t => {}
+                    _ => best = Some((t, node)),
+                }
+            }
+        }
+        best
+    }
+
+    #[test]
+    fn bvh_matches_brute_force_over_many_rays() {
+        // A field of quads at distinct, well-separated depths (so the nearest
+        // hit is never an ambiguous tie) including overlapping columns, then
+        // fire a deterministic spread of rays and assert the accelerated pick
+        // agrees with the brute-force scan on every one.
+        let mut scene = SceneGraph::new();
+        let mut lcg: u64 = 0x1234_5678;
+        let mut next = || {
+            lcg = lcg.wrapping_mul(6364136223846793005).wrapping_add(1);
+            ((lcg >> 33) as f32) / (u32::MAX as f32) // [0,1)
+        };
+        for i in 0..60 {
+            let x = (next() - 0.5) * 6.0;
+            let y = (next() - 0.5) * 6.0;
+            // 0.5 spacing keeps depths distinct enough to avoid float ties.
+            let z = i as f32 * 0.5;
+            let id = scene.add_root(&format!("q{i}"), "box", Transform::IDENTITY);
+            scene.set_mesh(id, unit_quad_at(Vec3::new(x, y, z)));
+        }
+        let mesh = flatten(&scene, None);
+        assert!(mesh.indices.len() / 3 > BVH_LEAF_TRIS, "want a real tree");
+
+        for _ in 0..400 {
+            let ro = Vec3::new((next() - 0.5) * 8.0, (next() - 0.5) * 8.0, -5.0);
+            let target = Vec3::new((next() - 0.5) * 8.0, (next() - 0.5) * 8.0, 20.0);
+            let rd = (target - ro).normalize();
+            let got = ray_pick(&mesh, ro, rd).map(|(_, n)| n);
+            let want = brute_pick(&mesh, ro, rd).map(|(_, n)| n);
+            assert_eq!(got, want, "ray {ro:?} -> {rd:?}");
+        }
     }
 }

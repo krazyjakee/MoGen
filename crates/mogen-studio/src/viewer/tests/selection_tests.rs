@@ -447,7 +447,7 @@ fn cycling_first_click_matches_today_redirect_pick() {
     let (scene, outer, _wrapper, body) = scene_with_use_inside_outer_group();
     let mut st = ViewerState::default();
     st.scene = Some(Arc::new(scene));
-    replace_selection_cycling(&mut st, body, egui::pos2(100.0, 100.0));
+    replace_selection_cycling(&mut st, body, egui::pos2(100.0, 100.0), 1.0);
     assert_eq!(st.selected, vec![outer]);
     assert_eq!(st.pick_cycle.map(|c| c.depth), Some(0));
 }
@@ -458,8 +458,8 @@ fn cycling_second_click_drills_to_use_wrapper() {
     let mut st = ViewerState::default();
     st.scene = Some(Arc::new(scene));
     let cursor = egui::pos2(100.0, 100.0);
-    replace_selection_cycling(&mut st, body, cursor);
-    replace_selection_cycling(&mut st, body, cursor);
+    replace_selection_cycling(&mut st, body, cursor, 1.0);
+    replace_selection_cycling(&mut st, body, cursor, 1.0);
     assert_eq!(st.selected, vec![wrapper]);
     assert_eq!(st.pick_cycle.map(|c| c.depth), Some(1));
 }
@@ -470,9 +470,9 @@ fn cycling_clamps_at_editability_boundary() {
     let mut st = ViewerState::default();
     st.scene = Some(Arc::new(scene));
     let cursor = egui::pos2(100.0, 100.0);
-    replace_selection_cycling(&mut st, body, cursor);
-    replace_selection_cycling(&mut st, body, cursor);
-    replace_selection_cycling(&mut st, body, cursor);
+    replace_selection_cycling(&mut st, body, cursor, 1.0);
+    replace_selection_cycling(&mut st, body, cursor, 1.0);
+    replace_selection_cycling(&mut st, body, cursor, 1.0);
     assert_eq!(st.selected, vec![wrapper]);
     assert_eq!(st.pick_cycle.map(|c| c.depth), Some(1));
 }
@@ -482,9 +482,9 @@ fn cycling_resets_when_cursor_moves_past_radius() {
     let (scene, outer, _wrapper, body) = scene_with_use_inside_outer_group();
     let mut st = ViewerState::default();
     st.scene = Some(Arc::new(scene));
-    replace_selection_cycling(&mut st, body, egui::pos2(100.0, 100.0));
+    replace_selection_cycling(&mut st, body, egui::pos2(100.0, 100.0), 1.0);
     let far = egui::pos2(100.0 + PICK_CYCLE_RADIUS_PX + 1.0, 100.0);
-    replace_selection_cycling(&mut st, body, far);
+    replace_selection_cycling(&mut st, body, far, 1.0);
     assert_eq!(st.selected, vec![outer]);
     assert_eq!(st.pick_cycle.map(|c| c.depth), Some(0));
 }
@@ -494,9 +494,9 @@ fn cycling_preserves_state_when_cursor_drifts_within_radius() {
     let (scene, _outer, wrapper, body) = scene_with_use_inside_outer_group();
     let mut st = ViewerState::default();
     st.scene = Some(Arc::new(scene));
-    replace_selection_cycling(&mut st, body, egui::pos2(100.0, 100.0));
+    replace_selection_cycling(&mut st, body, egui::pos2(100.0, 100.0), 1.0);
     let drifted = egui::pos2(100.0 + PICK_CYCLE_RADIUS_PX - 0.5, 100.0);
-    replace_selection_cycling(&mut st, body, drifted);
+    replace_selection_cycling(&mut st, body, drifted, 1.0);
     assert_eq!(st.selected, vec![wrapper]);
     assert_eq!(st.pick_cycle.map(|c| c.depth), Some(1));
 }
@@ -508,9 +508,9 @@ fn cycling_resets_when_leaf_changes() {
     let mut st = ViewerState::default();
     st.scene = Some(Arc::new(scene));
     let cursor = egui::pos2(100.0, 100.0);
-    replace_selection_cycling(&mut st, body, cursor);
-    replace_selection_cycling(&mut st, body, cursor);
-    replace_selection_cycling(&mut st, other, cursor);
+    replace_selection_cycling(&mut st, body, cursor, 1.0);
+    replace_selection_cycling(&mut st, body, cursor, 1.0);
+    replace_selection_cycling(&mut st, other, cursor, 1.0);
     assert_eq!(st.selected, vec![other]);
     assert_eq!(st.pick_cycle.map(|c| c.depth), Some(0));
 }
@@ -523,7 +523,7 @@ fn cycling_clears_selection_when_redirect_finds_no_wrapper() {
     scene.nodes[imported.0 as usize].origin = Some(PathBuf::from("desk.mog"));
     let mut st = ViewerState::default();
     st.scene = Some(Arc::new(scene));
-    replace_selection_cycling(&mut st, imported, egui::pos2(100.0, 100.0));
+    replace_selection_cycling(&mut st, imported, egui::pos2(100.0, 100.0), 1.0);
     assert!(st.selected.is_empty());
     assert!(st.pick_cycle.is_none());
 }
@@ -536,8 +536,8 @@ fn cycling_on_plain_user_authored_leaf_is_a_no_op() {
     let mut st = ViewerState::default();
     st.scene = Some(Arc::new(scene));
     let cursor = egui::pos2(100.0, 100.0);
-    replace_selection_cycling(&mut st, leaf, cursor);
-    replace_selection_cycling(&mut st, leaf, cursor);
+    replace_selection_cycling(&mut st, leaf, cursor, 1.0);
+    replace_selection_cycling(&mut st, leaf, cursor, 1.0);
     assert_eq!(st.selected, vec![leaf]);
     assert_eq!(st.pick_cycle.map(|c| c.depth), Some(0));
 }

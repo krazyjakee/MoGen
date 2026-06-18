@@ -254,7 +254,8 @@ impl Viewer {
                         // leaf, until the leaf is reached or the cycle
                         // bumps into an imported subtree boundary.
                         (false, Some(id)) => {
-                            replace_selection_cycling(&mut st, id, cursor);
+                            let ppp = ui.ctx().pixels_per_point();
+                            replace_selection_cycling(&mut st, id, cursor, ppp);
                             needs_repaint = true;
                         }
                         (false, None) => {
@@ -524,6 +525,14 @@ impl Viewer {
                 if st.show_light_gizmos {
                     rr.draw_lights_overlay(gl, viewproj, eye, viewport_height, &st.selected);
                 }
+                // Wireframe outline for all selected geometry nodes so multi-
+                // select is visible in the viewport, not just in the inspector.
+                rr.draw_selection_overlay(
+                    gl,
+                    viewproj,
+                    &st.mesh.node_index_runs,
+                    &st.selected,
+                );
                 if st.show_colliders {
                     if let Some(scene) = st.scene.as_ref() {
                         let worlds = scene.world_transforms();

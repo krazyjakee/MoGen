@@ -8,10 +8,12 @@
 use glam::{Mat4, Vec3};
 use mogen_core::{LightKind, NodeId, SceneGraph};
 
-/// Upper bound on punctual lights forwarded to the shader. Sized to comfortably
-/// fit a three-point lighting rig with overhead for a handful of accent lights.
-/// Keep in sync with `MAX_LIGHTS` in `shaders.rs`.
-pub const MAX_LIGHTS: usize = 8;
+/// Upper bound on punctual lights forwarded to the shader. Sized to fit a
+/// three-point lighting rig plus a generous set of accent lights without
+/// silent truncation. Stays well inside the GL 3.3 fragment-uniform budget
+/// (~15 components per light). Keep in sync with `MAX_LIGHTS` in
+/// `shaders/mesh.rs`.
+pub const MAX_LIGHTS: usize = 16;
 
 /// One light entry handed to the renderer. Packed into a layout the shader
 /// can iterate without per-light branches: position is unused for directional,

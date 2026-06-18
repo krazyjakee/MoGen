@@ -95,6 +95,26 @@ pub(super) unsafe fn compile_program(
     Ok(program)
 }
 
+/// `GL_EXT_texture_filter_anisotropic` enum values. Core GL 4.6 renames these
+/// to `GL_TEXTURE_MAX_ANISOTROPY` / `GL_MAX_TEXTURE_MAX_ANISOTROPY` with the
+/// same numeric values, so the EXT form below works on both.
+const TEXTURE_MAX_ANISOTROPY: u32 = 0x84FE;
+const MAX_TEXTURE_MAX_ANISOTROPY: u32 = 0x84FF;
+
+/// Largest anisotropy the driver supports, clamped to our quality target of
+/// 16×, or `None` when the extension is unavailable. Querying is cheap and
+/// texture loads are rare (cached by mtime upstream), so this is not memoised.
+pub(super) unsafe fn max_anisotropy(gl: &glow::Context) -> Option<f32> {
+    if !gl
+        .supported_extensions()
+        .contains("GL_EXT_texture_filter_anisotropic")
+    {
+        return None;
+    }
+    let hw = gl.get_parameter_f32(MAX_TEXTURE_MAX_ANISOTROPY);
+    Some(hw.clamp(1.0, 16.0))
+}
+
 /// Read a PNG from disk, decode to 8-bit RGBA, and upload as a 2D texture.
 /// `srgb` selects the internal format: `SRGB8_ALPHA8` for colour data so the
 /// hardware linearises on sample, `RGBA8` for data maps (normal/MR/AO/etc.)
@@ -130,6 +150,12 @@ pub(super) unsafe fn try_load_texture(
         glow::TEXTURE_MAG_FILTER,
         glow::LINEAR as i32,
     );
+    // Anisotropic filtering keeps texture detail sharp on surfaces viewed at
+    // grazing angles (floors, walls); trilinear alone blurs them. No-op when
+    // the driver lacks the extension.
+    if let Some(aniso) = max_anisotropy(gl) {
+        gl.tex_parameter_f32(glow::TEXTURE_2D, TEXTURE_MAX_ANISOTROPY, aniso);
+    }
     let internal = if srgb {
         glow::SRGB8_ALPHA8
     } else {

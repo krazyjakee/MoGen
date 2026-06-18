@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use glam::{Mat4, Vec3};
 use mogen_core::{AlphaMode, MaterialShader, NodeId, SceneGraph, Transform};
@@ -203,6 +204,16 @@ pub struct FlatMesh {
     /// AABBs. Holds runs for every collider variant; the overlay simply outlines
     /// the node's own mesh, which is what trimesh/convex collide against 1:1.
     pub collider_index_runs: Vec<(u32, u32, NodeId)>,
+    /// `(index_start, index_count, node)` for every geometry-contributing node,
+    /// regardless of collider presence. Used by the selection wireframe overlay
+    /// to outline all selected nodes (not just collider-bearing ones).
+    pub node_index_runs: Vec<(u32, u32, NodeId)>,
+    /// Lazily-built ray-pick acceleration structure over the rest-pose
+    /// triangle soup (`vertices` + `indices`). Built on the first pick after a
+    /// (re)flatten and reused for every click until the mesh changes, so the
+    /// common edit-then-don't-click path pays nothing and big scenes stop
+    /// stalling on a linear triangle scan per click. See [`Self::picking_bvh`].
+    pub bvh: OnceLock<crate::pick::Bvh>,
 }
 
 impl FlatMesh {
@@ -211,6 +222,14 @@ impl FlatMesh {
     /// repaints when the scene is otherwise static so the waves keep moving.
     pub fn has_animated_shader(&self) -> bool {
         self.batches.iter().any(|b| b.shader.animates())
+    }
+
+    /// The pick BVH for this mesh, built on first use. Rest-pose world-baked
+    /// positions match what the picker rays test against, so the tree stays
+    /// valid for the life of the `FlatMesh`.
+    pub(crate) fn picking_bvh(&self) -> &crate::pick::Bvh {
+        self.bvh
+            .get_or_init(|| crate::pick::Bvh::build(&self.vertices, &self.indices, FLOATS_PER_VERTEX))
     }
 }
 
@@ -309,6 +328,7 @@ pub fn flatten_with_worlds(
     let mut palette_sources: Vec<PaletteSource> = Vec::new();
     let mut tri_node: Vec<NodeId> = Vec::new();
     let mut collider_index_runs: Vec<(u32, u32, NodeId)> = Vec::new();
+    let mut node_index_runs: Vec<(u32, u32, NodeId)> = Vec::new();
     let mut min = Vec3::splat(f32::INFINITY);
     let mut max = Vec3::splat(f32::NEG_INFINITY);
 
@@ -434,11 +454,12 @@ pub fn flatten_with_worlds(
                 indices.extend(mesh.indices.iter().map(|idx| base + idx));
                 let tri_count = (indices.len() - idx_before) / 3;
                 tri_node.extend(std::iter::repeat(node_id).take(tri_count));
-                // Record the contiguous index range for collider-bearing nodes
-                // so the overlay can outline exactly this node's geometry.
-                if node.collider.is_some() {
-                    let count = (indices.len() - idx_before) as u32;
-                    if count > 0 {
+                let count = (indices.len() - idx_before) as u32;
+                if count > 0 {
+                    // Track every geometry node for the selection wireframe overlay.
+                    node_index_runs.push((idx_before as u32, count, node_id));
+                    // Also track collider-bearing nodes for the collider overlay.
+                    if node.collider.is_some() {
                         collider_index_runs.push((idx_before as u32, count, node_id));
                     }
                 }
@@ -580,6 +601,8 @@ pub fn flatten_with_worlds(
         radius,
         tri_node,
         collider_index_runs,
+        node_index_runs,
+        bvh: OnceLock::new(),
     }
 }
 

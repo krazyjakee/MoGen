@@ -148,10 +148,12 @@ fn hit_scale_arm(origin: Vec3, axis: Axis, scale: f32, ro: Vec3, rd: Vec3) -> Op
     }
 }
 
-/// Rotate handle: a torus around `axis` with a modest tube radius. We
-/// approximate by testing the ring's infinite-thin circle plus a tolerance:
-/// the cursor ray hits the plane perpendicular to `axis`, we check the
-/// distance from that hit to the ring.
+/// Rotate handle: a torus around `axis` with a modest tube radius. The old
+/// approach intersected the ray with the ring's infinite plane and measured
+/// the in-plane distance to the circle; that failed outright when the ray was
+/// near-parallel to the plane (edge-on view — the ring became ungrabbable) and
+/// felt mushy at oblique angles. Instead we find the closest distance between
+/// the ray and the ring *circle* directly, which stays stable at every angle.
 fn hit_rotate_ring(
     origin: Vec3,
     axis: Axis,
@@ -160,25 +162,48 @@ fn hit_rotate_ring(
     rd: Vec3,
 ) -> Option<f32> {
     let n = axis.unit();
-    let denom = rd.dot(n);
-    if denom.abs() < 1e-5 {
-        return None; // ray parallel to the ring plane
+    let ring_r = scale;
+    // Tube radius: the grab tolerance, i.e. the torus's minor radius.
+    let tube = scale * 0.10;
+
+    // Fixed-point search for the ray parameter nearest the circle: project the
+    // current ray point into the ring plane, snap it to the circle, then move
+    // to the ray point nearest that circle point, and repeat. Converges in a
+    // few steps and — unlike a plane intersection — never blows up edge-on.
+    // `rd` is unit, so `(p - ro).dot(rd)` is the nearest-point parameter.
+    let snap_to_circle = |p: Vec3| -> Vec3 {
+        let radial = (p - origin) - n * (p - origin).dot(n);
+        if radial.length_squared() < 1e-12 {
+            // Ray point sits on the axis — any in-plane direction is equally
+            // close; pick a stable perpendicular so the iteration continues.
+            origin + any_perp(n) * ring_r
+        } else {
+            origin + radial.normalize() * ring_r
+        }
+    };
+
+    let mut t = (origin - ro).dot(rd);
+    for _ in 0..4 {
+        let circle_pt = snap_to_circle(ro + rd * t);
+        t = (circle_pt - ro).dot(rd);
     }
-    let t = (origin - ro).dot(n) / denom;
-    if t <= 1e-5 {
+    if t <= 1e-4 {
         return None;
     }
-    let hit = ro + rd * t;
-    let offset = hit - origin;
-    // Distance from ring: |‖offset‖ - R| < tolerance.
-    let r = offset.length();
-    let ring_r = scale;
-    let tol = scale * 0.08;
-    if (r - ring_r).abs() <= tol {
+    let p = ro + rd * t;
+    let dist = (p - snap_to_circle(p)).length();
+    if dist <= tube {
         Some(t)
     } else {
         None
     }
+}
+
+/// Any unit vector perpendicular to `n`. Used as a stable fallback when a
+/// point lies exactly on the rotation axis.
+fn any_perp(n: Vec3) -> Vec3 {
+    let a = if n.x.abs() < 0.9 { Vec3::X } else { Vec3::Y };
+    (a - n * a.dot(n)).normalize_or_zero()
 }
 
 /// Intersect a ray with a finite cylinder (capsule-less: just the infinite
@@ -377,5 +402,57 @@ mod tests {
         let near = handle_scale(origin, Vec3::new(0.0, 0.0, 2.0), 720.0);
         let far = handle_scale(origin, Vec3::new(0.0, 0.0, 10.0), 720.0);
         assert!(far > near, "gizmo should get bigger in world units when farther");
+    }
+
+    #[test]
+    fn rotate_ring_hit_face_on() {
+        // Looking down -Z at the Z-axis ring (radius 1). Aim at a point 45°
+        // around the ring (x=y=√½, z=0): it sits on the Z ring but off the X
+        // and Y rings (which pass through ±X / ±Y / ±Z), so the grab is
+        // unambiguous.
+        let origin = Vec3::ZERO;
+        let scale = 1.0;
+        let r = std::f32::consts::FRAC_1_SQRT_2;
+        let got = hit_axis(
+            GizmoMode::Rotate,
+            origin,
+            scale,
+            Vec3::new(r, r, -2.0),
+            Vec3::new(0.0, 0.0, 1.0),
+        );
+        assert_eq!(got, Some(Axis::Z));
+    }
+
+    #[test]
+    fn rotate_ring_hit_edge_on() {
+        // The Z ring viewed edge-on: the ray travels in the ring's own plane
+        // (+X) toward its near rim. The old plane-intersection test returned
+        // None here (ray parallel to plane); the circle-distance test grabs it.
+        let origin = Vec3::ZERO;
+        let scale = 1.0;
+        let hit = hit_rotate_ring(
+            origin,
+            Axis::Z,
+            scale,
+            Vec3::new(-2.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+        );
+        assert!(hit.is_some(), "edge-on ring should still be grabbable");
+    }
+
+    #[test]
+    fn rotate_ring_miss_through_centre() {
+        // A ray straight through the centre (well inside the ring radius) and
+        // perpendicular to the ring should not register as a ring grab.
+        let origin = Vec3::ZERO;
+        let scale = 1.0;
+        let hit = hit_rotate_ring(
+            origin,
+            Axis::Z,
+            scale,
+            Vec3::new(0.0, 0.0, -2.0),
+            Vec3::new(0.0, 0.0, 1.0),
+        );
+        assert!(hit.is_none(), "ray through the hub is not a ring hit");
     }
 }
