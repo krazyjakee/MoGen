@@ -332,6 +332,46 @@ cave "mouthy" (
 }
 
 #[test]
+fn cave_per_band_entrances_route_to_correct_bands() {
+    // With levels=2 and entrances=[2, 0], both mouths land on band 0 (bottom).
+    // With levels=2 and entrances=[0, 2], both land on band 1 (top).
+    // The two sets must have distinct Y heights, confirming band routing.
+    let make = |entrances: &str| {
+        lower_src(&format!(
+            r#"cave "banded" (seed=5,size=[28,14,28],chambers=10,levels=2,resolution=48,entrances={entrances})"#
+        ))
+    };
+    let lo = make("[2, 0]");
+    let hi = make("[0, 2]");
+
+    let poi_ys = |g: &SceneGraph| -> Vec<f32> {
+        g.nodes
+            .iter()
+            .filter(|n| n.role.as_deref() == Some("entrance"))
+            .map(|n| n.transform.translation.y)
+            .collect()
+    };
+    let lo_ys = poi_ys(&lo);
+    let hi_ys = poi_ys(&hi);
+
+    assert_eq!(lo_ys.len(), 2, "entrances=[2,0] should place 2 mouths (both on band 0): {lo_ys:?}");
+    assert_eq!(hi_ys.len(), 2, "entrances=[0,2] should place 2 mouths (both on band 1): {hi_ys:?}");
+
+    // Band 1 (top) mouths must sit higher than band 0 (bottom) mouths.
+    let lo_max_y: f32 = lo_ys.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+    let hi_min_y: f32 = hi_ys.iter().copied().fold(f32::INFINITY, f32::min);
+    assert!(
+        hi_min_y > lo_max_y,
+        "band-1 entrances (min Y {hi_min_y:.2}) should be above band-0 (max Y {lo_max_y:.2})"
+    );
+
+    // Zero count on all bands → no mouths at all.
+    let none = make("[0, 0]");
+    let none_ys = poi_ys(&none);
+    assert!(none_ys.is_empty(), "entrances=[0,0] should emit no entrance POIs");
+}
+
+#[test]
 fn cave_debug_show_poi_visualizes_markers() {
     let base = r#"
 cave "poi_cave" (

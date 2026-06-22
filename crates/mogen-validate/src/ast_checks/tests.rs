@@ -887,6 +887,26 @@ mod cave_validator_tests {
     }
 
     #[test]
+    fn rejects_negative_entrances_scalar() {
+        let src = r#"cave "den" (seed=1, chambers=4, entrances=-2)"#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "E1202"),
+            "expected E1202 for negative scalar cave.entrances, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_negative_entrances_in_array() {
+        let src = r#"cave "den" (seed=1, chambers=4, entrances=[1, -1, 0])"#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "E1202"),
+            "expected E1202 for negative element in cave.entrances array, got: {diags:?}"
+        );
+    }
+
+    #[test]
     fn rejects_non_positive_size_components() {
         let src = r#"cave "den" (seed=1, chambers=4, size=[20, 0, 20])"#;
         let diags = diags_for(src);
@@ -1173,6 +1193,26 @@ mod dungeon_validator_tests {
         assert!(
             diags.iter().any(|d| d.code == "W1606"),
             "expected W1606 for lod_scale > 1.0, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_negative_entrances_scalar() {
+        let src = r#"dungeon "keep" (seed=1, entrances=-1)"#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "E1603"),
+            "expected E1603 for negative scalar dungeon.entrances, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_negative_entrances_in_array() {
+        let src = r#"dungeon "keep" (seed=1, entrances=[1, -1, 0])"#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "E1603"),
+            "expected E1603 for negative element in dungeon.entrances array, got: {diags:?}"
         );
     }
 }
