@@ -241,7 +241,8 @@ pub fn attrs_for_kind(kind: &str) -> &'static [&'static str] {
         "dungeon" => &[
             "seed", "mat_style", "size", "cell", "levels", "rooms",
             "room_min", "room_max", "spacing", "corridor_width", "loops",
-            "stairs", "wall_thickness", "floor_thickness", "ceilings",
+            "stairs", "entrances",
+            "wall_thickness", "floor_thickness", "ceilings",
             "colliders", "prop_spots", "lod_scale",
             "debug_hide_roof", "debug_render_floor", "debug_show_poi",
         ],
@@ -480,6 +481,8 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         ("room_type", "mat") => "string",
         ("adjacency", "adjacent_to") | ("adjacency", "away_from") => "list of string",
         ("cave", "size") => "vec3",
+        // Scalar (surface count) or per-band array, e.g. `entrances=[1, 0, 1]`.
+        ("cave", "entrances") => "number or list of number",
         ("cave", "chambers")
         | ("cave", "levels")
         | ("cave", "chamber_min")
@@ -496,7 +499,6 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         | ("cave", "blend")
         | ("cave", "margin")
         | ("cave", "resolution")
-        | ("cave", "entrances")
         | ("cave", "rock_piles")
         | ("cave", "pools")
         | ("cave", "lakes")
@@ -533,6 +535,8 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         | ("terrain", "debug_show_poi") => "number",
         ("dungeon", "size") => "vec3",
         ("dungeon", "mat_style") | ("dungeon", "colliders") => "string",
+        // Scalar (ground count) or per-floor array, e.g. `entrances=[1, 0, 2]`.
+        ("dungeon", "entrances") => "number or list of number",
         ("dungeon", "cell")
         | ("dungeon", "levels")
         | ("dungeon", "rooms")
@@ -747,6 +751,12 @@ pub(super) fn value_matches(v: &Value, expected: &str) -> bool {
         // though the schema declares it a list).
         (Value::List(_) | Value::ListExpr(_), "list of number") => true,
         (Value::Vec3(_) | Value::Vec3Expr(_), "list of number") => true,
+        // Scalar count or per-floor array (3-element arrays enter as `Vec3`).
+        (Value::Number(_) | Value::Expr(_), "number or list of number") => true,
+        (
+            Value::List(_) | Value::ListExpr(_) | Value::Vec3(_) | Value::Vec3Expr(_),
+            "number or list of number",
+        ) => true,
         (Value::ListString(_), "list of string") => true,
         (Value::String(_) | Value::Ident(_), "list of string") => true,
         // Deferred expressions: accept as their natural type; evaluation errors

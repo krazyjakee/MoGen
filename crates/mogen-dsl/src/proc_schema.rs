@@ -41,6 +41,21 @@ pub enum ParamKind {
     /// supplies the per-component value shown when the attr is absent; its
     /// length is the vector's arity.
     Vec { defaults: &'static [f32], speed: f32 },
+    /// A variable-length integer array whose arity tracks another attr's value
+    /// (e.g. `entrances=[a, b, …]` with one slot per `levels`). Rendered as one
+    /// clamped DragValue per level and written back as a list literal. A legacy
+    /// scalar value seeds a single slot — at the top index when `scalar_at_top`
+    /// (cave surface), else index 0 (dungeon ground).
+    LevelCounts {
+        /// Attr whose (integer) value sets how many slots to show.
+        levels_attr: &'static str,
+        /// Slot count shown when `levels_attr` is absent.
+        levels_default: i32,
+        /// Per-slot clamp ceiling.
+        max_per_level: i32,
+        /// Where a bare scalar value seeds: top slot (true) or slot 0 (false).
+        scalar_at_top: bool,
+    },
 }
 
 /// Which sidebar section a parameter belongs to. `Main` params render first
@@ -307,7 +322,21 @@ static CAVE: ProcSchema = ProcSchema {
             group: Main,
             help: Some("Voxel-grid resolution (samples along the longest axis)."),
         },
-        int("entrances", "Entrances", 1, 0, 16),
+        ParamSpec {
+            attr: "entrances",
+            label: "Entrances / band",
+            kind: ParamKind::LevelCounts {
+                levels_attr: "levels",
+                levels_default: 2,
+                max_per_level: 16,
+                scalar_at_top: true,
+            },
+            group: Main,
+            help: Some(
+                "Side mouths per vertical band (index 0 = lowest band). A bare \
+                 scalar opens them on the surface (top) band instead.",
+            ),
+        },
         int("mushrooms", "Mushrooms", 0, 0, 256),
         ParamSpec {
             attr: "colliders",
@@ -492,6 +521,21 @@ static DUNGEON: ProcSchema = ProcSchema {
         },
         int("levels", "Levels", 1, 1, 16),
         int("stairs", "Stairs", 1, 0, 16),
+        ParamSpec {
+            attr: "entrances",
+            label: "Entrances / floor",
+            kind: ParamKind::LevelCounts {
+                levels_attr: "levels",
+                levels_default: 1,
+                max_per_level: 16,
+                scalar_at_top: false,
+            },
+            group: Main,
+            help: Some(
+                "Exterior doorways per floor (index 0 = ground). A bare scalar \
+                 opens them all on the ground floor.",
+            ),
+        },
         int("rooms", "Rooms", 6, 1, 64),
         int("room_min", "Room min", 2, 1, 64),
         int("room_max", "Room max", 5, 1, 64),

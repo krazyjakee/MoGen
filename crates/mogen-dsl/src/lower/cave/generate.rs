@@ -11,8 +11,9 @@
 //! 3. Any passage steeper than `max_slope` is rebuilt as a switchback ramp —
 //!    each leg's rise-over-run is capped, so no walkable surface exceeds the
 //!    angle limit even when linking distant floors.
-//! 4. Punch `entrances` horizontal mouths out through the nearest side face,
-//!    hosted on the highest chambers so the cave is entered from the top layer.
+//! 4. Punch `entrances` horizontal mouths out through the nearest side face. A
+//!    scalar count opens them on the topmost band (the surface); an array
+//!    `[b0, b1, …]` opens them per band from the bottom up.
 //!
 //! Every carver is a `Subtract` `BlobChild`; `emit.rs` pairs them with an
 //! additive bounding box and meshes `box − ⋃ carvers` with surface nets.
@@ -24,7 +25,7 @@ use glam::{Mat4, Quat, Vec3};
 
 use mogen_geom::{BlobChild, SdfOp, SdfPrim};
 
-use super::config::CaveCfg;
+use super::config::{CaveCfg, CaveEntrances};
 use super::rng::{rand_f01, rand_in, rand_range, sub_seed};
 
 /// One carved cavity. Oblate (`half.y < half.x`) so the floor reads as gently
@@ -566,8 +567,10 @@ fn add_passage(carvers: &mut Vec<BlobChild>, a: Vec3, b: Vec3, radius: f32, max_
     }
 }
 
-/// Punch `entrances` horizontal mouths out through the nearest side face,
-/// hosted on the highest chambers so the openings land on the top layer.
+/// Punch horizontal mouths out through the nearest side face. A scalar
+/// `entrances=N` opens N mouths on the topmost populated band (the surface); an
+/// `entrances=[b0, b1, …]` array opens that many on each band from the bottom up
+/// (index 0 = lowest), so a chosen storey can meet an adjacent dungeon or pit.
 /// Returns one `(chamber_index, yaw)` per mouth for the POI pass: `yaw` points a
 /// prefab's local `-Z` (forward) out through the wall (toward the open world).
 fn add_entrances(
@@ -576,52 +579,100 @@ fn add_entrances(
     cfg: &CaveCfg,
     block_half: Vec3,
 ) -> Vec<(usize, f32)> {
-    if cfg.entrances == 0 || chambers.is_empty() {
+    if chambers.is_empty() {
         return Vec::new();
     }
-    // Highest chambers first (mouths open onto the top layer).
-    let mut order: Vec<usize> = (0..chambers.len()).collect();
-    order.sort_by(|&i, &j| {
-        chambers[j]
-            .center
-            .y
-            .partial_cmp(&chambers[i].center.y)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
-
     let mut anchors = Vec::new();
-    for &idx in order.iter().take(cfg.entrances as usize) {
-        let c = &chambers[idx];
-        // Opening centre sits a passage-radius above the chamber floor so the
-        // mouth's lower lip lands near walking height.
-        let y = (c.floor_y() + cfg.passage_radius).min(c.ceiling_y());
-        let start = Vec3::new(c.center.x, y, c.center.z);
+    let mut used = vec![false; chambers.len()];
 
-        // Nearest of the four vertical faces.
-        let dpx = block_half.x - c.center.x;
-        let dnx = c.center.x + block_half.x;
-        let dpz = block_half.z - c.center.z;
-        let dnz = c.center.z + block_half.z;
-        let min = dpx.min(dnx).min(dpz).min(dnz);
-        // Outward horizontal direction toward the chosen face.
-        let (end, out): (Vec3, (f32, f32)) = if min == dpx {
-            (Vec3::new(block_half.x + cfg.margin + 1.0, y, c.center.z), (1.0, 0.0))
-        } else if min == dnx {
-            (Vec3::new(-(block_half.x + cfg.margin + 1.0), y, c.center.z), (-1.0, 0.0))
-        } else if min == dpz {
-            (Vec3::new(c.center.x, y, block_half.z + cfg.margin + 1.0), (0.0, 1.0))
-        } else {
-            (Vec3::new(c.center.x, y, -(block_half.z + cfg.margin + 1.0)), (0.0, -1.0))
-        };
-        add_capsule(carvers, start, end, cfg.passage_radius);
+    // Chamber indices grouped by vertical band, lowest band first.
+    let mut by_level: BTreeMap<u32, Vec<usize>> = BTreeMap::new();
+    for (i, c) in chambers.iter().enumerate() {
+        by_level.entry(c.level).or_default().push(i);
+    }
 
-        // Yaw so the prefab's local -Z faces out through the wall. With
-        // `Quat::from_rotation_y(a)`, local -Z maps to world -(sin a, cos a), so
-        // to send -Z → out we set a = atan2(-out.x, -out.z).
-        let yaw = (-out.0).atan2(-out.1);
-        anchors.push((idx, yaw));
+    let punch_band = |level_idxs: &[usize], count: usize, used: &mut [bool], anchors: &mut Vec<(usize, f32)>, carvers: &mut Vec<BlobChild>| {
+        if count == 0 {
+            return;
+        }
+        // Prefer the chambers nearest a wall so the tunnels stay short.
+        let mut by_wall = level_idxs.to_vec();
+        by_wall.sort_by(|&i, &j| {
+            wall_distance(&chambers[i], block_half)
+                .partial_cmp(&wall_distance(&chambers[j], block_half))
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(i.cmp(&j))
+        });
+        let chosen: Vec<usize> = by_wall.into_iter().filter(|&idx| !used[idx]).take(count).collect();
+        for idx in chosen {
+            used[idx] = true;
+            anchors.push(punch_mouth(carvers, &chambers[idx], cfg, block_half, idx));
+        }
+    };
+
+    match &cfg.entrances {
+        CaveEntrances::Surface(n) => {
+            // Topmost populated band gets all the surface mouths.
+            if let Some((_, idxs)) = by_level.iter().next_back() {
+                punch_band(idxs, *n as usize, &mut used, &mut anchors, carvers);
+            }
+        }
+        CaveEntrances::PerBand(counts) => {
+            for (&level, idxs) in by_level.iter() {
+                let count = counts.get(level as usize).copied().unwrap_or(0) as usize;
+                punch_band(idxs, count, &mut used, &mut anchors, carvers);
+            }
+        }
     }
     anchors
+}
+
+/// Distance from a chamber centre to the nearest of the four vertical faces.
+fn wall_distance(c: &Chamber, block_half: Vec3) -> f32 {
+    let dpx = block_half.x - c.center.x;
+    let dnx = c.center.x + block_half.x;
+    let dpz = block_half.z - c.center.z;
+    let dnz = c.center.z + block_half.z;
+    dpx.min(dnx).min(dpz).min(dnz)
+}
+
+/// Carve one mouth from chamber `idx` out through its nearest vertical face and
+/// return the `(idx, yaw)` anchor for the POI pass.
+fn punch_mouth(
+    carvers: &mut Vec<BlobChild>,
+    c: &Chamber,
+    cfg: &CaveCfg,
+    block_half: Vec3,
+    idx: usize,
+) -> (usize, f32) {
+    // Opening centre sits a passage-radius above the chamber floor so the
+    // mouth's lower lip lands near walking height.
+    let y = (c.floor_y() + cfg.passage_radius).min(c.ceiling_y());
+    let start = Vec3::new(c.center.x, y, c.center.z);
+
+    // Nearest of the four vertical faces.
+    let dpx = block_half.x - c.center.x;
+    let dnx = c.center.x + block_half.x;
+    let dpz = block_half.z - c.center.z;
+    let dnz = c.center.z + block_half.z;
+    let min = dpx.min(dnx).min(dpz).min(dnz);
+    // Outward horizontal direction toward the chosen face.
+    let (end, out): (Vec3, (f32, f32)) = if min == dpx {
+        (Vec3::new(block_half.x + cfg.margin + 1.0, y, c.center.z), (1.0, 0.0))
+    } else if min == dnx {
+        (Vec3::new(-(block_half.x + cfg.margin + 1.0), y, c.center.z), (-1.0, 0.0))
+    } else if min == dpz {
+        (Vec3::new(c.center.x, y, block_half.z + cfg.margin + 1.0), (0.0, 1.0))
+    } else {
+        (Vec3::new(c.center.x, y, -(block_half.z + cfg.margin + 1.0)), (0.0, -1.0))
+    };
+    add_capsule(carvers, start, end, cfg.passage_radius);
+
+    // Yaw so the prefab's local -Z faces out through the wall. With
+    // `Quat::from_rotation_y(a)`, local -Z maps to world -(sin a, cos a), so
+    // to send -Z → out we set a = atan2(-out.x, -out.z).
+    let yaw = (-out.0).atan2(-out.1);
+    (idx, yaw)
 }
 
 /// An ellipsoid carver at `center` with the given half-extents, yawed by `rot`.
@@ -681,7 +732,7 @@ mod tests {
             blend: 1.5,
             margin: 2.0,
             resolution: 64,
-            entrances: 1,
+            entrances: CaveEntrances::Surface(1),
             water_mat: None,
             colliders: super::super::config::ColliderMode::All,
             water_collider: false,

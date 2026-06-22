@@ -136,14 +136,14 @@ pub(super) fn emit(
                     if layout.is_walkable(level, i + di, j + dj) {
                         continue;
                     }
-                    // Leave a gap in the perimeter wall where the exterior
-                    // doorway is carved, so there is a clear way in.
-                    if level == 0 {
-                        if let Some(e) = layout.entrance {
-                            if e.i == i && e.j == j && e.di == di && e.dj == dj {
-                                continue;
-                            }
-                        }
+                    // Leave a gap in the perimeter wall where an exterior
+                    // doorway is carved on this level, so there is a clear way in.
+                    if layout
+                        .entrances
+                        .iter()
+                        .any(|e| e.level == level && e.i == i && e.j == j && e.di == di && e.dj == dj)
+                    {
+                        continue;
                     }
                     // Wall sits on the shared edge, extended by a wall-thickness
                     // along its length so perpendicular walls overlap at corners.

@@ -71,7 +71,9 @@ pub(super) fn emit_pois(
         .map(|(i, _)| i)
         .collect();
     let spawn_room = layout
-        .entrance
+        .entrances
+        .iter()
+        .find(|e| e.level == 0)
         .map(|e| e.room)
         .or_else(|| ground.iter().copied().find(|&i| layout.room_degree[i] == 1))
         .or_else(|| ground.first().copied());
@@ -120,9 +122,9 @@ pub(super) fn emit_pois(
 
     drop(push);
 
-    // Entrance: at the exterior threshold, oriented so its forward (-Z) faces
-    // outward through the doorway.
-    if let Some(e) = layout.entrance {
+    // Entrances: each exterior threshold, oriented so its forward (-Z) faces
+    // outward through the doorway, at its own level's floor height.
+    for e in &layout.entrances {
         let yaw = (-(e.di as f32)).atan2(-(e.dj as f32));
         markers.push(PoiMarker {
             name_key: "entrance".to_string(),
@@ -133,7 +135,7 @@ pub(super) fn emit_pois(
                 "entrance".to_string(),
             ],
             transform: Transform::from_trs(
-                Vec3::new(cx(e.i), floor_y(0), cz(e.j)),
+                Vec3::new(cx(e.i), floor_y(e.level), cz(e.j)),
                 Quat::from_rotation_y(yaw),
                 Vec3::ONE,
             ),

@@ -589,7 +589,7 @@ fn attr_key_pool(parent_kind: Option<&str>) -> Vec<Candidate> {
             ("margin", "rock padding around the block"),
             ("resolution", "voxel grid resolution"),
             ("lod_scale", "0.1..1.0 mesh-quality / triangle budget"),
-            ("entrances", "openings carved to the surface"),
+            ("entrances", "surface mouth count, or per-band array [b0,b1,…]"),
             ("stalagmites", "floor spike count"),
             ("stalactites", "ceiling spike count"),
             ("columns", "floor-to-ceiling stone pillars"),

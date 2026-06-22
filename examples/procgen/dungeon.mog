@@ -2,15 +2,16 @@
 // by axis-aligned corridors, stacked into three floors that staircases connect.
 // Everything is a deterministic function of `seed=`, so rebuilds reproduce the
 // same layout. Walls, floors and ceilings are watertight box meshes; interior
-// doorways are gaps in the walls and one ground-level room opens to the outside
-// through the perimeter wall. POI markers flag the entrance, spawn, treasure
-// rooms and stair landings for the game engine.
+// doorways are gaps in the walls. The `entrances` array opens a doorway on the
+// floors you choose (here the ground and the top) so a raised storey can meet an
+// adjacent cave mouth or ledge. POI markers flag every entrance, spawn, treasure
+// room and stair landing for the game engine.
 
 meta (
   name = "dungeon",
-  description = "A three-level grid dungeon with rooms, corridors and staircases for dungeon-crawler games",
+  description = "A three-level grid dungeon with rooms, corridors, staircases and per-floor entrances for dungeon-crawler games",
   tags = ["dungeon", "building", "environment", "procedural", "crawler"],
-  mogen_version = "0.1.8")
+  mogen_version = "0.1.9")
 
 dungeon "keep" (
   seed = 7,
@@ -19,6 +20,10 @@ dungeon "keep" (
 
   levels = 3, // three stacked floors …
   stairs = 1, // … each pair linked by a staircase
+
+  // exterior doorways per floor (index 0 = ground): one on the ground, none on
+  // the middle floor, one up top to meet an adjacent cave mouth or ledge.
+  entrances = [1, 0, 1],
 
   rooms = 7, // target rooms per level (best-effort placement)
   room_min = 2, // room side length range, in cells

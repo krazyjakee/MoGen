@@ -11,8 +11,19 @@
 
 use anyhow::{bail, Result};
 
-use crate::ast::Node;
+use crate::ast::{Node, Value};
 use crate::lower::cfg;
+
+/// How many side mouths to punch, and where. A scalar `entrances=N` reads as
+/// `Surface(N)` — N mouths on the topmost populated band (the surface entrance).
+/// An array `entrances=[b0, b1, …]` reads as `PerBand`, one count per vertical
+/// band indexed from the bottom (index 0 = lowest band), so a chosen storey can
+/// open onto an adjacent dungeon or pit. Bands past the array end get none.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum CaveEntrances {
+    Surface(u32),
+    PerBand(Vec<u32>),
+}
 
 /// The decoration kinds a cave can be populated with. Each maps to a distinct
 /// mesh builder in `decorate.rs`.
@@ -146,8 +157,9 @@ pub(super) struct CaveCfg {
     pub margin: f32,
     /// Voxel-grid resolution (samples along the longest axis).
     pub resolution: u32,
-    /// Openings punched out to a side face so the cave is enterable.
-    pub entrances: u32,
+    /// Side-mouth openings: a scalar count on the surface band, or a per-band
+    /// array (index 0 = lowest) for connecting a chosen storey to a dungeon/pit.
+    pub entrances: CaveEntrances,
     pub water_mat: Option<String>,
     /// Which rock surfaces get a trimesh collider (`all` | `shell` | `none`).
     /// A game importer reads `extras.collider` off these nodes for physics.
@@ -219,7 +231,7 @@ pub(super) fn read_cfg(node: &Node) -> Result<CaveCfg> {
     let blend = cfg::scalar(node, "blend", 1.5, 0.0);
     let margin = cfg::scalar(node, "margin", 2.0, 0.5);
     let resolution = cfg::int_clamped(node, "resolution", 96, 32, 224);
-    let entrances = cfg::count(node, "entrances", 1.0, 0.0);
+    let entrances = read_entrances(node);
 
     let water_mat = node.attr_string("water_mat").map(|s| s.to_string());
 
@@ -276,6 +288,20 @@ pub(super) fn read_cfg(node: &Node) -> Result<CaveCfg> {
         debug_hide_shell,
         debug_show_poi,
     })
+}
+
+/// Read the `entrances` attr. A scalar lowers to `Surface(N)` (N mouths on the
+/// topmost band); an array lowers to `PerBand`, one count per band from the
+/// bottom up (3-element arrays enter as `Vec3`). Absent ⇒ one surface mouth.
+/// Negatives clamp to 0.
+fn read_entrances(node: &Node) -> CaveEntrances {
+    let to_counts = |xs: &[f32]| xs.iter().map(|v| v.max(0.0) as u32).collect();
+    match node.attr("entrances") {
+        Some(Value::Number(n)) => CaveEntrances::Surface(n.max(0.0) as u32),
+        Some(Value::Vec3(a)) => CaveEntrances::PerBand(to_counts(a)),
+        Some(Value::List(v)) => CaveEntrances::PerBand(to_counts(v)),
+        _ => CaveEntrances::Surface(1),
+    }
 }
 
 /// Merge the top-level count knobs with any `feature` children into one
