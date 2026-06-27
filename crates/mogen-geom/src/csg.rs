@@ -275,8 +275,8 @@ pub fn intersect_many(meshes: &[Mesh]) -> Mesh {
 /// arbitrary convex solids (e.g. a sheared/sloped 8-corner block) that no
 /// parametric primitive captures. Fewer than 4 points, or a fully coplanar
 /// set, yields a degenerate (empty) hull; callers validate the point count
-/// before reaching here. UVs come from `clean_csg_output`'s triplanar pass,
-/// since a hull has no natural parameterisation.
+/// before reaching here. UVs come from `clean_csg_output`'s per-face planar
+/// pass, since a hull has no natural parameterisation.
 pub fn hull_mesh(points: &[[f32; 3]]) -> Mesh {
     let pts: Vec<[f64; 3]> = points
         .iter()
