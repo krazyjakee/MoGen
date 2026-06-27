@@ -150,7 +150,11 @@ pub(super) fn lower_into(
         .and_then(|mid| graph.materials.get(mid.0 as usize))
         .map(|m| m.uv_mode)
         .unwrap_or_default();
-    if let Some(mesh_res) = primitive_mesh(node, uv_mode) {
+    if node.kind == "box" && node.attr("faces").is_some() {
+        // Per-face materials: the box becomes a meshless wrapper carrying one
+        // frozen quad-group child per material. See `faced_box`.
+        anchor_shift = super::faced_box::lower_faced_box(node, id, graph)?;
+    } else if let Some(mesh_res) = primitive_mesh(node, uv_mode) {
         let mut mesh = mesh_res?;
         // Deformation runs before anchor shift so the anchor reflects the
         // post-deform AABB — the user's `anchor=bottom` still lines up flush

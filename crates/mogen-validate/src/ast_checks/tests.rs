@@ -375,6 +375,39 @@ mod common_attr_scope_tests {
     }
 
     #[test]
+    fn box_accepts_faces_attr() {
+        // Per-face materials: `faces=` is a box-only attribute holding a list
+        // of strings. It must validate cleanly on `box`.
+        let src = r#"
+            material "a" (color=[0.5, 0.5, 0.5])
+            scene {
+              box "b" (size=[1,1,1], faces=["a", "a", "a", "a", "a", "a"])
+            }
+        "#;
+        let diags = diags_for(src);
+        assert!(
+            !has_unknown_attr(&diags, "faces", "box"),
+            "faces= must be a recognised box attribute, got {diags:?}"
+        );
+        assert!(
+            diags.iter().all(|d| d.severity != Severity::Error),
+            "well-formed faced box should not error, got {diags:?}"
+        );
+    }
+
+    #[test]
+    fn faces_attr_rejected_on_non_box_primitives() {
+        // `faces=` is meaningful only on `box`; the schema split keeps siblings
+        // like `plane`/`quad` from silently accepting it.
+        let src = r#"scene { plane "p" (size=[1,1,1], faces=["a","a","a","a","a","a"]) }"#;
+        let diags = diags_for(src);
+        assert!(
+            has_unknown_attr(&diags, "faces", "plane"),
+            "faces= on plane should warn W0102, got {diags:?}"
+        );
+    }
+
+    #[test]
     fn light_requires_kind() {
         let src = r#"scene { light "x" () }"#;
         let diags = diags_for(src);

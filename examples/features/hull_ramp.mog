@@ -1,0 +1,21 @@
+// Convex hull of a raw point cloud, built with the `hull` primitive. The 8
+// corners below describe a sheared, tapered block — a slab whose top face is
+// both tilted and narrower than its base, so no axis-aligned box or wedge
+// fits it. `hull` wraps the tightest closed manifold around the points, so
+// any convex polyhedron (ramps, bevelled kerbs, lopsided crates) becomes a
+// single compact node. Interior points are ignored, so a cloud sampled off a
+// scanned chunk of geometry collapses straight to its convex shell.
+
+material "concrete" (color=[0.55, 0.55, 0.52], roughness=0.9)
+
+scene {
+  hull "ramp" (
+    points=[
+      // base rectangle (y = 0)
+      [-1.0, 0.0, -0.6], [1.0, 0.0, -0.6], [1.0, 0.0, 0.6], [-1.0, 0.0, 0.6],
+      // top rectangle: lifted, shifted +x, and narrowed in z
+      [-0.4, 0.8, -0.3], [0.7, 1.1, -0.3], [0.7, 1.1, 0.3], [-0.4, 0.8, 0.3]
+    ],
+    mat="concrete"
+  )
+}

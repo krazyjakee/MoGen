@@ -1,0 +1,23 @@
+// Per-face box materials. `faces=` lists six material names in the fixed
+// +X, -X, +Y, -Y, +Z, -Z order — one per cube face. The box lowers to an
+// editable wrapper plus one frozen child per distinct material (faces sharing
+// a material collapse into a single quad group), so a crate with a metal lid
+// on timber sides is two child meshes, not six. This is the migration sink for
+// engine map blocks whose six faces each name a different tile texture.
+
+material "timber" (color=[0.55, 0.38, 0.20], roughness=0.7)
+material "lid"    (color=[0.72, 0.72, 0.78], metallic=0.85, roughness=0.35)
+material "label"  (color=[0.85, 0.15, 0.12], roughness=0.6)
+
+scene {
+  box "crate" (
+    size=[1.2, 0.9, 1.2],
+    anchor="bottom",
+    faces=[
+      "label",  "timber", // +X carries the stencil, -X bare timber
+      "lid",              // +Y metal lid
+      "timber",           // -Y underside
+      "timber", "timber"  // +Z, -Z sides
+    ]
+  )
+}

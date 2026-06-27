@@ -5,7 +5,7 @@ use mogen_core::{Mesh, UvMode};
 use mogen_geom::{
     bezier_patch_mesh, box_mesh, capsule_mesh, chamfered_box_mesh, clean_csg_output, coil_mesh,
     cone_mesh, curved_plane_mesh, cylinder_mesh, difference_many, disc_mesh, ellipsoid_mesh,
-    extrude_mesh, frustum_mesh, half_cylinder_mesh, heightfield_mesh, hemisphere_mesh,
+    extrude_mesh, frustum_mesh, half_cylinder_mesh, heightfield_mesh, hemisphere_mesh, hull_mesh,
     icosphere_mesh, inset_box_mesh, lathe_mesh, leaf_card_mesh, loft_mesh, mesh_from_glb_bytes,
     metaball_mesh, plane_mesh, prism_mesh, pyramid_mesh, quad_mesh, read_glb_bytes,
     rounded_box_mesh, sphere_mesh, spline_ribbon_mesh, spline_tube_mesh, superellipsoid_mesh,
@@ -294,6 +294,19 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
             let rings = seg("rings", 12, 2);
             let segments = seg("segments", 16, 3);
             metaball_mesh(&points, &radii, blend, rings, segments, uv_mode)
+        }
+        "hull" => {
+            // Convex hull of a point cloud — the lossless sink for arbitrary
+            // convex solids (sheared/sloped blocks) no parametric primitive
+            // captures. Needs ≥4 points; fewer can't bound a volume.
+            let points = node.attr_list_vec3("points").unwrap_or_default();
+            if points.len() < 4 {
+                return Some(Err(anyhow!(
+                    "`hull` requires at least 4 points in `points=[[x,y,z], …]`, got {}",
+                    points.len(),
+                )));
+            }
+            hull_mesh(&points)
         }
         "wall" => {
             // Box cut through along Z by any number of rectangular holes

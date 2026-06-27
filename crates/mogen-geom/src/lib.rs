@@ -22,8 +22,8 @@ pub use conform::{
 };
 #[cfg(any(feature = "csg", feature = "unstable-wasm-uu"))]
 pub use csg::{
-    difference, difference_many, intersect, intersect_many, is_csg_manifold, try_union_many, union,
-    union_many,
+    difference, difference_many, hull_mesh, intersect, intersect_many, is_csg_manifold,
+    try_union_many, union, union_many,
 };
 #[cfg(any(feature = "csg", feature = "unstable-wasm-uu"))]
 pub use csg_smooth::union_smooth;
@@ -33,7 +33,7 @@ pub use sdf::{blob_aabb, evaluate_field, smax, smin, BlobChild, SdfOp, SdfPrim};
 pub use subdivide::loop_subdivide;
 pub use surface_query::{SurfaceIndex, SurfacePoint};
 pub use primitives::{
-    box_mesh, capsule_mesh, chamfered_box_mesh, coil_mesh, cone_mesh, curved_plane_mesh,
+    box_faces_mesh, box_mesh, capsule_mesh, chamfered_box_mesh, coil_mesh, cone_mesh, curved_plane_mesh,
     cylinder_mesh, disc_mesh, ellipsoid_mesh, extrude_mesh, frustum_mesh, half_cylinder_mesh,
     heightfield_mesh,
     hemisphere_mesh, icosphere_mesh, inset_box_mesh, lathe_mesh, leaf_card_mesh, loft_mesh,
@@ -87,9 +87,12 @@ mod csg_stub {
     pub fn union_smooth(_meshes: &[Mesh], _k: f32) -> Mesh {
         unsupported()
     }
+    pub fn hull_mesh(_points: &[[f32; 3]]) -> Mesh {
+        unsupported()
+    }
 }
 #[cfg(not(any(feature = "csg", feature = "unstable-wasm-uu")))]
 pub use csg_stub::{
-    difference, difference_many, intersect, intersect_many, is_csg_manifold, try_union_many, union,
-    union_many, union_smooth,
+    difference, difference_many, hull_mesh, intersect, intersect_many, is_csg_manifold,
+    try_union_many, union, union_many, union_smooth,
 };

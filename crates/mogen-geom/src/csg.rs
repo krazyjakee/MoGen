@@ -270,6 +270,22 @@ pub fn intersect_many(meshes: &[Mesh]) -> Mesh {
     it.fold(first.clone(), |acc, m| intersect(&acc, m))
 }
 
+/// Convex hull of a 3D point cloud, returned as a clean, watertight,
+/// triplanar-UV'd `Mesh`. Backs the `hull` primitive — the lossless sink for
+/// arbitrary convex solids (e.g. a sheared/sloped 8-corner block) that no
+/// parametric primitive captures. Fewer than 4 points, or a fully coplanar
+/// set, yields a degenerate (empty) hull; callers validate the point count
+/// before reaching here. UVs come from `clean_csg_output`'s triplanar pass,
+/// since a hull has no natural parameterisation.
+pub fn hull_mesh(points: &[[f32; 3]]) -> Mesh {
+    let pts: Vec<[f64; 3]> = points
+        .iter()
+        .map(|p| [p[0] as f64, p[1] as f64, p[2] as f64])
+        .collect();
+    let raw = from_manifold_output(&Manifold::hull_pts(&pts));
+    crate::cleanup::clean_csg_output(&raw)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -321,6 +337,46 @@ mod tests {
     #[test]
     fn is_csg_manifold_accepts_closed_primitive() {
         assert!(is_csg_manifold(&ubox([1.0, 1.0, 1.0])));
+    }
+
+    #[test]
+    fn hull_of_cube_corners_is_a_closed_manifold_box() {
+        // The 8 corners of a unit cube; their convex hull is that cube.
+        let corners: Vec<[f32; 3]> = [-0.5f32, 0.5]
+            .iter()
+            .flat_map(|&x| {
+                [-0.5f32, 0.5].iter().flat_map(move |&y| {
+                    [-0.5f32, 0.5].iter().map(move |&z| [x, y, z])
+                })
+            })
+            .collect();
+        let m = hull_mesh(&corners);
+        assert!(!m.positions.is_empty(), "hull must produce geometry");
+        assert!(
+            is_csg_manifold(&m),
+            "a convex hull must be a watertight, consistently-wound manifold"
+        );
+        // Hull is a clean solid usable as a CSG operand (the migration's
+        // arbitrary-block sink relies on this).
+        assert!(crate::is_closed_manifold(&m));
+        // Extra interior points must not change the convex hull.
+        let mut padded = corners.clone();
+        padded.push([0.0, 0.0, 0.0]);
+        padded.push([0.1, -0.2, 0.3]);
+        let m2 = hull_mesh(&padded);
+        let bb = |mesh: &Mesh| {
+            let mut lo = [f32::MAX; 3];
+            let mut hi = [f32::MIN; 3];
+            for p in &mesh.positions {
+                for k in 0..3 {
+                    lo[k] = lo[k].min(p[k]);
+                    hi[k] = hi[k].max(p[k]);
+                }
+            }
+            (lo, hi)
+        };
+        assert_eq!(bb(&m).0, bb(&m2).0);
+        assert_eq!(bb(&m).1, bb(&m2).1);
     }
 
     #[test]
