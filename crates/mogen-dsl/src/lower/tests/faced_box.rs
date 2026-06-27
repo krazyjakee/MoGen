@@ -113,3 +113,38 @@ fn faced_box_anchor_shifts_all_faces() {
         .fold(f32::INFINITY, f32::min);
     assert!(min_y.abs() < 1e-3, "anchored base should rest at y=0 (got {min_y})");
 }
+
+#[test]
+fn faced_box_anchor_shifts_default_connectors() {
+    // Default connectors (top/bottom/etc.) must shift with the anchor so they
+    // stay flush with their faces. For anchor=bottom on a [1,2,1] box:
+    //   bottom connector was at y=-1, after shift sits at y=0.
+    //   top connector was at y=+1, after shift sits at y=+2.
+    let g = lower_src(
+        r#"scene {
+            material "m" (color=[0.5, 0.5, 0.5])
+            box "b" (size=[1, 2, 1], anchor="bottom", faces=["m","m","m","m","m","m"])
+        }"#,
+    );
+    let node = find_mesh_node(&g, "b");
+    let bottom = node
+        .connectors
+        .iter()
+        .find(|c| c.name == "bottom")
+        .expect("box should have a bottom connector");
+    let top = node
+        .connectors
+        .iter()
+        .find(|c| c.name == "top")
+        .expect("box should have a top connector");
+    assert!(
+        bottom.pos.y.abs() < 1e-3,
+        "bottom connector should be at y=0 after anchor=bottom (got {})",
+        bottom.pos.y
+    );
+    assert!(
+        (top.pos.y - 2.0).abs() < 1e-3,
+        "top connector should be at y=2 after anchor=bottom (got {})",
+        top.pos.y
+    );
+}

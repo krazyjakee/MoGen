@@ -306,7 +306,13 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
                     points.len(),
                 )));
             }
-            hull_mesh(&points)
+            let mesh = hull_mesh(&points);
+            if mesh.positions.is_empty() {
+                return Some(Err(anyhow!(
+                    "`hull` produced no geometry — all points may be coplanar"
+                )));
+            }
+            mesh
         }
         "wall" => {
             // Box cut through along Z by any number of rectangular holes
