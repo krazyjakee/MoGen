@@ -345,7 +345,7 @@ All primitives accept the common attributes above (`pos`, `rot`, `scale`,
 
 | kind | required attrs | other attrs |
 |---|---|---|
-| `box` | `size=[x,y,z]` | — |
+| `box` | `size=[x,y,z]` | `faces=[…]` — six material names in `+X,-X,+Y,-Y,+Z,-Z` order for [per-face materials](#per-face-box-materials-faces) |
 | `plane` | `size=[x,_,z]` (Y ignored) | — |
 | `quad` | `size=[w,h]` or `vec3` (w,h,_) | — |
 | `cylinder` | `radius`, `height` | `segments` (default 24) |
@@ -380,6 +380,7 @@ All primitives accept the common attributes above (`pos`, `rot`, `scale`,
 | `extrude` | `points=[[x,z], …]` (closed CCW) | `hole=[[x,z], …]` (one CW inner contour), `height` (1.0), `taper` (1.0), `twist` (0), `caps` (1). Multi-hole: chain `extrude` + `difference` |
 | `sweep` | `profile=[[x,y], …]` (closed CCW), `path=[[x,y,z], …]` | `samples` per segment (8), `twist` (uniform deg), `roll=[deg, …]`, `scale_along=[s, …]`, `caps` (1). Generalises `spline_tube`/`spline_ribbon` |
 | `loft` | `points=[[x,z], …]`, `heights=[y, …]` | sections flat-packed in `points` (vertex counts must match); `samples` (4), `caps` (1) |
+| `hull` | `points=[[x,y,z], …]` (≥4) | convex hull of the point cloud — the tightest closed manifold enclosing them. Interior points are ignored. Lossless sink for any convex polyhedron (sheared boxes, wedges, ramps) when no parametric primitive fits |
 | `leaf_card` | `size=[w,h]` | `cards` (2). Alpha-cutout foliage cluster — one quad + `cards-1` rotated copies sharing an XY plane. Pair with `alpha_mode="mask"` + `double_sided=1` |
 | `mesh` | `src="path.glb"` | embed an external glTF binary as a single mesh. Path relative to the calling `.mog`. Source materials/skinning/animations are dropped — set them in the DSL |
 | `branch` | — | procedural tree / vine / antler. See [Branch](#branch) below |
@@ -411,6 +412,39 @@ wall "barracks" (size=[3, 3, 0.1], holes=[
   [ 0.9,  0.3, 0.8, 0.8],    // window
 ])
 ```
+
+### Per-face box materials (`faces=`)
+
+A `box` can carry a different material on each face via `faces=[…]` — exactly
+six material names in the fixed order **`+X, -X, +Y, -Y, +Z, -Z`**:
+
+```
+material "wood"  (color=[0.6, 0.4, 0.2])
+material "metal" (color=[0.7, 0.7, 0.75], metallic=0.9)
+
+box "crate" (size=[2, 1, 1], faces=[
+  "wood", "wood",   // +X, -X
+  "metal",          // +Y (lid)
+  "wood", "wood", "wood"  // -Y, +Z, -Z
+])
+```
+
+The box lowers to an editable wrapper (keeping its transform, anchor, and
+connectors) plus one **frozen** child per distinct material — each a quad group
+of just that material's faces. Faces sharing a material collapse into one child,
+so the crate above becomes two children (`wood` ×5, `metal` ×1), not six. The
+children have no AST of their own, so the Studio inspector redirects clicks to
+the wrapper.
+
+An empty entry `""` falls back to the box's own `mat=` (or inherited material),
+so you can override just the faces you care about:
+
+```
+box "panel" (mat="body", faces=["", "", "label", "", "", ""])  // only +Y differs
+```
+
+This is the migration sink for engine map blocks whose six faces each reference
+a different tile texture.
 
 ### Branch
 

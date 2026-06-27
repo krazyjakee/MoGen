@@ -13,7 +13,7 @@ pub const KNOWN_KINDS: &[&str] = &[
     "prism", "pyramid", "disc", "icosphere", "rounded_box", "chamfered_box", "inset_box",
     "wedge", "frustum", "tube", "hemisphere", "half_cylinder", "torus_arc", "ellipsoid", "heightfield", "bezier_patch", "metaball", "blob",
     "superellipsoid", "curved_plane", "lathe", "spline_tube", "spline_ribbon", "coil", "leaf_card", "mesh",
-    "extrude", "sweep", "loft",
+    "extrude", "sweep", "loft", "hull",
     "slab", "post", "panel", "wall",
     "branch",
     "building", "room_type", "adjacency",
@@ -145,7 +145,8 @@ pub fn attrs_for_kind(kind: &str) -> &'static [&'static str] {
             // same MoGHub model instead of allocating a new slug.
             "moghub_model_id", "moghub_slug", "moghub_version",
         ],
-        "box" | "plane" | "quad" | "prism" => &["size"],
+        "box" => &["size", "faces"],
+        "plane" | "quad" | "prism" => &["size"],
         "slab" | "post" | "panel" => &["size"],
         "wall" => &["size", "holes"],
         "stack" => &["axis", "align", "pack"],
@@ -198,6 +199,7 @@ pub fn attrs_for_kind(kind: &str) -> &'static [&'static str] {
             "profile", "path", "samples", "twist", "roll", "scale_along", "caps",
         ],
         "loft" => &["points", "heights", "samples", "caps"],
+        "hull" => &["points"],
         "mesh" => &["src"],
         "branch" => &[
             "length", "radius", "depth", "splits", "length_falloff", "radius_falloff",
@@ -389,6 +391,7 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         | ("post", "size")
         | ("panel", "size")
         | ("wall", "size") => "number or vec3",
+        ("box", "faces") => "list of string",
         ("wall", "holes") => "list",
         ("stack", "axis") | ("stack", "align") | ("stack", "pack") => "string",
         ("solid", "cleanup") => "string",
@@ -416,6 +419,7 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         ("loft", "points") => "list",
         ("loft", "heights") => "list of number",
         ("loft", "samples") | ("loft", "caps") => "number",
+        ("hull", "points") => "list",
         ("leaf_card", "size") => "number or vec3",
         ("leaf_card", "cards") => "number",
         ("decal", "size") => "list",

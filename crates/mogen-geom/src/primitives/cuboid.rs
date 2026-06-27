@@ -1,17 +1,20 @@
 use mogen_core::{Mesh, UvMode};
 
-pub fn box_mesh(size: [f32; 3], mode: UvMode) -> Mesh {
+/// The six box faces in canonical order: `+X, -X, +Y, -Y, +Z, -Z`. This order
+/// is the public contract for per-face material assignment (`box (faces=[…])`
+/// in the DSL), so it must stay stable.
+///
+/// Each entry is `(outward normal, four CCW corners, (u_size, v_size) tile
+/// dimensions, per-corner tile-space coords)` for a unit-centred box of the
+/// given `size`.
+fn box_faces(size: [f32; 3]) -> [([f32; 3], [[f32; 3]; 4], [f32; 2], [[f32; 2]; 4]); 6] {
     let hx = size[0] * 0.5;
     let hy = size[1] * 0.5;
     let hz = size[2] * 0.5;
     let sx = size[0];
     let sy = size[1];
     let sz = size[2];
-
-    // Each face: outward normal, four CCW corners, the (u_axis_size, v_axis_size)
-    // that defines the face's tile-space dimensions, and per-corner local 2D
-    // coordinates in [0, u_size]×[0, v_size] for tile mode.
-    let faces: [([f32; 3], [[f32; 3]; 4], [f32; 2], [[f32; 2]; 4]); 6] = [
+    [
         // +X: U=Z, V=Y. Corner order matches positions.
         ([1.0, 0.0, 0.0],  [[ hx, -hy, -hz], [ hx,  hy, -hz], [ hx,  hy,  hz], [ hx, -hy,  hz]],
             [sz, sy], [[0.0, 0.0], [0.0, sy], [sz, sy], [sz, 0.0]]),
@@ -30,16 +33,30 @@ pub fn box_mesh(size: [f32; 3], mode: UvMode) -> Mesh {
         // -Z: U=X (flipped), V=Y.
         ([0.0, 0.0, -1.0], [[ hx, -hy, -hz], [-hx, -hy, -hz], [-hx,  hy, -hz], [ hx,  hy, -hz]],
             [sx, sy], [[0.0, 0.0], [sx, 0.0], [sx, sy], [0.0, sy]]),
-    ];
+    ]
+}
 
-    let mut positions = Vec::with_capacity(24);
-    let mut normals = Vec::with_capacity(24);
-    let mut uvs = Vec::with_capacity(24);
-    let mut indices = Vec::with_capacity(36);
+pub fn box_mesh(size: [f32; 3], mode: UvMode) -> Mesh {
+    box_faces_mesh(size, mode, &[0, 1, 2, 3, 4, 5])
+}
+
+/// Build a box made of only the requested faces (indices into [`box_faces`]'s
+/// canonical `+X,-X,+Y,-Y,+Z,-Z` order). Used to split a box into per-face
+/// quad groups so each group can carry its own material. Out-of-range indices
+/// are ignored.
+pub fn box_faces_mesh(size: [f32; 3], mode: UvMode, include: &[usize]) -> Mesh {
+    let faces = box_faces(size);
+    let mut positions = Vec::with_capacity(include.len() * 4);
+    let mut normals = Vec::with_capacity(include.len() * 4);
+    let mut uvs = Vec::with_capacity(include.len() * 4);
+    let mut indices = Vec::with_capacity(include.len() * 6);
     // Fit-mode UVs collapse every face into the unit square so each face shows
     // the texture once. Tile-mode UVs are world-space metres.
     const FIT_UVS: [[f32; 2]; 4] = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
-    for (normal, verts, _size, tile_uvs) in faces {
+    for &fi in include {
+        let Some((normal, verts, _size, tile_uvs)) = faces.get(fi).copied() else {
+            continue;
+        };
         let base = positions.len() as u32;
         for (i, v) in verts.into_iter().enumerate() {
             positions.push(v);

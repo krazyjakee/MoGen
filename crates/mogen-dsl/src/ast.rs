@@ -210,6 +210,16 @@ impl Node {
         }
     }
 
+    /// Returns a list of strings (`["a", "b", …]`). A single bare/quoted
+    /// string is *not* promoted to a one-element list — callers that want that
+    /// should special-case it.
+    pub fn attr_list_string(&self, key: &str) -> Option<Vec<String>> {
+        match self.attr(key)? {
+            Value::ListString(v) => Some(v.clone()),
+            _ => None,
+        }
+    }
+
     pub fn attr_number(&self, key: &str) -> Option<f32> {
         match self.attr(key)? {
             Value::Number(n) => Some(*n),
