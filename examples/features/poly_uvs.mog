@@ -1,0 +1,21 @@
+// `poly`: a raw triangle mesh with author-supplied per-vertex UVs.
+//
+// Use it when texture mapping must be exact — e.g. faces that sample distinct
+// sub-rectangles of a shared atlas, which no procedural Tile/Fit projection can
+// reproduce. Here two quads share their middle edge: the left quad maps the
+// atlas's left half ([0, 0.5] in U) and the right quad maps the right half
+// ([0.5, 1]). `poly` ignores the inherited UV mode — the `uvs=` list is the UV
+// channel verbatim, one entry per point.
+
+meta (name = "poly_uvs", version = "1.0", description = "explicit-UV raw mesh", tags = ["feature", "uv"])
+
+material "atlas" (color=[1, 1, 1], roughness=0.8)
+
+scene {
+  poly "split" (
+    points=[[-1, 0, 0], [0, 0, 0], [0, 1, 0], [-1, 1, 0], [1, 0, 0], [1, 1, 0]],
+    uvs=[[0, 1], [0.5, 1], [0.5, 0], [0, 0], [1, 1], [1, 0]],
+    indices=[0, 1, 2, 0, 2, 3, 1, 4, 5, 1, 5, 2],
+    mat="atlas"
+  )
+}

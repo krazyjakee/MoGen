@@ -826,7 +826,11 @@ impl MogenStudioApp {
                 .map(|id| id != editor_id)
                 .unwrap_or(false)
         });
-        if pointer_in_viewport && !modal_typing {
+        // In free cam W/A/S/D drive movement, so the bare W/E/R gizmo
+        // shortcuts must yield to it — otherwise tapping W to fly forward
+        // would also flip the gizmo to Translate.
+        let free_cam = self.viewer.camera_mode() == crate::viewer::CameraMode::FreeCam;
+        if pointer_in_viewport && !modal_typing && !free_cam {
             use crate::gizmo::GizmoMode;
             for (key, letter, mode) in [
                 (egui::Key::W, "w", GizmoMode::Translate),
@@ -837,6 +841,56 @@ impl MogenStudioApp {
                     self.viewer.set_gizmo_mode(mode);
                 }
             }
+        }
+
+        // Free-cam fly keys. Same viewport-cursor gate as the gizmo letters so
+        // they win over the editor while the user is looking at the 3D view,
+        // but disengage the moment the cursor moves to the text editor. Held
+        // state drives continuous movement (`key_down`), and the WASD letters'
+        // `Text` events are stripped so a focused editor never accumulates
+        // "wwww"; arrow keys carry no text. Movement itself is applied by the
+        // viewer against the scene scale.
+        if free_cam && pointer_in_viewport && !modal_typing {
+            let dt = ctx.input(|i| i.stable_dt);
+            let boost = ctx.input(|i| i.modifiers.shift);
+            let mut mv = egui::Vec2::ZERO;
+            ctx.input_mut(|i| {
+                let down = |k| i.key_down(k);
+                if down(egui::Key::W) || down(egui::Key::ArrowUp) {
+                    mv.x += 1.0;
+                }
+                if down(egui::Key::S) || down(egui::Key::ArrowDown) {
+                    mv.x -= 1.0;
+                }
+                if down(egui::Key::D) || down(egui::Key::ArrowRight) {
+                    mv.y += 1.0;
+                }
+                if down(egui::Key::A) || down(egui::Key::ArrowLeft) {
+                    mv.y -= 1.0;
+                }
+                // Keep the movement letters and arrow nav out of the editor.
+                i.events.retain(|e| {
+                    !matches!(
+                        e,
+                        egui::Event::Text(t)
+                            if matches!(
+                                t.as_str(),
+                                "w" | "W" | "a" | "A" | "s" | "S" | "d" | "D"
+                            )
+                    ) && !matches!(
+                        e,
+                        egui::Event::Key {
+                            key: egui::Key::ArrowUp
+                                | egui::Key::ArrowDown
+                                | egui::Key::ArrowLeft
+                                | egui::Key::ArrowRight,
+                            ..
+                        }
+                    )
+                });
+            });
+            self.viewer
+                .free_cam_fly(glam::vec2(mv.x, mv.y), boost, dt);
         }
 
         let mut hit: Option<ShortcutAction> = None;

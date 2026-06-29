@@ -38,7 +38,7 @@ pub use primitives::{
     heightfield_mesh,
     hemisphere_mesh, icosphere_mesh, inset_box_mesh, lathe_mesh, leaf_card_mesh, loft_mesh,
     bezier_patch_mesh, metaball_mesh,
-    mesh_from_glb_bytes, plane_mesh, prism_mesh, pyramid_mesh, quad_mesh, read_glb_bytes,
+    mesh_from_glb_bytes, plane_mesh, poly_mesh, prism_mesh, pyramid_mesh, quad_mesh, read_glb_bytes,
     rounded_box_mesh, sphere_mesh, spline_ribbon_mesh, spline_tube_mesh, superellipsoid_mesh,
     sweep_mesh, torus_arc_mesh, torus_mesh, tube_mesh, wedge_mesh, CoilHandedness, Contour,
     InsetFace, Section, SweepModulation, SweepProfile,

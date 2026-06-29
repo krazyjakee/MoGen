@@ -7,7 +7,7 @@ use mogen_geom::{
     cone_mesh, curved_plane_mesh, cylinder_mesh, difference_many, disc_mesh, ellipsoid_mesh,
     extrude_mesh, frustum_mesh, half_cylinder_mesh, heightfield_mesh, hemisphere_mesh, hull_mesh,
     icosphere_mesh, inset_box_mesh, lathe_mesh, leaf_card_mesh, loft_mesh, mesh_from_glb_bytes,
-    metaball_mesh, plane_mesh, prism_mesh, pyramid_mesh, quad_mesh, read_glb_bytes,
+    metaball_mesh, plane_mesh, poly_mesh, prism_mesh, pyramid_mesh, quad_mesh, read_glb_bytes,
     rounded_box_mesh, sphere_mesh, spline_ribbon_mesh, spline_tube_mesh, superellipsoid_mesh,
     sweep_mesh, torus_arc_mesh, torus_mesh, transform_mesh, tube_mesh, wedge_mesh,
     CoilHandedness, InsetFace, SweepModulation,
@@ -313,6 +313,23 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
                 )));
             }
             mesh
+        }
+        "poly" => {
+            // Raw triangle mesh with author-supplied per-vertex UVs — the
+            // escape hatch for geometry whose texture mapping must be carried
+            // through verbatim (e.g. a map converter re-emitting engine-native
+            // block faces, where each face samples an authored atlas
+            // sub-rectangle no procedural projection can reproduce). Ignores
+            // `uv_mode`: the `uvs=` list is the UV channel.
+            let points = node.attr_list_vec3("points").unwrap_or_default();
+            let uvs = node.attr_list_pair("uvs").unwrap_or_default();
+            // `indices=` is a flat list of vertex indices, three per triangle.
+            // The grammar parses every number list as f32; round to u32 here.
+            let indices: Vec<u32> = node
+                .attr_list("indices")
+                .map(|s| s.iter().map(|&f| f.round() as u32).collect())
+                .unwrap_or_default();
+            return Some(poly_mesh(&points, &uvs, &indices));
         }
         "wall" => {
             // Box cut through along Z by any number of rectangular holes

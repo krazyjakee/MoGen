@@ -12,6 +12,7 @@ mod lights;
 mod lod;
 mod materials;
 mod parametric_surfaces;
+mod poly;
 mod primitives;
 
 pub(super) fn lower_src(src: &str) -> SceneGraph {
