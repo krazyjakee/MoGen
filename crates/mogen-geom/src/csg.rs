@@ -271,7 +271,7 @@ pub fn intersect_many(meshes: &[Mesh]) -> Mesh {
 }
 
 /// Convex hull of a 3D point cloud, returned as a clean, watertight,
-/// triplanar-UV'd `Mesh`. Backs the `hull` primitive — the lossless sink for
+/// per-face UV'd `Mesh`. Backs the `hull` primitive — the lossless sink for
 /// arbitrary convex solids (e.g. a sheared/sloped 8-corner block) that no
 /// parametric primitive captures. Fewer than 4 points, or a fully coplanar
 /// set, yields a degenerate (empty) hull; callers validate the point count

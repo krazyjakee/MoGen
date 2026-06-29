@@ -46,6 +46,7 @@ mod ui_docs;
 mod ui_llm;
 mod ui_menu;
 mod ui_panels;
+mod ui_tabs;
 mod ui_wizard;
 mod undo;
 mod update;

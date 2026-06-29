@@ -195,4 +195,72 @@ mod tests {
         }
         assert!(free.pitch <= PITCH_LIMIT + 1e-6);
     }
+
+    #[test]
+    fn strafe_right_is_perpendicular_to_forward() {
+        // At yaw=π (maps to orbit yaw=0, looking toward -Z from +Z eye),
+        // strafing right (mv.y=+1) must produce movement perpendicular to
+        // forward and parallel to the world X axis.
+        let mut free = FreeCam::default();
+        free.yaw = std::f32::consts::PI;
+        free.pitch = 0.0;
+        let start = free.pos;
+        free.fly(glam::vec2(0.0, 1.0), false, 1.0, 1.0);
+        let moved = free.pos - start;
+        assert!(moved.z.abs() < 1e-5, "strafe must not move forward/back");
+        assert!(moved.y.abs() < 1e-5, "strafe must not move vertically");
+        assert!(moved.x.abs() > 1e-5, "strafe must move horizontally");
+    }
+
+    #[test]
+    fn adjust_speed_clamps_at_min_and_max() {
+        let mut free = FreeCam::default();
+        // Scroll down extremely far — must not go below SPEED_MULT_MIN.
+        for _ in 0..100 {
+            free.adjust_speed(-10_000.0);
+        }
+        assert!(
+            free.speed_mult >= SPEED_MULT_MIN - 1e-6,
+            "speed_mult {} went below SPEED_MULT_MIN {}",
+            free.speed_mult,
+            SPEED_MULT_MIN
+        );
+        // Scroll up extremely far — must not go above SPEED_MULT_MAX.
+        for _ in 0..100 {
+            free.adjust_speed(10_000.0);
+        }
+        assert!(
+            free.speed_mult <= SPEED_MULT_MAX + 1e-6,
+            "speed_mult {} exceeded SPEED_MULT_MAX {}",
+            free.speed_mult,
+            SPEED_MULT_MAX
+        );
+    }
+
+    #[test]
+    fn enter_with_offset_target_preserves_view() {
+        // Orbit camera aimed at a non-origin target — `enter` must derive the
+        // correct look direction from (target − eye), not from the raw angles.
+        let mut cam = OrbitCamera::default();
+        cam.target = glam::Vec3::new(3.0, 1.0, -2.0);
+        cam.yaw = 0.8;
+        cam.pitch = 0.2;
+        let eye_before = cam.eye();
+        let fwd_before = (cam.target - eye_before).normalize();
+
+        let mut free = FreeCam::default();
+        free.enter(&cam);
+        free.apply_to(&mut cam);
+
+        let eye_after = cam.eye();
+        let fwd_after = (cam.target - eye_after).normalize();
+        assert!(
+            (eye_after - eye_before).length() < 1e-3,
+            "eye jumped after enter+apply with offset target"
+        );
+        assert!(
+            (fwd_after - fwd_before).length() < 1e-3,
+            "look direction changed after enter+apply with offset target"
+        );
+    }
 }
