@@ -55,6 +55,39 @@ pub enum Value {
     /// recognises the surface shape; lowering interprets per kind so the
     /// validator can attach a span to whichever attribute is wrong.
     Gradient(GradientDef),
+    /// `box (faces=[…])` where at least one entry is a `face(...)` struct
+    /// carrying an authored UV transform. Bare material strings in the same
+    /// list are captured as [`FaceEntry`] with `uv: None`, so this variant is a
+    /// superset of the plain `ListString` faces form. A `faces=` list of only
+    /// bare strings still parses to [`Value::ListString`] for backward
+    /// compatibility — this variant appears only once a `face(...)` is present.
+    FaceList(Vec<FaceEntry>),
+}
+
+/// Authored per-face UV transform baked instead of the procedural projection.
+/// UVs are emitted verbatim (`offset + scale * local`); repeat/wrap is the
+/// sampler's job, so values are never clamped or wrapped.
+#[derive(Debug, Clone, Copy)]
+pub struct FaceUv {
+    /// Per-axis scale applied to the face-local coordinate. May be negative to
+    /// mirror the texture on that axis.
+    pub scale: [f32; 2],
+    /// Per-axis constant added after scaling.
+    pub offset: [f32; 2],
+    /// Swap the two in-plane axes before applying scale/offset (rotate/transpose
+    /// the mapping).
+    pub swap: bool,
+}
+
+/// One entry in a `box` `faces=[…]` list: a resolved material name plus an
+/// optional authored UV transform. `mat` empty means "use the box's own
+/// material". `uv: None` means keep the default Fit/Tile projection (identical
+/// to a bare material string).
+#[derive(Debug, Clone)]
+pub struct FaceEntry {
+    pub mat: String,
+    pub uv: Option<FaceUv>,
+    pub span: Span,
 }
 
 /// Surface representation of a gradient value. `kind` is one of
@@ -216,6 +249,21 @@ impl Node {
     pub fn attr_list_string(&self, key: &str) -> Option<Vec<String>> {
         match self.attr(key)? {
             Value::ListString(v) => Some(v.clone()),
+            _ => None,
+        }
+    }
+
+    /// Returns the box `faces=` list as [`FaceEntry`] values, promoting a
+    /// bare-string list (`Value::ListString`) so callers handle one shape.
+    /// Bare strings become entries with `uv: None`.
+    pub fn attr_faces(&self, key: &str) -> Option<Vec<FaceEntry>> {
+        match self.attr(key)? {
+            Value::FaceList(v) => Some(v.clone()),
+            Value::ListString(v) => Some(
+                v.iter()
+                    .map(|s| FaceEntry { mat: s.clone(), uv: None, span: self.span })
+                    .collect(),
+            ),
             _ => None,
         }
     }

@@ -43,7 +43,7 @@ pub fn collect_modules(ast: &[Node]) -> Result<ModuleRegistry> {
                 }
                 Value::List(_) | Value::ListExpr(_)
                 | Value::ListVec3(_) | Value::ListPair(_) | Value::ListQuad(_)
-                | Value::ListString(_) => {
+                | Value::ListString(_) | Value::FaceList(_) => {
                     bail!(
                         "module parameter `{}` default must be a number, expression, or vec3 (lists are not supported as parameter defaults)",
                         k

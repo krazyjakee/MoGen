@@ -13,7 +13,7 @@ pub const KNOWN_KINDS: &[&str] = &[
     "prism", "pyramid", "disc", "icosphere", "rounded_box", "chamfered_box", "inset_box",
     "wedge", "frustum", "tube", "hemisphere", "half_cylinder", "torus_arc", "ellipsoid", "heightfield", "bezier_patch", "metaball", "blob",
     "superellipsoid", "curved_plane", "lathe", "spline_tube", "spline_ribbon", "coil", "leaf_card", "mesh",
-    "extrude", "sweep", "loft", "hull",
+    "extrude", "sweep", "loft", "hull", "poly",
     "slab", "post", "panel", "wall",
     "branch",
     "building", "room_type", "adjacency",
@@ -200,6 +200,7 @@ pub fn attrs_for_kind(kind: &str) -> &'static [&'static str] {
         ],
         "loft" => &["points", "heights", "samples", "caps"],
         "hull" => &["points"],
+        "poly" => &["points", "uvs", "indices"],
         "mesh" => &["src"],
         "branch" => &[
             "length", "radius", "depth", "splits", "length_falloff", "radius_falloff",
@@ -420,6 +421,8 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         ("loft", "heights") => "list of number",
         ("loft", "samples") | ("loft", "caps") => "number",
         ("hull", "points") => "list",
+        ("poly", "points") | ("poly", "uvs") => "list",
+        ("poly", "indices") => "list of number",
         ("leaf_card", "size") => "number or vec3",
         ("leaf_card", "cards") => "number",
         ("decal", "size") => "list",
@@ -763,6 +766,9 @@ pub(super) fn value_matches(v: &Value, expected: &str) -> bool {
         ) => true,
         (Value::ListString(_), "list of string") => true,
         (Value::String(_) | Value::Ident(_), "list of string") => true,
+        // `box (faces=[…])` with authored `face(...)` UV entries — a superset of
+        // the bare-string faces list, accepted wherever `list of string` is.
+        (Value::FaceList(_), "list of string") => true,
         // Deferred expressions: accept as their natural type; evaluation errors
         // (unbound params, etc.) are reported during module expansion.
         (Value::Expr(_), "number") => true,
@@ -790,6 +796,7 @@ pub(super) fn value_kind(v: &Value) -> &'static str {
         Value::ListQuad(_) => "list of quad",
         Value::ListString(_) => "list of string",
         Value::Gradient(_) => "gradient",
+        Value::FaceList(_) => "list of face",
     }
 }
 

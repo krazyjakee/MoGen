@@ -18,7 +18,7 @@ use anyhow::{anyhow, bail, Result};
 use glam::Vec3;
 
 use mogen_core::{MaterialId, NodeId, SceneGraph, Transform, UvMode};
-use mogen_geom::{box_faces_mesh, box_mesh};
+use mogen_geom::{box_faces_mesh_authored, box_mesh, FaceUvXform};
 
 use crate::ast::Node;
 
@@ -27,6 +27,10 @@ use super::helpers::{anchor_for, apply_anchor_to_mesh, resolve_size3};
 /// Short, filename-safe tokens for the six faces, used to name the per-material
 /// child nodes. Index order matches [`mogen_geom::box_faces_mesh`].
 const FACE_TOKENS: [&str; 6] = ["px", "nx", "py", "ny", "pz", "nz"];
+
+/// A resolved material and the faces that use it. Each face is `(index into the
+/// canonical `+X,-X,+Y,-Y,+Z,-Z` order, optional authored UV transform)`.
+type FaceGroup = (Option<MaterialId>, Vec<(usize, Option<FaceUvXform>)>);
 
 /// Lower a `box` carrying `faces=[…]` into per-material quad children under the
 /// (meshless) wrapper `box_id`. Returns the anchor shift applied to the child
@@ -38,7 +42,7 @@ pub(super) fn lower_faced_box(
     graph: &mut SceneGraph,
 ) -> Result<Vec3> {
     let faces = node
-        .attr_list_string("faces")
+        .attr_faces("faces")
         .ok_or_else(|| anyhow!("`box` faces= must be a list of 6 material names"))?;
     if faces.len() != 6 {
         bail!(
@@ -52,20 +56,27 @@ pub(super) fn lower_faced_box(
 
     // Resolve each face's material name to an id (empty string → the box's own
     // material), preserving first-seen order so the emitted children are stable.
-    let mut groups: Vec<(Option<MaterialId>, Vec<usize>)> = Vec::new();
-    for (fi, name) in faces.iter().enumerate() {
-        let mat = if name.is_empty() {
+    // Each face carries an optional authored UV transform baked instead of the
+    // procedural projection; bare-string faces carry `None`.
+    let mut groups: Vec<FaceGroup> = Vec::new();
+    for (fi, entry) in faces.iter().enumerate() {
+        let mat = if entry.mat.is_empty() {
             fallback
         } else {
             Some(
                 graph
-                    .find_material_scoped(name, node.origin.as_deref())
-                    .ok_or_else(|| anyhow!("unknown material: {name}"))?,
+                    .find_material_scoped(&entry.mat, node.origin.as_deref())
+                    .ok_or_else(|| anyhow!("unknown material: {}", entry.mat))?,
             )
         };
+        let uv = entry.uv.map(|u| FaceUvXform {
+            scale: u.scale,
+            offset: u.offset,
+            swap: u.swap,
+        });
         match groups.iter_mut().find(|(m, _)| *m == mat) {
-            Some((_, idxs)) => idxs.push(fi),
-            None => groups.push((mat, vec![fi])),
+            Some((_, idxs)) => idxs.push((fi, uv)),
+            None => groups.push((mat, vec![(fi, uv)])),
         }
     }
 
@@ -81,7 +92,7 @@ pub(super) fn lower_faced_box(
             .and_then(|m| graph.materials.get(m.0 as usize))
             .map(|m| m.uv_mode)
             .unwrap_or_default();
-        let mut mesh = box_faces_mesh([size.x, size.y, size.z], uv_mode, &idxs);
+        let mut mesh = box_faces_mesh_authored([size.x, size.y, size.z], uv_mode, &idxs);
         if anchor_shift != Vec3::ZERO {
             for p in &mut mesh.positions {
                 p[0] += anchor_shift.x;
@@ -89,7 +100,8 @@ pub(super) fn lower_faced_box(
                 p[2] += anchor_shift.z;
             }
         }
-        let tokens: String = idxs.iter().map(|&i| FACE_TOKENS[i]).collect::<Vec<_>>().join("");
+        let tokens: String =
+            idxs.iter().map(|&(i, _)| FACE_TOKENS[i]).collect::<Vec<_>>().join("");
         let child_name = format!("{box_name}_{tokens}");
         let child = graph.add_child(box_id, child_name, "box_face", Transform::IDENTITY);
         graph.set_mesh(child, mesh);

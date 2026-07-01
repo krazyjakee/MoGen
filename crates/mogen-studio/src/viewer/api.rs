@@ -410,8 +410,87 @@ impl Viewer {
         self.state.lock().unwrap().cinema.active
     }
 
+    /// Which camera the viewport is currently driven by. Derived from the
+    /// cinema/free-cam flags so there's a single source of truth.
+    pub fn camera_mode(&self) -> super::CameraMode {
+        let st = self.state.lock().unwrap();
+        if st.cinema.active {
+            super::CameraMode::Cinema
+        } else if st.free_cam.active {
+            super::CameraMode::FreeCam
+        } else {
+            super::CameraMode::Orbit
+        }
+    }
+
+    /// Switch the viewport camera. Tears down whichever special mode is active
+    /// (restoring the orbit pose on cinema exit) before entering the new one,
+    /// so the modes stay mutually exclusive.
+    pub fn set_camera_mode(&self, mode: super::CameraMode) {
+        use super::CameraMode;
+        let mut st = self.state.lock().unwrap();
+        let current = if st.cinema.active {
+            CameraMode::Cinema
+        } else if st.free_cam.active {
+            CameraMode::FreeCam
+        } else {
+            CameraMode::Orbit
+        };
+        if current == mode {
+            return;
+        }
+        // Exit the current special mode first.
+        match current {
+            CameraMode::Cinema => {
+                if let Some(snap) = st.cinema.deactivate() {
+                    st.camera.restore(snap);
+                }
+            }
+            CameraMode::FreeCam => {
+                st.free_cam.active = false;
+                // Restore the distance-derived clip planes for orbit/cinema.
+                st.camera.clip_override = None;
+            }
+            CameraMode::Orbit => {}
+        }
+        // Enter the requested mode.
+        match mode {
+            CameraMode::Cinema => {
+                let center = st.static_center;
+                let radius = st.static_radius.max(0.001);
+                st.camera.target = center;
+                st.camera.fit_distance = radius * 2.8;
+                let st = &mut *st;
+                st.cinema.activate(&st.camera);
+                st.gizmo_drag = None;
+            }
+            CameraMode::FreeCam => {
+                let st = &mut *st;
+                st.free_cam.enter(&st.camera);
+                st.gizmo_drag = None;
+            }
+            CameraMode::Orbit => {}
+        }
+    }
+
     pub fn cinema_shot_label(&self) -> Option<&'static str> {
         self.state.lock().unwrap().cinema.shot_label()
+    }
+
+    /// Advance the free-fly camera one frame. `move_input` packs forward(+)/
+    /// back(−) in `.x` and right(+)/left(−) in `.y`; `boost` is Shift-to-go-
+    /// fast. No-op unless free cam is the active mode. Driven from the app's
+    /// per-frame key poll so movement keys can be arbitrated against editor
+    /// focus before the text widget sees them.
+    pub fn free_cam_fly(&self, move_input: glam::Vec2, boost: bool, dt: f32) {
+        let mut st = self.state.lock().unwrap();
+        if !st.free_cam.active {
+            return;
+        }
+        let fit = st.camera.fit_distance;
+        let st = &mut *st;
+        st.free_cam.fly(move_input, boost, fit, dt);
+        st.free_cam.apply_to(&mut st.camera);
     }
 
     /// Toggle cinema mode. On enable, latches the current camera pose and
@@ -428,6 +507,10 @@ impl Viewer {
             return;
         }
         if on {
+            // Cinema and free cam are mutually exclusive; drop free cam (and
+            // its custom clip planes) so they can't both drive the camera.
+            st.free_cam.active = false;
+            st.camera.clip_override = None;
             let center = st.static_center;
             let radius = st.static_radius.max(0.001);
             st.camera.target = center;

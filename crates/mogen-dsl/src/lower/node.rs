@@ -241,7 +241,7 @@ pub(super) fn lower_into(
     // so we only push names that aren't present.
     if matches!(
         node.kind.as_str(),
-        "group" | "solid" | "extrude" | "sweep" | "loft",
+        "group" | "solid" | "extrude" | "sweep" | "loft" | "hull",
     ) {
         // Primitives whose geometry derives from arbitrary author-supplied
         // 2D contours (extrude / sweep / loft) don't have a closed-form

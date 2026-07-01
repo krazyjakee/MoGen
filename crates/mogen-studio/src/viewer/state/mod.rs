@@ -12,6 +12,7 @@ use mogen_core::{NodeId, SceneGraph, Transform};
 use super::anim::{apply_animation, world_transforms_from_locals};
 use super::camera::OrbitCamera;
 use super::cinema::CinemaDirector;
+use super::free_cam::FreeCam;
 use super::environment::Environment;
 use super::flatten::{flatten, update_palettes, FlatMesh};
 use super::lights::{collect_lights, ResolvedLight};
@@ -129,6 +130,11 @@ pub struct ViewerState {
     /// orbit/pan/zoom/click input and the paint callback skips the grid +
     /// gizmo handles so the framing reads as a clean presentation.
     pub cinema: CinemaDirector,
+    /// Free-fly camera. When `free_cam.active`, `Viewer::show` drives the
+    /// camera from WASD/arrow keys + right-drag mouse-look instead of orbit,
+    /// and writes the equivalent orbit pose back so the renderer and picking
+    /// keep working through `camera`.
+    pub free_cam: FreeCam,
     /// User toggle for the ground-plane reference grid. Cinema mode hides the
     /// grid regardless of this flag.
     pub show_grid: bool,
@@ -226,6 +232,7 @@ impl Default for ViewerState {
             pending_caret: None,
             preview_shader: Default::default(),
             cinema: Default::default(),
+            free_cam: Default::default(),
             show_grid: true,
             show_light_gizmos: true,
             show_transform_gizmo: true,

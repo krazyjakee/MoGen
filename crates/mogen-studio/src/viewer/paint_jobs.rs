@@ -77,6 +77,7 @@ pub(super) fn process_capture_step(
         fit_distance: radius * 2.8,
         zoom: 1.0,
         target: center,
+        clip_override: None,
     };
     let viewproj = cam.view_proj(1.0);
     let eye = cam.eye();

@@ -310,26 +310,52 @@ impl MogenStudioApp {
                                 }
                             });
                             ui.separator();
-                            // Cinema mode: orbit/pan/zoom + gizmo + grid all
-                            // suppressed while on, so its toggle stays
-                            // outside the disabled group.
-                            if ui
-                                .selectable_label(cinema_on, "🎬 Cinema")
-                                .on_hover_text(if cinema_on {
-                                    "Stop cinema mode and restore the previous camera"
-                                } else {
-                                    "Play an automated sequence of camera shots. \
-                                     Animations resume only if they were already \
-                                     playing — toggle Play first if you want the \
-                                     subject to move while the camera pans."
-                                })
-                                .clicked()
-                            {
-                                // Don't force-play animations on enable: the
-                                // previous default surprised users who were
-                                // previewing a static model. They can hit Play
-                                // separately if they want both at once.
-                                self.viewer.set_cinema_active(!cinema_on, false);
+                            // Camera-mode dropdown: Orbit / Cinema / Free cam.
+                            // Cinema suppresses orbit/pan/zoom + gizmo + grid;
+                            // free cam flies with WASD + right-drag look. Kept
+                            // outside the disabled group so the user can always
+                            // switch back out of a special mode.
+                            use crate::viewer::CameraMode;
+                            let cur_mode = self.viewer.camera_mode();
+                            let mut chosen_mode: Option<CameraMode> = None;
+                            ui.menu_button(cur_mode.label(), |ui| {
+                                ui.label(egui::RichText::new("Camera").strong());
+                                ui.separator();
+                                for (m, tip) in [
+                                    (
+                                        CameraMode::Orbit,
+                                        "Drag to orbit · middle/right-drag to pan · \
+                                         scroll to zoom",
+                                    ),
+                                    (
+                                        CameraMode::Cinema,
+                                        "Play an automated sequence of camera shots. \
+                                         Toggle Play first if you want the subject to \
+                                         move while the camera pans.",
+                                    ),
+                                    (
+                                        CameraMode::FreeCam,
+                                        "Fly the camera: WASD / arrow keys to move along \
+                                         the look vector, hold right-click to look around, \
+                                         Shift to move faster.",
+                                    ),
+                                ] {
+                                    let selected = m == cur_mode;
+                                    if ui
+                                        .selectable_label(selected, m.label())
+                                        .on_hover_text(tip)
+                                        .clicked()
+                                        && !selected
+                                    {
+                                        chosen_mode = Some(m);
+                                        ui.close_menu();
+                                    }
+                                }
+                            })
+                            .response
+                            .on_hover_text("Viewport camera (Orbit / Cinema / Free cam)");
+                            if let Some(m) = chosen_mode {
+                                self.viewer.set_camera_mode(m);
                             }
                         });
                     });
@@ -340,11 +366,18 @@ impl MogenStudioApp {
         // and never competes with the right-hand inspector for horizontal room
         // (DCC convention — Blender/Maya put help text at the bottom).
         let cinema_on = self.viewer.is_cinema_active();
+        let free_cam_on = self.viewer.camera_mode() == crate::viewer::CameraMode::FreeCam;
         let ctrl_held = ctx.input(|i| i.modifiers.ctrl || i.modifiers.command);
         let status_text: Option<String> = if cinema_on {
             self.viewer
                 .cinema_shot_label()
                 .map(|name| format!("now: {name}"))
+        } else if free_cam_on {
+            Some(
+                "free cam — wasd / arrows: move · right-drag: look · \
+                 scroll: speed · shift: faster · click: select"
+                    .to_string(),
+            )
         } else if ctrl_held {
             // Ctrl held = snap mode. Surface the actual step values so users
             // know exactly what they're snapping to before committing a drag.

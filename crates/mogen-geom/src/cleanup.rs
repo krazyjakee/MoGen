@@ -283,42 +283,73 @@ pub fn clean_csg_output(mesh: &Mesh) -> Mesh {
     if with_normals.has_uvs() {
         with_normals
     } else {
-        assign_triplanar_uvs(&with_normals)
+        assign_per_face_uvs(&with_normals)
     }
 }
 
-/// Assign UVs by triplanar projection: for each vertex, pick the dominant
-/// normal axis and project the position onto the remaining two axes. Produces
-/// one UV unit per world-space meter. Tiling frequency is then controlled by
-/// the texture itself or an explicit tiling factor (future work).
+/// Assign UVs by per-face planar projection: every triangle is projected onto
+/// the plane perpendicular to its own geometric normal, using an orthonormal
+/// tangent basis built from that normal. One UV unit per world-space metre;
+/// the material's `uv_scale` sets the final tiling frequency.
 ///
-/// Compared with per-triangle projection, per-vertex projection costs a
-/// texture seam when adjacent verts pick different axes — but it preserves
-/// the indexed-mesh layout, which matters for the exporter.
-pub fn assign_triplanar_uvs(mesh: &Mesh) -> Mesh {
-    let uvs: Vec<[f32; 2]> = mesh
-        .positions
-        .iter()
-        .zip(mesh.normals.iter())
-        .map(|(p, n)| {
-            let (ax, ay, az) = (n[0].abs(), n[1].abs(), n[2].abs());
-            if ax >= ay && ax >= az {
-                [p[2], p[1]]
-            } else if ay >= az {
-                [p[0], p[2]]
-            } else {
-                [p[0], p[1]]
-            }
-        })
-        .collect();
+/// This is the right fallback for the faceted convex solids the `hull`
+/// primitive (and CSG booleans) produce. An axis-snapped projection — pick the
+/// dominant world axis and drop it — foreshortens any face that is not aligned
+/// to that axis: a 45° ramp's texture compresses by `cos θ` along the slope.
+/// Projecting onto the face's actual tangent plane removes that skew, so
+/// sloped and sheared faces tile at the same texel density as flat ones.
+///
+/// Choosing a basis per face means a vertex shared by faces with different
+/// normals needs a different UV per face, so the mesh is unwelded into
+/// independent triangles. The smooth per-vertex normals are duplicated, so only
+/// the vertex count grows — shading and watertight geometry are unchanged.
+pub fn assign_per_face_uvs(mesh: &Mesh) -> Mesh {
+    let n_tris = mesh.indices.len() / 3;
+    let mut positions = Vec::with_capacity(n_tris * 3);
+    let mut normals = Vec::with_capacity(n_tris * 3);
+    let mut uvs = Vec::with_capacity(n_tris * 3);
+    let mut indices = Vec::with_capacity(n_tris * 3);
+    for tri in mesh.indices.chunks_exact(3) {
+        let [i0, i1, i2] = [tri[0] as usize, tri[1] as usize, tri[2] as usize];
+        let p0 = Vec3::from_array(mesh.positions[i0]);
+        let p1 = Vec3::from_array(mesh.positions[i1]);
+        let p2 = Vec3::from_array(mesh.positions[i2]);
+        // Geometric face normal — robust against the smooth per-vertex normals
+        // disagreeing across the triangle. Degenerate tris fall back to +Z;
+        // their zero area makes the choice invisible anyway.
+        let mut n = (p1 - p0).cross(p2 - p0).normalize_or_zero();
+        if n.length_squared() < 0.5 {
+            n = Vec3::Z;
+        }
+        // Orthonormal tangent basis in the plane ⟂ n. Seed with the world axis
+        // least aligned with n so the cross product never degenerates.
+        let (ax, ay, az) = (n.x.abs(), n.y.abs(), n.z.abs());
+        let seed = if ax <= ay && ax <= az {
+            Vec3::X
+        } else if ay <= az {
+            Vec3::Y
+        } else {
+            Vec3::Z
+        };
+        let t = seed.cross(n).normalize_or_zero();
+        let b = n.cross(t);
+        let project = |p: Vec3| -> [f32; 2] { [p.dot(t), p.dot(b)] };
+        let base = positions.len() as u32;
+        for &i in &[i0, i1, i2] {
+            positions.push(mesh.positions[i]);
+            normals.push(mesh.normals[i]);
+        }
+        uvs.push(project(p0));
+        uvs.push(project(p1));
+        uvs.push(project(p2));
+        indices.extend_from_slice(&[base, base + 1, base + 2]);
+    }
     Mesh {
-        positions: mesh.positions.clone(),
-        normals: mesh.normals.clone(),
+        positions,
+        normals,
         uvs,
-        indices: mesh.indices.clone(),
-        joints: mesh.joints.clone(),
-        weights: mesh.weights.clone(),
-        colors: mesh.colors.clone(),
+        indices,
+        ..Default::default()
     }
 }
 
@@ -414,6 +445,29 @@ mod tests {
     fn empty_mesh_is_not_closed() {
         let empty = Mesh::default();
         assert!(!is_closed_manifold(&empty));
+    }
+
+    #[test]
+    fn per_face_uvs_do_not_foreshorten_a_sloped_face() {
+        // A 45° triangle: the edge p0->p1 rises one unit in Z over one in X, so
+        // its true length is √2. An axis-snapped projection would drop one axis
+        // and report length 1; the per-face tangent projection must preserve √2
+        // so the texture tiles at the same density as on a flat face.
+        let mesh = Mesh {
+            positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 1.0], [0.0, 1.0, 0.0]],
+            normals: vec![[0.0; 3]; 3],
+            indices: vec![0, 1, 2],
+            ..Default::default()
+        };
+        let out = assign_per_face_uvs(&mesh);
+        assert_eq!(out.uvs.len(), 3);
+        let du = out.uvs[1][0] - out.uvs[0][0];
+        let dv = out.uvs[1][1] - out.uvs[0][1];
+        let uv_len = (du * du + dv * dv).sqrt();
+        assert!(
+            (uv_len - 2.0_f32.sqrt()).abs() < 1e-5,
+            "edge UV span {uv_len} should equal the true edge length √2"
+        );
     }
 
     #[test]

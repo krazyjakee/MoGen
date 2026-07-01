@@ -1,6 +1,27 @@
 use eframe::egui;
 use glam::{Mat4, Vec3};
 
+/// Which camera the viewport is driven by. The overlay's camera dropdown
+/// selects between these; `Orbit` is the default editor camera, `Cinema` runs
+/// the automated shot director, and `FreeCam` is the WASD/right-drag fly cam.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum CameraMode {
+    #[default]
+    Orbit,
+    Cinema,
+    FreeCam,
+}
+
+impl CameraMode {
+    pub fn label(self) -> &'static str {
+        match self {
+            CameraMode::Orbit => "↻ Orbit",
+            CameraMode::Cinema => "🎬 Cinema",
+            CameraMode::FreeCam => "🕹 Free cam",
+        }
+    }
+}
+
 pub struct OrbitCamera {
     pub yaw: f32,
     pub pitch: f32,
@@ -13,6 +34,13 @@ pub struct OrbitCamera {
     /// apparent size.
     pub zoom: f32,
     pub target: Vec3,
+    /// Optional explicit `(near, far)` clip planes. The orbit camera normally
+    /// derives them from `distance()`, which works because it always sits
+    /// ~`distance` from its target. Free cam flies right up to geometry while
+    /// `distance` stays large (it tracks the scene's fit distance), so it sets
+    /// a small fixed-ish near here to stop close walls from being clipped.
+    /// `None` = the default distance-derived planes.
+    pub clip_override: Option<(f32, f32)>,
 }
 
 /// Lightweight snapshot of camera pose, suitable for persisting per-file so
@@ -36,6 +64,7 @@ impl Default for OrbitCamera {
             fit_distance: 4.0,
             zoom: 1.0,
             target: Vec3::ZERO,
+            clip_override: None,
         }
     }
 }
@@ -95,8 +124,10 @@ impl OrbitCamera {
         let dist = self.distance();
         let eye = self.eye();
         let view = Mat4::look_at_rh(eye, self.target, Vec3::Y);
-        let near = (dist * 0.01).max(0.01);
-        let far = (dist * 10.0).max(10.0);
+        let (near, far) = match self.clip_override {
+            Some((n, f)) => (n.max(0.001), f.max(n * 2.0)),
+            None => ((dist * 0.01).max(0.01), (dist * 10.0).max(10.0)),
+        };
         let proj = Mat4::perspective_rh_gl(45.0_f32.to_radians(), aspect.max(0.01), near, far);
         proj * view
     }

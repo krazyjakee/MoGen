@@ -327,7 +327,10 @@ fn substitute_value(value: &Value, scope: &Scope) -> Result<Value> {
         // Gradient attrs have no `$param` substitution surface — colour stops
         // are constant vec3s and axes are bare idents — so they round-trip
         // through module expansion unchanged.
-        | Value::Gradient(_) => Ok(value.clone()),
+        | Value::Gradient(_)
+        // `box (faces=[…])` entries are resolved material names + constant UV
+        // transforms — no `$param` surface — so they clone through unchanged.
+        | Value::FaceList(_) => Ok(value.clone()),
         // Strings and idents (and lists of strings) get scope-aware
         // `$ident` / `${ident}` interpolation so authors can write
         // `name "leg_$i"` inside a `for` body.

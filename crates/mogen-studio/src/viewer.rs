@@ -5,6 +5,7 @@ mod cinema;
 mod colliders_gl;
 pub mod environment;
 pub(crate) mod flatten;
+mod free_cam;
 mod gizmo_gl;
 mod gl_util;
 mod grid_gl;
@@ -23,7 +24,7 @@ use eframe::egui;
 use glam::Mat4;
 use mogen_core::NodeId;
 
-pub use camera::{CameraSnapshot, OrbitCamera};
+pub use camera::{CameraMode, CameraSnapshot, OrbitCamera};
 pub use environment::Environment;
 pub use flatten::{ClipSummary, FlatMesh, FLOATS_PER_VERTEX};
 pub use lights::ResolvedLight;
@@ -112,6 +113,61 @@ impl Viewer {
                 needs_repaint = true;
             }
 
+            // Free-fly camera: right-drag is mouse-look. WASD/arrow movement is
+            // handled app-side in `dispatch_shortcuts` (it needs editor-focus
+            // arbitration to keep the keys out of the text editor). Orbit/pan/
+            // zoom below are suppressed while it's on; click-to-select and
+            // gizmo edits stay live since they don't collide with the WASD +
+            // right-drag bindings.
+            let free_active = st.free_cam.active;
+            if free_active {
+                // Split the guard so `free_cam` and `camera` borrow disjointly.
+                let st = &mut *st;
+                // Right-button mouse-look. While the button is held we lock the
+                // OS cursor in place (and hide it) so the pointer can't wander
+                // out over the surrounding panels and steal hovers/clicks. A
+                // locked cursor stops reporting position movement, so we drive
+                // the look from raw device motion (`pointer.motion()`, fed by
+                // winit's `DeviceEvent::MouseMotion`) rather than `drag_delta`,
+                // which would read zero under the grab.
+                let secondary_down =
+                    ui.input(|i| i.pointer.button_down(egui::PointerButton::Secondary));
+                let want_look = secondary_down && (st.free_cam.is_looking() || response.contains_pointer());
+                if want_look {
+                    if !st.free_cam.is_looking() {
+                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::CursorGrab(
+                            egui::viewport::CursorGrab::Locked,
+                        ));
+                        ui.ctx()
+                            .send_viewport_cmd(egui::ViewportCommand::CursorVisible(false));
+                        st.free_cam.set_looking(true);
+                    }
+                    let m = ui.input(|i| i.pointer.motion().unwrap_or(egui::Vec2::ZERO));
+                    if m != egui::Vec2::ZERO {
+                        st.free_cam.look(glam::vec2(m.x, m.y));
+                    }
+                } else if st.free_cam.is_looking() {
+                    // Gesture ended (button released) — unlock and restore the
+                    // cursor so normal pointer interaction resumes.
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::CursorGrab(
+                        egui::viewport::CursorGrab::None,
+                    ));
+                    ui.ctx()
+                        .send_viewport_cmd(egui::ViewportCommand::CursorVisible(true));
+                    st.free_cam.set_looking(false);
+                }
+                // Scroll tunes fly speed (it can't zoom a fly cam), so the user
+                // can dial movement to the scene without a rebuild.
+                if response.hovered() {
+                    let scroll = ui.input(|i| i.smooth_scroll_delta.y);
+                    st.free_cam.adjust_speed(scroll);
+                }
+                // Keep the orbit camera the renderer/picking read in sync with
+                // the fly pose every frame.
+                st.free_cam.apply_to(&mut st.camera);
+                needs_repaint = true;
+            }
+
             let mut gizmo_handled_primary = false;
             // Shift and Cmd/Ctrl are reserved for additive selection (and
             // shift-drag for pan); never grab a gizmo handle while either
@@ -156,6 +212,7 @@ impl Viewer {
             // the user saw the camera tumble alongside the model, making
             // the edit look like it was rejected.
             let panning = !cinema_active
+                && !free_active
                 && !gizmo_in_progress
                 && !gizmo_handled_primary
                 && (response.dragged_by(egui::PointerButton::Middle)
@@ -164,6 +221,7 @@ impl Viewer {
             if panning {
                 st.camera.pan(response.drag_delta(), rect.height());
             } else if !cinema_active
+                && !free_active
                 && primary_dragging
                 && !gizmo_in_progress
                 && !gizmo_handled_primary
@@ -172,7 +230,7 @@ impl Viewer {
                 st.camera.yaw -= d.x * 0.01;
                 st.camera.pitch = (st.camera.pitch - d.y * 0.01).clamp(-1.54, 1.54);
             }
-            if !cinema_active && response.hovered() {
+            if !cinema_active && !free_active && response.hovered() {
                 let scroll = ui.input(|i| i.smooth_scroll_delta.y);
                 if scroll != 0.0 {
                     let factor = (1.0 - scroll * 0.0015).clamp(0.5, 1.5);
