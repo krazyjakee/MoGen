@@ -115,6 +115,184 @@ fn faced_box_anchor_shifts_all_faces() {
 }
 
 #[test]
+fn faced_box_authored_uv_bakes_face_local_coords() {
+    // +Z face carries an authored UV transform; giving it its own material
+    // makes it a single-face child so the four baked UVs read out directly.
+    // Spec worked example: uv = offset + scale * (localU, localV), where for
+    // +Z the in-plane axes are (X, Y) and local coords are `v[ax] + size/2`.
+    let g = lower_src(
+        r#"scene {
+            material "plain" (color=[0.5, 0.5, 0.5])
+            material "art"   (color=[0.2, 0.4, 0.8])
+            box "b" (
+                size=[2, 2, 2],
+                faces=[
+                    "plain", "plain", "plain", "plain",
+                    face("art", uv_scale=[2, 3], uv_offset=[0.5, 0.25]),
+                    "plain"
+                ]
+            )
+        }"#,
+    );
+    let art = g.find_material("art").unwrap();
+    let kids = children_of(&g, "b");
+    let art_child = kids.iter().find(|k| k.material == Some(art)).unwrap();
+    let m = art_child.mesh.as_ref().unwrap();
+    assert_eq!(m.positions.len(), 4, "+Z authored face is a single-face child");
+    for (p, uv) in m.positions.iter().zip(m.uvs.iter()) {
+        let local_u = p[0] + 1.0; // X + size.x/2
+        let local_v = p[1] + 1.0; // Y + size.y/2
+        let exp = [0.5 + 2.0 * local_u, 0.25 + 3.0 * local_v];
+        assert!(
+            (uv[0] - exp[0]).abs() < 1e-5 && (uv[1] - exp[1]).abs() < 1e-5,
+            "uv {uv:?} != expected {exp:?} for corner {p:?}"
+        );
+    }
+    // The box's min corner maps exactly to the offset.
+    let has_origin = m.positions.iter().zip(m.uvs.iter()).any(|(p, uv)| {
+        p[0] < 0.0 && p[1] < 0.0 && (uv[0] - 0.5).abs() < 1e-5 && (uv[1] - 0.25).abs() < 1e-5
+    });
+    assert!(has_origin, "min corner must map to the offset [0.5, 0.25]");
+}
+
+#[test]
+fn faced_box_authored_uv_swap_transposes_axes() {
+    // uv_swap=true swaps the two in-plane axes before scale/offset apply.
+    let g = lower_src(
+        r#"scene {
+            material "plain" (color=[0.5, 0.5, 0.5])
+            material "art"   (color=[0.2, 0.4, 0.8])
+            box "b" (
+                size=[2, 2, 2],
+                faces=[
+                    "plain", "plain", "plain", "plain",
+                    face("art", uv_scale=[2, 3], uv_swap=true),
+                    "plain"
+                ]
+            )
+        }"#,
+    );
+    let art = g.find_material("art").unwrap();
+    let kids = children_of(&g, "b");
+    let art_child = kids.iter().find(|k| k.material == Some(art)).unwrap();
+    let m = art_child.mesh.as_ref().unwrap();
+    for (p, uv) in m.positions.iter().zip(m.uvs.iter()) {
+        let local_u = p[0] + 1.0;
+        let local_v = p[1] + 1.0;
+        // swap: (localU, localV) -> (localV, localU) before scale; offset [0,0].
+        let exp = [2.0 * local_v, 3.0 * local_u];
+        assert!(
+            (uv[0] - exp[0]).abs() < 1e-5 && (uv[1] - exp[1]).abs() < 1e-5,
+            "swapped uv {uv:?} != expected {exp:?} for corner {p:?}"
+        );
+    }
+}
+
+#[test]
+fn faced_box_face_call_without_uv_matches_bare_string() {
+    // `face("m")` with no UV args is equivalent to the bare `"m"`: default Fit
+    // UVs and it groups with bare `"m"` faces into a single child.
+    let g = lower_src(
+        r#"scene {
+            material "m" (color=[0.5, 0.5, 0.5])
+            box "b" (faces=[face("m"), "m", "m", "m", "m", "m"])
+        }"#,
+    );
+    let kids = children_of(&g, "b");
+    assert_eq!(kids.len(), 1, "face(\"m\") and \"m\" share a material → one child");
+    let m = kids[0].mesh.as_ref().unwrap();
+    for uv in &m.uvs {
+        assert!(
+            uv[0] >= -1e-6 && uv[0] <= 1.0 + 1e-6 && uv[1] >= -1e-6 && uv[1] <= 1.0 + 1e-6,
+            "bare/face(\"m\") faces keep unit-square Fit UVs, got {uv:?}"
+        );
+    }
+}
+
+#[test]
+fn faced_box_mixes_authored_and_bare_faces() {
+    // Converter-shaped input: most faces bare, one authored, distinct sizes on
+    // each axis. The authored +Z face bakes world-local UVs; with scale chosen
+    // as 1/extent the mapping spans 0..1 across the face.
+    let g = lower_src(
+        r#"scene {
+            material "wall"  (color=[0.6, 0.6, 0.6])
+            material "panel" (color=[0.2, 0.5, 0.9])
+            box "wall_seg" (
+                size=[4, 3, 1],
+                faces=[
+                    "wall", "wall", "wall", "wall",
+                    face("panel", uv_scale=[0.25, 0.333333], uv_offset=[0, 0]),
+                    "wall"
+                ]
+            )
+        }"#,
+    );
+    let panel = g.find_material("panel").unwrap();
+    let kids = children_of(&g, "wall_seg");
+    let panel_child = kids.iter().find(|k| k.material == Some(panel)).unwrap();
+    let pm = panel_child.mesh.as_ref().unwrap();
+    // +Z face on [4,3,1]: X∈[-2,2], Y∈[-1.5,1.5]; local coords 0..4 and 0..3.
+    let max_uv = pm
+        .uvs
+        .iter()
+        .fold([f32::MIN; 2], |a, u| [a[0].max(u[0]), a[1].max(u[1])]);
+    let min_uv = pm
+        .uvs
+        .iter()
+        .fold([f32::MAX; 2], |a, u| [a[0].min(u[0]), a[1].min(u[1])]);
+    assert!(min_uv[0].abs() < 1e-5 && min_uv[1].abs() < 1e-5, "authored UV min at [0,0]");
+    assert!((max_uv[0] - 1.0).abs() < 1e-4, "u spans 0..1 over 4m at 0.25 (got {})", max_uv[0]);
+    assert!((max_uv[1] - 1.0).abs() < 1e-3, "v spans 0..1 over 3m at 1/3 (got {})", max_uv[1]);
+
+    // Bare "wall" faces are untouched by the authored transform: their UVs match
+    // a plain (no-authored-faces) box built the same way, face-for-face.
+    let wall = g.find_material("wall").unwrap();
+    let wall_child = kids.iter().find(|k| k.material == Some(wall)).unwrap();
+    let reference = lower_src(
+        r#"scene {
+            material "wall" (color=[0.6, 0.6, 0.6])
+            box "wall_seg" (size=[4, 3, 1], faces=["wall","wall","wall","wall","wall","wall"])
+        }"#,
+    );
+    let ref_child = &children_of(&reference, "wall_seg")[0];
+    let ref_uvs = &ref_child.mesh.as_ref().unwrap().uvs;
+    for uv in &wall_child.mesh.as_ref().unwrap().uvs {
+        assert!(
+            ref_uvs.iter().any(|r| (r[0] - uv[0]).abs() < 1e-6 && (r[1] - uv[1]).abs() < 1e-6),
+            "bare face UV {uv:?} must match the unmodified box path"
+        );
+    }
+}
+
+#[test]
+fn faces_all_bare_strings_still_parse_as_liststring() {
+    // Backward-compat: a faces list with no face(...) entries must stay a plain
+    // ListString so existing files and tooling see no behavioural change.
+    use crate::ast::Value;
+    let ast = parse(r#"box "b" (faces=["a","a","a","a","a","a"])"#).unwrap();
+    match ast[0].attr("faces").unwrap() {
+        Value::ListString(v) => assert_eq!(v.len(), 6),
+        other => panic!("expected ListString, got {other:?}"),
+    }
+}
+
+#[test]
+fn faces_with_face_call_parse_as_facelist() {
+    use crate::ast::Value;
+    let ast =
+        parse(r#"box "b" (faces=[face("a", uv_scale=[1,1]),"a","a","a","a","a"])"#).unwrap();
+    match ast[0].attr("faces").unwrap() {
+        Value::FaceList(v) => {
+            assert_eq!(v.len(), 6);
+            assert!(v[0].uv.is_some(), "face(...) entry carries a UV transform");
+            assert!(v[1].uv.is_none(), "bare string entry carries no UV transform");
+        }
+        other => panic!("expected FaceList, got {other:?}"),
+    }
+}
+
+#[test]
 fn faced_box_anchor_shifts_default_connectors() {
     // Default connectors (top/bottom/etc.) must shift with the anchor so they
     // stay flush with their faces. For anchor=bottom on a [1,2,1] box:

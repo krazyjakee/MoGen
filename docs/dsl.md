@@ -345,7 +345,7 @@ All primitives accept the common attributes above (`pos`, `rot`, `scale`,
 
 | kind | required attrs | other attrs |
 |---|---|---|
-| `box` | `size=[x,y,z]` | `faces=[…]` — six material names in `+X,-X,+Y,-Y,+Z,-Z` order for [per-face materials](#per-face-box-materials-faces) |
+| `box` | `size=[x,y,z]` | `faces=[…]` — six entries in `+X,-X,+Y,-Y,+Z,-Z` order for [per-face materials](#per-face-box-materials-faces); each is a material name or a `face("mat", uv_scale=…, uv_offset=…, uv_swap=…)` struct with an [authored UV transform](#authored-per-face-uv-transforms-face) |
 | `plane` | `size=[x,_,z]` (Y ignored) | — |
 | `quad` | `size=[w,h]` or `vec3` (w,h,_) | — |
 | `cylinder` | `radius`, `height` | `segments` (default 24) |
@@ -446,6 +446,42 @@ box "panel" (mat="body", faces=["", "", "label", "", "", ""])  // only +Y differ
 
 This is the migration sink for engine map blocks whose six faces each reference
 a different tile texture.
+
+#### Authored per-face UV transforms (`face(...)`)
+
+By default each face's texture coordinates follow the material's UV mode
+(`fit` = one copy per face, `tile` = 1 unit per metre). When a converter carries
+its own per-face UV mapping (atlas sub-rectangles, engine-native tile offsets),
+any entry in the `faces=` list may be a `face(...)` struct instead of a bare
+string. It sets the material **and** an explicit UV transform baked verbatim
+onto that face, bypassing the procedural projection:
+
+```
+box "wall_seg" (size=[4, 3, 1], faces=[
+  "wall", "wall", "wall", "wall",
+  face("panel", uv_scale=[0.25, 0.333], uv_offset=[0, 0], uv_swap=false),  // +Z
+  "wall"
+])
+```
+
+- **First argument** — the material name (same rules as the bare string; `""`
+  falls back to the box's own material).
+- `uv_scale=[sx, sy]` — per-axis scale; may be **negative** to mirror. Default `[1, 1]`.
+- `uv_offset=[ox, oy]` — per-axis constant added after scaling. Default `[0, 0]`.
+- `uv_swap=<bool>` — swap the two in-plane axes before scale/offset. Default `false`.
+
+All UV fields are optional; **`face("mat")` is identical to the bare `"mat"`**
+(no authored transform → keep the default Fit/Tile UVs). Authored and bare
+entries may be freely mixed in one list, and faces still group into frozen
+children by material as above.
+
+The baked coordinate is face-local. For a face whose outward normal is on axis
+*A*, the two in-plane axes are the other two in ascending index order
+(`X→(Y,Z)`, `Y→(X,Z)`, `Z→(X,Y)`); the local coordinate on each is the vertex
+offset from the box's minimum corner on that axis (`vertex + size/2`). The final
+UV is `offset + scale * (swap ? swapped : local)`. Values are emitted **exactly
+as computed** — never clamped or wrapped, so repeat/tile behaviour is left to the
+sampler.
 
 ### Branch
 

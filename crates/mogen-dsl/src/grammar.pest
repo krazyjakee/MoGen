@@ -22,7 +22,14 @@ gradient_kind = { "linear" | "vertical" | "radial" | "stops" }
 
 vec3      = { "[" ~ expr ~ "," ~ expr ~ "," ~ expr ~ "]" }
 list      = { "[" ~ (list_item ~ ("," ~ list_item)*)? ~ ","? ~ "]" }
-list_item = { vec3 | list | string | expr }
+list_item = { vec3 | list | face_call | string | expr }
+
+// Per-face UV struct for `box (faces=[…])`: a material string plus optional
+// authored UV transform. `face("wood", uv_scale=[1,1], uv_offset=[0,0],
+// uv_swap=false)`. The named args reuse `attr`; lowering reads uv_scale /
+// uv_offset (2-number lists) and uv_swap (true/false ident). A `face("mat")`
+// with no UV args is equivalent to the bare `"mat"` string.
+face_call = { "face" ~ "(" ~ string ~ ("," ~ attr)* ~ ","? ~ ")" }
 
 expr   =  { sum ~ (cmp_op ~ sum)? }
 sum    =  { term ~ (add_op ~ term)* }

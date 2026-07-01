@@ -766,6 +766,9 @@ pub(super) fn value_matches(v: &Value, expected: &str) -> bool {
         ) => true,
         (Value::ListString(_), "list of string") => true,
         (Value::String(_) | Value::Ident(_), "list of string") => true,
+        // `box (faces=[…])` with authored `face(...)` UV entries — a superset of
+        // the bare-string faces list, accepted wherever `list of string` is.
+        (Value::FaceList(_), "list of string") => true,
         // Deferred expressions: accept as their natural type; evaluation errors
         // (unbound params, etc.) are reported during module expansion.
         (Value::Expr(_), "number") => true,
@@ -793,6 +796,7 @@ pub(super) fn value_kind(v: &Value) -> &'static str {
         Value::ListQuad(_) => "list of quad",
         Value::ListString(_) => "list of string",
         Value::Gradient(_) => "gradient",
+        Value::FaceList(_) => "list of face",
     }
 }
 

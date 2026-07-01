@@ -29,7 +29,7 @@ pub use coil::{coil_mesh, Handedness as CoilHandedness};
 pub use heightfield::heightfield_mesh;
 pub use bezier_patch::bezier_patch_mesh;
 pub use metaball::metaball_mesh;
-pub use cuboid::{box_faces_mesh, box_mesh};
+pub use cuboid::{box_faces_mesh, box_faces_mesh_authored, box_mesh, FaceUvXform};
 pub use cylinder::{cylinder_mesh, half_cylinder_mesh, tube_mesh};
 pub use disc::disc_mesh;
 pub use extrude::{extrude_mesh, Contour};

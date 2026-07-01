@@ -4,7 +4,7 @@ use pest::iterators::Pair;
 use pest::Parser;
 use pest_derive::Parser;
 
-use crate::ast::{BinOp, Expr, GradientDef, Node, Value};
+use crate::ast::{BinOp, Expr, FaceEntry, FaceUv, GradientDef, Node, Value};
 
 fn span_of(p: &Pair<Rule>) -> Span {
     let s = p.as_span();
@@ -125,6 +125,70 @@ fn build_gradient(pair: Pair<Rule>) -> Result<GradientDef> {
     Ok(GradientDef { kind, attrs, span })
 }
 
+/// Build a [`FaceEntry`] from a `face(...)` list item. The first positional
+/// argument is the material string; optional named args `uv_scale` / `uv_offset`
+/// (2-number lists) and `uv_swap` (true/false) supply an authored UV transform.
+/// A `face("mat")` with no UV args yields `uv: None` so it behaves exactly like
+/// the bare `"mat"` string.
+fn build_face_call(pair: Pair<Rule>) -> Result<FaceEntry> {
+    let span = span_of(&pair);
+    let mut mat: Option<String> = None;
+    let mut scale = [1.0_f32, 1.0];
+    let mut offset = [0.0_f32, 0.0];
+    let mut swap = false;
+    let mut any_uv = false;
+    for inner in pair.into_inner() {
+        match inner.as_rule() {
+            Rule::string => mat = Some(unquote(inner.as_str())),
+            Rule::attr => {
+                let (key, value) = build_attr(inner)?;
+                match key.as_str() {
+                    "uv_scale" => {
+                        scale = face_uv_pair(&value, "uv_scale")?;
+                        any_uv = true;
+                    }
+                    "uv_offset" => {
+                        offset = face_uv_pair(&value, "uv_offset")?;
+                        any_uv = true;
+                    }
+                    "uv_swap" => {
+                        swap = face_uv_bool(&value, "uv_swap")?;
+                        any_uv = true;
+                    }
+                    other => {
+                        return Err(anyhow!(
+                            "unknown face() field `{other}` (expected uv_scale, uv_offset, uv_swap)"
+                        ))
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let mat = mat.ok_or_else(|| anyhow!("face() requires a material string as its first argument"))?;
+    let uv = if any_uv { Some(FaceUv { scale, offset, swap }) } else { None };
+    Ok(FaceEntry { mat, uv, span })
+}
+
+/// Read a 2-number list value (`[sx, sy]`) for a `face()` UV field. Negatives
+/// are allowed (mirroring); values are taken verbatim.
+fn face_uv_pair(v: &Value, field: &str) -> Result<[f32; 2]> {
+    match v {
+        Value::List(l) if l.len() == 2 => Ok([l[0], l[1]]),
+        _ => Err(anyhow!("face() `{field}` must be a 2-number list like [1, 1]")),
+    }
+}
+
+/// Read a boolean value (`true`/`false`, or nonzero number) for `uv_swap`.
+fn face_uv_bool(v: &Value, field: &str) -> Result<bool> {
+    match v {
+        Value::Ident(s) if s == "true" => Ok(true),
+        Value::Ident(s) if s == "false" => Ok(false),
+        Value::Number(n) => Ok(*n != 0.0),
+        _ => Err(anyhow!("face() `{field}` must be true or false")),
+    }
+}
+
 /// Collapse a deferred expression to a Value::Number if it is fully constant.
 fn lift_expr(e: Expr) -> Value {
     match e.eval_const() {
@@ -143,7 +207,8 @@ fn build_list(val_pair: Pair<Rule>) -> Result<Value> {
         Vec3([f32; 3]),
         Pair([f32; 2]),
         Quad([f32; 4]),
-        Str(String),
+        Str(String, Span),
+        Face(FaceEntry),
     }
 
     let mut items: Vec<Item> = Vec::new();
@@ -151,10 +216,12 @@ fn build_list(val_pair: Pair<Rule>) -> Result<Value> {
         if it.as_rule() != Rule::list_item {
             continue;
         }
+        let item_span = span_of(&it);
         let inner = it.into_inner().next().unwrap();
         match inner.as_rule() {
             Rule::expr => items.push(Item::Expr(build_expr(inner)?)),
-            Rule::string => items.push(Item::Str(unquote(inner.as_str()))),
+            Rule::face_call => items.push(Item::Face(build_face_call(inner)?)),
+            Rule::string => items.push(Item::Str(unquote(inner.as_str()), item_span)),
             Rule::vec3 => {
                 let exprs: Vec<Expr> = inner
                     .into_inner()
@@ -217,7 +284,27 @@ fn build_list(val_pair: Pair<Rule>) -> Result<Value> {
     let has_vec3 = items.iter().any(|i| matches!(i, Item::Vec3(_)));
     let has_pair = items.iter().any(|i| matches!(i, Item::Pair(_)));
     let has_quad = items.iter().any(|i| matches!(i, Item::Quad(_)));
-    let has_str = items.iter().any(|i| matches!(i, Item::Str(_)));
+    let has_str = items.iter().any(|i| matches!(i, Item::Str(..)));
+    let has_face = items.iter().any(|i| matches!(i, Item::Face(_)));
+    // A `face(...)` entry promotes the whole list to `FaceList`. Bare strings
+    // may coexist (they become `uv: None` entries); numeric items may not.
+    if has_face && (has_expr || has_vec3 || has_pair || has_quad) {
+        return Err(anyhow!(
+            "faces list may contain only material strings or face(...) entries — not numbers"
+        ));
+    }
+    if has_face {
+        return Ok(Value::FaceList(
+            items
+                .into_iter()
+                .map(|i| match i {
+                    Item::Face(fe) => fe,
+                    Item::Str(mat, span) => FaceEntry { mat, uv: None, span },
+                    _ => unreachable!(),
+                })
+                .collect(),
+        ));
+    }
     if has_str && (has_expr || has_vec3 || has_pair || has_quad) {
         return Err(anyhow!(
             "list items must be all strings or all numeric — mixing is not allowed"
@@ -240,7 +327,7 @@ fn build_list(val_pair: Pair<Rule>) -> Result<Value> {
             items
                 .into_iter()
                 .map(|i| match i {
-                    Item::Str(s) => s,
+                    Item::Str(s, _) => s,
                     _ => unreachable!(),
                 })
                 .collect(),
