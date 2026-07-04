@@ -40,6 +40,7 @@ impl Settings {
             ProviderSlot::ClaudeCode => "",
             ProviderSlot::Fireworks => self.fireworks_api_key.as_str(),
             ProviderSlot::Zai => self.zai_api_key.as_str(),
+            ProviderSlot::Xiaomi => self.xiaomi_api_key.as_str(),
             ProviderSlot::OpenAiCompat => self.openai_compat_api_key.as_str(),
         };
         let trimmed = raw.trim();
@@ -127,6 +128,7 @@ impl Settings {
             Provider::Ollama => &self.ollama_model,
             Provider::Fireworks => &self.fireworks_model,
             Provider::Zai => &self.zai_chat_model,
+            Provider::Xiaomi => &self.xiaomi_model,
             Provider::OpenAiCompat => &self.openai_compat_model,
             _ => "",
         }
@@ -141,6 +143,7 @@ impl Settings {
             Provider::Ollama => &self.ollama_fast_model,
             Provider::Fireworks => &self.fireworks_fast_model,
             Provider::Zai => &self.zai_chat_fast_model,
+            Provider::Xiaomi => &self.xiaomi_fast_model,
             Provider::OpenAiCompat => &self.openai_compat_fast_model,
             _ => "",
         }
@@ -156,6 +159,7 @@ impl Settings {
             Provider::Ollama => Some(&mut self.ollama_model),
             Provider::Fireworks => Some(&mut self.fireworks_model),
             Provider::Zai => Some(&mut self.zai_chat_model),
+            Provider::Xiaomi => Some(&mut self.xiaomi_model),
             Provider::OpenAiCompat => Some(&mut self.openai_compat_model),
             _ => None,
         }
@@ -170,6 +174,7 @@ impl Settings {
             Provider::Ollama => Some(&mut self.ollama_fast_model),
             Provider::Fireworks => Some(&mut self.fireworks_fast_model),
             Provider::Zai => Some(&mut self.zai_chat_fast_model),
+            Provider::Xiaomi => Some(&mut self.xiaomi_fast_model),
             Provider::OpenAiCompat => Some(&mut self.openai_compat_fast_model),
             _ => None,
         }

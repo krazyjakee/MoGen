@@ -1,13 +1,11 @@
-//! Public Gemini pricing applied client-side so the studio can show a
-//! running cost estimate. Rates are the published US list prices for the
-//! model family and are approximate — the authoritative source is the
-//! user's Google Cloud invoice.
+//! Client-side pricing estimates for the Studio session footer and pricing
+//! editor. Rates are per million tokens and intentionally approximate — the
+//! authoritative source is the provider invoice.
 //!
-//! Rates are per million tokens. Input/output counts come from the API's
-//! `usageMetadata`; `cached` is billed at a reduced rate when a
-//! `cachedContents` resource is attached. The 2.5 Pro and 3.x Pro tiers
-//! switch to a higher "long context" rate once the prompt crosses 200k
-//! tokens — see [`LONG_CONTEXT_THRESHOLD`].
+//! Input/output counts come from provider usage metadata; `cached` is billed
+//! at a reduced rate when the provider reports cache hits. Gemini Pro tiers
+//! switch to a higher "long context" rate once the prompt crosses 200k tokens
+//! — see [`LONG_CONTEXT_THRESHOLD`].
 
 use mogen_llm::gemini::Usage;
 
@@ -64,8 +62,9 @@ pub(super) struct ImagePricing {
     pub per_image_usd: f64,
 }
 
-/// Match a model name against the price table. More-specific (Gemini 3.x)
-/// matchers run first so 2.5 prefix matches don't shadow them.
+/// Match a model name against the price table. More-specific matchers run
+/// first so provider model ids with overlapping substrings don't shadow each
+/// other (e.g. `mimo-v2.5-pro` is Xiaomi, not Gemini).
 pub(super) fn text_pricing(model: &str) -> TextPricing {
     let m = model.to_ascii_lowercase();
 
@@ -75,10 +74,7 @@ pub(super) fn text_pricing(model: &str) -> TextPricing {
     // landing on the right row.
     if m.contains("3.1-pro") || m.contains("3-pro") {
         // Gemini 3.1 Pro Preview, tiered at 200k.
-        return TextPricing::tiered(
-            (2.00, 12.00, 0.50),
-            (4.00, 18.00, 1.00),
-        );
+        return TextPricing::tiered((2.00, 12.00, 0.50), (4.00, 18.00, 1.00));
     }
     if m.contains("3.5-flash") {
         // Gemini 3.5 Flash (GA May 2026): $1.50 in / $9 out per million.
@@ -93,19 +89,31 @@ pub(super) fn text_pricing(model: &str) -> TextPricing {
     }
 
     // --- Gemini 2.5 Pro (tiered at 200k).
-    if m.starts_with("gemini-pro") || m.contains("2.5-pro") || m.contains("2-5-pro") {
-        return TextPricing::tiered(
-            (1.25, 10.00, 0.125),
-            (2.50, 15.00, 0.25),
-        );
+    if m.starts_with("gemini-pro")
+        || (m.starts_with("gemini") && (m.contains("2.5-pro") || m.contains("2-5-pro")))
+    {
+        return TextPricing::tiered((1.25, 10.00, 0.125), (2.50, 15.00, 0.25));
     }
     // --- Gemini 2.5 Flash-Lite (cheapest text tier).
-    if m.contains("flash-lite") {
+    if m.starts_with("gemini") && m.contains("flash-lite") {
         return TextPricing::flat(0.10, 0.40, 0.01);
     }
     // --- Gemini 2.5 Flash / flash-latest.
-    if m.starts_with("gemini-flash") || m.contains("2.5-flash") || m.contains("2-5-flash") {
+    if m.starts_with("gemini-flash")
+        || (m.starts_with("gemini") && (m.contains("2.5-flash") || m.contains("2-5-flash")))
+    {
         return TextPricing::flat(0.30, 2.50, 0.03);
+    }
+
+    // --- Xiaomi MiMo. Overseas pay-as-you-go rates.
+    if m.contains("mimo-v2.5-pro") || m.contains("mimo-v2-pro") {
+        return TextPricing::flat(0.435, 0.87, 0.0036);
+    }
+    if m.contains("mimo-v2.5") || m.contains("mimo-v2-omni") {
+        return TextPricing::flat(0.14, 0.28, 0.0028);
+    }
+    if m.contains("mimo-v2-flash") {
+        return TextPricing::flat(0.10, 0.30, 0.01);
     }
 
     // Unknown — zero-cost fallback keeps the meter honest instead of
@@ -118,11 +126,15 @@ pub(super) fn text_pricing(model: &str) -> TextPricing {
 pub(super) fn image_pricing(model: &str) -> ImagePricing {
     let m = model.to_ascii_lowercase();
     if m.contains("flash-image") || m.contains("nano-banana") {
-        return ImagePricing { per_image_usd: 0.039 };
+        return ImagePricing {
+            per_image_usd: 0.039,
+        };
     }
     // `imagen-4.0-generate-*`: $0.04 per image (1:1, standard quality).
     if m.contains("imagen") {
-        return ImagePricing { per_image_usd: 0.04 };
+        return ImagePricing {
+            per_image_usd: 0.04,
+        };
     }
     ImagePricing { per_image_usd: 0.0 }
 }
@@ -239,6 +251,19 @@ mod tests {
         assert!((p.output_per_million_usd - 9.00).abs() < 1e-9);
         assert!((p.cached_input_per_million_usd - 0.15).abs() < 1e-9);
         assert!(!p.is_tiered());
+    }
+
+    #[test]
+    fn xiaomi_pricing_matches_overseas_rates() {
+        let p = text_pricing("mimo-v2.5-pro");
+        assert!((p.input_per_million_usd - 0.435).abs() < 1e-9);
+        assert!((p.output_per_million_usd - 0.87).abs() < 1e-9);
+        assert!((p.cached_input_per_million_usd - 0.0036).abs() < 1e-9);
+        assert!(!p.is_tiered());
+
+        let flash = text_pricing("mimo-v2-flash");
+        assert!((flash.input_per_million_usd - 0.10).abs() < 1e-9);
+        assert!((flash.output_per_million_usd - 0.30).abs() < 1e-9);
     }
 
     #[test]

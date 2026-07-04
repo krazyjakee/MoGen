@@ -4,13 +4,15 @@
 //! `modify`, `animate`, `repair`, `bench`, and `textures` commands:
 //!
 //! - [`provider`] — the [`LlmClient`] enum dispatches to the right backend
-//!   (Gemini, OpenAI, Anthropic, Ollama). [`Provider`] describes the
-//!   selector and per-provider defaults; [`ProviderError`] is the unified
-//!   error returned by [`LlmClient::generate`].
-//! - [`gemini`] / [`openai`] / [`anthropic`] / [`ollama`] — per-backend
-//!   HTTP clients, each with its own request/response wire types.
+//!   (Gemini, OpenAI, Anthropic, Ollama, Claude Code, Fireworks, Z.ai,
+//!   Xiaomi MiMo, or a generic OpenAI-compatible host). [`Provider`]
+//!   describes the selector and per-provider defaults; [`ProviderError`] is
+//!   the unified error returned by [`LlmClient::generate`].
+//! - [`gemini`] / [`openai`] / [`anthropic`] / [`ollama`] / provider-specific
+//!   OpenAI-compatible modules — per-backend HTTP clients, each with its own
+//!   request/response wire types.
 //! - [`prompt`] — assembles the system instruction (grammar + stdlib index +
-//!   examples). Provider-agnostic — the same string ships to all four.
+//!   examples). Provider-agnostic — the same string ships to every text backend.
 //! - [`repair`] — drives parse → validate → feed JSON diagnostics back on
 //!   error. Takes [`LlmClient`] so it works against any provider.
 //!
@@ -38,21 +40,25 @@ pub mod refine;
 pub mod repair;
 pub mod settings_store;
 pub mod spend;
-pub mod textures;
 pub mod style;
+pub mod textures;
 pub mod types;
+pub mod xiaomi;
 pub mod zai;
 pub mod zai_chat;
 
-pub use cache::{default_cache_path, resolve_or_create as resolve_or_create_cache, DEFAULT_TTL_SECONDS};
+pub use cache::{
+    default_cache_path, resolve_or_create as resolve_or_create_cache, DEFAULT_TTL_SECONDS,
+};
+pub use fireworks::{FireworksClient, FireworksError};
 pub use gemini::{CachedContent, GeminiAuth, GeminiClient, GeminiError};
+pub use google_oauth::client::{resolve_user_path, PathMode};
 pub use google_oauth::{
     all_existing_token_paths, all_existing_token_paths_for, delete_bundle, load_bundle,
     run_login_flow, save_bundle, token_store_path, token_store_path_for, token_store_write_path,
     token_store_write_path_for, LoginOptions, LoginOutcome, OAuthBundle, OAuthError,
     TOKEN_STORE_FILENAME,
 };
-pub use google_oauth::client::{resolve_user_path, PathMode};
 pub use image::{GeneratedImage, DEFAULT_IMAGE_MODEL};
 pub use image_client::{ImageClient, ImageError};
 pub use imports::{
@@ -72,21 +78,21 @@ pub use repair::{
 pub use settings_store::{
     load_api_keys, read_api_key, settings_path as settings_store_path, zai_base_url, ApiKeys,
 };
-pub use fireworks::{FireworksClient, FireworksError};
-pub use textures::parse_prompt_header;
-pub use style::{apply_style_to_prompt, style_prompt_block, Style, STYLES};
-pub use zai::{ZaiClient, ZaiError};
-pub use zai_chat::{
-    ZaiChatClient, ZaiChatError, CODING_PLAN_BASE_URL as ZAI_CODING_PLAN_BASE_URL,
-    DEFAULT_BASE_URL as ZAI_DEFAULT_BASE_URL, DEFAULT_VISION_MODEL as ZAI_DEFAULT_VISION_MODEL,
+pub use spend::{
+    CallContext, CallFilter, CallRecord, CallRow, ModelSummary, NoopRecorder, Operation,
+    SpendRecorder, SqliteRecorder, SummaryRow,
 };
+pub use style::{apply_style_to_prompt, style_prompt_block, Style, STYLES};
+pub use textures::parse_prompt_header;
 pub use types::{
     GenerateConfig, GenerateResponse, ImageInput, Role, ThinkingLevel, Turn, Usage,
     DEFAULT_TEMPERATURE,
 };
-pub use spend::{
-    CallContext, CallFilter, CallRecord, CallRow, ModelSummary, NoopRecorder, Operation,
-    SpendRecorder, SqliteRecorder, SummaryRow,
+pub use xiaomi::{XiaomiClient, XiaomiError, DEFAULT_VISION_MODEL as XIAOMI_DEFAULT_VISION_MODEL};
+pub use zai::{ZaiClient, ZaiError};
+pub use zai_chat::{
+    ZaiChatClient, ZaiChatError, CODING_PLAN_BASE_URL as ZAI_CODING_PLAN_BASE_URL,
+    DEFAULT_BASE_URL as ZAI_DEFAULT_BASE_URL, DEFAULT_VISION_MODEL as ZAI_DEFAULT_VISION_MODEL,
 };
 
 /// Default heavy text model — kept as the legacy alias so existing callers
@@ -279,7 +285,8 @@ scene { box \"b\" (size=[1,1,1], mat=\"wood\") }
 
     #[test]
     fn embed_strips_legacy_comments() {
-        let src = "// mogen-generate seed=1\n// mogen-generate thinking=low\n// prompt: old\nscene {}\n";
+        let src =
+            "// mogen-generate seed=1\n// mogen-generate thinking=low\n// prompt: old\nscene {}\n";
         let wrapped = embed_seed_header(src, 2, "new", Some(ThinkingLevel::High));
         assert!(!wrapped.contains("// mogen-generate"));
         assert!(!wrapped.contains("// prompt:"));

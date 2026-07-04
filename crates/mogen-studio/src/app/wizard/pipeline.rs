@@ -9,11 +9,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use mogen_core::subtree_local_aabb;
-use mogen_llm::{
-    apply_style_to_prompt, generate_with_repair, embed_seed_header, GenerateConfig, LlmClient,
-    RepairConfig, Style, ThinkingLevel,
-};
 use mogen_llm::image_client::{ImageClient, ImageError};
+use mogen_llm::{
+    apply_style_to_prompt, embed_seed_header, generate_with_repair, GenerateConfig, LlmClient,
+    Provider, RepairConfig, Style, ThinkingLevel,
+};
 
 use crate::app::util::{Credential, ProviderEndpoints};
 
@@ -26,12 +26,24 @@ use super::state::{
 #[derive(Clone)]
 pub struct WizardRunConfig {
     pub model: String,
+    pub provider: Provider,
     pub thinking: ThinkingLevel,
     pub temperature: f32,
     pub max_repair_iters: u32,
     pub seed: u64,
     pub style: Option<Style>,
     pub session_id: String,
+}
+
+fn apply_vision_model_if_needed(gc: &mut GenerateConfig, cfg: &WizardRunConfig) {
+    if gc.user_images.is_empty() {
+        return;
+    }
+    if cfg.provider == Provider::Zai {
+        gc.model = mogen_llm::ZAI_DEFAULT_VISION_MODEL.to_string();
+    } else if cfg.provider == Provider::Xiaomi {
+        gc.model = mogen_llm::XIAOMI_DEFAULT_VISION_MODEL.to_string();
+    }
 }
 
 /// Stage 1: produce a one-paragraph "scene brief" from the user's free-form
@@ -99,8 +111,12 @@ pub fn run_brief(
         },
     };
     if let (Some(data), Some(mime)) = (source_bytes, source_mime) {
-        gc.user_images.push(mogen_llm::ImageInput { mime_type: mime, data });
+        gc.user_images.push(mogen_llm::ImageInput {
+            mime_type: mime,
+            data,
+        });
     }
+    apply_vision_model_if_needed(&mut gc, &cfg);
     let resp = client.generate(&gc).map_err(|e| e.to_string())?;
     Ok(resp.text.trim().to_string())
 }
@@ -159,8 +175,12 @@ pub fn run_manifest(
         },
     };
     if let (Some(data), Some(mime)) = (source_bytes, source_mime) {
-        gc.user_images.push(mogen_llm::ImageInput { mime_type: mime, data });
+        gc.user_images.push(mogen_llm::ImageInput {
+            mime_type: mime,
+            data,
+        });
     }
+    apply_vision_model_if_needed(&mut gc, &cfg);
     let resp = client.generate(&gc).map_err(|e| e.to_string())?;
     parse_manifest_json(&resp.text)
 }
@@ -178,15 +198,17 @@ pub fn run_reference_image(
     seed: u64,
 ) -> Result<PathBuf, String> {
     if let Some(parent) = out_path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
     }
     // Image-to-image only when a source photo is present AND the backend can
     // actually consume input images (Gemini yes, Z.ai no). Otherwise fall back
     // to text-to-image so a scene still gets references either way.
     let inputs: Vec<mogen_llm::ImageInput> = match (source_bytes, source_mime) {
         (Some(data), Some(mime)) if image_client.supports_image_input() => {
-            vec![mogen_llm::ImageInput { mime_type: mime, data }]
+            vec![mogen_llm::ImageInput {
+                mime_type: mime,
+                data,
+            }]
         }
         _ => Vec::new(),
     };
@@ -267,8 +289,7 @@ pub fn run_object_mog(
     cfg: WizardRunConfig,
 ) -> Result<ObjectGenResult, String> {
     if let Some(parent) = out_path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
     }
     let header_prompt = format!("{} — {}", obj.name, obj.prompt);
     let user = format!(
@@ -316,8 +337,12 @@ pub fn run_object_mog(
         },
     };
     if let (Some(data), Some(mime)) = (reference_bytes, reference_mime) {
-        gc.user_images.push(mogen_llm::ImageInput { mime_type: mime, data });
+        gc.user_images.push(mogen_llm::ImageInput {
+            mime_type: mime,
+            data,
+        });
     }
+    apply_vision_model_if_needed(&mut gc, &cfg);
     let repair = RepairConfig {
         max_iters: cfg.max_repair_iters,
         on_iteration: None,
@@ -379,6 +404,7 @@ pub fn run_object_review(
         mime_type: image_mime,
         data: image_bytes,
     });
+    apply_vision_model_if_needed(&mut gc, &cfg);
     gc.spend_context = mogen_llm::CallContext {
         operation: "Generate".into(),
         scene_path: None,
@@ -406,8 +432,8 @@ pub fn run_scene_review(
     iteration: u32,
     cfg: WizardRunConfig,
 ) -> Result<SceneReview, String> {
-    let manifest_json = serde_json::to_string_pretty(&manifest)
-        .map_err(|e| format!("serialise manifest: {e}"))?;
+    let manifest_json =
+        serde_json::to_string_pretty(&manifest).map_err(|e| format!("serialise manifest: {e}"))?;
     let user = format!(
         "You are reviewing an isometric render of a 3D scene generated for this prompt:\n\n\
          \"{prompt}\"\n\n\
@@ -435,6 +461,7 @@ pub fn run_scene_review(
         mime_type: image_mime,
         data: image_bytes,
     });
+    apply_vision_model_if_needed(&mut gc, &cfg);
     gc.spend_context = mogen_llm::CallContext {
         operation: "Generate".into(),
         scene_path: None,
@@ -492,8 +519,9 @@ fn compute_position_guide(dsl: &str, _id: &str) -> Option<PositionGuide> {
 /// (models sometimes wrap their answer in ```json … ``` even when told not to).
 fn parse_manifest_json(text: &str) -> Result<Vec<ObjectEntry>, String> {
     let cleaned = strip_markdown_fences(text);
-    let value: serde_json::Value = serde_json::from_str(&cleaned)
-        .map_err(|e| format!("manifest is not valid JSON: {e}\n\n--- raw response ---\n{cleaned}"))?;
+    let value: serde_json::Value = serde_json::from_str(&cleaned).map_err(|e| {
+        format!("manifest is not valid JSON: {e}\n\n--- raw response ---\n{cleaned}")
+    })?;
     let arr = value
         .get("objects")
         .and_then(|v| v.as_array())
@@ -619,6 +647,45 @@ pub(crate) fn strip_markdown_fences(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_config(provider: Provider, model: &str) -> WizardRunConfig {
+        WizardRunConfig {
+            model: model.to_string(),
+            provider,
+            thinking: ThinkingLevel::High,
+            temperature: 0.3,
+            max_repair_iters: 0,
+            seed: 1,
+            style: None,
+            session_id: String::new(),
+        }
+    }
+
+    #[test]
+    fn wizard_image_calls_use_provider_vision_model() {
+        let cfg = test_config(Provider::Xiaomi, "mimo-v2.5-pro");
+        let mut gc = GenerateConfig::new("describe");
+        gc.model = cfg.model.clone();
+        gc.user_images.push(mogen_llm::ImageInput {
+            mime_type: "image/png".into(),
+            data: vec![1],
+        });
+
+        apply_vision_model_if_needed(&mut gc, &cfg);
+
+        assert_eq!(gc.model, mogen_llm::XIAOMI_DEFAULT_VISION_MODEL);
+    }
+
+    #[test]
+    fn wizard_text_calls_keep_configured_model() {
+        let cfg = test_config(Provider::Xiaomi, "mimo-v2.5-pro");
+        let mut gc = GenerateConfig::new("describe");
+        gc.model = cfg.model.clone();
+
+        apply_vision_model_if_needed(&mut gc, &cfg);
+
+        assert_eq!(gc.model, "mimo-v2.5-pro");
+    }
 
     #[test]
     fn strips_json_fence() {

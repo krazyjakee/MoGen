@@ -83,11 +83,7 @@ pub(super) fn model_presets(slot: ProviderSlot) -> &'static [&'static str] {
             "phi4",
             "gemma3",
         ],
-        ProviderSlot::ClaudeCode => &[
-            "sonnet",
-            "haiku",
-            "opus",
-        ],
+        ProviderSlot::ClaudeCode => &["sonnet", "haiku", "opus"],
         ProviderSlot::Fireworks => &[
             "accounts/fireworks/routers/kimi-k2p6",
             "accounts/fireworks/routers/kimi-k2p6-turbo",
@@ -100,6 +96,7 @@ pub(super) fn model_presets(slot: ProviderSlot) -> &'static [&'static str] {
             "glm-4.5-air",
             "glm-4.5-flash",
         ],
+        ProviderSlot::Xiaomi => &["mimo-v2.5-pro", "mimo-v2.5", "mimo-v2-flash"],
         // Model ids are server-defined for a local OpenAI-compatible host —
         // there's no canonical preset list. `local-model` is the library
         // default that many single-model servers (llama.cpp, some LM Studio
@@ -124,11 +121,8 @@ impl MogenStudioApp {
             .order(egui::Order::Background)
             .fixed_pos(egui::pos2(0.0, 0.0))
             .show(ctx, |ui| {
-                ui.painter().rect_filled(
-                    screen,
-                    0.0,
-                    egui::Color32::from_black_alpha(96),
-                );
+                ui.painter()
+                    .rect_filled(screen, 0.0, egui::Color32::from_black_alpha(96));
             });
 
         // Adapt the dialog footprint to the host window. On a small
@@ -141,8 +135,7 @@ impl MogenStudioApp {
         let max_h = (avail_h - 64.0).max(320.0);
         let default_w = max_w.min(560.0);
 
-        let active_tab_color =
-            crate::app::style::accent_primary(&ctx.style().visuals);
+        let active_tab_color = crate::app::style::accent_primary(&ctx.style().visuals);
 
         egui::Window::new("Options")
             .open(&mut open)
@@ -194,12 +187,10 @@ impl MogenStudioApp {
                     .id_salt(("prefs_body", self.prefs_active_tab))
                     .auto_shrink([false, false])
                     .max_height(body_height)
-                    .show(ui, |ui| {
-                        match self.prefs_active_tab {
-                            PrefsTab::Llm => self.prefs_tab_llm(ui),
-                            PrefsTab::Appearance => self.prefs_tab_appearance(ui, ctx),
-                            PrefsTab::Privacy => self.prefs_tab_privacy(ui),
-                        }
+                    .show(ui, |ui| match self.prefs_active_tab {
+                        PrefsTab::Llm => self.prefs_tab_llm(ui),
+                        PrefsTab::Appearance => self.prefs_tab_appearance(ui, ctx),
+                        PrefsTab::Privacy => self.prefs_tab_privacy(ui),
                     });
 
                 ui.add_space(8.0);
@@ -207,62 +198,61 @@ impl MogenStudioApp {
                 ui.add_space(4.0);
                 // Right-aligned cluster, primary Save on the right.
                 ui.horizontal(|ui| {
-                    ui.with_layout(
-                        egui::Layout::right_to_left(egui::Align::Center),
-                        |ui| {
-                            let save = ui.add(
-                                crate::app::style::primary_button(ui, "Save"),
-                            );
-                            if save.clicked() {
-                        // The Gemini key uses an editor-buffered draft so the
-                        // user can clear/re-paste without instantly mutating
-                        // settings; commit it on Save. Other providers' keys
-                        // are written directly into settings as the user
-                        // types because they don't share that legacy draft.
-                        self.settings.gemini_api_key =
-                            self.options_api_key_draft.trim().to_string();
-                        // Trim whitespace from per-provider keys / URL on
-                        // save so users can paste with surrounding spaces.
-                        self.settings.openai_api_key =
-                            self.settings.openai_api_key.trim().to_string();
-                        self.settings.anthropic_api_key =
-                            self.settings.anthropic_api_key.trim().to_string();
-                        self.settings.ollama_api_key =
-                            self.settings.ollama_api_key.trim().to_string();
-                        self.settings.ollama_base_url =
-                            self.settings.ollama_base_url.trim().to_string();
-                        self.settings.claude_code_path =
-                            self.settings.claude_code_path.trim().to_string();
-                        self.settings.zai_api_key =
-                            self.settings.zai_api_key.trim().to_string();
-                        self.settings.fireworks_api_key =
-                            self.settings.fireworks_api_key.trim().to_string();
-                        self.settings.openai_compat_api_key =
-                            self.settings.openai_compat_api_key.trim().to_string();
-                        self.settings.openai_compat_base_url =
-                            self.settings.openai_compat_base_url.trim().to_string();
-                        match self.settings.save() {
-                            Ok(()) => {
-                                let active = self.settings.provider();
-                                let msg = match active {
-                                    Provider::Gemini if self.settings.gemini_api_key.is_empty() => {
-                                        "options: cleared saved Gemini API key".to_string()
-                                    }
-                                    _ => "options: settings saved".to_string(),
-                                };
-                                self.active_mut().status = msg;
-                                close_after = true;
-                            }
-                            Err(e) => {
-                                self.active_mut().status = format!("options: save failed: {e}");
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let save = ui.add(crate::app::style::primary_button(ui, "Save"));
+                        if save.clicked() {
+                            // The Gemini key uses an editor-buffered draft so the
+                            // user can clear/re-paste without instantly mutating
+                            // settings; commit it on Save. Other providers' keys
+                            // are written directly into settings as the user
+                            // types because they don't share that legacy draft.
+                            self.settings.gemini_api_key =
+                                self.options_api_key_draft.trim().to_string();
+                            // Trim whitespace from per-provider keys / URL on
+                            // save so users can paste with surrounding spaces.
+                            self.settings.openai_api_key =
+                                self.settings.openai_api_key.trim().to_string();
+                            self.settings.anthropic_api_key =
+                                self.settings.anthropic_api_key.trim().to_string();
+                            self.settings.ollama_api_key =
+                                self.settings.ollama_api_key.trim().to_string();
+                            self.settings.ollama_base_url =
+                                self.settings.ollama_base_url.trim().to_string();
+                            self.settings.claude_code_path =
+                                self.settings.claude_code_path.trim().to_string();
+                            self.settings.zai_api_key =
+                                self.settings.zai_api_key.trim().to_string();
+                            self.settings.fireworks_api_key =
+                                self.settings.fireworks_api_key.trim().to_string();
+                            self.settings.xiaomi_api_key =
+                                self.settings.xiaomi_api_key.trim().to_string();
+                            self.settings.openai_compat_api_key =
+                                self.settings.openai_compat_api_key.trim().to_string();
+                            self.settings.openai_compat_base_url =
+                                self.settings.openai_compat_base_url.trim().to_string();
+                            match self.settings.save() {
+                                Ok(()) => {
+                                    let active = self.settings.provider();
+                                    let msg = match active {
+                                        Provider::Gemini
+                                            if self.settings.gemini_api_key.is_empty() =>
+                                        {
+                                            "options: cleared saved Gemini API key".to_string()
+                                        }
+                                        _ => "options: settings saved".to_string(),
+                                    };
+                                    self.active_mut().status = msg;
+                                    close_after = true;
+                                }
+                                Err(e) => {
+                                    self.active_mut().status = format!("options: save failed: {e}");
+                                }
                             }
                         }
-                            }
-                            if ui.button("Cancel").clicked() {
-                                close_after = true;
-                            }
-                        },
-                    );
+                        if ui.button("Cancel").clicked() {
+                            close_after = true;
+                        }
+                    });
                 });
             });
         if !open || close_after {
@@ -347,8 +337,7 @@ impl MogenStudioApp {
             } else {
                 login_button_label.to_string()
             };
-            let login_btn =
-                ui.add_enabled(!any_in_flight, egui::Button::new(login_label));
+            let login_btn = ui.add_enabled(!any_in_flight, egui::Button::new(login_label));
             if login_btn.clicked() {
                 let ctx = ui.ctx().clone();
                 self.start_oauth_login_for(ctx, config);
@@ -356,9 +345,7 @@ impl MogenStudioApp {
             if stored.is_some() {
                 if ui
                     .add_enabled(!any_in_flight, egui::Button::new("Sign out"))
-                    .on_hover_text(
-                        "Delete the local OAuth token for this provider.",
-                    )
+                    .on_hover_text("Delete the local OAuth token for this provider.")
                     .clicked()
                 {
                     self.start_oauth_logout_for(config);
@@ -378,11 +365,7 @@ impl MogenStudioApp {
             .show_ui(ui, |ui| {
                 for t in THEMES {
                     let selected = t == current_theme;
-                    if ui
-                        .selectable_label(selected, theme_label(t))
-                        .clicked()
-                        && !selected
-                    {
+                    if ui.selectable_label(selected, theme_label(t)).clicked() && !selected {
                         new_theme = Some(t);
                     }
                 }
@@ -419,11 +402,7 @@ impl MogenStudioApp {
             .show_ui(ui, |ui| {
                 for (val, label) in presets {
                     let selected = val == current_fps;
-                    if ui
-                        .selectable_label(selected, label)
-                        .clicked()
-                        && !selected
-                    {
+                    if ui.selectable_label(selected, label).clicked() && !selected {
                         new_fps = Some(val);
                     }
                 }

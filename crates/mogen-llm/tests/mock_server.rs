@@ -27,7 +27,10 @@ impl MockServer {
         let port = server.server_addr().to_ip().expect("ipv4").port();
 
         let responses = Arc::new(Mutex::new(
-            responses.into_iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+            responses
+                .into_iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>(),
         ));
         let requests = Arc::new(Mutex::new(Vec::<String>::new()));
 
@@ -47,17 +50,21 @@ impl MockServer {
                         q.remove(0)
                     }
                 };
-                let response = tiny_http::Response::from_string(payload)
-                    .with_header(
-                        "Content-Type: application/json"
-                            .parse::<tiny_http::Header>()
-                            .unwrap(),
-                    );
+                let response = tiny_http::Response::from_string(payload).with_header(
+                    "Content-Type: application/json"
+                        .parse::<tiny_http::Header>()
+                        .unwrap(),
+                );
                 let _ = req.respond(response);
             }
         });
 
-        Self { port, responses, requests, _handle: handle }
+        Self {
+            port,
+            responses,
+            requests,
+            _handle: handle,
+        }
     }
 
     fn base_url(&self) -> String {
@@ -126,8 +133,16 @@ fn repair_loop_succeeds_on_second_attempt() {
     let reqs = server.requests.lock().unwrap();
     assert_eq!(reqs.len(), 2);
     let second = &reqs[1];
-    assert!(second.contains("E0101"), "expected diagnostic code in repair turn: {}", second);
-    assert!(second.contains("wombat"), "expected prior DSL inlined in user turn: {}", second);
+    assert!(
+        second.contains("E0101"),
+        "expected diagnostic code in repair turn: {}",
+        second
+    );
+    assert!(
+        second.contains("wombat"),
+        "expected prior DSL inlined in user turn: {}",
+        second
+    );
     assert!(
         !second.contains("\"role\":\"model\""),
         "repair turn should not carry prior model history: {}",
@@ -145,7 +160,11 @@ fn repair_loop_respects_max_iters_and_returns_last_attempt() {
     let outcome = generate_with_repair(
         &client,
         GenerateConfig::new("anything"),
-        &RepairConfig { max_iters: 1, on_iteration: None, allow_edit_mode: false },
+        &RepairConfig {
+            max_iters: 1,
+            on_iteration: None,
+            allow_edit_mode: false,
+        },
     )
     .expect("request ok");
 
@@ -187,13 +206,23 @@ fn user_images_become_inline_data_parts_on_the_user_turn() {
         // Three bytes the test can spot once base64-encoded ("AQID").
         data: vec![0x01, 0x02, 0x03],
     });
-    let _ = generate_with_repair(&client, cfg, &RepairConfig { max_iters: 0, on_iteration: None, allow_edit_mode: false })
-        .expect("request ok");
+    let _ = generate_with_repair(
+        &client,
+        cfg,
+        &RepairConfig {
+            max_iters: 0,
+            on_iteration: None,
+            allow_edit_mode: false,
+        },
+    )
+    .expect("request ok");
 
     let reqs = server.requests.lock().unwrap();
     assert_eq!(reqs.len(), 1);
     let body: serde_json::Value = serde_json::from_str(&reqs[0]).expect("valid JSON");
-    let parts = body["contents"][0]["parts"].as_array().expect("parts array");
+    let parts = body["contents"][0]["parts"]
+        .as_array()
+        .expect("parts array");
     // Image part comes first, text part second — vision-prompt convention.
     assert_eq!(parts.len(), 2, "got: {body}");
     assert_eq!(parts[0]["inline_data"]["mime_type"], "image/png");
@@ -209,8 +238,7 @@ fn api_error_surfaces_with_status_and_message() {
     let port = server.server_addr().to_ip().unwrap().port();
     thread::spawn(move || {
         for req in server.incoming_requests() {
-            let body =
-                r#"{"error":{"message":"API key not valid","status":"INVALID_ARGUMENT"}}"#;
+            let body = r#"{"error":{"message":"API key not valid","status":"INVALID_ARGUMENT"}}"#;
             let resp = tiny_http::Response::from_string(body)
                 .with_status_code(400)
                 .with_header(
@@ -222,10 +250,8 @@ fn api_error_surfaces_with_status_and_message() {
         }
     });
 
-    let client = GeminiClient::with_base_url(
-        "test-key",
-        format!("http://127.0.0.1:{}/v1beta", port),
-    );
+    let client =
+        GeminiClient::with_base_url("test-key", format!("http://127.0.0.1:{}/v1beta", port));
     let err = client
         .generate(&GenerateConfig::new("x"))
         .expect_err("should fail");
@@ -244,15 +270,11 @@ fn planner_then_coder_threads_plan_into_user_turn() {
     // contract end-to-end against the real client + repair stack.
     let plan_text = "## Subject\nA tall wooden stool with four legs.\n\n## Parts\n- seat (top)\n- four legs splayed slightly outward";
     let coder_dsl = "scene { box \"seat\" (size=[0.4, 0.05, 0.4]) }";
-    let server = MockServer::start(vec![
-        &candidate_body(plan_text),
-        &candidate_body(coder_dsl),
-    ]);
+    let server = MockServer::start(vec![&candidate_body(plan_text), &candidate_body(coder_dsl)]);
     let client = LlmClient::with_base_url(Provider::Gemini, "test-key", server.base_url());
 
     let base = mogen_llm::GenerateConfig::new("a wooden stool");
-    let plan = mogen_llm::generate_plan(&client, &base, "a wooden stool")
-        .expect("plan call ok");
+    let plan = mogen_llm::generate_plan(&client, &base, "a wooden stool").expect("plan call ok");
     assert!(plan.plan.contains("four legs"));
 
     let coder_user_prompt = mogen_llm::compose_coder_prompt("a wooden stool", &plan.plan);
@@ -261,7 +283,11 @@ fn planner_then_coder_threads_plan_into_user_turn() {
     let outcome = generate_with_repair(
         &client,
         coder_cfg,
-        &RepairConfig { max_iters: 0, on_iteration: None, allow_edit_mode: false },
+        &RepairConfig {
+            max_iters: 0,
+            on_iteration: None,
+            allow_edit_mode: false,
+        },
     )
     .expect("coder call ok");
     assert!(outcome.is_ok(), "diagnostics: {:?}", outcome.diagnostics);
@@ -307,7 +333,11 @@ fn visual_refine_attaches_image_and_dsl() {
     let outcome = mogen_llm::visual_refine(
         &client,
         &base,
-        &RepairConfig { max_iters: 0, on_iteration: None, allow_edit_mode: false },
+        &RepairConfig {
+            max_iters: 0,
+            on_iteration: None,
+            allow_edit_mode: false,
+        },
         registry,
         "a wooden stool",
         previous_dsl,
@@ -371,8 +401,16 @@ fn zai_vision_uses_image_url_content() {
         // Three bytes that base64-encode to "AQID".
         data: vec![0x01, 0x02, 0x03],
     });
-    let _ = generate_with_repair(&client, cfg, &RepairConfig { max_iters: 0, on_iteration: None, allow_edit_mode: false })
-        .expect("request ok");
+    let _ = generate_with_repair(
+        &client,
+        cfg,
+        &RepairConfig {
+            max_iters: 0,
+            on_iteration: None,
+            allow_edit_mode: false,
+        },
+    )
+    .expect("request ok");
 
     let reqs = server.requests.lock().unwrap();
     assert_eq!(reqs.len(), 1);
@@ -381,15 +419,14 @@ fn zai_vision_uses_image_url_content() {
     let messages = body["messages"].as_array().expect("messages array");
     let user = messages.last().expect("user turn");
     assert_eq!(user["role"], "user");
-    let parts = user["content"].as_array().expect("content array on vision turn");
+    let parts = user["content"]
+        .as_array()
+        .expect("content array on vision turn");
     assert_eq!(parts.len(), 2, "got: {body}");
     assert_eq!(parts[0]["type"], "text");
     assert_eq!(parts[0]["text"], "describe");
     assert_eq!(parts[1]["type"], "image_url");
-    assert_eq!(
-        parts[1]["image_url"]["url"],
-        "data:image/png;base64,AQID"
-    );
+    assert_eq!(parts[1]["image_url"]["url"], "data:image/png;base64,AQID");
 }
 
 #[test]
@@ -402,8 +439,7 @@ fn fireworks_vision_uses_image_url_content() {
     // OpenAI-compatible Chat Completions surface.
     let dsl = "scene { box \"b\" (size=[1,1,1]) }";
     let server = MockServer::start(vec![&zai_chat_body(dsl)]);
-    let client =
-        LlmClient::with_base_url(Provider::Fireworks, "test-key", server.base_url());
+    let client = LlmClient::with_base_url(Provider::Fireworks, "test-key", server.base_url());
 
     let mut cfg = GenerateConfig::new("describe");
     cfg.model = "accounts/fireworks/routers/kimi-k2p6".to_string();
@@ -412,8 +448,16 @@ fn fireworks_vision_uses_image_url_content() {
         // Three bytes that base64-encode to "AQID".
         data: vec![0x01, 0x02, 0x03],
     });
-    let _ = generate_with_repair(&client, cfg, &RepairConfig { max_iters: 0, on_iteration: None, allow_edit_mode: false })
-        .expect("request ok");
+    let _ = generate_with_repair(
+        &client,
+        cfg,
+        &RepairConfig {
+            max_iters: 0,
+            on_iteration: None,
+            allow_edit_mode: false,
+        },
+    )
+    .expect("request ok");
 
     let reqs = server.requests.lock().unwrap();
     assert_eq!(reqs.len(), 1);
@@ -422,12 +466,63 @@ fn fireworks_vision_uses_image_url_content() {
     let messages = body["messages"].as_array().expect("messages array");
     let user = messages.last().expect("user turn");
     assert_eq!(user["role"], "user");
-    let parts = user["content"].as_array().expect("content array on vision turn");
+    let parts = user["content"]
+        .as_array()
+        .expect("content array on vision turn");
     assert_eq!(parts.len(), 2, "got: {body}");
     assert_eq!(parts[0]["type"], "text");
     assert_eq!(parts[0]["text"], "describe");
     assert_eq!(parts[1]["type"], "image_url");
     assert_eq!(parts[1]["image_url"]["url"], "data:image/png;base64,AQID");
+}
+
+#[test]
+fn xiaomi_vision_uses_image_url_content() {
+    // Xiaomi MiMo's OpenAI-compatible vision docs use
+    // `content: [{type:"image_url"}, {type:"text"}]` against `mimo-v2.5`.
+    // Pin the provider-specific ordering and model routing shape without
+    // hitting the real API.
+    let dsl = "scene { box \"b\" (size=[1,1,1]) }";
+    let server = MockServer::start(vec![&zai_chat_body(dsl)]);
+    let client = LlmClient::with_base_url(Provider::Xiaomi, "test-key", server.base_url());
+
+    let mut cfg = GenerateConfig::new("describe");
+    cfg.model = mogen_llm::XIAOMI_DEFAULT_VISION_MODEL.to_string();
+    cfg.user_images.push(ImageInput {
+        mime_type: "image/png".into(),
+        // Three bytes that base64-encode to "AQID".
+        data: vec![0x01, 0x02, 0x03],
+    });
+    let _ = generate_with_repair(
+        &client,
+        cfg,
+        &RepairConfig {
+            max_iters: 0,
+            on_iteration: None,
+            allow_edit_mode: false,
+        },
+    )
+    .expect("request ok");
+
+    let reqs = server.requests.lock().unwrap();
+    assert_eq!(reqs.len(), 1);
+    let body: serde_json::Value = serde_json::from_str(&reqs[0]).expect("valid JSON");
+    assert_eq!(body["model"], mogen_llm::XIAOMI_DEFAULT_VISION_MODEL);
+    let messages = body["messages"].as_array().expect("messages array");
+    let user = messages.last().expect("user turn");
+    assert_eq!(user["role"], "user");
+    let parts = user["content"]
+        .as_array()
+        .expect("content array on vision turn");
+    assert_eq!(parts.len(), 2, "got: {body}");
+    assert_eq!(parts[0]["type"], "image_url");
+    assert_eq!(parts[0]["image_url"]["url"], "data:image/png;base64,AQID");
+    assert_eq!(parts[1]["type"], "text");
+    assert_eq!(parts[1]["text"], "describe");
+    assert!(
+        body.get("seed").is_none(),
+        "Xiaomi payload must not include undocumented seed field: {body}"
+    );
 }
 
 #[test]
@@ -450,7 +545,10 @@ fn edit_mode_first_call_applies_search_replace_against_baseline() {
     .expect("request ok");
 
     assert!(outcome.is_ok(), "diagnostics: {:?}", outcome.diagnostics);
-    assert_eq!(outcome.call_count, 1, "edit mode should resolve in one call");
+    assert_eq!(
+        outcome.call_count, 1,
+        "edit mode should resolve in one call"
+    );
     assert!(
         outcome.dsl.contains("size=[2,2,2]"),
         "edit block should mutate the baseline: {}",

@@ -30,7 +30,29 @@ struct Cli {
     cmd: Cmd,
 }
 
+#[cfg(windows)]
 fn main() -> ExitCode {
+    // The clap command graph is large enough that debug Windows builds can
+    // overflow the 1 MiB process-main stack while constructing help/version
+    // output. Run the real entry point on an explicit stack so `cargo run`
+    // and release binaries behave the same.
+    let worker = std::thread::Builder::new()
+        .name("mogen-main".to_string())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(run)
+        .expect("spawn mogen main thread");
+    match worker.join() {
+        Ok(code) => code,
+        Err(panic) => std::panic::resume_unwind(panic),
+    }
+}
+
+#[cfg(not(windows))]
+fn main() -> ExitCode {
+    run()
+}
+
+fn run() -> ExitCode {
     let cli = Cli::parse();
 
     // Spend tracker (issue 60). Best-effort — failures are silent so

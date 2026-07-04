@@ -25,7 +25,8 @@ connectors, skeletons + skinning + animation templates, full PBR materials with 
 textures, validation diagnostics, and LLM-driven generate/modify/animate are all
 working. Multiple LLM backends are supported out of the box — Gemini (API key or
 Google OAuth), OpenAI, Anthropic, Ollama (local), Claude Code (subscription),
-Fireworks AI Firepass (Kimi K2 routers), and Z.ai (GLM family, default `glm-5.1`). See
+Fireworks AI Firepass (Kimi K2 routers), Z.ai (GLM family, default `glm-5.1`),
+and Xiaomi MiMo (default `mimo-v2.5-pro`). See
 [`docs/dsl.md`](docs/dsl.md) for the full feature surface.
 
 ## Install
@@ -166,7 +167,7 @@ mogen update                                           # self-update from the la
 default that's Gemini (`GEMINI_API_KEY` env var, `--api-key` flag, stored OAuth
 bundle, or the shared settings file — see below). Pick a different backend with
 `--provider <name>` and the matching env var: `OPENAI_API_KEY`,
-`ANTHROPIC_API_KEY`, `FIREWORKS_API_KEY`, `ZAI_API_KEY`, etc. `animate` is
+`ANTHROPIC_API_KEY`, `FIREWORKS_API_KEY`, `ZAI_API_KEY`, `XIAOMI_API_KEY`, etc. `animate` is
 scoped to top-level animation declarations only (`joint`, `clip`/`track`, and
 the `spin` / `open_close` / `wave` / `flap` / `idle` templates) — it leaves
 geometry, materials, and hierarchy untouched. There are a few more
@@ -197,7 +198,8 @@ The file is plain JSON. A minimal example:
   "openai_api_key": "sk-...",
   "anthropic_api_key": "sk-ant-...",
   "fireworks_api_key": "fw_...",
-  "zai_api_key": "..."
+  "zai_api_key": "...",
+  "xiaomi_api_key": "sk-..."
 }
 ```
 
@@ -212,6 +214,7 @@ The file is plain JSON. A minimal example:
 | Claude Code  | `claude-code`      | `sonnet` (delegates to `claude` CLI)       | — (subscription)      |
 | Fireworks AI Firepass | `fireworks` | `accounts/fireworks/routers/kimi-k2p6`     | `FIREWORKS_API_KEY`   |
 | Z.ai (GLM)   | `zai`              | `glm-5.1`                                  | `ZAI_API_KEY`         |
+| Xiaomi MiMo | `xiaomi`           | `mimo-v2.5-pro`                          | `XIAOMI_API_KEY`      |
 
 \* Ollama is keyless for local installs — the env var is only consulted when
 running behind an authenticating reverse proxy.
@@ -224,6 +227,10 @@ Notes:
 - **Z.ai** uses an OpenAI-compatible Chat Completions endpoint at
   `api.z.ai/api/paas/v4/chat/completions`. The same `ZAI_API_KEY` also
   authenticates the `glm-image` image-gen path used by `mogen textures`.
+- **Xiaomi MiMo** uses the OpenAI-compatible Chat Completions endpoint at
+  `api.xiaomimimo.com/v1/chat/completions`; MoGen uses Bearer auth because
+  Xiaomi documents it alongside the `api-key` header. Vision calls auto-switch
+  to `mimo-v2.5`.
 - **Claude Code** is keyless — it shells out to the `claude` CLI, so auth
   is whatever `claude login` already set up.
 

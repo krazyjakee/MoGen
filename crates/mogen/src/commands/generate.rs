@@ -1,13 +1,13 @@
 use std::fs;
 use std::path::PathBuf;
 
+use crate::refine_render::render_dsl_to_png;
 use anyhow::{anyhow, bail, Context, Result};
 use mogen_llm::{
     apply_style_to_prompt, compose_coder_prompt, embed_seed_header, generate_plan,
     generate_with_repair, stamp_style_header, visual_refine, GenerateConfig, ImageInput, Provider,
     RepairConfig, Style, ThinkingLevel, Usage,
 };
-use crate::refine_render::render_dsl_to_png;
 
 use crate::commands::build::build;
 use crate::common::{
@@ -57,7 +57,6 @@ pub(crate) fn generate(args: GenerateArgs) -> Result<()> {
 
     // Visual refinement requires a vision-capable provider — bail early so
     // the user doesn't burn tokens on a Coder pass that can't be refined.
-    // Today that's Gemini only.
     if args.auto_refine > 0 && !provider.supports_images() {
         bail!(
             "--auto-refine requires a vision-capable provider; {} does not support image input",
@@ -115,7 +114,13 @@ pub(crate) fn generate(args: GenerateArgs) -> Result<()> {
     // Generate has no prior file to read a header from; use CLI or library default.
     let effective_thinking = args.thinking.unwrap_or(ThinkingLevel::High);
     cfg.thinking_level = Some(effective_thinking);
-    attach_system_instruction(&mut cfg, &client, args.cached_content, args.no_cache, "generate");
+    attach_system_instruction(
+        &mut cfg,
+        &client,
+        args.cached_content,
+        args.no_cache,
+        "generate",
+    );
 
     let provider_label = provider.label();
 
@@ -135,9 +140,7 @@ pub(crate) fn generate(args: GenerateArgs) -> Result<()> {
         let plan_outcome = match generate_plan(&client, &cfg, &args.prompt) {
             Ok(o) => o,
             Err(e) => {
-                pb.abandon_with_message(format!(
-                    "generate: {provider_label} planner error — {e}"
-                ));
+                pb.abandon_with_message(format!("generate: {provider_label} planner error — {e}"));
                 return Err(anyhow!("{}: planner: {e}", provider_label.to_lowercase()));
             }
         };
@@ -197,10 +200,7 @@ pub(crate) fn generate(args: GenerateArgs) -> Result<()> {
         let registry = mogen_dsl::stdlib_registry();
         for iter in 0..args.auto_refine {
             let label = format!("refine {}/{}", iter + 1, args.auto_refine);
-            let mut pb = Spinner::new(
-                &format!("generate: rendering for {label}"),
-                LLM_FLAVORS,
-            );
+            let mut pb = Spinner::new(&format!("generate: rendering for {label}"), LLM_FLAVORS);
 
             let png = match render_dsl_to_png(&outcome.dsl, resolved_dsl_out.as_deref()) {
                 Ok(bytes) => bytes,
@@ -237,14 +237,16 @@ pub(crate) fn generate(args: GenerateArgs) -> Result<()> {
                 data: png,
             };
 
-            // Z.ai vision auto-swap. The Coder pass on Z.ai runs against
-            // a text model (`glm-5.1` by default); the Reviewer needs to
-            // read the rendered PNG, so it has to route through
-            // `glm-5v-turbo` instead. Mirrors the Studio-side override
-            // in `app/util/llm.rs::run_llm_refine`.
+            // Provider-specific vision auto-swaps. Some providers expose
+            // separate text and image-understanding model ids; route the
+            // Reviewer through the documented vision model when it needs to
+            // read the rendered PNG. Mirrors the Studio-side override in
+            // `app/util/llm.rs::run_llm`.
             let mut refine_cfg = cfg.clone();
             if provider == Provider::Zai {
                 refine_cfg.model = mogen_llm::ZAI_DEFAULT_VISION_MODEL.to_string();
+            } else if provider == Provider::Xiaomi {
+                refine_cfg.model = mogen_llm::XIAOMI_DEFAULT_VISION_MODEL.to_string();
             }
             let refined = match visual_refine(
                 &client,
@@ -306,7 +308,10 @@ pub(crate) fn generate(args: GenerateArgs) -> Result<()> {
         // Print diagnostics so the user knows what the LLM missed.
         let filename = "<generated>".to_string();
         if args.dry_run {
-            eprintln!("{}", mogen_validate::render_json(&filename, &outcome.diagnostics));
+            eprintln!(
+                "{}",
+                mogen_validate::render_json(&filename, &outcome.diagnostics)
+            );
             println!("{}", wrapped);
         } else {
             mogen_validate::render_human(&filename, &wrapped, &outcome.diagnostics);
@@ -336,8 +341,7 @@ pub(crate) fn generate(args: GenerateArgs) -> Result<()> {
     let out_path = resolved_out.expect("out checked above");
     let dsl_path = resolved_dsl_out.expect("dsl_out resolved above for non-dry-run");
 
-    fs::write(&dsl_path, &wrapped)
-        .with_context(|| format!("writing {}", dsl_path.display()))?;
+    fs::write(&dsl_path, &wrapped).with_context(|| format!("writing {}", dsl_path.display()))?;
 
     // Reuse the regular build path so the user gets the same progress line.
     build(dsl_path, out_path, None)

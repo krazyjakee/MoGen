@@ -73,11 +73,7 @@ impl MogenStudioApp {
                     .show_ui(ui, |ui| {
                         for slot in PROVIDER_SLOTS {
                             let selected = slot == current_slot;
-                            if ui
-                                .selectable_label(selected, slot.label())
-                                .clicked()
-                                && !selected
-                            {
+                            if ui.selectable_label(selected, slot.label()).clicked() && !selected {
                                 self.settings.set_provider_slot(slot);
                             }
                         }
@@ -104,11 +100,7 @@ impl MogenStudioApp {
                     .show_ui(ui, |ui| {
                         for p in IMAGE_PROVIDERS {
                             let selected = p == current_image;
-                            if ui
-                                .selectable_label(selected, p.label())
-                                .clicked()
-                                && !selected
-                            {
+                            if ui.selectable_label(selected, p.label()).clicked() && !selected {
                                 self.settings.set_image_provider(p);
                             }
                         }
@@ -131,9 +123,7 @@ impl MogenStudioApp {
                              will surface a 'wrong client' error if used for \
                              textures)"
                         }
-                        Some(Credential::Zai(_)) => {
-                            "Auto → Z.ai (unusual settings combination)"
-                        }
+                        Some(Credential::Zai(_)) => "Auto → Z.ai (unusual settings combination)",
                         None => {
                             "Auto → no credential resolved — texture \
                              generation will fail. Sign in to Antigravity or \
@@ -255,6 +245,13 @@ impl MogenStudioApp {
                      the `glm-image` texture path when you set Image \
                      provider → Z.ai.",
                 ),
+                Provider::Xiaomi => (
+                    "Xiaomi MiMo API key",
+                    "Used by Generate / Modify / Animate / Ask. Default \
+                     model is `mimo-v2.5-pro` via Xiaomi's OpenAI-compatible \
+                     chat API. `mimo-v2.5` is used automatically for image \
+                     inputs.",
+                ),
                 Provider::OpenAiCompat => (
                     "OpenAI-compatible API key (optional)",
                     "Optional bearer token for a local OpenAI-compatible \
@@ -273,25 +270,19 @@ impl MogenStudioApp {
                     Provider::Ollama => &mut self.settings.ollama_api_key,
                     Provider::Fireworks => &mut self.settings.fireworks_api_key,
                     Provider::Zai => &mut self.settings.zai_api_key,
+                    Provider::Xiaomi => &mut self.settings.xiaomi_api_key,
                     Provider::OpenAiCompat => &mut self.settings.openai_compat_api_key,
                     Provider::ClaudeCode => unreachable!(),
                 };
-                crate::app::text_menu::text_edit_with_menu(
-                    ui,
-                    key_id,
-                    key_buf,
-                    |ui, text| {
-                        ui.add(
-                            egui::TextEdit::singleline(text)
-                                .password(true)
-                                .hint_text(style::placeholder(
-                                    "paste key (leave blank to clear)",
-                                ))
-                                .desired_width(f32::INFINITY)
-                                .id(key_id),
-                        )
-                    },
-                );
+                crate::app::text_menu::text_edit_with_menu(ui, key_id, key_buf, |ui, text| {
+                    ui.add(
+                        egui::TextEdit::singleline(text)
+                            .password(true)
+                            .hint_text(style::placeholder("paste key (leave blank to clear)"))
+                            .desired_width(f32::INFINITY)
+                            .id(key_id),
+                    )
+                });
 
                 if matches!(active_provider, Provider::Ollama) {
                     ui.add_space(6.0);
@@ -408,7 +399,10 @@ impl MogenStudioApp {
                             .unwrap_or_else(|| active_provider.default_fast_model()),
                     )
                 } else {
-                    (active_provider.default_model(), active_provider.default_fast_model())
+                    (
+                        active_provider.default_model(),
+                        active_provider.default_fast_model(),
+                    )
                 };
                 let presets = model_presets(active_slot);
 
@@ -437,10 +431,7 @@ impl MogenStudioApp {
                     .width(preset_w)
                     .show_ui(ui, |ui| {
                         for m in presets {
-                            if ui
-                                .selectable_label(thinking_draft == *m, *m)
-                                .clicked()
-                            {
+                            if ui.selectable_label(thinking_draft == *m, *m).clicked() {
                                 thinking_draft = (*m).to_string();
                             }
                         }
@@ -453,13 +444,9 @@ impl MogenStudioApp {
                 ui.add_space(6.0);
 
                 // --- fast model: same row pattern ---
-                ui.label("Fast model").on_hover_text(
-                    "Used for low-stakes text rewrites like the Prompt Enhancer.",
-                );
-                let mut fast_draft = self
-                    .settings
-                    .fast_model_field(active_provider)
-                    .to_string();
+                ui.label("Fast model")
+                    .on_hover_text("Used for low-stakes text rewrites like the Prompt Enhancer.");
+                let mut fast_draft = self.settings.fast_model_field(active_provider).to_string();
                 ui.horizontal(|ui| {
                     let preset_w = 96.0;
                     let avail = ui.available_width().max(preset_w + 60.0);
@@ -502,12 +489,9 @@ impl MogenStudioApp {
                     // figure without expanding the breakdown.
                     let typical_in = 5_000.0_f64;
                     let typical_out = 3_000.0_f64;
-                    let typical_cost = typical_in
-                        * thinking_price.input_per_million_usd
+                    let typical_cost = typical_in * thinking_price.input_per_million_usd
                         / 1_000_000.0
-                        + typical_out
-                            * thinking_price.output_per_million_usd
-                            / 1_000_000.0;
+                        + typical_out * thinking_price.output_per_million_usd / 1_000_000.0;
                     ui.add_space(8.0);
                     ui.label(
                         egui::RichText::new(format!(
@@ -566,13 +550,7 @@ impl MogenStudioApp {
                                         );
                                     }
                                     if fast_price.input_per_million_usd > 0.0 {
-                                        price_grid_row(
-                                            ui,
-                                            "Fast",
-                                            &fast_model,
-                                            fast_price,
-                                            false,
-                                        );
+                                        price_grid_row(ui, "Fast", &fast_model, fast_price, false);
                                         if fast_price.is_tiered() {
                                             price_grid_row(
                                                 ui,
@@ -586,10 +564,7 @@ impl MogenStudioApp {
                                     if img_price.per_image_usd > 0.0 {
                                         ui.label("Image");
                                         ui.label(img_model);
-                                        ui.label(format!(
-                                            "${:.3}/image",
-                                            img_price.per_image_usd,
-                                        ));
+                                        ui.label(format!("${:.3}/image", img_price.per_image_usd,));
                                         ui.label("");
                                         ui.label("");
                                         ui.end_row();
@@ -649,14 +624,13 @@ impl MogenStudioApp {
                 .gemini_temperature
                 .unwrap_or(mogen_llm::gemini::DEFAULT_TEMPERATURE);
             ui.horizontal(|ui| {
-                let resp = ui.add(
-                    egui::Slider::new(&mut temp, 0.0..=2.0)
-                        .max_decimals(2)
-                        .text("°"),
-                )
-                .on_hover_text(
-                    "0 = deterministic, 2 = chaotic. Default 0.3.",
-                );
+                let resp = ui
+                    .add(
+                        egui::Slider::new(&mut temp, 0.0..=2.0)
+                            .max_decimals(2)
+                            .text("°"),
+                    )
+                    .on_hover_text("0 = deterministic, 2 = chaotic. Default 0.3.");
                 if resp.changed() {
                     self.settings.gemini_temperature = Some(temp);
                 }
@@ -682,11 +656,7 @@ impl MogenStudioApp {
                 .max_repair_iters
                 .unwrap_or(DEFAULT_MAX_REPAIR_ITERS);
             if ui
-                .add(
-                    egui::DragValue::new(&mut iters)
-                        .range(0..=5)
-                        .speed(0.1),
-                )
+                .add(egui::DragValue::new(&mut iters).range(0..=5).speed(0.1))
                 .on_hover_text("Range 0–5.")
                 .changed()
             {
@@ -713,10 +683,11 @@ impl MogenStudioApp {
                         .desired_width(160.0),
                 );
                 let trimmed = seed_str.trim().to_string();
-                let parse_result =
-                    if trimmed.is_empty() { Ok(None) } else {
-                        trimmed.parse::<u64>().map(Some)
-                    };
+                let parse_result = if trimmed.is_empty() {
+                    Ok(None)
+                } else {
+                    trimmed.parse::<u64>().map(Some)
+                };
                 if resp.changed() {
                     self.settings.seed_override = match &parse_result {
                         Ok(v) => *v,
@@ -728,8 +699,7 @@ impl MogenStudioApp {
                     .on_hover_text("Pick a random seed now")
                     .clicked()
                 {
-                    self.settings.seed_override =
-                        Some(crate::app::util::pick_default_seed());
+                    self.settings.seed_override = Some(crate::app::util::pick_default_seed());
                 }
                 if ui
                     .small_button("Clear")
@@ -742,8 +712,7 @@ impl MogenStudioApp {
                 // didn't take effect — matches the new_prompt dialog.
                 if !trimmed.is_empty() && parse_result.is_err() {
                     ui.label(
-                        egui::RichText::new("not a valid u64")
-                            .color(ui.visuals().warn_fg_color),
+                        egui::RichText::new("not a valid u64").color(ui.visuals().warn_fg_color),
                     );
                 }
             });
