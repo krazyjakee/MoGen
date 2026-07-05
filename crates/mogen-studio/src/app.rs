@@ -519,6 +519,7 @@ impl MogenStudioApp {
             .seed_override
             .map(|s| s.to_string())
             .unwrap_or_default();
+        let prefs_remote_port_draft = settings.remote_port().to_string();
         install_fonts(&cc.egui_ctx);
         apply_theme(&cc.egui_ctx, settings.theme());
         viewer.set_preview_shader(settings.preview_shader());
@@ -675,7 +676,7 @@ impl MogenStudioApp {
             spend_session_id: gen_session_id(),
             show_spending: false,
             spending: crate::app::spend_panel::SpendingState::default(),
-            prefs_remote_port_draft: String::new(),
+            prefs_remote_port_draft,
             remote: None,
             remote_error: None,
             remote_last_snapshot: None,
