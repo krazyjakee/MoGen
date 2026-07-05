@@ -867,3 +867,41 @@ impl Settings {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn remote_port_defaults_when_unset_or_zero() {
+        let mut s = Settings::default();
+        assert_eq!(s.remote_port(), DEFAULT_REMOTE_PORT);
+        s.set_remote_port(0);
+        assert_eq!(s.remote_port(), DEFAULT_REMOTE_PORT);
+    }
+
+    #[test]
+    fn remote_port_clamps_privileged_range() {
+        let mut s = Settings::default();
+        s.set_remote_port(80);
+        assert_eq!(s.remote_port(), 1024, "a hand-edited settings file must not be able to request a root-only bind");
+        s.set_remote_port(1023);
+        assert_eq!(s.remote_port(), 1024);
+    }
+
+    #[test]
+    fn remote_port_passes_through_unprivileged_values() {
+        let mut s = Settings::default();
+        s.set_remote_port(7878);
+        assert_eq!(s.remote_port(), 7878);
+        s.set_remote_port(65535);
+        assert_eq!(s.remote_port(), 65535);
+    }
+
+    #[test]
+    fn remote_toggles_default_off() {
+        let s = Settings::default();
+        assert!(!s.remote_enabled());
+        assert!(!s.remote_allow_lan());
+    }
+}

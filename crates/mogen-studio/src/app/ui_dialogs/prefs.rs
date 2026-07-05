@@ -469,12 +469,9 @@ impl MogenStudioApp {
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             ui.label("Port");
-            // Seed the draft from settings on first paint (and after an
-            // external change wiped it). Committed below on Enter / focus
-            // loss so half-typed ports never reach the server.
-            if self.prefs_remote_port_draft.is_empty() {
-                self.prefs_remote_port_draft = self.settings.remote_port().to_string();
-            }
+            // Draft is seeded once from settings at startup (`MogenStudioApp::new`)
+            // and only ever written back here on commit, so a user clearing the
+            // field to type a new value never gets silently reset mid-edit.
             let resp = ui.add(
                 egui::TextEdit::singleline(&mut self.prefs_remote_port_draft)
                     .desired_width(72.0),
