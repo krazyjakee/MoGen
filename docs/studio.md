@@ -258,10 +258,36 @@ path. It's safe to edit by hand — Studio reloads on next launch.
 | `open_tabs` | Absolute paths of every titled tab open at last persist time. |
 | `recent_files` | Most-recently-opened paths, newest first. Capped at 12. |
 | `onboarded` | Set once the first-launch onboarding has been dismissed. |
+| `remote_enabled` | Serve the remote-control web dashboard. `null`/`false` → off. |
+| `remote_port` | TCP port for the dashboard. `null`/`0` → `7878`. |
+| `remote_allow_lan` | Bind `0.0.0.0` so other devices on the network can connect. `null`/`false` → loopback only. |
 
 Untitled buffers are deliberately not persisted — there's nothing to
 key off — so a fresh Studio launch with only-untitled tabs comes up
 empty. Save first if you want them back.
+
+---
+
+## Remote control
+
+Options › **Remote** can start an embedded web server that mirrors the
+live session in any browser: the open tabs, the active source, compile
+diagnostics, scene stats, and a slowly orbiting live preview of the
+compiled model. The dashboard can push source edits back, save, force a
+recompile, and kick off a **Build GLB** — every action lands in the
+desktop session exactly as if it were performed there (remote edits even
+join the in-app undo stack).
+
+- Off by default. Enable it with the checkbox; the server starts
+  immediately and the dialog shows the URL (default
+  `http://127.0.0.1:7878/`).
+- By default only this machine can connect. Ticking *Allow connections
+  from other devices* rebinds to `0.0.0.0` so a phone or tablet on the
+  same network can drive Studio — there is **no password**, so only do
+  this on networks you trust.
+- The preview renders on the same GL pipeline as thumbnails, only while
+  a browser is actually watching, and always yields to real capture
+  work (thumbnail / video / publish renders).
 
 ---
 

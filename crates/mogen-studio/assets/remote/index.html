@@ -1,0 +1,534 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MoGen Remote</title>
+<style>
+  :root {
+    --bg: #0d0f13;
+    --bg-soft: #14171d;
+    --card: #171b22;
+    --card-edge: #262c37;
+    --ink: #e8e4dc;
+    --ink-dim: #9aa0ab;
+    --ink-faint: #5f6672;
+    --accent: #f0a858;
+    --accent-deep: #b06024;
+    --ok: #6fce8f;
+    --warn: #e8b440;
+    --err: #e86050;
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background:
+      radial-gradient(1200px 600px at 85% -10%, rgba(176, 96, 36, 0.14), transparent 60%),
+      radial-gradient(900px 500px at -10% 110%, rgba(88, 120, 240, 0.06), transparent 60%),
+      var(--bg);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 1280px; margin: 0 auto; padding: 20px 20px 48px; }
+
+  /* ------------------------------------------------------- header */
+  header {
+    display: flex; align-items: center; gap: 14px;
+    padding: 6px 2px 16px;
+  }
+  .brand {
+    font-size: 1.35rem; font-weight: 700; letter-spacing: 0.2px;
+    display: flex; align-items: baseline; gap: 8px; white-space: nowrap;
+  }
+  .brand .mark { color: var(--accent); }
+  .brand .sub {
+    font-size: 0.78rem; font-weight: 600; color: var(--ink-faint);
+    text-transform: uppercase; letter-spacing: 2.2px;
+  }
+  .spacer { flex: 1; }
+  .conn { display: flex; align-items: center; gap: 8px; font-size: 0.86rem; color: var(--ink-dim); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--err); transition: background .3s; }
+  .dot.on { background: var(--ok); box-shadow: 0 0 8px rgba(111, 206, 143, 0.6); }
+
+  /* ------------------------------------------------------- tabs */
+  .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+  .tab {
+    background: var(--bg-soft); border: 1px solid var(--card-edge);
+    color: var(--ink-dim); border-radius: 8px; padding: 6px 14px;
+    font-size: 0.88rem; cursor: pointer; transition: all .15s;
+    font-family: var(--mono);
+  }
+  .tab:hover { color: var(--ink); border-color: var(--accent-deep); }
+  .tab.active {
+    color: var(--ink); background: linear-gradient(180deg, #22190f, #1b1510);
+    border-color: var(--accent-deep);
+    box-shadow: inset 0 1px 0 rgba(240, 168, 88, 0.15);
+  }
+  .tab .dirty { color: var(--accent); margin-left: 5px; }
+
+  /* ------------------------------------------------------- layout */
+  .grid { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 16px; }
+  @media (max-width: 900px) { .grid { grid-template-columns: minmax(0, 1fr); } }
+
+  .card {
+    background: var(--card); border: 1px solid var(--card-edge);
+    border-radius: 12px; overflow: hidden;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  }
+  .card + .card { margin-top: 16px; }
+  .card-head {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 14px; border-bottom: 1px solid var(--card-edge);
+    background: rgba(255, 255, 255, 0.015);
+  }
+  .card-head h2 {
+    margin: 0; font-size: 0.8rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 1.6px; color: var(--ink-dim);
+  }
+  .card-body { padding: 14px; }
+
+  /* ------------------------------------------------------- editor */
+  #editor {
+    width: 100%; min-height: 46vh; resize: vertical;
+    background: #101318; color: #e6e1d6;
+    border: 1px solid var(--card-edge); border-radius: 8px;
+    padding: 12px 14px; font-family: var(--mono); font-size: 13.5px;
+    line-height: 1.55; tab-size: 2; outline: none;
+    white-space: pre; overflow-wrap: normal; overflow-x: auto;
+  }
+  #editor:focus { border-color: var(--accent-deep); box-shadow: 0 0 0 3px rgba(176, 96, 36, 0.18); }
+  .editor-bar { display: flex; align-items: center; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .hint { font-size: 0.8rem; color: var(--ink-faint); }
+  .hint.pending { color: var(--warn); }
+
+  /* ------------------------------------------------------- buttons */
+  button.btn {
+    font-family: var(--sans); font-size: 0.88rem; font-weight: 600;
+    border-radius: 8px; padding: 7px 16px; cursor: pointer;
+    border: 1px solid var(--card-edge); background: var(--bg-soft); color: var(--ink);
+    transition: all .15s;
+  }
+  button.btn:hover:not(:disabled) { border-color: var(--accent-deep); }
+  button.btn:disabled { opacity: 0.4; cursor: default; }
+  button.btn.primary {
+    background: linear-gradient(180deg, #cf7f34, #a5551f);
+    border-color: #cf7f34; color: #fff8ef;
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.25);
+  }
+  button.btn.primary:hover:not(:disabled) { filter: brightness(1.1); }
+
+  /* ------------------------------------------------------- preview */
+  .preview-box {
+    position: relative; aspect-ratio: 1 / 1; max-height: 380px;
+    display: flex; align-items: center; justify-content: center;
+    background:
+      radial-gradient(closest-side, rgba(240, 168, 88, 0.05), transparent),
+      #363a40;
+    border-radius: 8px; overflow: hidden;
+  }
+  .preview-box img { max-width: 100%; max-height: 100%; display: none; }
+  .preview-empty { color: var(--ink-faint); font-size: 0.85rem; text-align: center; padding: 0 20px; }
+
+  /* ------------------------------------------------------- stats / chips */
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .stat {
+    background: var(--bg-soft); border: 1px solid var(--card-edge);
+    border-radius: 8px; padding: 8px 12px;
+  }
+  .stat .k { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 1.2px; color: var(--ink-faint); }
+  .stat .v { font-size: 1.15rem; font-weight: 700; font-family: var(--mono); }
+
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 0.75rem; font-weight: 700; letter-spacing: 0.8px;
+    padding: 3px 10px; border-radius: 999px; text-transform: uppercase;
+  }
+  .chip.ok   { background: rgba(111, 206, 143, 0.12); color: var(--ok); }
+  .chip.err  { background: rgba(232, 96, 80, 0.14);  color: var(--err); }
+  .chip.busy { background: rgba(232, 180, 64, 0.13); color: var(--warn); }
+  .chip.busy::before {
+    content: ""; width: 8px; height: 8px; border-radius: 50%;
+    background: currentColor; animation: pulse 1.1s ease-in-out infinite;
+  }
+  @keyframes pulse { 50% { opacity: 0.25; } }
+
+  .statusline {
+    margin-top: 12px; font-family: var(--mono); font-size: 0.82rem;
+    color: var(--ink-dim); word-break: break-word;
+  }
+  .actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+
+  /* ------------------------------------------------------- diagnostics */
+  .diag-list { display: flex; flex-direction: column; gap: 6px; max-height: 300px; overflow-y: auto; }
+  .diag {
+    display: flex; gap: 10px; align-items: baseline;
+    background: var(--bg-soft); border: 1px solid var(--card-edge);
+    border-left: 3px solid var(--ink-faint);
+    border-radius: 6px; padding: 7px 10px; cursor: pointer;
+    font-size: 0.84rem;
+  }
+  .diag:hover { border-color: var(--accent-deep); }
+  .diag.error   { border-left-color: var(--err); }
+  .diag.warning { border-left-color: var(--warn); }
+  .diag .code { font-family: var(--mono); color: var(--ink-faint); flex-shrink: 0; }
+  .diag .line { font-family: var(--mono); color: var(--accent); flex-shrink: 0; }
+  .diag-clean { color: var(--ink-faint); font-size: 0.86rem; padding: 4px 2px; }
+  .diag-clean .tick { color: var(--ok); }
+
+  /* ------------------------------------------------------- toasts */
+  #toasts {
+    position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+    display: flex; flex-direction: column; gap: 8px; z-index: 50; align-items: center;
+  }
+  .toast {
+    background: #21262f; border: 1px solid var(--card-edge); color: var(--ink);
+    border-radius: 8px; padding: 9px 18px; font-size: 0.86rem;
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+    animation: rise .2s ease-out;
+  }
+  .toast.err { border-color: var(--err); color: #f4b0a8; }
+  @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
+
+  footer {
+    margin-top: 28px; text-align: center;
+    color: var(--ink-faint); font-size: 0.78rem;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">Mo<span class="mark">Gen</span>&nbsp;<span class="sub">Remote</span></div>
+    <div class="spacer"></div>
+    <div class="conn"><span class="dot" id="conn-dot"></span><span id="conn-text">connecting…</span></div>
+  </header>
+
+  <div class="tabs" id="tabs"></div>
+
+  <div class="grid">
+    <div>
+      <div class="card">
+        <div class="card-head">
+          <h2>Source</h2>
+          <div class="spacer" style="flex:1"></div>
+          <span class="hint" id="edit-hint">synced</span>
+        </div>
+        <div class="card-body">
+          <textarea id="editor" spellcheck="false" autocomplete="off" autocapitalize="off"></textarea>
+          <div class="editor-bar">
+            <button class="btn primary" id="btn-apply" disabled>Apply</button>
+            <button class="btn" id="btn-discard" disabled>Discard edits</button>
+            <div class="spacer" style="flex:1"></div>
+            <button class="btn" id="btn-save">Save</button>
+            <button class="btn" id="btn-recompile">Recompile</button>
+            <button class="btn primary" id="btn-build">Build GLB</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>Diagnostics</h2>
+          <div class="spacer" style="flex:1"></div>
+          <span class="chip ok" id="stage-chip">—</span>
+        </div>
+        <div class="card-body">
+          <div class="diag-list" id="diags"></div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="card">
+        <div class="card-head"><h2>Preview</h2></div>
+        <div class="card-body">
+          <div class="preview-box">
+            <img id="preview" alt="viewport preview">
+            <div class="preview-empty" id="preview-empty">
+              Waiting for the first render…<br>
+              <span style="font-size:0.78rem">The preview orbits the compiled scene and refreshes live.</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>Scene</h2>
+          <div class="spacer" style="flex:1"></div>
+          <span class="chip busy" id="busy-chip" style="display:none">working</span>
+        </div>
+        <div class="card-body">
+          <div class="stats">
+            <div class="stat"><div class="k">Nodes</div><div class="v" id="stat-nodes">—</div></div>
+            <div class="stat"><div class="k">Triangles</div><div class="v" id="stat-tris">—</div></div>
+            <div class="stat"><div class="k">Issues</div><div class="v" id="stat-diags">—</div></div>
+          </div>
+          <div class="statusline" id="status">—</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <footer>MoGen Studio remote control · changes apply to the live desktop session</footer>
+</div>
+
+<div id="toasts"></div>
+
+<script>
+"use strict";
+
+const $ = (id) => document.getElementById(id);
+const editor = $("editor");
+
+let stateRev = 0;          // last state revision we rendered
+let previewRev = -1;       // last preview revision we loaded
+let state = null;          // last snapshot
+let localDirty = false;    // textarea diverges from the server snapshot
+let editingTab = -1;       // tab index the local edits belong to
+let pollTimer = null;
+
+/* ------------------------------------------------------------ helpers */
+
+function toast(msg, isErr) {
+  const t = document.createElement("div");
+  t.className = "toast" + (isErr ? " err" : "");
+  t.textContent = msg;
+  $("toasts").appendChild(t);
+  setTimeout(() => t.remove(), 3200);
+}
+
+async function sendCommand(cmd) {
+  try {
+    const r = await fetch("/api/command", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(cmd),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || j.error) {
+      toast(j.error || ("command failed (" + r.status + ")"), true);
+      return false;
+    }
+    schedulePoll(250); // pick up the effect quickly
+    return true;
+  } catch (e) {
+    toast("connection lost", true);
+    return false;
+  }
+}
+
+function setConnected(on) {
+  $("conn-dot").classList.toggle("on", on);
+  $("conn-text").textContent = on ? "connected" : "disconnected";
+}
+
+function fmt(n) {
+  return n >= 1000000 ? (n / 1000000).toFixed(2) + "M"
+       : n >= 1000    ? (n / 1000).toFixed(1) + "k"
+       : String(n);
+}
+
+/* ------------------------------------------------------------ render */
+
+function render(s) {
+  state = s;
+
+  // Tab strip
+  const tabs = $("tabs");
+  tabs.innerHTML = "";
+  s.tabs.forEach((t, i) => {
+    const b = document.createElement("button");
+    b.className = "tab" + (i === s.active ? " active" : "");
+    b.innerHTML = escapeHtml(t.name) + (t.dirty ? '<span class="dirty">●</span>' : "");
+    b.title = t.path || "unsaved buffer";
+    b.onclick = () => {
+      if (i === s.active) return;
+      if (localDirty && !confirm("Switch tabs? Your unapplied local edits will be discarded.")) return;
+      sendCommand({ cmd: "activate", tab: i });
+    };
+    tabs.appendChild(b);
+  });
+
+  // If the desktop switched tabs while we held local edits, they belong to
+  // a tab that's no longer in front — drop them rather than writing them
+  // into the wrong file.
+  if (localDirty && editingTab !== s.active) resetLocalEdits();
+
+  // Editor: never clobber in-progress local edits.
+  if (!localDirty && editor.value !== s.source) editor.value = s.source;
+
+  // Stage / diagnostics
+  const chip = $("stage-chip");
+  const errs = s.diagnostics.filter((d) => d.severity === "error").length;
+  if (s.stage === "ok" && errs === 0) {
+    chip.className = "chip ok"; chip.textContent = "compiles";
+  } else if (s.stage === "none") {
+    chip.className = "chip ok"; chip.textContent = "—";
+  } else {
+    chip.className = "chip err"; chip.textContent = errs ? errs + " error" + (errs > 1 ? "s" : "") : s.stage;
+  }
+
+  const list = $("diags");
+  list.innerHTML = "";
+  if (s.diagnostics.length === 0) {
+    list.innerHTML = '<div class="diag-clean"><span class="tick">✓</span> No diagnostics — scene is clean.</div>';
+  } else {
+    s.diagnostics.forEach((d) => {
+      const row = document.createElement("div");
+      row.className = "diag " + d.severity;
+      row.innerHTML =
+        '<span class="code">' + escapeHtml(d.code) + "</span>" +
+        (d.line ? '<span class="line">L' + d.line + "</span>" : "") +
+        "<span>" + escapeHtml(d.message) + "</span>";
+      if (d.line) row.onclick = () => jumpToLine(d.line);
+      list.appendChild(row);
+    });
+  }
+
+  // Stats + status
+  $("stat-nodes").textContent = s.nodes ? fmt(s.nodes) : "—";
+  $("stat-tris").textContent = s.triangles ? fmt(s.triangles) : "—";
+  $("stat-diags").textContent = String(s.diagnostics.length);
+  $("status").textContent = s.status || "—";
+
+  // Busy chip: building or LLM in flight
+  const busy = $("busy-chip");
+  if (s.building) {
+    busy.style.display = "";
+    busy.textContent = s.build_stage ? "build: " + s.build_stage : "building…";
+  } else if (s.llm) {
+    busy.style.display = "";
+    busy.textContent = "llm: " + s.llm;
+  } else {
+    busy.style.display = "none";
+  }
+  $("btn-build").disabled = !!s.building;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+function jumpToLine(line) {
+  const lines = editor.value.split("\n");
+  let pos = 0;
+  for (let i = 0; i < Math.min(line - 1, lines.length); i++) pos += lines[i].length + 1;
+  editor.focus();
+  editor.setSelectionRange(pos, pos + (lines[line - 1] || "").length);
+}
+
+/* ------------------------------------------------------------ editing */
+
+function resetLocalEdits() {
+  localDirty = false;
+  editingTab = -1;
+  $("btn-apply").disabled = true;
+  $("btn-discard").disabled = true;
+  const hint = $("edit-hint");
+  hint.textContent = "synced";
+  hint.className = "hint";
+}
+
+editor.addEventListener("input", () => {
+  if (!state) return;
+  localDirty = editor.value !== state.source;
+  editingTab = localDirty ? state.active : -1;
+  $("btn-apply").disabled = !localDirty;
+  $("btn-discard").disabled = !localDirty;
+  const hint = $("edit-hint");
+  hint.textContent = localDirty ? "local edits — Apply to push" : "synced";
+  hint.className = localDirty ? "hint pending" : "hint";
+});
+
+async function applyEdits() {
+  if (!state || !localDirty) return true;
+  const ok = await sendCommand({ cmd: "set_source", tab: state.active, source: editor.value });
+  if (ok) { resetLocalEdits(); toast("source applied"); }
+  return ok;
+}
+
+$("btn-apply").onclick = applyEdits;
+$("btn-discard").onclick = () => {
+  if (state) editor.value = state.source;
+  resetLocalEdits();
+};
+$("btn-save").onclick = async () => {
+  if (!state) return;
+  if (localDirty && !(await applyEdits())) return;
+  if (await sendCommand({ cmd: "save", tab: state.active })) toast("saved");
+};
+$("btn-recompile").onclick = async () => {
+  if (!state) return;
+  if (localDirty && !(await applyEdits())) return;
+  if (await sendCommand({ cmd: "recompile", tab: state.active })) toast("recompiling");
+};
+$("btn-build").onclick = async () => {
+  if (!state) return;
+  if (localDirty && !(await applyEdits())) return;
+  if (await sendCommand({ cmd: "build", tab: state.active })) toast("build started");
+};
+
+// Ctrl/Cmd+S applies + saves, Ctrl/Cmd+Enter applies — the muscle memory
+// people bring from the desktop.
+editor.addEventListener("keydown", (e) => {
+  const mod = e.ctrlKey || e.metaKey;
+  if (mod && e.key === "s") { e.preventDefault(); $("btn-save").click(); }
+  else if (mod && e.key === "Enter") { e.preventDefault(); applyEdits(); }
+  else if (e.key === "Tab") {
+    e.preventDefault();
+    const s = editor.selectionStart, t = editor.selectionEnd;
+    editor.setRangeText("  ", s, t, "end");
+    editor.dispatchEvent(new Event("input"));
+  }
+});
+
+/* ------------------------------------------------------------ preview */
+
+function refreshPreview() {
+  const img = $("preview");
+  const probe = new Image();
+  probe.onload = () => {
+    img.src = probe.src;
+    img.style.display = "block";
+    $("preview-empty").style.display = "none";
+  };
+  probe.onerror = () => {}; // keep the last good frame / placeholder
+  probe.src = "/api/preview.png?r=" + previewRev + "&t=" + Date.now();
+}
+
+// Keep the capture loop alive on the desktop even when the preview rev is
+// static (the endpoint hit is what signals "someone is watching").
+setInterval(() => { if (!document.hidden) refreshPreview(); }, 2500);
+
+/* ------------------------------------------------------------ polling */
+
+function schedulePoll(ms) {
+  clearTimeout(pollTimer);
+  pollTimer = setTimeout(poll, ms);
+}
+
+async function poll() {
+  try {
+    const r = await fetch("/api/state?rev=" + stateRev);
+    const j = await r.json();
+    setConnected(true);
+    if (!j.unchanged && j.state) { stateRev = j.rev; render(j.state); }
+    if (j.preview !== previewRev) { previewRev = j.preview; refreshPreview(); }
+  } catch (e) {
+    setConnected(false);
+  }
+  schedulePoll(document.hidden ? 4000 : 1200);
+}
+
+poll();
+</script>
+</body>
+</html>

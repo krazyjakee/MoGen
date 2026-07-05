@@ -381,6 +381,28 @@ pub struct Settings {
     #[serde(default)]
     pub word_wrap: Option<bool>,
 
+    /// Remote-control web UI. When `true`, Studio runs an embedded HTTP
+    /// server that serves a browser dashboard mirroring the active session
+    /// (tabs, source, diagnostics, live preview) and accepts edit / save /
+    /// build commands. Off by default — the server binds only when the user
+    /// explicitly enables it in Preferences › Remote.
+    #[serde(default)]
+    pub remote_enabled: Option<bool>,
+
+    /// TCP port for the remote-control server. `None` / `0` falls back to
+    /// [`DEFAULT_REMOTE_PORT`]. Clamped to the unprivileged range at read
+    /// time so a hand-edited settings file can't ask Studio to bind :80.
+    #[serde(default)]
+    pub remote_port: Option<u16>,
+
+    /// When `true`, the remote server binds `0.0.0.0` so other devices on
+    /// the local network (a phone, a tablet) can reach the dashboard. The
+    /// default (`false` / unset) binds loopback only — anyone who can reach
+    /// the port can edit and save the open files, so exposure beyond the
+    /// local machine is a deliberate opt-in.
+    #[serde(default)]
+    pub remote_allow_lan: Option<bool>,
+
     /// When `Some(true)` (or absent — defaults to `true`), Z.ai chat
     /// calls (Generate / Modify / Animate / Ask) route through the
     /// dedicated GLM Coding Plan endpoint
@@ -399,6 +421,11 @@ pub struct Settings {
 /// colours read consistently regardless of the panel scheme. Tuned to match
 /// Blender / Maya / Modo defaults.
 pub const DEFAULT_VIEWER_BG_RGB: [u8; 3] = [54, 58, 64];
+
+/// Default TCP port for the remote-control web UI. Chosen out of the way
+/// of the common dev-server ports (3000/5173/8000/8080) so enabling the
+/// remote rarely collides with whatever else the user is running.
+pub const DEFAULT_REMOTE_PORT: u16 = 7878;
 
 /// Factory default for the viewport repaint cap. Picked to match the most
 /// common display refresh rate while keeping battery / thermals reasonable
@@ -778,6 +805,40 @@ impl Settings {
 
     pub fn set_max_fps(&mut self, fps: Option<u32>) {
         self.max_fps = Some(fps.unwrap_or(0));
+    }
+
+    /// Whether the remote-control web UI server should be running. Defaults
+    /// to `false` — the server only binds on explicit opt-in.
+    pub fn remote_enabled(&self) -> bool {
+        self.remote_enabled.unwrap_or(false)
+    }
+
+    pub fn set_remote_enabled(&mut self, on: bool) {
+        self.remote_enabled = Some(on);
+    }
+
+    /// Remote server port, falling back to [`DEFAULT_REMOTE_PORT`] and
+    /// clamped to the unprivileged range so a corrupted settings file can't
+    /// request a root-only bind.
+    pub fn remote_port(&self) -> u16 {
+        match self.remote_port {
+            None | Some(0) => DEFAULT_REMOTE_PORT,
+            Some(p) => p.max(1024),
+        }
+    }
+
+    pub fn set_remote_port(&mut self, port: u16) {
+        self.remote_port = Some(port);
+    }
+
+    /// Whether the remote server binds all interfaces (`0.0.0.0`) instead of
+    /// loopback. Defaults to `false` — LAN exposure is a deliberate opt-in.
+    pub fn remote_allow_lan(&self) -> bool {
+        self.remote_allow_lan.unwrap_or(false)
+    }
+
+    pub fn set_remote_allow_lan(&mut self, on: bool) {
+        self.remote_allow_lan = Some(on);
     }
 
     /// Promote `path` to the front of [`Self::recent_files`], dedup'ing any

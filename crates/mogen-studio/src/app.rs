@@ -34,6 +34,7 @@ mod onboarding;
 mod preview;
 mod pricing;
 mod publish_textures;
+mod remote_link;
 mod spend_panel;
 mod spotlight;
 mod style;
@@ -469,6 +470,30 @@ pub struct MogenStudioApp {
     /// Refreshed each time the panel opens or the user clicks Refresh.
     pub(in crate::app) spending: crate::app::spend_panel::SpendingState,
 
+    /// Draft text for the Preferences › Remote port field. Committed (and
+    /// validated) on Enter / focus loss so mid-typing values don't bounce
+    /// the server through invalid ports.
+    prefs_remote_port_draft: String,
+
+    /// Remote-control web UI server, running while Preferences › Remote is
+    /// enabled. `None` when disabled or when the last bind attempt failed
+    /// (see `remote_error`). Reconciled against settings once per frame by
+    /// `drive_remote`.
+    pub(in crate::app) remote: Option<crate::remote::RemoteServer>,
+    /// Human-readable reason the remote server isn't running (port in use,
+    /// bind refused). Shown in Preferences › Remote; cleared on the next
+    /// successful start or when the feature is switched off.
+    pub(in crate::app) remote_error: Option<String>,
+    /// Last snapshot published to the remote server. Compared each frame so
+    /// idle frames cost one `PartialEq` walk instead of a re-serialization.
+    pub(in crate::app) remote_last_snapshot: Option<crate::remote::Snapshot>,
+    /// Wall-clock time the last remote preview capture was submitted.
+    /// Paces the turntable to `remote_link::PREVIEW_INTERVAL`.
+    pub(in crate::app) remote_preview_last_submit: Option<Instant>,
+    /// Current turntable yaw for the remote preview, advanced a step per
+    /// captured frame.
+    pub(in crate::app) remote_preview_yaw: f32,
+
     /// Scene Wizard window visibility. The wizard owns its own state in
     /// `wizard`; this flag just gates the window.
     pub(in crate::app) show_wizard: bool,
@@ -650,6 +675,12 @@ impl MogenStudioApp {
             spend_session_id: gen_session_id(),
             show_spending: false,
             spending: crate::app::spend_panel::SpendingState::default(),
+            prefs_remote_port_draft: String::new(),
+            remote: None,
+            remote_error: None,
+            remote_last_snapshot: None,
+            remote_preview_last_submit: None,
+            remote_preview_yaw: std::f32::consts::FRAC_PI_4,
             show_wizard: false,
             wizard: None,
         }
@@ -927,6 +958,11 @@ impl eframe::App for MogenStudioApp {
         self.drive_moghub_protocol(ctx);
         self.drive_compile_debounce(ctx);
         self.check_external_changes(ctx);
+        // Remote web UI: reconcile the server with settings, drain browser
+        // commands, publish state, and drive the preview turntable. Runs
+        // after the other polls so the snapshot reflects this frame's
+        // completions.
+        self.drive_remote(ctx);
 
         // Consume global shortcuts before the menu / editor see the key event,
         // so e.g. Ctrl+S doesn't reach the TextEdit. Spotlight is dispatched

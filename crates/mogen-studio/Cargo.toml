@@ -70,9 +70,11 @@ arboard = { version = "3", default-features = false }
 # tree stable.
 regex = "1"
 sentry = { version = "0.34", default-features = false, features = ["backtrace", "contexts", "debug-images", "panic", "reqwest", "rustls"] }
-# Browser shim — opens the GitHub OAuth URL via the system handler.
-# tiny_http is pulled in transitively via mogen-moghub-client's `oauth`
-# feature; we only need webbrowser directly here for the publish-success
-# "Open in browser" affordance.
+# Embedded HTTP server for the remote-control web UI (Preferences › Remote).
+# Already in the dependency tree via mogen-moghub-client's `oauth` feature and
+# mogen-llm, so this adds no new transitive weight.
+tiny_http = "0.12"
+# Browser shim — opens the GitHub OAuth URL via the system handler. Also used
+# by Preferences › Remote's "Open in browser" button.
 webbrowser = "1"
 zip = { version = "0.6", default-features = false, features = ["deflate"] }

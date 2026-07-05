@@ -226,7 +226,10 @@ impl MogenStudioApp {
         if let Some(outcome) = self.viewer.take_capture_outcome_if(|kind| {
             !matches!(
                 kind,
-                CaptureKind::PickerThumb | CaptureKind::Publish | CaptureKind::WizardThumb
+                CaptureKind::PickerThumb
+                    | CaptureKind::Publish
+                    | CaptureKind::WizardThumb
+                    | CaptureKind::RemotePreview
             )
         }) {
             self.handle_capture_outcome(ctx, outcome);
@@ -273,10 +276,14 @@ impl MogenStudioApp {
                     self.files[i].status = "thumbnail: render produced no output".into();
                 }
             }
-            CaptureKind::PickerThumb | CaptureKind::Publish | CaptureKind::WizardThumb => {
+            CaptureKind::PickerThumb
+            | CaptureKind::Publish
+            | CaptureKind::WizardThumb
+            | CaptureKind::RemotePreview => {
                 // PickerThumb is owned by `ThumbnailManager`; Publish by the
-                // community publish dialog; WizardThumb by the Scene Wizard.
-                // `poll_generate` filters all three out before reaching this
+                // community publish dialog; WizardThumb by the Scene Wizard;
+                // RemotePreview by the remote web UI's `poll_remote_preview`.
+                // `poll_generate` filters all four out before reaching this
                 // handler. Reaching here would only happen if the filter were
                 // bypassed — drop on the floor rather than mis-attributing it
                 // to the active file's status.
