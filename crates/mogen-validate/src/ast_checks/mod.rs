@@ -411,5 +411,14 @@ fn check_attrs(
                 .with_span(n.span),
             );
         }
+        if k == "weight" && n.kind != "physics" && n.attr("phys").is_none() {
+            diags.push(
+                Diagnostic::warning(
+                    "W0215",
+                    "`weight=...` has no effect without a `phys=\"...\"` attribute",
+                )
+                .with_span(n.span),
+            );
+        }
     }
 }

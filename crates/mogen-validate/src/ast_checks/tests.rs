@@ -1244,8 +1244,8 @@ mod physics_validator_tests {
         let src = r#"physics (weight=700kg/m3)"#;
         let diags = diags_for(src);
         assert!(
-            diags.iter().any(|d| d.code == "E0210"),
-            "expected E0210 for nameless physics, got: {diags:?}"
+            diags.iter().any(|d| d.code == "E0214"),
+            "expected E0214 for nameless physics, got: {diags:?}"
         );
     }
 
@@ -1267,6 +1267,43 @@ mod physics_validator_tests {
         assert!(
             diags.iter().any(|d| d.code == "W0102"),
             "expected W0102 for unknown `density` attr, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn node_weight_without_phys_warns() {
+        // `weight=` on a geometry node only has an effect when paired with
+        // `phys=`; forgetting `phys=` should not fail silently.
+        let src = r#"scene { box "prop" (size=[1,1,1], weight=5kg) }"#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "W0215"),
+            "expected W0215 for orphan `weight=`, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn node_weight_with_phys_is_clean() {
+        let src = r#"
+            physics "oak" (weight=700kg/m3)
+            scene { box "prop" (size=[1,1,1], phys="oak", weight=5kg) }
+        "#;
+        let diags = diags_for(src);
+        assert!(
+            !diags.iter().any(|d| d.code == "W0215"),
+            "unexpected W0215 with `phys=` present, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn physics_block_weight_does_not_trigger_orphan_warning() {
+        // The `physics` block's own `weight=` (per-m³ density) must not be
+        // mistaken for the node-level orphan-weight case.
+        let src = r#"physics "oak" (weight=700kg/m3)"#;
+        let diags = diags_for(src);
+        assert!(
+            !diags.iter().any(|d| d.code == "W0215"),
+            "unexpected W0215 on a `physics` block, got: {diags:?}"
         );
     }
 }

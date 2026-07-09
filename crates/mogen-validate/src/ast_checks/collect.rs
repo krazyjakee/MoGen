@@ -105,7 +105,7 @@ pub(super) fn collect_material_names(ast: &[Node], diags: &mut Vec<Diagnostic>) 
 
 /// Gather declared `physics` substance names so `phys="..."` references can be
 /// checked. Missing-name and duplicate diagnostics are emitted by `rules`
-/// (E0210) and lowering respectively, so this pass only collects.
+/// (E0214) and lowering respectively, so this pass only collects.
 pub(super) fn collect_physics_names(ast: &[Node]) -> HashSet<String> {
     let mut names = HashSet::new();
     let mut visit = |n: &Node| {

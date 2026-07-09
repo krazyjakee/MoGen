@@ -64,7 +64,7 @@ pub(super) fn check_anim_required(n: &Node, diags: &mut Vec<Diagnostic>) {
             if n.name.is_none() {
                 diags.push(
                     Diagnostic::error(
-                        "E0210",
+                        "E0214",
                         "physics declaration requires a name, e.g. `physics \"oak\" (...)`",
                     )
                     .with_span(n.span),

@@ -159,11 +159,14 @@ mass properties.
 ## Validation
 
 - **E0105** — `phys="…"` references an undeclared substance.
-- **E0210** — a `physics` block without a name.
+- **E0214** — a `physics` block without a name.
 - **W0211 / W0212 / W0213** — non-positive `weight`, negative `friction`, or
   `bounce` outside `[0, 1]`.
 - **W0102** — an unknown attribute on a `physics` block. In particular
   `density=` is *not* accepted — it's the jargon `weight=` replaces.
+- **W0215** — a node's flat `weight=` override with no `phys=` attribute on the
+  same node. Without a substance to override, the mass is never computed and
+  the number is silently dropped.
 
 ## Mesh-merge
 
