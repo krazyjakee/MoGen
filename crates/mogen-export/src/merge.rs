@@ -26,13 +26,18 @@
 
 use std::collections::{HashMap, HashSet};
 
-use mogen_core::{MaterialId, Mesh, NodeId, SceneGraph, SceneNode};
+use glam::Mat4;
+use mogen_core::{MaterialId, Mesh, NodeId, SceneGraph, SceneNode, Transform};
 
 #[derive(Clone, Copy)]
 enum CleanupMode {
     Standard,
     Coplanar,
 }
+
+/// Mergeable leaves grouped by material, each paired with its transform
+/// relative to the enclosing solid. Used by the deep solid merge.
+type LeafGroups = Vec<(Option<MaterialId>, Vec<(NodeId, Mat4)>)>;
 
 /// Build a new scene graph by applying the merge transform. The original
 /// graph is left untouched.
@@ -157,6 +162,25 @@ fn rebuild_level<P>(
 where
     P: Fn(Option<NodeId>, &SceneGraph) -> Option<CleanupMode>,
 {
+    // Deep solid merge: when the parent is a `solid` whose *entire* subtree is
+    // made of mergeable leaves (no skins / colliders / slots / protected nodes /
+    // non-manifold meshes), collapse ALL same-material descendant leaves — not
+    // just the direct children — into one mesh per material. Parts authored as
+    // modules wrap their geometry in a group (the module body plus `use`'s
+    // implicit transform group), so without this pass a `solid` built from
+    // `use`d parts never reaches the merge at all.
+    if let Some(p) = src_parent {
+        let pn = &scene.nodes[p.0 as usize];
+        if pn.tags.iter().any(|t| t == "solid") && solid_qualifies_deep(scene, p, protected) {
+            let cleanup = if pn.tags.iter().any(|t| t == "cleanup=coplanar") {
+                CleanupMode::Coplanar
+            } else {
+                CleanupMode::Standard
+            };
+            return deep_merge_solid_children(scene, p, protected, out, new_parent, cleanup);
+        }
+    }
+
     // Split each child into "copy as-is" and "merge candidate" buckets. The
     // only candidates are *leaves* with a plain (non-skinned) mesh, no skin
     // binding, not referenced by skins or clips. Preserving ordering matters
@@ -268,6 +292,139 @@ fn is_mergeable(n: &SceneNode, id: NodeId, protected: &HashSet<NodeId>) -> bool 
             mogen_geom::is_csg_manifold(&baked)
         }
         _ => false,
+    }
+}
+
+/// A `solid` qualifies for the deep merge when *every* mesh in its subtree is a
+/// mergeable leaf and nothing in it is referenced by a skin/clip. Any keeper
+/// (skinned/collider/slot leaf, a `cast_shadow=false` opt-out, a non-manifold
+/// mesh, or a protected node) disqualifies the whole solid, which then falls
+/// back to the shallow direct-child merge below. Transform-only groups are fine
+/// — they are exactly what we flatten through.
+fn solid_qualifies_deep(scene: &SceneGraph, solid_id: NodeId, protected: &HashSet<NodeId>) -> bool {
+    fn walk(scene: &SceneGraph, id: NodeId, protected: &HashSet<NodeId>) -> bool {
+        if protected.contains(&id) {
+            return false;
+        }
+        let n = &scene.nodes[id.0 as usize];
+        // A mesh-bearing node that can't be merged is a keeper — bail.
+        if n.mesh.is_some() && !is_mergeable(n, id, protected) {
+            return false;
+        }
+        if n.skin.is_some() || n.collider.is_some() || n.slot.is_some() {
+            return false;
+        }
+        n.children
+            .iter()
+            .all(|&c| walk(scene, c, protected))
+    }
+    scene.nodes[solid_id.0 as usize]
+        .children
+        .iter()
+        .all(|&c| walk(scene, c, protected))
+}
+
+/// Gather every mergeable leaf in a solid's subtree, grouped by material, each
+/// paired with its transform **relative to the solid** (the product of the
+/// intermediate group transforms; the solid's own transform is excluded because
+/// the merged nodes are emitted as its direct children). First-seen traversal
+/// order is preserved so the output is deterministic without hashing.
+fn collect_deep_leaves(
+    scene: &SceneGraph,
+    ids: &[NodeId],
+    accum: Mat4,
+    protected: &HashSet<NodeId>,
+    groups: &mut LeafGroups,
+) {
+    for &id in ids {
+        let n = &scene.nodes[id.0 as usize];
+        let world = accum * n.transform.to_mat4();
+        if is_mergeable(n, id, protected) {
+            match groups.iter_mut().find(|(m, _)| *m == n.material) {
+                Some((_, v)) => v.push((id, world)),
+                None => groups.push((n.material, vec![(id, world)])),
+            }
+        } else {
+            collect_deep_leaves(scene, &n.children, world, protected, groups);
+        }
+    }
+}
+
+/// Build the merged children of a deep-qualifying solid: one CSG-unioned node
+/// per material, baked into the solid's frame. Falls back to baking each leaf
+/// individually if a group's union collapses to nothing.
+fn deep_merge_solid_children(
+    scene: &SceneGraph,
+    solid_id: NodeId,
+    protected: &HashSet<NodeId>,
+    out: &mut SceneGraph,
+    new_parent: Option<NodeId>,
+    cleanup: CleanupMode,
+) -> Vec<NodeId> {
+    let mut groups: LeafGroups = Vec::new();
+    collect_deep_leaves(
+        scene,
+        &scene.nodes[solid_id.0 as usize].children,
+        Mat4::IDENTITY,
+        protected,
+        &mut groups,
+    );
+
+    let mut result = Vec::new();
+    for (material, leaves) in groups {
+        let mesh = merge_baked_leaves(scene, &leaves, cleanup);
+        if mesh.positions.is_empty() || mesh.indices.is_empty() {
+            // Union failed — keep the originals, each baked into solid-space so
+            // it still lands in the right place under the flattened solid.
+            for (lid, world) in &leaves {
+                let src = &scene.nodes[lid.0 as usize];
+                let baked = mogen_geom::transform_mesh(
+                    src.mesh.as_ref().expect("mergeable has mesh"),
+                    *world,
+                );
+                let node = SceneNode {
+                    mesh: Some(baked),
+                    material,
+                    parent: new_parent,
+                    transform: Transform::default(),
+                    children: Vec::new(),
+                    ..src.clone()
+                };
+                result.push(push_node(out, node));
+            }
+            continue;
+        }
+        let ids: Vec<NodeId> = leaves.iter().map(|(id, _)| *id).collect();
+        let merged = build_merged_node(scene, &ids, material, mesh, new_parent);
+        result.push(push_node(out, merged));
+    }
+    result
+}
+
+/// Like [`merge_group_meshes`] but bakes each leaf with a caller-supplied
+/// (solid-relative) transform instead of the leaf's own local transform.
+fn merge_baked_leaves(
+    scene: &SceneGraph,
+    leaves: &[(NodeId, Mat4)],
+    cleanup: CleanupMode,
+) -> Mesh {
+    let baked: Vec<Mesh> = leaves
+        .iter()
+        .map(|(id, world)| {
+            let mesh = scene.nodes[id.0 as usize]
+                .mesh
+                .as_ref()
+                .expect("is_mergeable ensures mesh is Some");
+            mogen_geom::transform_mesh(mesh, *world)
+        })
+        .collect();
+    let Some(unioned) = mogen_geom::try_union_many(&baked) else {
+        return Mesh::default();
+    };
+    let cleaned = mogen_geom::clean_csg_output(&unioned);
+    match cleanup {
+        CleanupMode::Standard => cleaned,
+        CleanupMode::Coplanar => mogen_geom::cull_coplanar_opposites(&cleaned),
     }
 }
 
@@ -484,6 +641,93 @@ mod tests {
             })
             .count();
         assert_eq!(plain_kids, 2, "non-solid parent must not merge its kids");
+    }
+
+    #[test]
+    fn deep_solid_merge_flattens_nested_groups() {
+        // A solid whose boxes live one group deep (as module-instantiated parts
+        // do) must still collapse into a single merged leaf directly under the
+        // solid — the intermediate group is flattened, its transform baked in.
+        let mut s = SceneGraph::new();
+        let oak = s.add_material(Material::new("oak"));
+
+        let solid_root = s.add_root("shell", "solid", Transform::default());
+        s.nodes[solid_root.0 as usize].tags.push("solid".into());
+        let grp = s.add_child(
+            solid_root,
+            "grp",
+            "group",
+            Transform::from_translation([1.0, 0.0, 0.0].into()),
+        );
+        let a = s.add_child(grp, "a", "box", Transform::default());
+        let b = s.add_child(
+            grp,
+            "b",
+            "box",
+            Transform::from_translation([0.5, 0.0, 0.0].into()),
+        );
+        s.set_mesh(a, box_mesh([1.0, 1.0, 1.0], mogen_core::UvMode::default()));
+        s.set_mesh(b, box_mesh([1.0, 1.0, 1.0], mogen_core::UvMode::default()));
+        s.set_material(a, oak);
+        s.set_material(b, oak);
+
+        let out = merge_solid_groups(&s, |_| {});
+
+        let merged: Vec<&SceneNode> = out.nodes.iter().filter(|n| n.kind == "merged").collect();
+        assert_eq!(merged.len(), 1, "nested boxes should collapse to one merged leaf");
+        let parent = merged[0].parent.expect("merged node has a parent");
+        assert!(
+            out.nodes[parent.0 as usize].tags.iter().any(|t| t == "solid"),
+            "merged leaf must hang directly off the solid, not the flattened group"
+        );
+        assert_eq!(
+            out.nodes.iter().filter(|n| n.kind == "group").count(),
+            0,
+            "the intermediate group should be flattened away"
+        );
+        // The union baked in the group's +1 X translation, so the geometry must
+        // sit around x = 1 (not the origin the leaves declared locally).
+        let m = merged[0].mesh.as_ref().unwrap();
+        let max_x = m.positions.iter().map(|p| p[0]).fold(f32::MIN, f32::max);
+        assert!(max_x > 1.0, "baked union should carry the group transform (max_x={max_x})");
+    }
+
+    #[test]
+    fn deep_solid_merge_falls_back_when_subtree_has_a_keeper() {
+        // If any leaf in the subtree is non-mergeable (here a cast_shadow=false
+        // opt-out), the deep merge must bail for the whole solid rather than
+        // fold the keeper away. Since the mergeable box sits under a group, the
+        // shallow fallback can't reach it either — both leaves survive.
+        let mut s = SceneGraph::new();
+        let oak = s.add_material(Material::new("oak"));
+
+        let solid_root = s.add_root("shell", "solid", Transform::default());
+        s.nodes[solid_root.0 as usize].tags.push("solid".into());
+        let grp = s.add_child(solid_root, "grp", "group", Transform::default());
+        let a = s.add_child(grp, "a", "box", Transform::default());
+        let b = s.add_child(
+            grp,
+            "b",
+            "box",
+            Transform::from_translation([0.5, 0.0, 0.0].into()),
+        );
+        s.set_mesh(a, box_mesh([1.0, 1.0, 1.0], mogen_core::UvMode::default()));
+        s.set_mesh(b, box_mesh([1.0, 1.0, 1.0], mogen_core::UvMode::default()));
+        s.set_material(a, oak);
+        s.set_material(b, oak);
+        s.nodes[b.0 as usize].cast_shadow = false; // keeper → disqualifies deep merge
+
+        let out = merge_solid_groups(&s, |_| {});
+        assert_eq!(
+            out.nodes.iter().filter(|n| n.kind == "merged").count(),
+            0,
+            "a keeper in the subtree must disable the deep merge"
+        );
+        assert_eq!(
+            out.nodes.iter().filter(|n| n.mesh.is_some()).count(),
+            2,
+            "both leaves survive the safe fallback"
+        );
     }
 
     #[test]

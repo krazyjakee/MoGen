@@ -149,31 +149,30 @@ discards the abstraction once it has done its job. Two collapse strategies, both
 Because the aesthetic wants flat per-face materials anyway, nothing of value is lost in the
 collapse.
 
-### Verified behaviour + the module-nesting gap (2026-07-09)
+### Verified behaviour + the deep solid merge (2026-07-09)
 
-Tested against `examples/parts/lego_bricks.mog`. Findings:
+Tested against `examples/parts/lego_bricks.mog`. Note the `mogen build` *summary line* reports
+pre-merge scene counts — always `inspect` the GLB to see the merged result.
 
-- The `solid { … }` CSG merge **works and fires automatically** (no export flag) — but the
-  `mogen build` *summary line* reports pre-merge scene counts, so always `inspect` the GLB to see
-  the merged result. A flat control (`box` siblings directly under `solid`) collapses correctly:
-  `nodes=2, meshes=1` with a single `merged_<material>` node.
-- **Parts instantiated with `use` do NOT merge.** `is_mergeable` (in `merge.rs`) rejects any node
-  with children, and a `use` always wraps its geometry in a group (the module-body group *plus*
-  `use`'s implicit transform group). So module-placed parts are never *direct leaf children* of the
-  `solid`, and the merge can't reach them — the demo build keeps all 30 nodes separate.
+**The original gap:** `is_mergeable` (in `merge.rs`) rejects any node with children, and a `use`
+always wraps its geometry in a group (the module-body group *plus* `use`'s implicit transform
+group). So module-placed parts were never *direct leaf children* of the `solid`, and the shallow
+merge couldn't reach them — the demo built to 30 separate nodes.
 
-**Implication for this system:** parts are modules, so the merge as it stands will never collapse
-them. To make "minimum parts" real we need one of:
+**Resolved — deep solid merge** (`merge.rs`, `merge_solid_groups`): when a `solid`'s *entire*
+subtree is mergeable leaves (no skins / colliders / slots / protected nodes / non-manifold meshes /
+`cast_shadow=false` opt-outs), the pass now collapses **all same-material descendant leaves** — not
+just direct children — into one CSG-unioned mesh per material, baking each leaf's transform relative
+to the solid and flattening the intermediate groups away. Any keeper in the subtree disqualifies the
+solid, which falls back to the safe shallow direct-child merge. Watertight by construction (same
+`try_union_many` → `clean_csg_output` path as in-DSL CSG).
 
-1. a **deep solid merge** — recurse through pass-through groups and merge all same-material
-   *descendant* leaves of a `solid`, not just direct children (smallest change; keeps the module
-   authoring model intact), or
-2. **greedy meshing** as a new grid-aware pass (bigger; also the UV-preserving win), or
-3. emitting parts **without** a wrapping group so their single mesh lands as a direct `solid` child
-   (fights `use`'s implicit group; least attractive).
+Result on the demo: **30 nodes / 5 meshes → 8 nodes / 3 meshes** — each `solid` course collapses to
+one `merged_<material>` leaf; the standalone tile (not in a `solid`) stays separate, as intended.
 
-Recommendation: (1) first — it unblocks the current design with the least disruption — then (2) for
-the flat-field UV case.
+**Still ahead:** **greedy meshing** as a grid-aware pass — the UV-preserving win for large flat
+same-material fields, where CSG union drops per-vertex UVs. The deep merge unblocks the part model
+today; greedy meshing is the later optimisation for textured flat runs.
 
 ---
 
@@ -198,10 +197,9 @@ already exist.
 - The named size-class set (how many distinct connector radii the catalog uses).
 - Whether `gear` and `rail` ship in v1 (they retain a DOF after mating — only meaningful for
   animated/mechanical models; static scenery may not need them).
-- Whether greedy meshing lands as a new export pass or an upgrade to `merge.rs`.
-- **Blocking:** whether to add a *deep solid merge* (merge same-material descendant leaves, not just
-  direct children) so module-instantiated parts actually collapse — see §5. Without this, no
-  part-based build ever merges.
+- Whether greedy meshing lands as a new export pass or an upgrade to `merge.rs` (the UV-preserving
+  win for flat same-material fields; the deep solid merge in §5 already handles the part-collapse
+  case, but via CSG union which drops per-vertex UVs).
 
 ---
 
