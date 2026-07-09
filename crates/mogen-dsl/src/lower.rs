@@ -16,6 +16,7 @@ mod light;
 mod lod;
 mod material;
 mod node;
+mod physics;
 mod poi;
 mod primitive;
 mod procedural;
@@ -44,6 +45,7 @@ use anim::{is_anim_decl, lower_animations};
 use lod::{collect_origin_lods, extract_lod_scale, LodByOriginGuard};
 use material::collect_materials;
 use node::lower_into;
+use physics::collect_physics;
 
 thread_local! {
     // Build-pass-scoped LOD multiplier. Set by `lower()` before walking the
@@ -231,11 +233,16 @@ pub fn lower_with_loader(
     // match, which is how user-declared materials shadow imported ones.
     collect_materials(&expanded, &mut graph)?;
     collect_materials(&imported_decls, &mut graph)?;
+    // Physics substances hoist in the same pass, on the same dedupe rules, so
+    // `phys=` references resolve during Pass 2 exactly like `mat=`.
+    collect_physics(&expanded, &mut graph)?;
+    collect_physics(&imported_decls, &mut graph)?;
 
     // Pass 2: build scene graph (skip anim declarations — they need nodes first).
     for n in &expanded {
         match n.kind.as_str() {
             "material" => {} // already handled
+            "physics" => {} // hoisted in Pass 1
             "lod_scale" => {} // build-time setting, consumed above
             "meta" => {} // already lifted onto graph.meta
             k if is_anim_decl(k) => {} // pass 3
@@ -245,6 +252,7 @@ pub fn lower_with_loader(
             "scene" => {
                 for c in &n.children {
                     if c.kind == "material"
+                        || c.kind == "physics"
                         || c.kind == "attach"
                         || c.kind == "conform"
                         || is_anim_decl(&c.kind)
@@ -293,6 +301,32 @@ pub fn lower_with_loader(
             graph.nodes[id.0 as usize].collider =
                 Some(mogen_core::ColliderShape::Aabb { aabb });
         }
+    }
+
+    // Pass 2.65: auto-weigh every physics body. Runs after collider (so it
+    // sees the same final mesh — post attach/conform/skin) and computes each
+    // node's `mass` + centre of gravity from its *real* geometry. Weight =
+    // substance density × world volume; the world-transform determinant folds
+    // in this node's (and its ancestors') scale so `scale=2` weighs 8×. A node
+    // with an explicit `weight=` override, or no mesh to weigh, is left as-is.
+    let worlds = graph.world_transforms();
+    for id in 0..graph.nodes.len() {
+        let node = &graph.nodes[id];
+        let Some(body) = &node.physics else { continue };
+        if body.mass.is_some() {
+            continue; // explicit per-node weight= override
+        }
+        let weight_per_m3 = body.weight_per_m3;
+        let (mass, cog) = match &node.mesh {
+            Some(mesh) => {
+                let world_volume = mesh.solid_volume() * worlds[id].determinant().abs();
+                (Some(weight_per_m3 * world_volume), mesh.solid_centroid())
+            }
+            None => (None, None),
+        };
+        let body = graph.nodes[id].physics.as_mut().unwrap();
+        body.mass = mass;
+        body.center_of_gravity = cog;
     }
 
     // Pass 2.7: propagate `cast_shadow=false` down the subtree so a `group`

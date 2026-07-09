@@ -11,48 +11,58 @@ material "ruby"           (color=[0.9, 0.02, 0.05], transmission=0.9, roughness=
 material "enamel_navy"    (color=[0.05, 0.10, 0.25], metallic=0.2, roughness=0.15)
 material "leather"        (color=[0.12, 0.08, 0.06], roughness=0.85)
 
+// Physics substances — real densities, so the engine can weigh the sword and
+// balance it: a dense gold pommel counterweighting the steel blade. mogen
+// derives each part's weight from its true volume, so the whole assembly's
+// centre of mass falls out of the geometry.
+physics "steel"   (weight=7850kg/m3,  friction=0.42, bounce=0.35)
+physics "gold"    (weight=19300kg/m3, friction=0.35, bounce=0.20)
+physics "leather" (weight=900kg/m3,   friction=0.70, bounce=0.10)
+
 scene {
   group "grip_assembly" (y=-0.5) {
-    cylinder "grip"  (radius=0.014, height=0.18, mat="leather")
-    torus    "ring1" (major=0.015, minor=0.002, pos=[0,  0.05, 0], mat="gold")
-    torus    "ring2" (major=0.015, minor=0.002, pos=[0, -0.05, 0], mat="gold")
+    cylinder "grip"  (radius=0.014, height=0.18, mat="leather", phys="leather")
+    torus    "ring1" (major=0.015, minor=0.002, pos=[0,  0.05, 0], mat="gold", phys="gold")
+    torus    "ring2" (major=0.015, minor=0.002, pos=[0, -0.05, 0], mat="gold", phys="gold")
   }
 
   group "pommel" (below="grip_assembly", pos=[0,-0.39,0]) {
     // Rotated 90 degrees on X so the flat disc faces front/back
-    cylinder "p_disc"   (radius=0.045, height=0.02, rot=[90, 0, 0], mat="gold")
-    cylinder "p_enamel" (radius=0.032, height=0.022, rot=[90, 0, 0], mat="enamel_navy")
+    cylinder "p_disc"   (radius=0.045, height=0.02, rot=[90, 0, 0], mat="gold", phys="gold")
+    cylinder "p_enamel" (radius=0.032, height=0.022, rot=[90, 0, 0], mat="enamel_navy", phys="gold")
     sphere   "p_ruby_f" (radius=0.008, pos=[0, 0,  0.011], mat="ruby")
     sphere   "p_ruby_b" (radius=0.008, pos=[0, 0, -0.011], mat="ruby")
   }
 
   group "crossguard" (above="grip_assembly", pos=[0,-0.39,0]) {
-    box  "cg_center" (size=[0.06, 0.03, 0.025], mat="gold")
-    
+    box  "cg_center" (size=[0.06, 0.03, 0.025], mat="gold", phys="gold")
+
     // Cones point outward along X. Center of a 0.1m cone is 0.05m from its base.
     // Base starts at x=0.03 (edge of the center box), so pos is 0.03 + 0.05 = 0.08.
-    cone "cg_arm_l"  (radius=0.012, height=0.1, pos=[-0.08, 0, 0], rot=[0, 0,  90], mat="gold")
-    cone "cg_arm_r"  (radius=0.012, height=0.1, pos=[ 0.08, 0, 0], rot=[0, 0, -90], mat="gold")
-    
+    cone "cg_arm_l"  (radius=0.012, height=0.1, pos=[-0.08, 0, 0], rot=[0, 0,  90], mat="gold", phys="gold")
+    cone "cg_arm_r"  (radius=0.012, height=0.1, pos=[ 0.08, 0, 0], rot=[0, 0, -90], mat="gold", phys="gold")
+
     sphere "cg_ruby_l" (radius=0.006, pos=[-0.13, 0, 0], mat="ruby")
     sphere "cg_ruby_r" (radius=0.006, pos=[ 0.13, 0, 0], mat="ruby")
   }
 
   group "blade" (above="crossguard", rot=[0, 0, 0]) {
     cylinder "b_main" (
-      radius=0.025, 
-      height=0.75, 
+      radius=0.025,
+      height=0.75,
       segments=4,
       scale=[1, 1, 0.2],
-      mat="damascus_steel"
+      mat="damascus_steel",
+      phys="steel"
     )
     cone "b_tip" (
-      above="b_main", 
-      radius=0.025, 
-      height=0.08, 
+      above="b_main",
+      radius=0.025,
+      height=0.08,
       segments=4,
       scale=[1, 1, 0.2],
-      mat="damascus_steel"
+      mat="damascus_steel",
+      phys="steel"
     )
   }
 }

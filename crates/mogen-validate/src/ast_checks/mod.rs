@@ -27,7 +27,10 @@ pub use schema::{
     LIGHT_COMMON_ATTRS, TRANSFORM_COMMON_ATTRS,
 };
 
-use collect::{collect_material_names, collect_module_names, merge_imported_names, ImportResolution};
+use collect::{
+    collect_material_names, collect_module_names, collect_physics_names, merge_imported_names,
+    ImportResolution,
+};
 use rules::check_anim_required;
 use schema::{as_string_or_ident, attr_type, value_kind, value_matches};
 
@@ -45,6 +48,7 @@ pub fn validate_ast(ast: &[Node]) -> Vec<Diagnostic> {
 pub fn validate_ast_with_source(ast: &[Node], base_dir: Option<&Path>) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
     let mut materials = collect_material_names(ast, &mut diags);
+    let mut physics = collect_physics_names(ast);
     let mut modules = collect_module_names(ast, &mut diags);
     // Cross-author registry refs (`use "@user/slug[@v]"`) resolve at
     // build time via `Loader::load_registry`. At validation time we
@@ -60,6 +64,7 @@ pub fn validate_ast_with_source(ast: &[Node], base_dir: Option<&Path>) -> Vec<Di
         base_dir,
         &mut modules,
         &mut materials,
+        &mut physics,
         &mut diags,
     ) {
         ImportResolution::Resolved => false,
@@ -67,7 +72,7 @@ pub fn validate_ast_with_source(ast: &[Node], base_dir: Option<&Path>) -> Vec<Di
     };
     check_meta_blocks(ast, &mut diags);
     for n in ast {
-        walk(n, &materials, &modules, suppress_unknown_module, false, &mut diags);
+        walk(n, &materials, &physics, &modules, suppress_unknown_module, false, &mut diags);
     }
     diags
 }
@@ -185,6 +190,7 @@ fn parse_major_minor(v: &str) -> Option<(u64, u64)> {
 fn walk(
     n: &Node,
     materials: &HashSet<String>,
+    physics: &HashSet<String>,
     modules: &HashSet<String>,
     suppress_unknown_module: bool,
     inherited_skin: bool,
@@ -261,7 +267,7 @@ fn walk(
                     .with_span(n.span),
                 );
             }
-            check_attrs(n, materials, inherited_skin, diags);
+            check_attrs(n, materials, physics, inherited_skin, diags);
         }
         "import" => {
             if n.name.is_none() {
@@ -305,7 +311,7 @@ fn walk(
             }
         }
         _ if KNOWN_KINDS.contains(&n.kind.as_str()) => {
-            check_attrs(n, materials, inherited_skin, diags);
+            check_attrs(n, materials, physics, inherited_skin, diags);
             check_anim_required(n, diags);
         }
         _ => {}
@@ -317,7 +323,7 @@ fn walk(
     // inherited from an ancestor group / mirror / use, not authored locally.
     let child_skin = inherited_skin || n.attr("skin").is_some();
     for c in &n.children {
-        walk(c, materials, modules, suppress_unknown_module, child_skin, diags);
+        walk(c, materials, physics, modules, suppress_unknown_module, child_skin, diags);
     }
 }
 
@@ -333,7 +339,13 @@ fn check_kind(n: &Node, diags: &mut Vec<Diagnostic>) {
     }
 }
 
-fn check_attrs(n: &Node, materials: &HashSet<String>, inherited_skin: bool, diags: &mut Vec<Diagnostic>) {
+fn check_attrs(
+    n: &Node,
+    materials: &HashSet<String>,
+    physics: &HashSet<String>,
+    inherited_skin: bool,
+    diags: &mut Vec<Diagnostic>,
+) {
     let allowed = attrs_for_kind(&n.kind);
     let common = common_attrs_for_kind(&n.kind);
     for (k, v) in &n.attrs {
@@ -371,6 +383,19 @@ fn check_attrs(n: &Node, materials: &HashSet<String>, inherited_skin: bool, diag
                         Diagnostic::error(
                             "E0104",
                             format!("unknown material \"{}\"", name),
+                        )
+                        .with_span(n.span),
+                    );
+                }
+            }
+        }
+        if k == "phys" {
+            if let Some(name) = as_string_or_ident(v) {
+                if !physics.contains(name) {
+                    diags.push(
+                        Diagnostic::error(
+                            "E0105",
+                            format!("unknown physics material \"{}\"", name),
                         )
                         .with_span(n.span),
                     );

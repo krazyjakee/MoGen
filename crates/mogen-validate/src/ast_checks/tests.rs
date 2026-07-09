@@ -1209,3 +1209,64 @@ mod dungeon_validator_tests {
         );
     }
 }
+
+mod physics_validator_tests {
+    use super::super::*;
+    use mogen_core::Diagnostic;
+
+    fn diags_for(src: &str) -> Vec<Diagnostic> {
+        let ast = mogen_dsl::parse(src).expect("parse");
+        validate_ast(&ast)
+    }
+
+    #[test]
+    fn valid_physics_declaration_and_reference_are_clean() {
+        let src = r#"
+            physics "oak" (weight=700kg/m3, friction=0.6, bounce=0.2)
+            scene { box "crate" (size=[1,1,1], phys="oak") }
+        "#;
+        let diags = diags_for(src);
+        assert!(diags.is_empty(), "expected no diagnostics, got: {diags:?}");
+    }
+
+    #[test]
+    fn unknown_phys_reference_errors() {
+        let src = r#"scene { box "crate" (size=[1,1,1], phys="missing") }"#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "E0105"),
+            "expected E0105 for unknown phys, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn nameless_physics_errors() {
+        let src = r#"physics (weight=700kg/m3)"#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "E0210"),
+            "expected E0210 for nameless physics, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn out_of_range_bounce_warns() {
+        let src = r#"physics "rubber" (weight=1100kg/m3, bounce=1.5)"#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "W0213"),
+            "expected W0213 for bounce>1, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn unknown_attr_on_physics_warns() {
+        // `density` is exactly the jargon we replaced — it must not be accepted.
+        let src = r#"physics "oak" (density=700)"#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "W0102"),
+            "expected W0102 for unknown `density` attr, got: {diags:?}"
+        );
+    }
+}

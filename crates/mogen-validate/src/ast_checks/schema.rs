@@ -6,7 +6,7 @@
 use mogen_dsl::ast::Value;
 
 pub const KNOWN_KINDS: &[&str] = &[
-    "scene", "group", "solid", "material", "connector", "attach", "conform", "mirror", "array",
+    "scene", "group", "solid", "material", "physics", "connector", "attach", "conform", "mirror", "array",
     "stack", "grid",
     "meta",
     "box", "plane", "quad", "cylinder", "cone", "sphere", "capsule", "torus",
@@ -37,6 +37,10 @@ pub const KNOWN_KINDS: &[&str] = &[
 /// shortcuts (`x`/`y`/`z`, `anchor`, `from`/`to` corners, sibling relations).
 pub const GEOMETRY_COMMON_ATTRS: &[&str] = &[
     "pos", "rot", "scale", "role", "tags", "mat", "skin", "bind",
+    // Physics: `phys="<name>"` binds a declared `physics` substance; `weight=`
+    // is an optional flat per-node mass override (kg) for props whose weight
+    // shouldn't be derived from their volume.
+    "phys", "weight",
     // Per-component shortcuts.
     "x", "y", "z", "rx", "ry", "rz", "w", "h", "d",
     // Placement ergonomics.
@@ -116,7 +120,7 @@ pub fn common_attrs_for_kind(kind: &str) -> &'static [&'static str] {
         "skeleton" | "bone" => TRANSFORM_COMMON_ATTRS,
         "light" => LIGHT_COMMON_ATTRS,
         "decal" => DECAL_COMMON_ATTRS,
-        "material" | "connector" | "attach"
+        "material" | "physics" | "connector" | "attach"
         | "joint" | "clip" | "track"
         | "spin" | "open_close" | "wave" | "flap" | "idle"
         | "lod_scale" | "meta"
@@ -273,6 +277,7 @@ pub fn attrs_for_kind(kind: &str) -> &'static [&'static str] {
             "gradient",
             "prompt",
         ],
+        "physics" => &["weight", "friction", "bounce"],
         "connector" => &["at", "dir", "tag", "radius"],
         "mirror" => &["axis", "flip_bind"],
         "array" => &["count", "around", "start_angle"],

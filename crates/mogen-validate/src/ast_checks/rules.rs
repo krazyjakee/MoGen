@@ -60,6 +60,50 @@ pub(super) fn check_anim_required(n: &Node, diags: &mut Vec<Diagnostic>) {
                 }
             }
         }
+        "physics" => {
+            if n.name.is_none() {
+                diags.push(
+                    Diagnostic::error(
+                        "E0210",
+                        "physics declaration requires a name, e.g. `physics \"oak\" (...)`",
+                    )
+                    .with_span(n.span),
+                );
+            }
+            if let Some(Value::Number(w)) = n.attr("weight") {
+                if *w <= 0.0 {
+                    diags.push(
+                        Diagnostic::warning(
+                            "W0211",
+                            format!("weight {w} kg/m³ is not positive — a body needs a positive weight to be simulated"),
+                        )
+                        .with_span(n.span),
+                    );
+                }
+            }
+            if let Some(Value::Number(f)) = n.attr("friction") {
+                if *f < 0.0 {
+                    diags.push(
+                        Diagnostic::warning(
+                            "W0212",
+                            format!("friction {f} is negative — clamped to 0 by most engines"),
+                        )
+                        .with_span(n.span),
+                    );
+                }
+            }
+            if let Some(Value::Number(b)) = n.attr("bounce") {
+                if !(0.0..=1.0).contains(b) {
+                    diags.push(
+                        Diagnostic::warning(
+                            "W0213",
+                            format!("bounce {b} is outside the [0,1] range (0 = dead thud, 1 = superball)"),
+                        )
+                        .with_span(n.span),
+                    );
+                }
+            }
+        }
         "joint" => {
             if n.name.is_none() {
                 diags.push(

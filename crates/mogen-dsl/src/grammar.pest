@@ -41,13 +41,21 @@ mul_op =  { "*" | "/" }
 // `<=` doesn't get tokenised as `<` followed by `=`.
 cmp_op =  { "<=" | ">=" | "==" | "!=" | "<" | ">" }
 
-// A numeric literal may carry an optional length-unit suffix
-// (`1.5m`, `18in`, `90cm`). Units are normalised to metres at parse time,
-// so the rest of the pipeline only ever sees plain `f32` lengths. Bare
-// numbers are unitless and treated as metres (the glTF/Godot base unit).
-// Order matters: two-letter units that share a prefix with `m` (`mm`, `cm`,
-// `km`) must precede it so `m` doesn't shadow them.
-number    = @{ "-"? ~ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+)? ~ length_unit? }
+// A numeric literal may carry an optional unit suffix. Two dimensions are
+// recognised, both normalised to their base unit at parse time so the rest of
+// the pipeline only ever sees plain `f32`:
+//   * length → metres     (`1.5m`, `18in`, `90cm`; bare = metres)
+//   * weight → kilograms   (`5kg`, `180lb`, `2t`; a mass) and its per-volume
+//                           form `700kg/m3` → kilograms per cubic metre (a
+//                           "weight per cubic metre", i.e. density).
+// Order matters. `density_unit` precedes `mass_unit` so `kg/m3` is taken whole
+// rather than as `kg` with a dangling `/m3`. The two-letter length units that
+// share a prefix with `m` (`mm`, `cm`, `km`) must precede `m`. Mass and length
+// suffixes are disjoint, so a literal is unambiguous.
+number    = @{ "-"? ~ ASCII_DIGIT+ ~ ("." ~ ASCII_DIGIT+)? ~ unit? }
+unit        = @{ density_unit | mass_unit | length_unit }
+density_unit = @{ mass_unit ~ "/" ~ ("m3" | "m³") }
+mass_unit   = @{ "kg" | "g" | "t" | "lb" | "oz" | "st" }
 length_unit = @{ "mm" | "cm" | "km" | "m" | "in" | "ft" | "yd" }
 string    = @{ "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
 ident     = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }

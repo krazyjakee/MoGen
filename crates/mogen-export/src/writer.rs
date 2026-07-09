@@ -617,6 +617,24 @@ fn emit_node(n: &SceneNode, mesh: Option<usize>, light: Option<usize>) -> Value 
     if !n.cast_shadow {
         extras.insert("cast_shadow".into(), json!(false));
     }
+    // Physics body: the substance's feel (weight-per-m³, friction, bounce) plus
+    // the values mogen computed from this node's real geometry (weight in kg,
+    // local-space centre of gravity). A downstream importer reads this to build
+    // a RigidBody + PhysicsMaterial. See `mogen_core::PhysicsBody`.
+    if let Some(p) = &n.physics {
+        let mut phys = serde_json::Map::new();
+        phys.insert("material".into(), Value::String(p.material.clone()));
+        phys.insert("weight_per_m3".into(), json!(p.weight_per_m3));
+        phys.insert("friction".into(), json!(p.friction));
+        phys.insert("bounce".into(), json!(p.bounce));
+        if let Some(m) = p.mass {
+            phys.insert("weight".into(), json!(m));
+        }
+        if let Some(c) = p.center_of_gravity {
+            phys.insert("center_of_gravity".into(), json!([c[0], c[1], c[2]]));
+        }
+        extras.insert("physics".into(), Value::Object(phys));
+    }
     if !extras.is_empty() {
         obj.insert("extras".into(), Value::Object(extras));
     }

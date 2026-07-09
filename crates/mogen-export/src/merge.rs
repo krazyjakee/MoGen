@@ -77,6 +77,7 @@ where
         nodes: Vec::new(),
         roots: Vec::new(),
         materials: scene.materials.clone(),
+        physics: scene.physics.clone(),
         joints: scene.joints.clone(),
         clips: scene.clips.clone(),
         skins: scene.skins.clone(),

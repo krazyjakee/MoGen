@@ -8,6 +8,7 @@ pub mod light;
 pub mod material;
 pub mod mesh;
 pub mod meta;
+pub mod physics;
 pub mod skin;
 pub mod transform;
 
@@ -23,5 +24,6 @@ pub use meta::Meta;
 pub use light::{Light, LightKind};
 pub use material::{AlphaMode, Material, MaterialId, MaterialShader, TextureRef, UvMode};
 pub use mesh::Mesh;
+pub use physics::{PhysicsBody, PhysicsId, PhysicsMaterial};
 pub use skin::{Skin, SkinId};
 pub use transform::Transform;

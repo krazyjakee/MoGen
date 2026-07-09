@@ -14,6 +14,7 @@ modules, see [`modules.md`](./modules.md).
 - [Scene structure](#scene-structure-scene-group)
 - [Primitives](#primitives)
 - [Materials](#materials)
+- [Physics](#physics)
 - [Decals](#decals)
 - [Connectors](#connectors)
 - [Attach: rigid alignment of two connector frames](#attach-rigid-alignment-of-two-connector-frames)
@@ -176,11 +177,31 @@ every numeric position: scalars, `vec3` components, list items, and
 `$param` arithmetic. Each component carries its own unit, so metric and
 imperial can be mixed freely within one literal or expression.
 
-Units are for **lengths only** — sizes, positions, radii, heights, offsets.
-Rotations stay in degrees, `scale` stays a unit-less multiplier, and counts
-/ weights / colours stay plain numbers; don't put a length suffix on those.
+Length units are for **lengths only** — sizes, positions, radii, heights,
+offsets. Rotations stay in degrees, `scale` stays a unit-less multiplier, and
+counts / colours stay plain numbers; don't put a length suffix on those.
 Because everything normalises to metres, a unit literal and its metre
 equivalent lower to byte-identical geometry.
+
+### Weight units
+
+Weights follow the same scheme, normalising to the **kilogram**. A bare number
+is kilograms. Used by [`physics`](#physics) (`weight=`) and the per-node
+`weight=` override.
+
+| suffix | unit | metres → kg |
+|---|---|---|
+| `g` | gram | 0.001 |
+| `kg` | kilogram | 1.0 |
+| `t` | tonne | 1000 |
+| `lb` | pound | 0.4536 |
+| `oz` | ounce | 0.02835 |
+| `st` | stone | 6.350 |
+
+A `physics` block's `weight=` is a weight **per cubic metre** — append `/m3`
+(or `/m³`): `700kg/m3`, `0.7t/m3`. A bare `weight=` on a geometry node is a flat
+mass (`5kg`). Mass and length suffixes are disjoint, so a literal's dimension is
+never ambiguous.
 
 ---
 
@@ -194,6 +215,8 @@ These apply to every geometry node (`box`, `cylinder`, …) and to `group`:
 | `rot` | `vec3` (Euler XYZ in **degrees**) or a list | rotation applied after translation; default identity |
 | `scale` | scalar or `vec3` | uniform/per-axis scale; default `1` |
 | `mat` | string or ident | references a declared `material` by name |
+| `phys` | string or ident | references a declared `physics` substance by name; drives auto-computed weight + centre of gravity (see [Physics](#physics)) |
+| `weight` | mass (`5kg`) | optional flat per-node weight override (a mass), for props whose weight shouldn't follow from their volume |
 | `role` | string or ident | semantic label; written into the GLB `extras` block |
 | `tags` | comma-separated string | free-form labels; also in `extras` |
 
@@ -933,6 +956,36 @@ material "lake" (color=[0.05, 0.32, 0.45], shader="water")
 Texture files are embedded in the output GLB (self-contained, movable
 without sources); missing files are a hard error at export. Reference a
 material via `mat="wood"`; unknown names are a hard error at lowering.
+
+---
+
+## Physics
+
+A `physics` substance is the *feel* of an object, the counterpart to
+`material`'s *look*. Declared once and referenced with `phys=`, it lets an
+engine reconstruct a rigid body — and because mogen builds real watertight
+geometry, it **computes the weight and centre of gravity for you** from the
+mesh. mogen runs no simulation; this is metadata written to `node.extras`.
+
+```
+material "wood" (color=[0.55, 0.35, 0.18])            // look
+physics  "oak"  (weight=700kg/m3, friction=0.55, bounce=0.15)  // feel
+
+scene {
+  box "crate" (size=[1, 1, 1], mat="wood", phys="oak")   // → weighs 700 kg
+}
+```
+
+Attributes: `weight` (a weight **per cubic metre**, e.g. `700kg/m3` — density in
+human words, not the jargon "density"), `friction` (`0` ice … `1` rubber), and
+`bounce` (`0` dead thud … `1` superball). A geometry node references a substance
+with `phys="oak"`; the object's weight is `weight_per_m3 × volume` and its
+centre of gravity is the mesh centroid, both auto-computed and written into
+`node.extras.physics`. A flat per-node `weight=5kg` overrides the computed value
+for props whose weight shouldn't follow from their size.
+
+See [`physics.md`](./physics.md) for the full spec: weight units, the `extras`
+shape engines read, validation codes, and current limitations.
 
 ---
 
