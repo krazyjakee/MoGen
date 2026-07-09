@@ -1,0 +1,97 @@
+// Seed part library — proves the connection ontology end-to-end.
+// See docs/part-connection-ontology.md for the design.
+//
+// GRID (real Lego, ratio 5:2):
+//   stud pitch  P = 8 mm      (horizontal cell)
+//   plate       H = 3.2 mm    (one layer)
+//   brick         = 9.6 mm    (3 plates)
+//   stud radius   = 2.4 mm,  stud height = 1.8 mm
+//
+// CONNECTOR TAGS (kind:profile:gender):
+//   "stud:round:m"  top peg      "stud:round:f"  bottom socket
+// A top stud of one part mates with the bottom socket of the part above:
+// same kind+profile, opposite gender, radii equal, frames anti-parallel.
+
+meta (
+  name = "lego_bricks",
+  description = "Studded bricks on a real-Lego grid with typed connectors, plus a demo build.",
+  tags = ["parts", "lego", "connectors", "demo"],
+)
+
+material "red"    (color=[0.70, 0.05, 0.05], roughness=0.35)
+material "yellow" (color=[0.90, 0.70, 0.05], roughness=0.35)
+material "blue"   (color=[0.05, 0.20, 0.70], roughness=0.35)
+
+// --- Part library ---------------------------------------------------------
+// Each part omits `mat=` so it inherits the colour from the `use` wrapper.
+
+// 1x1 brick — one stud up, one socket down.
+module "brick_1x1" () {
+  group "brick_1x1" {
+    box "body" (size=[8mm, 9.6mm, 8mm], anchor=bottom) {
+      connector "top"    (at=[0, 9.6mm, 0], dir=[0,  1, 0], tag="stud:round:m", radius=2.4mm)
+      connector "bottom" (at=[0, 0,     0], dir=[0, -1, 0], tag="stud:round:f", radius=2.4mm)
+    }
+    cylinder "stud" (pos=[0, 9.6mm, 0], radius=2.4mm, height=1.8mm, segments=8, anchor=bottom)
+  }
+}
+
+// 1x1 plate — a third of a brick tall; same stud/socket pair.
+module "plate_1x1" () {
+  group "plate_1x1" {
+    box "body" (size=[8mm, 3.2mm, 8mm], anchor=bottom) {
+      connector "top"    (at=[0, 3.2mm, 0], dir=[0,  1, 0], tag="stud:round:m", radius=2.4mm)
+      connector "bottom" (at=[0, 0,     0], dir=[0, -1, 0], tag="stud:round:f", radius=2.4mm)
+    }
+    cylinder "stud" (pos=[0, 3.2mm, 0], radius=2.4mm, height=1.8mm, segments=8, anchor=bottom)
+  }
+}
+
+// 1x1 tile — plate height, SMOOTH top (no stud): presents a socket below only.
+module "tile_1x1" () {
+  group "tile_1x1" {
+    box "body" (size=[8mm, 3.2mm, 8mm], anchor=bottom) {
+      connector "bottom" (at=[0, 0, 0], dir=[0, -1, 0], tag="stud:round:f", radius=2.4mm)
+    }
+  }
+}
+
+// 2x1 brick — two studs along X, two sockets below.
+module "brick_2x1" () {
+  group "brick_2x1" {
+    box "body" (size=[16mm, 9.6mm, 8mm], anchor=bottom) {
+      connector "top_a"    (at=[-4mm, 9.6mm, 0], dir=[0,  1, 0], tag="stud:round:m", radius=2.4mm)
+      connector "top_b"    (at=[ 4mm, 9.6mm, 0], dir=[0,  1, 0], tag="stud:round:m", radius=2.4mm)
+      connector "bottom_a" (at=[-4mm, 0,     0], dir=[0, -1, 0], tag="stud:round:f", radius=2.4mm)
+      connector "bottom_b" (at=[ 4mm, 0,     0], dir=[0, -1, 0], tag="stud:round:f", radius=2.4mm)
+    }
+    cylinder "stud_a" (pos=[-4mm, 9.6mm, 0], radius=2.4mm, height=1.8mm, segments=8, anchor=bottom)
+    cylinder "stud_b" (pos=[ 4mm, 9.6mm, 0], radius=2.4mm, height=1.8mm, segments=8, anchor=bottom)
+  }
+}
+
+// --- Demo build -----------------------------------------------------------
+// Parts placed on the 8 mm grid via `use` x/y/z shortcuts — the snap the
+// generator performs by pairing compatible connectors reduces to integer
+// grid coordinates. `solid` requests the export-time same-material merge.
+
+scene {
+  // Base course: a 2x2 footprint of red 1x1 bricks at y = 0.
+  solid "course_0" (mat="red") {
+    use "brick_1x1" (x=0,   z=0)
+    use "brick_1x1" (x=8mm, z=0)
+    use "brick_1x1" (x=0,   z=8mm)
+    use "brick_1x1" (x=8mm, z=8mm)
+  }
+
+  // Second course: two yellow bricks bridging diagonally, at y = 9.6 mm.
+  solid "course_1" (mat="yellow") {
+    use "brick_1x1" (x=0,   y=9.6mm, z=0)
+    use "brick_1x1" (x=8mm, y=9.6mm, z=8mm)
+  }
+
+  // Cap one column with a smooth blue tile (no stud on top).
+  group "cap" (mat="blue") {
+    use "tile_1x1" (x=8mm, y=19.2mm, z=8mm)
+  }
+}
