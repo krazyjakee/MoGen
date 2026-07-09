@@ -984,6 +984,14 @@ centre of gravity is the mesh centroid, both auto-computed and written into
 `node.extras.physics`. A flat per-node `weight=5kg` overrides the computed value
 for props whose weight shouldn't follow from their size.
 
+`phys=` **inherits** down the hierarchy like `mat=`: set it on a `group` and
+every child without its own `phys=` inherits it and weighs itself. A group that
+carries a substance but no mesh of its own reports the **compound** weight and
+mass-weighted centre of gravity of its whole subtree, so an engine can treat the
+assembly as one rigid body. Weight units carry a dimension — a mass literal
+(`5kg`) is only valid on `weight=`; using one elsewhere (`size=[5kg,1,1]`) is a
+parse error.
+
 See [`physics.md`](./physics.md) for the full spec: weight units, the `extras`
 shape engines read, validation codes, and current limitations.
 

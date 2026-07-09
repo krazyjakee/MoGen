@@ -73,7 +73,20 @@ fn build_node(pair: Pair<Rule>) -> Result<Node> {
 fn build_attr(pair: Pair<Rule>) -> Result<(String, Value)> {
     let mut it = pair.into_inner();
     let key = it.next().unwrap().as_str().to_string();
-    let val_pair = it.next().unwrap().into_inner().next().unwrap();
+    let value_pair = it.next().unwrap();
+    // Weight units are typed: a mass / weight-per-volume literal (`5kg`,
+    // `700kg/m3`) only makes sense on a `weight=` attribute. Using one anywhere
+    // else — `size=[5kg, 1, 1]`, a rotation, a count — is a dimensional
+    // mistake, so reject it at parse time rather than silently treating the
+    // kilograms as metres.
+    if key != "weight" {
+        if let Some(lit) = value_mass_literal(&value_pair) {
+            return Err(anyhow!(
+                "weight unit `{lit}` is only valid on a `weight=` attribute (found on `{key}=`)"
+            ));
+        }
+    }
+    let val_pair = value_pair.into_inner().next().unwrap();
     let value = match val_pair.as_rule() {
         Rule::expr => lift_expr(build_expr(val_pair)?),
         Rule::vec3 => {
@@ -462,6 +475,38 @@ fn mass_unit_to_kg(unit: &str) -> Option<f32> {
     })
 }
 
+/// True if a numeric literal carries a mass or weight-per-volume unit suffix
+/// (`5kg`, `700kg/m3`) rather than a length suffix or no suffix at all.
+fn number_literal_is_mass(lit: &str) -> bool {
+    match lit.find(|c: char| c.is_ascii_alphabetic()) {
+        None => false,
+        Some(i) => {
+            let unit = &lit[i..];
+            let core = unit
+                .strip_suffix("/m3")
+                .or_else(|| unit.strip_suffix("/m³"))
+                .unwrap_or(unit);
+            mass_unit_to_kg(core).is_some()
+        }
+    }
+}
+
+/// Walk a parsed `value` (or any sub-pair) and return the first mass-dimensioned
+/// numeric literal it contains, if any. Reaches through vec3 / list / expression
+/// nesting so `size=[1, 2kg, 3]` is caught. Used to reject weight units outside
+/// `weight=`.
+fn value_mass_literal(pair: &Pair<Rule>) -> Option<String> {
+    if pair.as_rule() == Rule::number {
+        return number_literal_is_mass(pair.as_str()).then(|| pair.as_str().to_string());
+    }
+    for inner in pair.clone().into_inner() {
+        if let Some(l) = value_mass_literal(&inner) {
+            return Some(l);
+        }
+    }
+    None
+}
+
 /// Parse a numeric literal, applying any trailing unit suffix so the returned
 /// value is always in the dimension's base unit. Length suffixes normalise to
 /// metres (`18in` → `0.4572`); mass suffixes to kilograms (`5kg` → `5`,
@@ -576,6 +621,18 @@ mod tests {
             Value::Number(n) => assert!((n - 5.0).abs() < 1e-6),
             other => panic!("expected Number, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn mass_units_rejected_outside_weight() {
+        // A weight suffix on a length attribute is a dimensional mistake.
+        let err = parse("box (size=[5kg, 1, 1])\n").expect_err("mass in size must fail");
+        assert!(err.to_string().contains("weight unit `5kg`"), "got: {err}");
+        // Even nested inside an expression.
+        assert!(parse("box (height=2 + 1kg)\n").is_err());
+        // But `weight=` accepts them (mass on a node, density in a physics block).
+        assert!(parse("box (weight=5kg)\n").is_ok());
+        assert!(parse("physics \"oak\" (weight=700kg/m3)\n").is_ok());
     }
 
     #[test]

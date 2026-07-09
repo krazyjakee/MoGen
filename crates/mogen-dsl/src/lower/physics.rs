@@ -63,24 +63,39 @@ fn register_physics(node: &Node, graph: &mut SceneGraph) -> Result<()> {
     Ok(())
 }
 
-/// Resolve a geometry node's `phys="<name>"` reference into a [`PhysicsBody`]
-/// snapshot on the node. Copies the substance properties off the referenced
-/// declaration and records any explicit per-node `weight=<mass>` override (a
-/// flat mass in kg — distinct from the block's per-volume `weight=`). Leaves
-/// `mass`/`center_of_gravity` for the auto-weigh pass unless overridden.
+/// A resolved substance: the four intrinsic fields copied onto a [`PhysicsBody`]
+/// (everything except the geometry-derived `mass`/`center_of_gravity`).
+type Substance = (String, f32, f32, f32);
+
+/// Resolve a geometry node's physics substance into a [`PhysicsBody`] snapshot.
+///
+/// An explicit `phys="<name>"` wins; otherwise the node **inherits** the nearest
+/// ancestor's substance, exactly as `mat=` inherits down the hierarchy (see
+/// [`super::helpers::inherit_material_from_ancestor`]). So `phys=` on a `group`
+/// flows to every child mesh, which then weighs itself. A flat per-node
+/// `weight=<mass>` override is recorded regardless; `mass`/`center_of_gravity`
+/// are otherwise filled by the auto-weigh pass.
 pub(super) fn bind_physics(node: &Node, id: NodeId, graph: &mut SceneGraph) -> Result<()> {
-    let Some(name) = node.attr_string("phys") else {
-        return Ok(());
+    let substance = if let Some(name) = node.attr_string("phys") {
+        let pid = graph
+            .find_physics_scoped(name, node.origin.as_deref())
+            .ok_or_else(|| anyhow!("unknown physics material: {name}"))?;
+        let pm = &graph.physics[pid.0 as usize];
+        (pm.name.clone(), pm.weight_per_m3, pm.friction, pm.bounce)
+    } else {
+        // No own `phys=` — inherit from the nearest ancestor that has a body.
+        // The ancestor's own mass/COG never carry down; each node weighs itself.
+        match inherited_substance(id, graph) {
+            Some(s) => s,
+            None => return Ok(()),
+        }
     };
-    let pid = graph
-        .find_physics_scoped(name, node.origin.as_deref())
-        .ok_or_else(|| anyhow!("unknown physics material: {name}"))?;
-    let pm = &graph.physics[pid.0 as usize];
+    let (material, weight_per_m3, friction, bounce) = substance;
     let mut body = PhysicsBody {
-        material: pm.name.clone(),
-        weight_per_m3: pm.weight_per_m3,
-        friction: pm.friction,
-        bounce: pm.bounce,
+        material,
+        weight_per_m3,
+        friction,
+        bounce,
         mass: None,
         center_of_gravity: None,
     };
@@ -91,4 +106,18 @@ pub(super) fn bind_physics(node: &Node, id: NodeId, graph: &mut SceneGraph) -> R
     }
     graph.nodes[id.0 as usize].physics = Some(body);
     Ok(())
+}
+
+/// Walk the parent chain and return the nearest ancestor's substance, if any.
+/// Only the intrinsic fields are copied — never the ancestor's computed
+/// `mass`/`center_of_gravity`.
+fn inherited_substance(id: NodeId, graph: &SceneGraph) -> Option<Substance> {
+    let mut cur = graph.nodes[id.0 as usize].parent;
+    while let Some(p) = cur {
+        if let Some(b) = &graph.nodes[p.0 as usize].physics {
+            return Some((b.material.clone(), b.weight_per_m3, b.friction, b.bounce));
+        }
+        cur = graph.nodes[p.0 as usize].parent;
+    }
+    None
 }

@@ -63,9 +63,30 @@ size — a hollow prop, a scripted "magic anvil":
 box "prop" (size=[1,1,1], phys="oak", weight=5kg)   // exactly 5 kg, not 700
 ```
 
-Physics does not inherit down the hierarchy in this version — put `phys=` on the
-nodes that carry the mesh. (Inheritance from an ancestor, like `mat=`, is a
-planned follow-up.)
+### Inheritance
+
+`phys=` inherits down the hierarchy exactly like `mat=`. Set it on a `group` and
+every descendant that doesn't declare its own inherits that substance and weighs
+itself; a descendant with its own `phys=` overrides:
+
+```
+group "chair" (phys="oak") {         // frame is oak…
+  box "seat" (…, phys="cushion")     // …but the seat overrides to foam
+  box "back" (…)                     // inherits oak, weighs itself
+  cylinder "leg_fl" (…)              // inherits oak
+}
+```
+
+### Compound bodies
+
+A node that carries a substance but **no mesh of its own** — a `group phys=…`,
+whether set directly or inherited — reports the *combined* weight and the
+**mass-weighted centre of gravity** of every mesh-bearing descendant, in its own
+local frame. So the `chair` group above exports one body whose `weight` is the
+whole chair's and whose `center_of_gravity` is the real balance point (pulled up
+and back toward the heavy backrest). An engine can treat the group as a single
+`RigidBody3D` and the children as its collision shapes. Nested groups each sum
+their own subtree without double-counting the shared leaves.
 
 ## Weight units
 
@@ -87,9 +108,10 @@ The **per-cubic-metre** form appends `/m3` (or `/m³`): `700kg/m3`, `0.7t/m3`,
 `weight=` on a *node* is a flat mass (`5kg`, `180lb`).
 
 Weight and length suffixes are disjoint, so a literal is never ambiguous. Units
-are typed by dimension: a mass literal is only meaningful in a `weight=`, and
-writing one where a length belongs (`size=[5kg, 1, 1]`) is a mistake — full
-dimensional-mismatch diagnostics are a planned follow-up.
+are **typed by dimension**: a mass/weight-per-volume literal is only valid on a
+`weight=` attribute. Writing one where a length belongs (`size=[5kg, 1, 1]`,
+`rot=[90kg, 0, 0]`) is a dimensional mistake and is rejected at parse time
+rather than silently treating the kilograms as metres.
 
 ## Auto-computed weight and centre of gravity
 
@@ -143,15 +165,22 @@ mass properties.
 - **W0102** — an unknown attribute on a `physics` block. In particular
   `density=` is *not* accepted — it's the jargon `weight=` replaces.
 
+## Mesh-merge
+
+The optional export merge pass (`merge_sibling_meshes` /
+`ExportOptions::merge_sibling_meshes`) CSG-unions same-material sibling leaves
+into one node. It now **carries a combined physics body** when every merged leaf
+shares the same substance: the merged node's weight is the sum and its centre of
+gravity the mass-weighted mean, so the union simulates like the parts did. If
+the merged leaves have *different* substances (a mix of densities that can't be
+one uniform body), physics drops — the same way UVs drop on a mixed-UV merge.
+
 ## Limitations and follow-ups
 
-- **No inheritance yet.** `phys=` binds only the node it's written on.
-- **Per-mesh, not compound.** Each mesh node computes its own weight and centre
-  of gravity. A group-level *combined* (mass-weighted) centre of mass across a
-  multi-part body is a natural next step.
-- **Mesh-merge drops it.** The optional export merge pass
-  (`merge_sibling_meshes`) that CSG-unions same-material siblings produces a new
-  node without physics — the same way it drops per-vertex UVs. Unmerged nodes
-  keep their physics.
-- **No dimensional-mismatch errors yet.** Mass units are accepted anywhere a
-  number is; using one outside `weight=` is nonsensical but not yet flagged.
+- **Compound bodies read own-mesh descendants.** A group's aggregate sums its
+  mesh-bearing descendants. A standalone `weight=` override on a bodiless,
+  childless node isn't counted into an ancestor's aggregate.
+- **Inertia tensor is not emitted.** Weight and centre of gravity are computed;
+  a full inertia tensor for angular dynamics is a natural next step.
+- **Collision shape is separate.** Physics carries mass properties; the
+  collision shape still comes from `collider=` / the procedural auto-colliders.
