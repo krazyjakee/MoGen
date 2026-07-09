@@ -75,6 +75,11 @@ Multiple `.mog` files can be open simultaneously, one per tab.
   are removed automatically if the file no longer exists at that path.
 - Save / Save As use a native file dialog. New tabs default to "Untitled"
   and prompt for a path on first save.
+- Studio also opens and saves `.mogb`, the experimental MOGB binary
+  container (`mogen pack`/`unpack` on the CLI). It's a transparent
+  encoding of the same DSL source — the editor, diagnostics, and viewer
+  never see the binary form. Text `.mog` stays canonical; save a tab to a
+  `.mogb` path only if you specifically want the compact container.
 
 ---
 
