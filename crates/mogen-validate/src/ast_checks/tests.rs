@@ -1306,4 +1306,24 @@ mod physics_validator_tests {
             "unexpected W0215 on a `physics` block, got: {diags:?}"
         );
     }
+
+    #[test]
+    fn node_weight_with_inherited_phys_is_clean() {
+        // `phys=` inherits down the hierarchy (see lower/physics.rs); a
+        // descendant's `weight=` override that relies on an ancestor's `phys=`
+        // is the documented pattern, not an orphan attribute.
+        let src = r#"
+            physics "oak" (weight=700kg/m3)
+            scene {
+              group "chair" (phys="oak") {
+                box "seat" (size=[1,1,1], weight=5kg)
+              }
+            }
+        "#;
+        let diags = diags_for(src);
+        assert!(
+            !diags.iter().any(|d| d.code == "W0215"),
+            "unexpected W0215 with inherited `phys=`, got: {diags:?}"
+        );
+    }
 }

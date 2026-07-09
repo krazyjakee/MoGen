@@ -72,7 +72,7 @@ pub fn validate_ast_with_source(ast: &[Node], base_dir: Option<&Path>) -> Vec<Di
     };
     check_meta_blocks(ast, &mut diags);
     for n in ast {
-        walk(n, &materials, &physics, &modules, suppress_unknown_module, false, &mut diags);
+        walk(n, &materials, &physics, &modules, suppress_unknown_module, false, false, &mut diags);
     }
     diags
 }
@@ -194,6 +194,7 @@ fn walk(
     modules: &HashSet<String>,
     suppress_unknown_module: bool,
     inherited_skin: bool,
+    inherited_phys: bool,
     diags: &mut Vec<Diagnostic>,
 ) {
     check_kind(n, diags);
@@ -267,7 +268,7 @@ fn walk(
                     .with_span(n.span),
                 );
             }
-            check_attrs(n, materials, physics, inherited_skin, diags);
+            check_attrs(n, materials, physics, inherited_skin, inherited_phys, diags);
         }
         "import" => {
             if n.name.is_none() {
@@ -311,7 +312,7 @@ fn walk(
             }
         }
         _ if KNOWN_KINDS.contains(&n.kind.as_str()) => {
-            check_attrs(n, materials, physics, inherited_skin, diags);
+            check_attrs(n, materials, physics, inherited_skin, inherited_phys, diags);
             check_anim_required(n, diags);
         }
         _ => {}
@@ -322,8 +323,21 @@ fn walk(
     // "`bind` without `skin`" warning suppresses for leaves whose skin is
     // inherited from an ancestor group / mirror / use, not authored locally.
     let child_skin = inherited_skin || n.attr("skin").is_some();
+    // `phys=` inherits the same way (see `mogen-dsl`'s `bind_physics`), so a
+    // descendant's `weight=` override can rely on an ancestor's substance
+    // without repeating `phys=` locally — track it so W0215 doesn't misfire.
+    let child_phys = inherited_phys || n.attr("phys").is_some();
     for c in &n.children {
-        walk(c, materials, physics, modules, suppress_unknown_module, child_skin, diags);
+        walk(
+            c,
+            materials,
+            physics,
+            modules,
+            suppress_unknown_module,
+            child_skin,
+            child_phys,
+            diags,
+        );
     }
 }
 
@@ -344,6 +358,7 @@ fn check_attrs(
     materials: &HashSet<String>,
     physics: &HashSet<String>,
     inherited_skin: bool,
+    inherited_phys: bool,
     diags: &mut Vec<Diagnostic>,
 ) {
     let allowed = attrs_for_kind(&n.kind);
@@ -411,11 +426,11 @@ fn check_attrs(
                 .with_span(n.span),
             );
         }
-        if k == "weight" && n.kind != "physics" && n.attr("phys").is_none() {
+        if k == "weight" && n.kind != "physics" && n.attr("phys").is_none() && !inherited_phys {
             diags.push(
                 Diagnostic::warning(
                     "W0215",
-                    "`weight=...` has no effect without a `phys=\"...\"` attribute",
+                    "`weight=...` has no effect without a `phys=\"...\"` attribute (own or inherited)",
                 )
                 .with_span(n.span),
             );
