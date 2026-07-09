@@ -53,6 +53,17 @@ pub fn write_ivarint(out: &mut Vec<u8>, v: i64) {
     write_uvarint(out, ((v << 1) ^ (v >> 63)) as u64);
 }
 
+/// Byte length `write_uvarint` would emit for `v` — lets the encoder size the
+/// compressed branch exactly before committing to it.
+pub fn uvarint_len(mut v: u64) -> usize {
+    let mut n = 1;
+    while v >= 0x80 {
+        v >>= 7;
+        n += 1;
+    }
+    n
+}
+
 /// Cursor over a byte slice with bounds-checked reads. Every read returns a
 /// `Result` so a truncated or malformed `.mogb` is a clean error, never a panic.
 pub struct Reader<'a> {
@@ -72,6 +83,11 @@ impl<'a> Reader<'a> {
             .ok_or_else(|| anyhow::anyhow!("MOGB: unexpected end of input"))?;
         self.pos += 1;
         Ok(b)
+    }
+
+    /// The not-yet-consumed tail of the input.
+    pub fn remaining(&self) -> &'a [u8] {
+        &self.buf[self.pos..]
     }
 
     pub fn bytes(&mut self, n: usize) -> Result<&'a [u8]> {

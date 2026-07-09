@@ -10,20 +10,43 @@ use mogen_core::Span;
 use mogen_dsl::ast::{BinOp, Expr, FaceEntry, FaceUv, GradientDef, Node, Value};
 
 use crate::wire::*;
-use crate::{MAGIC, VERSION};
+use crate::{FLAG_COMPRESSED, MAGIC, MAX_DECOMPRESSED, VERSION};
 
 /// Decode MOGB bytes into an AST forest.
 pub fn decode(bytes: &[u8]) -> Result<Vec<Node>> {
-    let mut r = Reader::new(bytes);
-    let magic = r.bytes(4)?;
+    let mut header = Reader::new(bytes);
+    let magic = header.bytes(4)?;
     if magic != MAGIC {
         bail!("MOGB: bad magic (not a .mogb file)");
     }
-    let version = r.u8()?;
+    let version = header.u8()?;
     if version != VERSION {
         bail!("MOGB: unsupported version {version} (this build writes v{VERSION})");
     }
-    let _flags = r.u8()?; // lossy flag is informational; tags are self-describing
+    let flags = header.u8()?; // lossy flag is informational; tags are self-describing
+
+    // Everything after the header is the payload (string table + node stream),
+    // optionally DEFLATE-compressed. Inflate it into an owned buffer so the rest
+    // of decoding reads from one uniform slice either way.
+    let payload: Vec<u8> = if flags & FLAG_COMPRESSED != 0 {
+        let raw_len = header.uvarint()? as usize;
+        let inflated = miniz_oxide::inflate::decompress_to_vec_with_limit(
+            header.remaining(),
+            MAX_DECOMPRESSED,
+        )
+        .map_err(|e| anyhow::anyhow!("MOGB: decompression failed ({:?})", e.status))?;
+        if inflated.len() != raw_len {
+            bail!(
+                "MOGB: decompressed length {} != declared {raw_len}",
+                inflated.len()
+            );
+        }
+        inflated
+    } else {
+        header.remaining().to_vec()
+    };
+
+    let mut r = Reader::new(&payload);
 
     // String table: preset dictionary followed by the per-file strings.
     let mut strings: Vec<String> = crate::preset::PRESET.iter().map(|s| s.to_string()).collect();

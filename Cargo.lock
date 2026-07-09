@@ -2681,6 +2681,7 @@ name = "mogen-binary"
 version = "0.1.10"
 dependencies = [
  "anyhow",
+ "miniz_oxide",
  "mogen-core",
  "mogen-dsl",
 ]

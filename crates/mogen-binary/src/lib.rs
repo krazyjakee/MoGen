@@ -31,6 +31,16 @@
 //! via varint, everything else via raw `f32`). [`encode_lossy`] forces `/1000`
 //! fixed-point on all numbers — smaller, at ~3 decimal places of precision. Use
 //! lossless unless you have measured that the size win is worth the rounding.
+//!
+//! # Compression
+//!
+//! After encoding, the payload is raw-DEFLATE compressed and the smaller of the
+//! two is kept (flagged in the header). The semantic layer already stripped the
+//! entropy DEFLATE is bad at — keyword strings became dictionary indices, round
+//! floats became short varints — so what's left is exactly the residual string
+//! and structural repetition DEFLATE *is* good at (repeated material names, the
+//! shape of sibling nodes). It's the same win you'd get zipping a `.mogb` by
+//! hand, folded into the container so save/load are compressed end to end.
 
 use anyhow::Result;
 use mogen_dsl::ast::Node;
@@ -54,6 +64,18 @@ pub(crate) const VERSION: u8 = 1;
 /// Header flag: numbers were written in lossy `/1000` fixed-point mode. Purely
 /// informational on decode (the per-value tags are self-describing).
 pub(crate) const FLAG_LOSSY: u8 = 0b0000_0001;
+
+/// Header flag: the payload (string table + node stream) is raw-DEFLATE
+/// compressed. The 6-byte header (magic + version + flags) is always stored
+/// uncompressed so the decoder can read this bit. Set only when compression
+/// actually shrinks the file, so a `.mogb` is never larger than its plain form
+/// — and files written before compression existed (flag clear) still decode.
+pub(crate) const FLAG_COMPRESSED: u8 = 0b0000_0010;
+
+/// Hard ceiling on the decompressed payload size, as a decompression-bomb
+/// guard: a malformed/hostile `.mogb` can claim any size, so inflation is
+/// capped here regardless of the stored length.
+pub(crate) const MAX_DECOMPRESSED: usize = 256 * 1024 * 1024;
 
 /// Convenience: parse `src` to an AST and encode it (lossless).
 pub fn pack_source(src: &str) -> Result<Vec<u8>> {

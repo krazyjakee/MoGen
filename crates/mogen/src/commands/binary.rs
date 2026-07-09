@@ -72,20 +72,22 @@ fn report_sizes(src: &str, bytes: &[u8], lossy: bool) {
         }
     };
     eprintln!("MOGB size report{}:", if lossy { " (lossy /1000)" } else { "" });
-    eprintln!("  text  .mog : {text:>7} bytes");
+    eprintln!("  text  .mog        : {text:>7} bytes");
     eprintln!(
-        "  binary.mogb: {bin:>7} bytes   ({:.0}% of text, {:.2}x)",
+        "  binary.mogb (deflate): {bin:>7} bytes   ({:.0}% of text, {:.2}x)",
         pct(bin, text),
         text as f64 / bin.max(1) as f64
     );
 
     if let (Some(gz_text), Some(gz_bin)) = (gzip_len(src.as_bytes()), gzip_len(bytes)) {
-        eprintln!("  gzip -9 text : {gz_text:>7} bytes");
-        eprintln!("  gzip -9 mogb : {gz_bin:>7} bytes");
+        eprintln!("  gzip -9 text      : {gz_text:>7} bytes");
+        // The container already self-compresses, so re-zipping it barely moves —
+        // that's the point. Compare the finished .mogb against gzipped text.
+        eprintln!("  gzip -9 mogb      : {gz_bin:>7} bytes  (already compressed)");
         eprintln!(
             "  → MOGB vs gzipped-text: {:.0}% ({:.2}x smaller)",
-            pct(gz_bin.min(bin), gz_text),
-            gz_text as f64 / gz_bin.min(bin).max(1) as f64
+            pct(bin, gz_text),
+            gz_text as f64 / bin.max(1) as f64
         );
     }
 }

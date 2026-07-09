@@ -11,6 +11,9 @@ edition.workspace = true
 mogen-core = { workspace = true }
 mogen-dsl = { workspace = true }
 anyhow = { workspace = true }
+# Pure-Rust DEFLATE (already in the workspace tree via `image`/`png`). Used to
+# compress the encoded payload; no C toolchain, wasm-clean.
+miniz_oxide = "0.8"
 
 [dev-dependencies]
 # Round-trip tests parse the checked-in examples and assert encode∘decode is

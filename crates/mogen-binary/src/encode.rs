@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use mogen_dsl::ast::{Expr, GradientDef, Node, Value};
 
 use crate::wire::*;
-use crate::{FLAG_LOSSY, MAGIC, VERSION};
+use crate::{FLAG_COMPRESSED, FLAG_LOSSY, MAGIC, VERSION};
 
 /// Encode an AST forest to MOGB, lossless (every `f32` round-trips exactly).
 pub fn encode(nodes: &[Node]) -> Vec<u8> {
@@ -32,12 +32,34 @@ fn encode_inner(nodes: &[Node], lossy: bool) -> Vec<u8> {
         encode_node(&mut body, &mut table, n, lossy);
     }
 
-    let mut out = Vec::with_capacity(body.len() + 64);
+    // Payload = string table followed by the node stream. This is what gets
+    // (optionally) compressed; the 6-byte header stays plaintext.
+    let mut payload = Vec::with_capacity(body.len() + 64);
+    table.serialize(&mut payload);
+    payload.extend_from_slice(&body);
+
+    // Compress, but only adopt it when it actually wins after accounting for the
+    // uncompressed-length prefix — so a `.mogb` is never larger than its plain
+    // form (tiny scenes where DEFLATE can't help just stay uncompressed).
+    let compressed = miniz_oxide::deflate::compress_to_vec(&payload, 10);
+    let comp_branch_len = uvarint_len(payload.len() as u64) + compressed.len();
+    let use_comp = comp_branch_len < payload.len();
+
+    let mut flags = if lossy { FLAG_LOSSY } else { 0 };
+    if use_comp {
+        flags |= FLAG_COMPRESSED;
+    }
+
+    let mut out = Vec::with_capacity(6 + comp_branch_len.min(payload.len()));
     out.extend_from_slice(MAGIC);
     out.push(VERSION);
-    out.push(if lossy { FLAG_LOSSY } else { 0 });
-    table.serialize(&mut out);
-    out.extend_from_slice(&body);
+    out.push(flags);
+    if use_comp {
+        write_uvarint(&mut out, payload.len() as u64);
+        out.extend_from_slice(&compressed);
+    } else {
+        out.extend_from_slice(&payload);
+    }
     out
 }
 

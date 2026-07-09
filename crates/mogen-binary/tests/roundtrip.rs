@@ -86,4 +86,34 @@ fn rejects_garbage() {
     assert!(mogen_binary::decode(b"not a mogb file at all").is_err());
     assert!(mogen_binary::decode(b"MOGB\xff").is_err()); // bad version
     assert!(mogen_binary::decode(&[]).is_err());
+    // Compressed flag set (0x02) but a garbage payload must not panic.
+    assert!(mogen_binary::decode(b"MOGB\x01\x02\x05\xff\xff\xff").is_err());
+}
+
+#[test]
+fn compression_shrinks_and_round_trips() {
+    // A file with enough repeated structure that DEFLATE has something to chew
+    // on — the compressed container must be smaller than the same content would
+    // be uncompressed, and still round-trip.
+    let mut files = Vec::new();
+    collect_mog(&examples_dir(), &mut files);
+    let mut saw_compressed = false;
+    for path in &files {
+        let src = std::fs::read_to_string(path).unwrap();
+        let Ok(ast) = mogen_dsl::parse(&src) else {
+            continue;
+        };
+        let bytes = mogen_binary::encode(&ast);
+        // Header byte 5 carries the flags; bit 1 (0x02) = compressed.
+        if bytes.len() > 6 && bytes[5] & 0x02 != 0 {
+            saw_compressed = true;
+        }
+        // Round-trips regardless of whether this particular file compressed.
+        let decoded = mogen_binary::decode(&bytes).expect("decode");
+        assert!(mogen_binary::nodes_equivalent(&ast, &decoded));
+    }
+    assert!(
+        saw_compressed,
+        "expected at least one example to compress — none set the flag"
+    );
 }
