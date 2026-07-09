@@ -42,6 +42,42 @@ pub enum Stage {
     Ok,
 }
 
+/// True if `path` names a MOGB binary container (`.mogb`) rather than a text
+/// `.mog`. Extension-only check — content is not sniffed.
+pub fn is_binary_source(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("mogb"))
+        .unwrap_or(false)
+}
+
+/// Read a `.mog` or `.mogb` file as DSL source text. `.mogb` is decoded through
+/// `mogen_binary`; `.mog` is read verbatim. The editor, compiler, and every
+/// other consumer only ever see text — the binary container is transparent, so
+/// callers that previously did `fs::read_to_string` route through here instead.
+pub fn read_source(path: &Path) -> std::io::Result<String> {
+    if is_binary_source(path) {
+        let bytes = std::fs::read(path)?;
+        mogen_binary::unpack_to_source(&bytes)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
+    } else {
+        std::fs::read_to_string(path)
+    }
+}
+
+/// Encode DSL source text into the on-disk byte payload for `path`: a MOGB
+/// container for `.mogb`, UTF-8 text otherwise. Fails for a `.mogb` target
+/// whose source doesn't parse (the caller should surface the error and leave
+/// the existing file untouched rather than write a corrupt container).
+pub fn encode_source(path: &Path, src: &str) -> std::io::Result<Vec<u8>> {
+    if is_binary_source(path) {
+        mogen_binary::pack_source(src)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))
+    } else {
+        Ok(src.as_bytes().to_vec())
+    }
+}
+
 pub fn compile(src: &str, source_dir: Option<&Path>) -> CompileResult {
     // A `.mog` file that contains only `module "X" () { … }` (e.g. each
     // wizard per-object file) lowers to an empty scene because nothing

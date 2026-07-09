@@ -517,8 +517,8 @@ fn looks_like_path(s: &str) -> bool {
     // Bare filename with a recognised extension.
     let lower = s.to_ascii_lowercase();
     [
-        ".mog", ".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tga", ".glb",
-        ".gltf",
+        ".mog", ".mogb", ".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tga",
+        ".glb", ".gltf",
     ]
     .iter()
     .any(|ext| lower.ends_with(ext))

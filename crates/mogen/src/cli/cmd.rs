@@ -66,6 +66,29 @@ pub(crate) enum Cmd {
     },
     /// Read a GLB and print its structure.
     Inspect { input: PathBuf },
+    /// Encode a `.mog` source into the experimental MOGB binary container.
+    ///
+    /// MOGB is a schema-aware serialization of the parsed AST: node kinds and
+    /// common attributes reference a built-in dictionary, and numbers are coded
+    /// in their tightest exact form. It round-trips back to `.mog` via `unpack`
+    /// and is meant for size experiments — the text `.mog` stays canonical.
+    Pack {
+        input: PathBuf,
+        /// Output path. Defaults to `<input>.mogb` alongside the source.
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+        /// Force `/1000` fixed-point on all numbers (smaller, lossy past 3
+        /// decimal places). Default encoding is lossless.
+        #[arg(long)]
+        lossy: bool,
+    },
+    /// Decode a MOGB file back to `.mog` source (prints to stdout by default).
+    Unpack {
+        input: PathBuf,
+        /// Write the `.mog` source here instead of stdout.
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+    },
     /// Render a PNG preview of a `.mog` via the headless GL pipeline.
     /// Suitable to feed back into `mogen moghub publish --thumbnail`.
     Thumbnail {

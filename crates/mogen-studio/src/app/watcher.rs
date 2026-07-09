@@ -69,7 +69,7 @@ impl MogenStudioApp {
                     if on_disk == Some(known_mtime) {
                         continue;
                     }
-                    let Ok(disk_src) = fs::read_to_string(&path) else {
+                    let Ok(disk_src) = crate::pipeline::read_source(&path) else {
                         continue;
                     };
 

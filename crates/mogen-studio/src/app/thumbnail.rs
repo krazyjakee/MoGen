@@ -401,7 +401,7 @@ fn compile_one(path: &Path, cache_dir: &Path) -> CompileResultMsg {
             };
         }
     }
-    let src = match fs::read_to_string(path) {
+    let src = match pipeline::read_source(path) {
         Ok(s) => s,
         Err(e) => {
             return CompileResultMsg {

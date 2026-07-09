@@ -12,6 +12,7 @@ mogen-core = { workspace = true }
 # Workspace defaults are off so the wasm crate can disable CSG/textures/merge.
 # The CLI wants the full pipeline, so opt back in to every default feature.
 mogen-dsl = { workspace = true, features = ["csg"] }
+mogen-binary = { workspace = true }
 mogen-validate = { workspace = true, features = ["csg"] }
 mogen-export = { workspace = true, features = ["textures", "merge", "fbx"] }
 mogen-llm = { workspace = true }

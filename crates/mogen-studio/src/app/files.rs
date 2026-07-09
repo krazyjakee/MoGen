@@ -51,7 +51,7 @@ impl MogenStudioApp {
             self.activate(i);
             return;
         }
-        match fs::read_to_string(path) {
+        match crate::pipeline::read_source(path) {
             Ok(src) => {
                 let tab_id = self.next_tab_id();
                 let mtime = mtime_of(path);
@@ -335,7 +335,18 @@ impl MogenStudioApp {
         // Reflect the stamped version back into the live buffer so the editor,
         // dirty-tracking, and parser all agree on what's on disk.
         self.files[i].source = src.clone();
-        if let Err(e) = fs::write(path, &src) {
+        // `.mogb` targets are encoded to the binary container; `.mog` writes the
+        // text unchanged. A `.mogb` encode fails only if the source doesn't
+        // parse — surface that and leave the on-disk file untouched rather than
+        // writing a corrupt container.
+        let bytes = match crate::pipeline::encode_source(path, &src) {
+            Ok(b) => b,
+            Err(e) => {
+                self.files[i].status = format!("save failed: {e}");
+                return;
+            }
+        };
+        if let Err(e) = fs::write(path, &bytes) {
             self.files[i].status = format!("save failed: {e}");
             return;
         }
@@ -380,6 +391,7 @@ impl MogenStudioApp {
         } else {
             let mut dialog = rfd::FileDialog::new()
                 .add_filter("MoGen DSL", &["mog"])
+                .add_filter("MoGen binary", &["mogb"])
                 .set_directory(&self.project_root);
             dialog = dialog.set_file_name(self.files[i].display_name());
             if let Some(chosen) = dialog.save_file() {
@@ -440,7 +452,7 @@ impl MogenStudioApp {
             let is_mog = path
                 .extension()
                 .and_then(|e| e.to_str())
-                .map(|e| e.eq_ignore_ascii_case("mog"))
+                .map(|e| e.eq_ignore_ascii_case("mog") || e.eq_ignore_ascii_case("mogb"))
                 .unwrap_or(false);
             if !is_mog {
                 skipped += 1;
@@ -450,7 +462,7 @@ impl MogenStudioApp {
         }
         if skipped > 0 {
             self.active_mut().status =
-                format!("ignored {skipped} dropped file(s) (only .mog supported)");
+                format!("ignored {skipped} dropped file(s) (only .mog / .mogb supported)");
         }
     }
 
