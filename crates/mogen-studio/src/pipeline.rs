@@ -187,3 +187,86 @@ pub fn write_glb_with_source_options_and_imposter<F: Fn(&str)>(
 fn has_errors(diags: &[Diagnostic]) -> bool {
     diags.iter().any(|d| matches!(d.severity, Severity::Error))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn fresh_tempdir(label: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "mogen-studio-pipeline-{label}-{}-{nanos}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn is_binary_source_matches_only_mogb() {
+        assert!(is_binary_source(Path::new("chair.mogb")));
+        assert!(is_binary_source(Path::new("chair.MOGB")));
+        assert!(!is_binary_source(Path::new("chair.mog")));
+        assert!(!is_binary_source(Path::new("chair")));
+    }
+
+    #[test]
+    fn read_source_reads_text_mog_verbatim() {
+        let dir = fresh_tempdir("read-text");
+        let path = dir.join("chair.mog");
+        std::fs::write(&path, "box (size=[1,1,1])\n").unwrap();
+        let src = read_source(&path).expect("read_source");
+        assert_eq!(src, "box (size=[1,1,1])\n");
+    }
+
+    #[test]
+    fn read_source_decodes_mogb() {
+        let dir = fresh_tempdir("read-mogb");
+        let src = "box (size=[1,1,1])\n";
+        let ast = mogen_dsl::parse(src).unwrap();
+        let bytes = mogen_binary::encode(&ast);
+        let path = dir.join("chair.mogb");
+        std::fs::write(&path, &bytes).unwrap();
+
+        let decoded_src = read_source(&path).expect("read_source");
+        let reparsed = mogen_dsl::parse(&decoded_src).expect("reparse");
+        assert!(mogen_binary::nodes_equivalent(&ast, &reparsed));
+    }
+
+    #[test]
+    fn read_source_surfaces_corrupt_mogb_as_error() {
+        let dir = fresh_tempdir("read-corrupt");
+        let path = dir.join("broken.mogb");
+        std::fs::write(&path, b"not a mogb file").unwrap();
+        assert!(read_source(&path).is_err());
+    }
+
+    #[test]
+    fn encode_source_passes_text_through_unchanged() {
+        let src = "box (size=[1,1,1])\n";
+        let bytes = encode_source(Path::new("chair.mog"), src).expect("encode_source");
+        assert_eq!(bytes, src.as_bytes());
+    }
+
+    #[test]
+    fn encode_source_round_trips_through_mogb() {
+        let src = "box (size=[1,1,1])\n";
+        let bytes = encode_source(Path::new("chair.mogb"), src).expect("encode_source");
+        let decoded_src = mogen_binary::unpack_to_source(&bytes).expect("decode");
+        let original = mogen_dsl::parse(src).unwrap();
+        let reparsed = mogen_dsl::parse(&decoded_src).unwrap();
+        assert!(mogen_binary::nodes_equivalent(&original, &reparsed));
+    }
+
+    #[test]
+    fn encode_source_rejects_unparseable_mogb_target() {
+        // A `.mogb` target must parse to encode; malformed DSL source should
+        // error rather than silently write a corrupt container.
+        let err = encode_source(Path::new("broken.mogb"), "box (size=[").unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    }
+}

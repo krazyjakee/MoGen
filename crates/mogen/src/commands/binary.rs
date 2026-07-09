@@ -104,3 +104,78 @@ fn gzip_len(data: &[u8]) -> Option<usize> {
     let output = child.wait_with_output().ok()?;
     output.status.success().then(|| output.stdout.len())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fresh_tempdir(label: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "mogen-cli-binary-{label}-{}-{nanos}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn pack_then_unpack_round_trips_to_equivalent_source() {
+        let dir = fresh_tempdir("pack-unpack");
+        let src_path = dir.join("chair.mog");
+        fs::write(&src_path, "box (size=[1, 2.5, 3], pos=[0, 0.3, 0])\n").unwrap();
+        let mogb_path = dir.join("chair.mogb");
+
+        pack(src_path.clone(), Some(mogb_path.clone()), false).expect("pack");
+        assert!(mogb_path.exists());
+
+        let unpacked_path = dir.join("chair.roundtrip.mog");
+        unpack(mogb_path, Some(unpacked_path.clone())).expect("unpack");
+
+        let original = mogen_dsl::parse(&fs::read_to_string(&src_path).unwrap()).unwrap();
+        let roundtripped =
+            mogen_dsl::parse(&fs::read_to_string(&unpacked_path).unwrap()).unwrap();
+        assert!(mogen_binary::nodes_equivalent(&original, &roundtripped));
+    }
+
+    #[test]
+    fn pack_defaults_output_to_mogb_beside_input() {
+        let dir = fresh_tempdir("default-out");
+        let src_path = dir.join("chair.mog");
+        fs::write(&src_path, "box (size=[1,1,1])\n").unwrap();
+
+        pack(src_path.clone(), None, false).expect("pack");
+        assert!(dir.join("chair.mogb").exists());
+    }
+
+    #[test]
+    fn pack_lossy_still_decodes_to_a_valid_ast() {
+        let dir = fresh_tempdir("lossy");
+        let src_path = dir.join("chair.mog");
+        fs::write(&src_path, "box (size=[1.23456, 2, 3], pos=[0.1, 0.2, 0.3])\n").unwrap();
+        let mogb_path = dir.join("chair.mogb");
+
+        pack(src_path, Some(mogb_path.clone()), true).expect("lossy pack");
+        let bytes = fs::read(&mogb_path).unwrap();
+        assert!(mogen_binary::decode(&bytes).is_ok());
+    }
+
+    #[test]
+    fn pack_rejects_unparseable_source() {
+        let dir = fresh_tempdir("bad-source");
+        let src_path = dir.join("broken.mog");
+        fs::write(&src_path, "box (size=[\n").unwrap();
+        assert!(pack(src_path, None, false).is_err());
+    }
+
+    #[test]
+    fn unpack_rejects_garbage_input() {
+        let dir = fresh_tempdir("garbage");
+        let path = dir.join("broken.mogb");
+        fs::write(&path, b"not a mogb file").unwrap();
+        assert!(unpack(path, None).is_err());
+    }
+}
