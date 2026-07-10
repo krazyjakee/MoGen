@@ -143,6 +143,11 @@ pub(super) fn lower_into(
     // before uv_mode is read so primitive UVs reflect the inherited material.
     inherit_material_from_ancestor(id, graph);
 
+    // Physics: resolve `phys="<name>"` into a per-node body snapshot. Weight +
+    // centre of gravity are filled by the auto-weigh pass once the final mesh
+    // exists (see `lower` Pass 2.65).
+    super::physics::bind_physics(node, id, graph)?;
+
     let anchor = anchor_for(node);
     let mut anchor_shift = Vec3::ZERO;
     let uv_mode = graph.nodes[id.0 as usize]

@@ -8,8 +8,8 @@ use glam::Mat4;
 use glam::{Quat, Vec3};
 
 use crate::{
-    Aabb, Clip, Connector, Joint, Light, Material, MaterialId, Mesh, Meta, Skin, SkinId, Span,
-    Transform,
+    Aabb, Clip, Connector, Joint, Light, Material, MaterialId, Mesh, Meta, PhysicsBody,
+    PhysicsId, PhysicsMaterial, Skin, SkinId, Span, Transform,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -166,6 +166,13 @@ pub struct SceneNode {
     pub transform: Transform,
     pub mesh: Option<Mesh>,
     pub material: Option<MaterialId>,
+    /// Resolved physics body for this node — the substance it's made of plus
+    /// its computed weight + centre of gravity. Set when the DSL node carries
+    /// `phys="<name>"`; exported to `node.extras.physics`. mogen runs no
+    /// simulation — this is metadata for a downstream importer. See
+    /// [`crate::PhysicsBody`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub physics: Option<PhysicsBody>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skin: Option<SkinId>,
     /// Punctual light attached to this node (`KHR_lights_punctual`). Mutually
@@ -298,6 +305,7 @@ impl Default for SceneNode {
             transform: Transform::default(),
             mesh: None,
             material: None,
+            physics: None,
             skin: None,
             light: None,
             parent: None,
@@ -327,6 +335,11 @@ pub struct SceneGraph {
     pub nodes: Vec<SceneNode>,
     pub roots: Vec<NodeId>,
     pub materials: Vec<Material>,
+    /// Declared `physics "<name>" (…)` substances, hoisted in the same pass as
+    /// materials. Nodes reference these by name via `phys=`; the reference is
+    /// resolved into a per-node [`PhysicsBody`] snapshot at lowering time.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub physics: Vec<PhysicsMaterial>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub joints: Vec<Joint>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -452,6 +465,34 @@ impl SceneGraph {
             return Some(MaterialId(idx as u32));
         }
         self.find_material(name)
+    }
+
+    pub fn add_physics(&mut self, phys: PhysicsMaterial) -> PhysicsId {
+        let id = PhysicsId(self.physics.len() as u32);
+        self.physics.push(phys);
+        id
+    }
+
+    pub fn find_physics(&self, name: &str) -> Option<PhysicsId> {
+        self.physics
+            .iter()
+            .position(|p| p.name == name)
+            .map(|i| PhysicsId(i as u32))
+    }
+
+    /// Look up a physics substance by name, preferring one declared in the same
+    /// file as the caller (`origin`), then falling back to a bare-name search.
+    /// Mirrors [`Self::find_material_scoped`] so cross-file `phys=` references
+    /// resolve on the same rules as `mat=`.
+    pub fn find_physics_scoped(&self, name: &str, origin: Option<&Path>) -> Option<PhysicsId> {
+        if let Some(idx) = self
+            .physics
+            .iter()
+            .position(|p| p.name == name && p.origin.as_deref() == origin)
+        {
+            return Some(PhysicsId(idx as u32));
+        }
+        self.find_physics(name)
     }
 
     /// Rewrite every relative texture path on every material so it's anchored

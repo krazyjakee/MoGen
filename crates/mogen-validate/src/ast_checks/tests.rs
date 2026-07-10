@@ -1209,3 +1209,121 @@ mod dungeon_validator_tests {
         );
     }
 }
+
+mod physics_validator_tests {
+    use super::super::*;
+    use mogen_core::Diagnostic;
+
+    fn diags_for(src: &str) -> Vec<Diagnostic> {
+        let ast = mogen_dsl::parse(src).expect("parse");
+        validate_ast(&ast)
+    }
+
+    #[test]
+    fn valid_physics_declaration_and_reference_are_clean() {
+        let src = r#"
+            physics "oak" (weight=700kg/m3, friction=0.6, bounce=0.2)
+            scene { box "crate" (size=[1,1,1], phys="oak") }
+        "#;
+        let diags = diags_for(src);
+        assert!(diags.is_empty(), "expected no diagnostics, got: {diags:?}");
+    }
+
+    #[test]
+    fn unknown_phys_reference_errors() {
+        let src = r#"scene { box "crate" (size=[1,1,1], phys="missing") }"#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "E0105"),
+            "expected E0105 for unknown phys, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn nameless_physics_errors() {
+        let src = r#"physics (weight=700kg/m3)"#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "E0214"),
+            "expected E0214 for nameless physics, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn out_of_range_bounce_warns() {
+        let src = r#"physics "rubber" (weight=1100kg/m3, bounce=1.5)"#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "W0213"),
+            "expected W0213 for bounce>1, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn unknown_attr_on_physics_warns() {
+        // `density` is exactly the jargon we replaced — it must not be accepted.
+        let src = r#"physics "oak" (density=700)"#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "W0102"),
+            "expected W0102 for unknown `density` attr, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn node_weight_without_phys_warns() {
+        // `weight=` on a geometry node only has an effect when paired with
+        // `phys=`; forgetting `phys=` should not fail silently.
+        let src = r#"scene { box "prop" (size=[1,1,1], weight=5kg) }"#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "W0215"),
+            "expected W0215 for orphan `weight=`, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn node_weight_with_phys_is_clean() {
+        let src = r#"
+            physics "oak" (weight=700kg/m3)
+            scene { box "prop" (size=[1,1,1], phys="oak", weight=5kg) }
+        "#;
+        let diags = diags_for(src);
+        assert!(
+            !diags.iter().any(|d| d.code == "W0215"),
+            "unexpected W0215 with `phys=` present, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn physics_block_weight_does_not_trigger_orphan_warning() {
+        // The `physics` block's own `weight=` (per-m³ density) must not be
+        // mistaken for the node-level orphan-weight case.
+        let src = r#"physics "oak" (weight=700kg/m3)"#;
+        let diags = diags_for(src);
+        assert!(
+            !diags.iter().any(|d| d.code == "W0215"),
+            "unexpected W0215 on a `physics` block, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn node_weight_with_inherited_phys_is_clean() {
+        // `phys=` inherits down the hierarchy (see lower/physics.rs); a
+        // descendant's `weight=` override that relies on an ancestor's `phys=`
+        // is the documented pattern, not an orphan attribute.
+        let src = r#"
+            physics "oak" (weight=700kg/m3)
+            scene {
+              group "chair" (phys="oak") {
+                box "seat" (size=[1,1,1], weight=5kg)
+              }
+            }
+        "#;
+        let diags = diags_for(src);
+        assert!(
+            !diags.iter().any(|d| d.code == "W0215"),
+            "unexpected W0215 with inherited `phys=`, got: {diags:?}"
+        );
+    }
+}

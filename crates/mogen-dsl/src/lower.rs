@@ -16,6 +16,7 @@ mod light;
 mod lod;
 mod material;
 mod node;
+mod physics;
 mod poi;
 mod primitive;
 mod procedural;
@@ -44,6 +45,7 @@ use anim::{is_anim_decl, lower_animations};
 use lod::{collect_origin_lods, extract_lod_scale, LodByOriginGuard};
 use material::collect_materials;
 use node::lower_into;
+use physics::collect_physics;
 
 thread_local! {
     // Build-pass-scoped LOD multiplier. Set by `lower()` before walking the
@@ -231,11 +233,16 @@ pub fn lower_with_loader(
     // match, which is how user-declared materials shadow imported ones.
     collect_materials(&expanded, &mut graph)?;
     collect_materials(&imported_decls, &mut graph)?;
+    // Physics substances hoist in the same pass, on the same dedupe rules, so
+    // `phys=` references resolve during Pass 2 exactly like `mat=`.
+    collect_physics(&expanded, &mut graph)?;
+    collect_physics(&imported_decls, &mut graph)?;
 
     // Pass 2: build scene graph (skip anim declarations — they need nodes first).
     for n in &expanded {
         match n.kind.as_str() {
             "material" => {} // already handled
+            "physics" => {} // hoisted in Pass 1
             "lod_scale" => {} // build-time setting, consumed above
             "meta" => {} // already lifted onto graph.meta
             k if is_anim_decl(k) => {} // pass 3
@@ -245,6 +252,7 @@ pub fn lower_with_loader(
             "scene" => {
                 for c in &n.children {
                     if c.kind == "material"
+                        || c.kind == "physics"
                         || c.kind == "attach"
                         || c.kind == "conform"
                         || is_anim_decl(&c.kind)
@@ -295,6 +303,53 @@ pub fn lower_with_loader(
         }
     }
 
+    // Pass 2.65: auto-weigh physics bodies from the final geometry. Runs after
+    // collider (so it sees the same post attach/conform/skin mesh).
+    let worlds = graph.world_transforms();
+    // (a) Leaves — nodes with their own mesh. Weight = substance density × world
+    // volume (the world-transform determinant folds in this node's + ancestors'
+    // scale, so `scale=2` weighs 8×); centre of gravity = the mesh's volume
+    // centroid, in local space. An explicit `weight=` keeps its overridden mass
+    // but still gets a real centre of gravity.
+    for id in 0..graph.nodes.len() {
+        let node = &graph.nodes[id];
+        let Some(body) = &node.physics else { continue };
+        let Some(mesh) = &node.mesh else { continue };
+        let mass = if body.mass.is_some() {
+            body.mass
+        } else {
+            // Group as `density × (volume × det)` — the same association the
+            // golden GLBs were baked with; regrouping shifts the last f32 ULP.
+            let world_volume = mesh.solid_volume() * worlds[id].determinant().abs();
+            Some(body.weight_per_m3 * world_volume)
+        };
+        let cog = mesh.solid_centroid();
+        let b = graph.nodes[id].physics.as_mut().unwrap();
+        b.mass = mass;
+        b.center_of_gravity = cog;
+    }
+    // (b) Compound bodies — a node that carries a physics body but has no mesh
+    // of its own (a `group phys=…`, possibly inherited) reports the *combined*
+    // mass and mass-weighted centre of gravity of every mesh-bearing descendant,
+    // expressed in its own local frame. An engine can then treat the whole
+    // assembly as one rigid body. Only own-mesh descendants contribute, so a
+    // compound group nested above another never double-counts the shared
+    // leaves. Runs after (a) so leaf masses already exist.
+    for id in 0..graph.nodes.len() {
+        if graph.nodes[id].physics.is_none() || graph.nodes[id].mesh.is_some() {
+            continue;
+        }
+        let mut total = 0.0f32;
+        let mut weighted = glam::Vec3::ZERO;
+        collect_subtree_mass(&graph, NodeId(id as u32), &worlds, &mut total, &mut weighted);
+        if total > 0.0 {
+            let local_com = worlds[id].inverse().transform_point3(weighted / total);
+            let b = graph.nodes[id].physics.as_mut().unwrap();
+            b.mass = Some(total);
+            b.center_of_gravity = Some([local_com.x, local_com.y, local_com.z]);
+        }
+    }
+
     // Pass 2.7: propagate `cast_shadow=false` down the subtree so a `group`
     // (or wrapping `use`) can opt out an entire subassembly with one flag.
     // Walking root-first means an ancestor's `false` overrides any descendant
@@ -321,6 +376,36 @@ pub fn lower_with_loader(
     gradient_bake::bake_gradients(&mut graph);
 
     Ok(graph)
+}
+
+/// Accumulate the mass and mass-weighted *world-space* centre of gravity of
+/// every mesh-bearing physics body strictly below `id`. Only own-mesh nodes
+/// contribute, so a compound group above another compound group can't
+/// double-count the leaves they share.
+fn collect_subtree_mass(
+    graph: &SceneGraph,
+    id: NodeId,
+    worlds: &[glam::Mat4],
+    total: &mut f32,
+    weighted: &mut glam::Vec3,
+) {
+    let children = graph.nodes[id.0 as usize].children.clone();
+    for c in children {
+        let node = &graph.nodes[c.0 as usize];
+        if node.mesh.is_some() {
+            if let Some(m) = node.physics.as_ref().and_then(|b| b.mass) {
+                let cog = node
+                    .physics
+                    .as_ref()
+                    .and_then(|b| b.center_of_gravity)
+                    .unwrap_or([0.0, 0.0, 0.0]);
+                let world_pt = worlds[c.0 as usize].transform_point3(glam::Vec3::from_array(cog));
+                *total += m;
+                *weighted += m * world_pt;
+            }
+        }
+        collect_subtree_mass(graph, c, worlds, total, weighted);
+    }
 }
 
 /// Walk the subtree rooted at `id` and clear `cast_shadow` on every node

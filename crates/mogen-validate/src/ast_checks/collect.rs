@@ -19,6 +19,7 @@ pub(super) fn merge_imported_names(
     base_dir: Option<&Path>,
     modules: &mut HashSet<String>,
     materials: &mut HashSet<String>,
+    physics: &mut HashSet<String>,
     diags: &mut Vec<Diagnostic>,
 ) -> ImportResolution {
     if base_dir.is_none() {
@@ -34,6 +35,9 @@ pub(super) fn merge_imported_names(
                     }
                     "material" => {
                         materials.insert(name.clone());
+                    }
+                    "physics" => {
+                        physics.insert(name.clone());
                     }
                     _ => {}
                 }
@@ -93,6 +97,29 @@ pub(super) fn collect_material_names(ast: &[Node], diags: &mut Vec<Diagnostic>) 
         if n.kind == "scene" {
             for c in &n.children {
                 visit(c, diags);
+            }
+        }
+    }
+    names
+}
+
+/// Gather declared `physics` substance names so `phys="..."` references can be
+/// checked. Missing-name and duplicate diagnostics are emitted by `rules`
+/// (E0214) and lowering respectively, so this pass only collects.
+pub(super) fn collect_physics_names(ast: &[Node]) -> HashSet<String> {
+    let mut names = HashSet::new();
+    let mut visit = |n: &Node| {
+        if n.kind == "physics" {
+            if let Some(name) = &n.name {
+                names.insert(name.clone());
+            }
+        }
+    };
+    for n in ast {
+        visit(n);
+        if n.kind == "scene" {
+            for c in &n.children {
+                visit(c);
             }
         }
     }

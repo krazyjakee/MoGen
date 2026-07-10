@@ -12,6 +12,7 @@ mod lights;
 mod lod;
 mod materials;
 mod parametric_surfaces;
+mod physics;
 mod poly;
 mod primitives;
 

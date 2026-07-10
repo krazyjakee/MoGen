@@ -26,7 +26,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use mogen_core::{MaterialId, Mesh, NodeId, SceneGraph, SceneNode};
+use mogen_core::{MaterialId, Mesh, NodeId, PhysicsBody, SceneGraph, SceneNode};
 
 #[derive(Clone, Copy)]
 enum CleanupMode {
@@ -77,6 +77,7 @@ where
         nodes: Vec::new(),
         roots: Vec::new(),
         materials: scene.materials.clone(),
+        physics: scene.physics.clone(),
         joints: scene.joints.clone(),
         clips: scene.clips.clone(),
         skins: scene.skins.clone(),
@@ -217,7 +218,13 @@ where
             continue;
         }
 
-        let merged = build_merged_node(scene, &ids, material, merged_mesh, new_parent);
+        let mut merged = build_merged_node(scene, &ids, material, merged_mesh, new_parent);
+        // Carry a combined physics body when every merged leaf shares the same
+        // substance: the merged node's weight is the sum and its centre of
+        // gravity the mass-weighted mean, so the union simulates like the parts
+        // did. Mixed substances can't collapse into one uniform body, so they
+        // drop (like UVs on a textured merge).
+        merged.physics = merged_physics(scene, &ids);
         let new_id = push_node(out, merged);
         result.push(new_id);
     }
@@ -348,6 +355,52 @@ fn build_merged_node(
     }
 }
 
+/// Combined physics body for a group of leaves being merged into one node.
+///
+/// Returns `Some` only when every leaf carries a physics body of the *same*
+/// substance (name + weight-per-m³ + friction + bounce). The combined `mass` is
+/// the sum and the `center_of_gravity` is the mass-weighted mean of the leaf
+/// centres, each baked through that leaf's local transform into the merged
+/// node's frame — the same frame `merge_group_meshes` bakes the geometry into.
+/// Any leaf missing a body, or a substance mismatch, yields `None` (physics is
+/// dropped, as UVs are on a mixed-UV merge).
+fn merged_physics(scene: &SceneGraph, ids: &[NodeId]) -> Option<PhysicsBody> {
+    let first = scene.nodes[ids[0].0 as usize].physics.as_ref()?.clone();
+    let mut total = 0.0f32;
+    let mut weighted = glam::Vec3::ZERO;
+    for &id in ids {
+        let n = &scene.nodes[id.0 as usize];
+        let b = n.physics.as_ref()?;
+        if b.material != first.material
+            || b.weight_per_m3 != first.weight_per_m3
+            || b.friction != first.friction
+            || b.bounce != first.bounce
+        {
+            return None;
+        }
+        if let Some(m) = b.mass {
+            let cog = b.center_of_gravity.unwrap_or([0.0, 0.0, 0.0]);
+            let pt = n.transform.to_mat4().transform_point3(glam::Vec3::from_array(cog));
+            total += m;
+            weighted += m * pt;
+        }
+    }
+    let (mass, cog) = if total > 0.0 {
+        let c = weighted / total;
+        (Some(total), Some([c.x, c.y, c.z]))
+    } else {
+        (None, None)
+    };
+    Some(PhysicsBody {
+        material: first.material,
+        weight_per_m3: first.weight_per_m3,
+        friction: first.friction,
+        bounce: first.bounce,
+        mass,
+        center_of_gravity: cog,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -391,6 +444,43 @@ mod tests {
         let out = merge_sibling_meshes(&s, |_| {});
         let leaf_count = out.nodes.iter().filter(|n| n.mesh.is_some()).count();
         assert_eq!(leaf_count, 2, "different materials must stay separate leaves");
+    }
+
+    fn set_body(s: &mut SceneGraph, name: &str, material: &str, mass: f32) {
+        let id = s.nodes.iter().position(|n| n.name == name).unwrap();
+        s.nodes[id].physics = Some(PhysicsBody {
+            material: material.into(),
+            weight_per_m3: 700.0,
+            friction: 0.5,
+            bounce: 0.1,
+            mass: Some(mass),
+            center_of_gravity: Some([0.0, 0.0, 0.0]),
+        });
+    }
+
+    #[test]
+    fn merge_preserves_shared_physics_as_combined_body() {
+        let mut s = scene_with_two_boxes(true);
+        // Same substance on both, each pre-weighed at 700 kg.
+        set_body(&mut s, "a", "oak", 700.0);
+        set_body(&mut s, "b", "oak", 700.0);
+        let out = merge_sibling_meshes(&s, |_| {});
+        let merged = out.nodes.iter().find(|n| n.kind == "merged").unwrap();
+        let p = merged.physics.as_ref().expect("merged node keeps physics");
+        assert_eq!(p.material, "oak");
+        assert!((p.mass.unwrap() - 1400.0).abs() < 1e-3, "combined mass");
+        // Boxes sit at x=0 and x=0.5 → mass-weighted COG at x=0.25.
+        assert!((p.center_of_gravity.unwrap()[0] - 0.25).abs() < 1e-4);
+    }
+
+    #[test]
+    fn merge_drops_physics_on_mixed_substances() {
+        let mut s = scene_with_two_boxes(true); // same material → they still merge
+        set_body(&mut s, "a", "oak", 700.0);
+        set_body(&mut s, "b", "steel", 7850.0);
+        let out = merge_sibling_meshes(&s, |_| {});
+        let merged = out.nodes.iter().find(|n| n.kind == "merged").unwrap();
+        assert!(merged.physics.is_none(), "mixed substances can't collapse to one body");
     }
 
     #[test]

@@ -73,7 +73,20 @@ fn build_node(pair: Pair<Rule>) -> Result<Node> {
 fn build_attr(pair: Pair<Rule>) -> Result<(String, Value)> {
     let mut it = pair.into_inner();
     let key = it.next().unwrap().as_str().to_string();
-    let val_pair = it.next().unwrap().into_inner().next().unwrap();
+    let value_pair = it.next().unwrap();
+    // Weight units are typed: a mass / weight-per-volume literal (`5kg`,
+    // `700kg/m3`) only makes sense on a `weight=` attribute. Using one anywhere
+    // else — `size=[5kg, 1, 1]`, a rotation, a count — is a dimensional
+    // mistake, so reject it at parse time rather than silently treating the
+    // kilograms as metres.
+    if key != "weight" {
+        if let Some(lit) = value_mass_literal(&value_pair) {
+            return Err(anyhow!(
+                "weight unit `{lit}` is only valid on a `weight=` attribute (found on `{key}=`)"
+            ));
+        }
+    }
+    let val_pair = value_pair.into_inner().next().unwrap();
     let value = match val_pair.as_rule() {
         Rule::expr => lift_expr(build_expr(val_pair)?),
         Rule::vec3 => {
@@ -447,16 +460,74 @@ fn length_unit_to_metres(unit: &str) -> Option<f32> {
     })
 }
 
-/// Parse a numeric literal, applying any trailing length-unit suffix so the
-/// returned value is always in metres. `18in` → `0.4572`, `1.5` → `1.5`.
+/// Conversion factor from a mass-unit suffix to kilograms, the base unit for
+/// weights. Returns `None` for an unrecognised suffix — the grammar only admits
+/// the units listed here, so that path is purely defensive.
+fn mass_unit_to_kg(unit: &str) -> Option<f32> {
+    Some(match unit {
+        "kg" => 1.0,
+        "g" => 0.001,
+        "t" => 1000.0, // metric tonne
+        "lb" => 0.45359237,
+        "oz" => 0.028349523,
+        "st" => 6.35029318, // stone
+        _ => return None,
+    })
+}
+
+/// True if a numeric literal carries a mass or weight-per-volume unit suffix
+/// (`5kg`, `700kg/m3`) rather than a length suffix or no suffix at all.
+fn number_literal_is_mass(lit: &str) -> bool {
+    match lit.find(|c: char| c.is_ascii_alphabetic()) {
+        None => false,
+        Some(i) => {
+            let unit = &lit[i..];
+            let core = unit
+                .strip_suffix("/m3")
+                .or_else(|| unit.strip_suffix("/m³"))
+                .unwrap_or(unit);
+            mass_unit_to_kg(core).is_some()
+        }
+    }
+}
+
+/// Walk a parsed `value` (or any sub-pair) and return the first mass-dimensioned
+/// numeric literal it contains, if any. Reaches through vec3 / list / expression
+/// nesting so `size=[1, 2kg, 3]` is caught. Used to reject weight units outside
+/// `weight=`.
+fn value_mass_literal(pair: &Pair<Rule>) -> Option<String> {
+    if pair.as_rule() == Rule::number {
+        return number_literal_is_mass(pair.as_str()).then(|| pair.as_str().to_string());
+    }
+    for inner in pair.clone().into_inner() {
+        if let Some(l) = value_mass_literal(&inner) {
+            return Some(l);
+        }
+    }
+    None
+}
+
+/// Parse a numeric literal, applying any trailing unit suffix so the returned
+/// value is always in the dimension's base unit. Length suffixes normalise to
+/// metres (`18in` → `0.4572`); mass suffixes to kilograms (`5kg` → `5`,
+/// `180lb` → `81.6…`); the per-volume form `700kg/m3` to kilograms per cubic
+/// metre — numerically the bare mass factor, since kg/m³ is the base density
+/// unit. Bare numbers pass through unchanged (`1.5` → `1.5`).
 fn parse_number_literal(s: &str) -> Result<f32> {
     match s.find(|c: char| c.is_ascii_alphabetic()) {
         None => Ok(s.parse()?),
         Some(i) => {
             let (num, unit) = s.split_at(i);
             let value: f32 = num.parse()?;
-            let factor = length_unit_to_metres(unit)
-                .ok_or_else(|| anyhow!("unknown length unit `{unit}`"))?;
+            // A `…/m3` suffix marks a weight-per-volume literal; strip it and
+            // reuse the mass factor (the base density unit is kg/m³).
+            let core = unit
+                .strip_suffix("/m3")
+                .or_else(|| unit.strip_suffix("/m³"))
+                .unwrap_or(unit);
+            let factor = length_unit_to_metres(core)
+                .or_else(|| mass_unit_to_kg(core))
+                .ok_or_else(|| anyhow!("unknown unit `{unit}`"))?;
             Ok(value * factor)
         }
     }
@@ -516,6 +587,61 @@ mod tests {
         assert!((parse_number_literal("0.45").unwrap() - 0.45).abs() < 1e-6);
         // Negative literals keep their sign.
         assert!((parse_number_literal("-3ft").unwrap() + 0.9144).abs() < 1e-6);
+    }
+
+    #[test]
+    fn weight_units_normalise_to_kilograms() {
+        // Metric masses.
+        assert!((parse_number_literal("5kg").unwrap() - 5.0).abs() < 1e-6);
+        assert!((parse_number_literal("250g").unwrap() - 0.25).abs() < 1e-6);
+        assert!((parse_number_literal("2t").unwrap() - 2000.0).abs() < 1e-4);
+        // Imperial masses.
+        assert!((parse_number_literal("180lb").unwrap() - 81.6466).abs() < 1e-3);
+        assert!((parse_number_literal("16oz").unwrap() - 0.453592).abs() < 1e-4);
+        assert!((parse_number_literal("11st").unwrap() - 69.8532).abs() < 1e-2);
+    }
+
+    #[test]
+    fn weight_per_cubic_metre_normalises_to_kg_per_m3() {
+        // `kg/m3` is the base density unit: same numeric value.
+        assert!((parse_number_literal("700kg/m3").unwrap() - 700.0).abs() < 1e-3);
+        // A tonne per m³ is 1000 kg/m³ — the mass factor carries through.
+        assert!((parse_number_literal("0.7t/m3").unwrap() - 700.0).abs() < 1e-2);
+        // Unicode superscript form is accepted too.
+        assert!((parse_number_literal("917kg/m³").unwrap() - 917.0).abs() < 1e-2);
+    }
+
+    #[test]
+    fn weight_literals_parse_through_attrs() {
+        match first_attr("physics (weight=700kg/m3)\n", "weight") {
+            Value::Number(n) => assert!((n - 700.0).abs() < 1e-3),
+            other => panic!("expected Number, got {other:?}"),
+        }
+        match first_attr("box (weight=5kg)\n", "weight") {
+            Value::Number(n) => assert!((n - 5.0).abs() < 1e-6),
+            other => panic!("expected Number, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn mass_units_rejected_outside_weight() {
+        // A weight suffix on a length attribute is a dimensional mistake.
+        let err = parse("box (size=[5kg, 1, 1])\n").expect_err("mass in size must fail");
+        assert!(err.to_string().contains("weight unit `5kg`"), "got: {err}");
+        // Even nested inside an expression.
+        assert!(parse("box (height=2 + 1kg)\n").is_err());
+        // But `weight=` accepts them (mass on a node, density in a physics block).
+        assert!(parse("box (weight=5kg)\n").is_ok());
+        assert!(parse("physics \"oak\" (weight=700kg/m3)\n").is_ok());
+    }
+
+    #[test]
+    fn division_still_parses_when_not_a_density_unit() {
+        // `6/2` must stay an expression, not get swallowed as a unit suffix.
+        match first_attr("box (height=6/2)\n", "height") {
+            Value::Number(n) => assert!((n - 3.0).abs() < 1e-6),
+            other => panic!("expected Number, got {other:?}"),
+        }
     }
 
     #[test]
