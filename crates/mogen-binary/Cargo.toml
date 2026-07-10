@@ -1,0 +1,20 @@
+[package]
+name = "mogen-binary"
+version.workspace = true
+edition.workspace = true
+
+# Experimental schema-aware binary container for `.mog` sources. Encodes the
+# parsed AST (not the lowered SceneGraph) so it round-trips back to DSL text and
+# feeds the existing lowering pipeline unchanged. Text `.mog` stays canonical;
+# `.mogb` is a build/experiment artifact.
+[dependencies]
+mogen-core = { workspace = true }
+mogen-dsl = { workspace = true }
+anyhow = { workspace = true }
+# Pure-Rust DEFLATE (already in the workspace tree via `image`/`png`). Used to
+# compress the encoded payload; no C toolchain, wasm-clean.
+miniz_oxide = "0.8"
+
+[dev-dependencies]
+# Round-trip tests parse the checked-in examples and assert encode∘decode is
+# structurally lossless.

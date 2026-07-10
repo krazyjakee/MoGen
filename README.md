@@ -154,6 +154,8 @@ mogen animate    <file.mog> "spin the rotor at 120 rpm"  # LLM edit limited to a
 mogen repair     <file.mog>                            # LLM-driven fix for validation errors
 mogen textures   <file.mog>                            # generate albedo + derived PBR maps
 mogen thumbnail  <file.mog> --out preview.png          # headless PNG render of a .mog
+mogen pack       <file.mog> --out <file.mogb>          # encode to the experimental MOGB binary container
+mogen unpack     <file.mogb> --out <file.mog>          # decode a MOGB container back to .mog source
 mogen check      <file.mog>                            # validate a DSL file
 mogen inspect    <file.glb>                            # summarize a GLB
 mogen moghub     discover --query chair                # browse / download / publish to MoGHub

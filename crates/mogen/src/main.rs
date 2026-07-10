@@ -61,6 +61,8 @@ fn main() -> ExitCode {
         Cmd::Check { input, json } => check(input, json),
         Cmd::DumpScene { input, json } => dump_scene(input, json),
         Cmd::Inspect { input } => inspect(input),
+        Cmd::Pack { input, out, lossy } => commands::binary::pack(input, out, lossy),
+        Cmd::Unpack { input, out } => commands::binary::unpack(input, out),
         Cmd::Thumbnail {
             input,
             out,

@@ -248,29 +248,32 @@ impl FilePickerState {
     fn mog_paths(&self) -> impl Iterator<Item = &Path> {
         self.entries
             .iter()
-            .filter(|e| !e.is_dir && is_mog_extension(&e.path))
+            .filter(|e| !e.is_dir && is_mog_source(&e.path))
             .map(|e| e.path.as_path())
     }
 }
 
-/// Files we offer in the picker grid. `.mog` is the primary case; `.glb`
-/// is listed because users frequently want to cross-reference an exported
-/// asset from the same dir. Other extensions are hidden so the list isn't
-/// noise.
+/// Files we offer in the picker grid. `.mog` and its binary sibling `.mogb`
+/// are the primary cases; `.glb` is listed because users frequently want to
+/// cross-reference an exported asset from the same dir. Other extensions are
+/// hidden so the list isn't noise.
 fn is_browseable_extension(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
         .map(|e| {
             let e = e.to_ascii_lowercase();
-            e == "mog" || e == "glb"
+            e == "mog" || e == "mogb" || e == "glb"
         })
         .unwrap_or(false)
 }
 
-fn is_mog_extension(path: &Path) -> bool {
+/// A DSL source the picker can thumbnail and open: text `.mog` or binary
+/// `.mogb`. Both decode to the same source, so both get rendered previews and
+/// a working Open action.
+fn is_mog_source(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
-        .map(|e| e.eq_ignore_ascii_case("mog"))
+        .map(|e| e.eq_ignore_ascii_case("mog") || e.eq_ignore_ascii_case("mogb"))
         .unwrap_or(false)
 }
 
@@ -596,7 +599,7 @@ impl MogenStudioApp {
                                                 });
                                             select_toggle =
                                                 Some((entry.path.clone(), multi));
-                                            if is_mog_extension(&entry.path) {
+                                            if is_mog_source(&entry.path) {
                                                 newly_selected_for_thumb =
                                                     Some(entry.path.clone());
                                             }
@@ -872,7 +875,7 @@ fn paint_cell(
 
     if entry.is_dir {
         paint_folder_glyph(&painter, img_rect, &visuals);
-    } else if is_mog_extension(&entry.path) {
+    } else if is_mog_source(&entry.path) {
         match thumbs.texture(&entry.path) {
             Some(handle) => {
                 painter.image(

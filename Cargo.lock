@@ -2651,6 +2651,7 @@ dependencies = [
  "clap",
  "image",
  "indicatif",
+ "mogen-binary",
  "mogen-core",
  "mogen-dsl",
  "mogen-export",
@@ -2673,6 +2674,16 @@ version = "0.1.10"
 dependencies = [
  "glam 0.30.10",
  "mogen-core",
+]
+
+[[package]]
+name = "mogen-binary"
+version = "0.1.10"
+dependencies = [
+ "anyhow",
+ "miniz_oxide",
+ "mogen-core",
+ "mogen-dsl",
 ]
 
 [[package]]
@@ -2809,6 +2820,7 @@ dependencies = [
  "glam 0.30.10",
  "glow 0.14.2",
  "image",
+ "mogen-binary",
  "mogen-core",
  "mogen-dsl",
  "mogen-export",

@@ -1,6 +1,7 @@
 pub(crate) mod animate;
 pub(crate) mod auth;
 pub(crate) mod bench;
+pub(crate) mod binary;
 pub(crate) mod build;
 pub(crate) mod generate;
 pub(crate) mod inspect;
