@@ -16,6 +16,7 @@ pub enum PrefsTab {
     #[default]
     Llm,
     Appearance,
+    Remote,
     Privacy,
 }
 
@@ -24,12 +25,18 @@ impl PrefsTab {
         match self {
             PrefsTab::Llm => "LLM",
             PrefsTab::Appearance => "Appearance",
+            PrefsTab::Remote => "Remote",
             PrefsTab::Privacy => "Privacy",
         }
     }
 }
 
-const PREFS_TABS: [PrefsTab; 3] = [PrefsTab::Llm, PrefsTab::Appearance, PrefsTab::Privacy];
+const PREFS_TABS: [PrefsTab; 4] = [
+    PrefsTab::Llm,
+    PrefsTab::Appearance,
+    PrefsTab::Remote,
+    PrefsTab::Privacy,
+];
 
 /// Models surfaced in the Preferences dropdown for each slot. Free-form
 /// text still wins if a user types one in, but these cover the tiers almost
@@ -198,6 +205,7 @@ impl MogenStudioApp {
                         match self.prefs_active_tab {
                             PrefsTab::Llm => self.prefs_tab_llm(ui),
                             PrefsTab::Appearance => self.prefs_tab_appearance(ui, ctx),
+                            PrefsTab::Remote => self.prefs_tab_remote(ui),
                             PrefsTab::Privacy => self.prefs_tab_privacy(ui),
                         }
                     });
@@ -431,6 +439,121 @@ impl MogenStudioApp {
         if let Some(val) = new_fps {
             self.settings.set_max_fps(val);
             self.viewer.set_max_fps(val);
+        }
+    }
+
+    /// Preferences › Remote — the embedded web UI that lets a browser (on
+    /// this machine or, opt-in, on the LAN) drive the live session. The
+    /// enable toggle takes effect immediately; `drive_remote` reconciles the
+    /// server with these settings once per frame.
+    fn prefs_tab_remote(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Remote control");
+        ui.label(
+            "Serve a web dashboard that mirrors this session — open tabs, \
+             source, diagnostics, and a live preview — and accepts edits, \
+             saves, and builds from the browser. Handy for tweaking a scene \
+             from a phone or a second machine.",
+        );
+        ui.add_space(8.0);
+
+        let mut enabled = self.settings.remote_enabled();
+        if ui
+            .checkbox(&mut enabled, "Enable remote control web UI")
+            .changed()
+        {
+            self.settings.set_remote_enabled(enabled);
+            // A fresh manual toggle supersedes any stale bind failure.
+            self.remote_error = None;
+        }
+
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            ui.label("Port");
+            // Draft is seeded once from settings at startup (`MogenStudioApp::new`)
+            // and only ever written back here on commit, so a user clearing the
+            // field to type a new value never gets silently reset mid-edit.
+            let resp = ui.add(
+                egui::TextEdit::singleline(&mut self.prefs_remote_port_draft)
+                    .desired_width(72.0),
+            );
+            let commit = resp.lost_focus()
+                || (resp.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
+            if commit {
+                match self.prefs_remote_port_draft.trim().parse::<u16>() {
+                    Ok(p) if p >= 1024 => {
+                        self.settings.set_remote_port(p);
+                        self.remote_error = None;
+                    }
+                    _ => {
+                        // Snap the draft back to the last good value.
+                        self.prefs_remote_port_draft =
+                            self.settings.remote_port().to_string();
+                    }
+                }
+            }
+            ui.label(egui::RichText::new("(1024–65535)").weak());
+        });
+
+        ui.add_space(6.0);
+        let mut lan = self.settings.remote_allow_lan();
+        let lan_resp = ui.checkbox(
+            &mut lan,
+            "Allow connections from other devices on this network",
+        );
+        if lan_resp.changed() {
+            self.settings.set_remote_allow_lan(lan);
+        }
+        lan_resp.on_hover_text(
+            "Binds 0.0.0.0 instead of loopback. Anyone who can reach the \
+             port can edit and save your open files — only enable this on \
+             networks you trust.",
+        );
+        if lan {
+            ui.label(
+                egui::RichText::new(
+                    "⚠ The dashboard has no password — everyone on this \
+                     network can edit and save your open files.",
+                )
+                .color(crate::app::style::accent_warn(ui.visuals())),
+            );
+        }
+
+        ui.add_space(10.0);
+        ui.separator();
+        ui.add_space(6.0);
+
+        if let Some(err) = self.remote_error.clone() {
+            ui.colored_label(
+                ui.visuals().error_fg_color,
+                format!("Could not start the server: {err}"),
+            );
+        } else if let Some(server) = self.remote.as_ref() {
+            let url = server.local_url();
+            ui.horizontal(|ui| {
+                ui.label("Running at");
+                if ui
+                    .link(egui::RichText::new(&url).monospace())
+                    .on_hover_text("Open the dashboard in your browser")
+                    .clicked()
+                {
+                    let _ = webbrowser::open(&url);
+                }
+                if ui
+                    .button("Copy")
+                    .on_hover_text("Copy the URL to the clipboard")
+                    .clicked()
+                {
+                    ui.ctx().copy_text(url.clone());
+                }
+            });
+            if server.allow_lan() {
+                ui.label(
+                    "Other devices connect via this machine's LAN address on \
+                     the same port (e.g. http://192.168.x.x:port/).",
+                );
+            }
+        } else {
+            ui.label(egui::RichText::new("Server is off.").weak());
         }
     }
 

@@ -10,6 +10,7 @@ mod pick;
 mod pipeline;
 mod preview_shader;
 mod protocol;
+mod remote;
 mod settings;
 mod splash;
 mod theme;

@@ -37,6 +37,11 @@ pub enum CaptureKind {
     /// tells `poll_generate` to route the outcome back into the wizard
     /// instead of the active tab's status line.
     WizardThumb,
+    /// Single-frame render owned by the remote-control web UI's live
+    /// preview. Same GL path as a `Thumbnail`; the variant keeps
+    /// `poll_generate` from draining outcomes that belong to
+    /// `poll_remote_preview`.
+    RemotePreview,
 }
 
 /// One frame the renderer should produce as part of a capture. Yaw/pitch
