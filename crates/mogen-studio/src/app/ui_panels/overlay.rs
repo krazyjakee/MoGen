@@ -403,7 +403,14 @@ impl MogenStudioApp {
                     egui::Frame::popup(ui.style())
                         .fill(ui.visuals().window_fill().linear_multiply(0.85))
                         .show(ui, |ui| {
-                            ui.label(egui::RichText::new(text).weak());
+                            // Non-wrapping: a wrapping label in an auto-sized
+                            // Area collapses to minimum width during egui's
+                            // sizing pass and the squashed size then sticks in
+                            // area memory.
+                            ui.add(
+                                egui::Label::new(egui::RichText::new(text).weak())
+                                    .wrap_mode(egui::TextWrapMode::Extend),
+                            );
                         });
                 });
         }
