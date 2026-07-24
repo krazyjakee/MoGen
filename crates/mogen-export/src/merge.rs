@@ -78,6 +78,7 @@ where
         roots: Vec::new(),
         materials: scene.materials.clone(),
         physics: scene.physics.clone(),
+        shaders: scene.shaders.clone(),
         joints: scene.joints.clone(),
         clips: scene.clips.clone(),
         skins: scene.skins.clone(),

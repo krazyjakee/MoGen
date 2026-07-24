@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use glam::{Mat4, Vec3};
-use mogen_core::{AlphaMode, MaterialShader, NodeId, SceneGraph, Transform};
+use mogen_core::{AlphaMode, NodeId, SceneGraph, Transform};
 
 use super::anim::world_transforms_from_locals;
 
@@ -95,11 +95,10 @@ pub struct DrawBatch {
     /// member shares this flag — `flatten_with_worlds` keys grouping by it so
     /// a single batch is always all-cast or all-skip.
     pub cast_shadow: bool,
-    /// Per-material shader override copied off the source [`Material`].
-    /// `Standard` (default) routes through the regular PBR path; non-default
-    /// shaders (e.g. `Water`) take a dedicated branch in the FS keyed by
-    /// `MaterialShader::shader_id`.
-    pub shader: MaterialShader,
+    /// Name of the per-material preview shader copied off the source
+    /// [`Material`]. `None` routes through the regular PBR path; `Some("water")`
+    /// (or a user shader name) selects a dedicated program in the renderer.
+    pub shader_name: Option<String>,
     /// Baked render-LOD band `(min_distance, max_distance)` copied off the
     /// node's [`mogen_core::Lod`]. When `Some`, the renderer draws this batch
     /// only while the camera distance to `centroid` falls within the band, so a
@@ -221,7 +220,9 @@ impl FlatMesh {
     /// (currently just water). The viewport uses this to keep requesting
     /// repaints when the scene is otherwise static so the waves keep moving.
     pub fn has_animated_shader(&self) -> bool {
-        self.batches.iter().any(|b| b.shader.animates())
+        self.batches
+            .iter()
+            .any(|b| b.shader_name.as_deref() == Some(mogen_core::shader::WATER))
     }
 
     /// The pick BVH for this mesh, built on first use. Rest-pose world-baked
@@ -497,7 +498,7 @@ pub fn flatten_with_worlds(
                 alpha_mode,
                 alpha_cutoff,
                 double_sided,
-                shader,
+                shader_name,
             ) = match material {
                 Some(m) => (
                     m.base_color_texture.as_ref().map(resolve),
@@ -516,7 +517,7 @@ pub fn flatten_with_worlds(
                     m.alpha_mode,
                     m.alpha_cutoff,
                     m.double_sided,
-                    m.shader,
+                    m.shader_name.clone(),
                 ),
                 None => (
                     None,
@@ -535,7 +536,7 @@ pub fn flatten_with_worlds(
                     AlphaMode::Opaque,
                     0.5,
                     false,
-                    MaterialShader::Standard,
+                    None,
                 ),
             };
             let (centroid, radius) = if bmin.is_finite() && bmax.is_finite() {
@@ -575,7 +576,7 @@ pub fn flatten_with_worlds(
                 palette_id,
                 material_id: mat_id,
                 cast_shadow,
-                shader,
+                shader_name,
                 lod,
             });
         }

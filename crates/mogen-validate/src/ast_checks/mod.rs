@@ -16,7 +16,7 @@ mod terrain_rules;
 #[cfg(test)]
 mod tests;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use mogen_core::Diagnostic;
@@ -71,10 +71,89 @@ pub fn validate_ast_with_source(ast: &[Node], base_dir: Option<&Path>) -> Vec<Di
         ImportResolution::Skipped => has_imports,
     };
     check_meta_blocks(ast, &mut diags);
+    // Shaders aren't merged across imports, so a material referencing a shader
+    // declared in an imported file can't be resolved here — suppress the
+    // unknown-shader error whenever the file has imports, mirroring how the
+    // unknown-module check backs off. Local param-name warnings still fire.
+    check_shader_refs(ast, has_imports, &mut diags);
     for n in ast {
         walk(n, &materials, &physics, &modules, suppress_unknown_module, false, false, &mut diags);
     }
     diags
+}
+
+/// Validate `shader="<name>"` references on materials against declared +
+/// built-in shaders, and check `shader_params` override names against the
+/// referenced shader's declared params. A dedicated pass so the main `walk`
+/// signature stays unchanged.
+fn check_shader_refs(ast: &[Node], suppress_unknown: bool, diags: &mut Vec<Diagnostic>) {
+    let mut decls: HashMap<String, HashSet<String>> = HashMap::new();
+    collect_shader_param_names(ast, &mut decls);
+    walk_shader_refs(ast, &decls, suppress_unknown, diags);
+}
+
+/// Map each declared shader name to the set of its declared `param` names.
+/// First declaration of a name wins (matches lowering's dedupe).
+fn collect_shader_param_names(ast: &[Node], out: &mut HashMap<String, HashSet<String>>) {
+    for n in ast {
+        if n.kind == "shader" {
+            if let Some(name) = &n.name {
+                let params: HashSet<String> = n
+                    .children
+                    .iter()
+                    .filter(|c| c.kind == "param")
+                    .filter_map(|c| c.name.clone())
+                    .collect();
+                out.entry(name.clone()).or_insert(params);
+            }
+        }
+        collect_shader_param_names(&n.children, out);
+    }
+}
+
+fn walk_shader_refs(
+    ast: &[Node],
+    decls: &HashMap<String, HashSet<String>>,
+    suppress_unknown: bool,
+    diags: &mut Vec<Diagnostic>,
+) {
+    for n in ast {
+        if n.kind == "material" {
+            if let Some(name) = n.attr("shader").and_then(as_string_or_ident) {
+                // `standard`/`pbr` are the implicit PBR path, not a reference.
+                let is_pbr = matches!(name, "standard" | "pbr");
+                let is_builtin = mogen_core::shader::builtin_names().contains(&name);
+                let declared = decls.contains_key(name);
+                if !is_pbr && !is_builtin && !declared && !suppress_unknown {
+                    diags.push(
+                        Diagnostic::error("E0106", format!("unknown shader \"{name}\""))
+                            .with_span(n.span),
+                    );
+                }
+                // Check override names only when we know the shader's params
+                // (i.e. it's declared locally — built-ins expose none here).
+                if let Some(params) = decls.get(name) {
+                    for c in &n.children {
+                        if c.kind != "shader_params" {
+                            continue;
+                        }
+                        for (k, _v) in &c.attrs {
+                            if !params.contains(k) {
+                                diags.push(
+                                    Diagnostic::warning(
+                                        "W0108",
+                                        format!("shader \"{name}\" has no parameter \"{k}\""),
+                                    )
+                                    .with_span(c.span),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        walk_shader_refs(&n.children, decls, suppress_unknown, diags);
+    }
 }
 
 /// Walk the AST recursively for `use` nodes whose name parses as a
@@ -311,6 +390,11 @@ fn walk(
                 );
             }
         }
+        // A material-side `shader_params (…)` override block carries arbitrary
+        // param-name attributes; the closed attr-vocabulary check doesn't
+        // apply. Names + types are validated against the referenced shader's
+        // declared params by `check_shader_refs`.
+        "shader_params" => {}
         _ if KNOWN_KINDS.contains(&n.kind.as_str()) => {
             check_attrs(n, materials, physics, inherited_skin, inherited_phys, diags);
             check_anim_required(n, diags);

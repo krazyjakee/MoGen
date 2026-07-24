@@ -25,7 +25,8 @@ use super::gl_util::{bytes_of_f32, bytes_of_u32, compile_program};
 use super::grid_gl::GridGl;
 use super::lights::{ResolvedLight, MAX_LIGHTS};
 use super::lights_gl::LightsGl;
-use super::shaders::{FS_SRC, VS_SRC};
+use super::shaders::user_shader;
+use super::shaders::VS_SRC;
 use super::shadows::{ShadowFrame, ShadowQuality, ShadowSystem};
 
 use textures::TextureCache;
@@ -232,7 +233,12 @@ fn light_eq(a: &ResolvedLight, b: &ResolvedLight) -> bool {
 impl Renderer {
     pub fn new(gl: &glow::Context) -> anyhow::Result<Self> {
         unsafe {
-            let program = compile_program(gl, VS_SRC, FS_SRC)?;
+            // Compile the standard fragment program via the user-shader
+            // assembler with no injections: this fills the injection marker with
+            // the dispatch stub. Behaviour is identical to the pre-feature
+            // shader — ids 0/1 never enter the (inert) dispatch branch.
+            let standard_fs = user_shader::assemble_fs(&[]);
+            let program = compile_program(gl, VS_SRC, &standard_fs)?;
 
             let vao = gl
                 .create_vertex_array()
