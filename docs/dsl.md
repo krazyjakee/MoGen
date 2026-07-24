@@ -915,13 +915,17 @@ Declared at the top of the file or inside `scene { ... }`. Attributes:
   albedo (e.g. `prompt="navy nylon ripstop weave"`). Steers Gemini away
   from the default "material name + colour" framing; auto-rephrased on
   recitation rejection.
-- `shader` — `"standard"` (default) or `"water"`. Studio-preview only — the
-  exported `.glb` always uses standard PBR. `"water"` reinterprets the
-  standard knobs as a procedural water shader: `color` is the body tint,
-  `uv_scale` is ripple density, `roughness` controls chop/foam (`0.05`
-  glassy → `1.0` whitecaps), `metallic` lerps toward liquid-metal Fresnel,
-  `transmission` + `alpha_mode="blend"` lets the floor show through, and
-  `normal_texture`/`base_color_texture` blend into the procedural waves.
+- `shader` — `"standard"`/`"pbr"` (default, the regular PBR path), the
+  built-in `"water"` preset, or the name of a user-declared `shader "<name>"`
+  (see [Shaders](#shaders) below). Studio-preview only — the exported `.glb`
+  always uses standard PBR scalars; the shader name + `shader_params` ride
+  along as `node.extras.shader` metadata for downstream consumers. `"water"`
+  reinterprets the standard knobs as a procedural water shader: `color` is
+  the body tint, `uv_scale` is ripple density, `roughness` controls
+  chop/foam (`0.05` glassy → `1.0` whitecaps), `metallic` lerps toward
+  liquid-metal Fresnel, `transmission` + `alpha_mode="blend"` lets the floor
+  show through, and `normal_texture`/`base_color_texture` blend into the
+  procedural waves.
 - `gradient` — optional ramp baked into per-vertex `COLOR_0` at export
   time. Four surface forms, all colours are vec3 in sRGB `[0..1]`:
   - `linear(from=[…], to=[…], axis=x|y|z)` — interpolates between two
@@ -956,6 +960,52 @@ material "lake" (color=[0.05, 0.32, 0.45], shader="water")
 Texture files are embedded in the output GLB (self-contained, movable
 without sources); missing files are a hard error at export. Reference a
 material via `mat="wood"`; unknown names are a hard error at lowering.
+
+---
+
+## Shaders
+
+A `shader "<name>" { ... }` declaration names an on-disk GLSL fragment
+snippet and the parameters materials may feed it. mogen never compiles or
+runs the GLSL — it only carries the path + resolved parameter values as
+`node.extras.shader` metadata on the glTF nodes bound to a referencing
+material. MoGen Studio is the one component that actually compiles a
+declared shader, for live preview. The built-in `water` preset (see
+`shader=` above) is just the first client of this system — declaring your
+own `shader "water" { ... }` shadows it.
+
+```
+shader "ripple" (source="shaders/ripple.glsl") {
+  param "speed" (type=float, default=2.0)
+  param "tint"  (type=color, default=[0.0, 0.3, 0.5])
+}
+
+material "pond" (color=[0.1, 0.2, 0.3], shader="ripple") {
+  shader_params (speed=3.5, tint=[0.0, 0.4, 0.6])
+}
+```
+
+`shader` attributes:
+
+- `source` — path to the GLSL fragment snippet, resolved relative to the
+  `.mog` file the same way texture paths are.
+
+Each `param "<name>" { ... }` child declares one uniform the snippet may
+use:
+
+- `type` — `float`, `vec2`, `vec3`, `vec4`, or `color` (an RGB `vec3`
+  authored as `[r, g, b]`).
+- `default` — value used when a referencing material supplies no override
+  via `shader_params`. Must match the declared `type`.
+
+A material opts in with `shader="<name>"` (built-in `water`, or a declared
+name) and overrides individual parameter values with a `shader_params (...)`
+child block — any attribute name matching a declared `param` name; names
+that don't match warn (`W0108`) but don't fail the build. Referencing an
+undeclared, non-built-in shader name is a hard error (`E0106`) at
+validation time. Shaders declared in an imported file aren't currently
+visible to the importing file's materials — declare shaders in the file
+that uses them.
 
 ---
 

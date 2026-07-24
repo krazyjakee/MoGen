@@ -149,3 +149,73 @@ impl ShaderDecl {
             .and_then(|p| p.default.clone())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn param_type_parse_round_trips_all_spellings() {
+        assert_eq!(ShaderParamType::parse("float"), Some(ShaderParamType::Float));
+        assert_eq!(ShaderParamType::parse("vec2"), Some(ShaderParamType::Vec2));
+        assert_eq!(ShaderParamType::parse("vec3"), Some(ShaderParamType::Vec3));
+        assert_eq!(ShaderParamType::parse("vec4"), Some(ShaderParamType::Vec4));
+        assert_eq!(ShaderParamType::parse("color"), Some(ShaderParamType::Color));
+        assert_eq!(ShaderParamType::parse("bogus"), None);
+    }
+
+    #[test]
+    fn glsl_type_maps_color_to_vec3() {
+        assert_eq!(ShaderParamType::Float.glsl_type(), "float");
+        assert_eq!(ShaderParamType::Vec2.glsl_type(), "vec2");
+        assert_eq!(ShaderParamType::Vec3.glsl_type(), "vec3");
+        assert_eq!(ShaderParamType::Color.glsl_type(), "vec3");
+        assert_eq!(ShaderParamType::Vec4.glsl_type(), "vec4");
+    }
+
+    #[test]
+    fn value_matches_accepts_color_as_vec3_but_not_other_mismatches() {
+        assert!(ShaderParamValue::Float(1.0).matches(ShaderParamType::Float));
+        assert!(ShaderParamValue::Vec3([0.0, 0.0, 0.0]).matches(ShaderParamType::Vec3));
+        assert!(ShaderParamValue::Vec3([0.0, 0.0, 0.0]).matches(ShaderParamType::Color));
+        assert!(!ShaderParamValue::Float(1.0).matches(ShaderParamType::Vec3));
+        assert!(!ShaderParamValue::Vec2([0.0, 0.0]).matches(ShaderParamType::Vec4));
+        assert!(!ShaderParamValue::Vec4([0.0, 0.0, 0.0, 0.0]).matches(ShaderParamType::Color));
+    }
+
+    #[test]
+    fn resolve_param_prefers_override_then_default_then_none() {
+        let mut decl = ShaderDecl::new("ripple", "shaders/ripple.glsl");
+        decl.params.push(ShaderParamDef {
+            name: "speed".to_string(),
+            ty: ShaderParamType::Float,
+            default: Some(ShaderParamValue::Float(2.0)),
+        });
+        decl.params.push(ShaderParamDef {
+            name: "undefaulted".to_string(),
+            ty: ShaderParamType::Float,
+            default: None,
+        });
+
+        let mut overrides = BTreeMap::new();
+        assert_eq!(
+            decl.resolve_param("speed", &overrides),
+            Some(ShaderParamValue::Float(2.0)),
+            "falls back to the declared default"
+        );
+        assert_eq!(decl.resolve_param("undefaulted", &overrides), None);
+        assert_eq!(decl.resolve_param("unknown_param", &overrides), None);
+
+        overrides.insert("speed".to_string(), ShaderParamValue::Float(9.0));
+        assert_eq!(
+            decl.resolve_param("speed", &overrides),
+            Some(ShaderParamValue::Float(9.0)),
+            "an override wins over the declared default"
+        );
+    }
+
+    #[test]
+    fn builtin_names_seeds_water() {
+        assert_eq!(builtin_names(), &[WATER]);
+    }
+}

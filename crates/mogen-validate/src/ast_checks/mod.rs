@@ -73,9 +73,16 @@ pub fn validate_ast_with_source(ast: &[Node], base_dir: Option<&Path>) -> Vec<Di
     check_meta_blocks(ast, &mut diags);
     // Shaders aren't merged across imports, so a material referencing a shader
     // declared in an imported file can't be resolved here — suppress the
-    // unknown-shader error whenever the file has imports, mirroring how the
-    // unknown-module check backs off. Local param-name warnings still fire.
-    check_shader_refs(ast, has_imports, &mut diags);
+    // unknown-shader error the same way the unknown-module check does: only
+    // when imports are actually present but couldn't be resolved (no
+    // `base_dir`, or resolution failed). Once imports resolve, a reference to
+    // a genuinely undeclared shader is a real error — including references to
+    // a shader that only exists nested inside an imported file's `scene`
+    // block, which today's importer doesn't hoist to top level either way.
+    // Using `has_imports` here instead of `suppress_unknown_module` would
+    // silently swallow every local shader-name typo in any file that happens
+    // to import something unrelated.
+    check_shader_refs(ast, suppress_unknown_module, &mut diags);
     for n in ast {
         walk(n, &materials, &physics, &modules, suppress_unknown_module, false, false, &mut diags);
     }
