@@ -6,7 +6,8 @@ use mogen_geom::{
     bezier_patch_mesh, box_mesh, capsule_mesh, chamfered_box_mesh, clean_csg_output, coil_mesh,
     cone_mesh, curved_plane_mesh, cylinder_mesh, difference_many, disc_mesh, ellipsoid_mesh,
     extrude_mesh, frustum_mesh, half_cylinder_mesh, heightfield_mesh, hemisphere_mesh, hull_mesh,
-    icosphere_mesh, inset_box_mesh, lathe_mesh, leaf_card_mesh, loft_mesh, mesh_from_glb_bytes,
+    icosphere_mesh, inset_box_mesh, is_degenerate_solid, lathe_mesh, leaf_card_mesh, loft_mesh,
+    mesh_from_glb_bytes,
     metaball_mesh, plane_mesh, poly_mesh, prism_mesh, pyramid_mesh, quad_mesh, read_glb_bytes,
     rounded_box_mesh, sphere_mesh, spline_ribbon_mesh, spline_tube_mesh, superellipsoid_mesh,
     sweep_mesh, torus_arc_mesh, torus_mesh, transform_mesh, tube_mesh, wedge_mesh,
@@ -307,9 +308,13 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
                 )));
             }
             let mesh = hull_mesh(&points);
-            if mesh.positions.is_empty() {
+            // Degenerate input does not come back as an empty mesh: Manifold
+            // returns a zero-volume sheet for a coplanar point set, which would
+            // export as an invisible, non-watertight node. Test the volume the
+            // hull actually bounds rather than trusting it to come back empty.
+            if is_degenerate_solid(&mesh) {
                 return Some(Err(anyhow!(
-                    "`hull` produced no geometry — all points may be coplanar"
+                    "`hull` produced no solid geometry — the points bound no volume (all coplanar or collinear)"
                 )));
             }
             mesh
