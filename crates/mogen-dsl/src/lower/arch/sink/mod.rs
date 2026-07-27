@@ -7,7 +7,9 @@
 //! - [`mog_text`] writes `.mog` source. Phase 1 ships here: an import produces
 //!   a file the user can open and edit, which is the point of importing into
 //!   this project rather than just rendering the JSON.
-//! - A mesh sink follows in phase 2, when the `building` generator becomes the
-//!   second producer and wants `SceneGraph` nodes directly.
+//! - [`mesh`] builds `Mesh` values. Phase 2 uses it: the `building` generator
+//!   already lives inside the lowering pipeline, so it cannot round-trip
+//!   through source text and wants the solved shapes as geometry directly.
 
+pub(crate) mod mesh;
 pub(crate) mod mog_text;
