@@ -48,6 +48,7 @@ pub(crate) mod resolved;
 pub(crate) mod roof;
 pub(crate) mod sink;
 pub(crate) mod validate;
+pub(crate) mod wall_mesh;
 
 #[cfg(test)]
 mod tests;
@@ -68,6 +69,7 @@ pub use ir::{
     P2, P3,
 };
 pub use resolved::MaterialDecl;
+pub use wall_mesh::{solve_wall_meshes, WallRequest};
 
 /// Solve a model and write it out as `.mog` source.
 ///

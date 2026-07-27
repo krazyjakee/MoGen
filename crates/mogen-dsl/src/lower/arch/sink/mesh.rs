@@ -35,7 +35,7 @@ use super::super::resolved::{Placement, Shape, ShapeError, Solid};
 /// Distinct from [`ShapeError`], which is about the shape being wrong.
 /// These are about this sink being unable to render a shape that was fine.
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub(in crate::lower::arch) enum MeshError {
+pub(crate) enum MeshError {
     /// The shape failed its own validity check.
     Shape(ShapeError),
     /// Ear clipping stalled with polygon left over. For a ring that passed
@@ -96,7 +96,7 @@ pub(in crate::lower::arch) fn placement_matrix(p: &Placement) -> Mat4 {
 /// falls out of reversing the ring order, and the bottom cap keeps it. Getting
 /// this backwards produces an inside-out solid that renders fine in a viewer
 /// with backface culling off and fails every CSG operation afterwards.
-pub(in crate::lower::arch) fn prism(
+pub(crate) fn prism(
     outer: &[P2],
     holes: &[Vec<P2>],
     base: f32,
