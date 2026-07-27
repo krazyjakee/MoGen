@@ -59,17 +59,69 @@ impl WallFootprint {
     /// The closed outline: up the plus side, back down the minus side,
     /// counter-clockwise, first point not repeated.
     pub fn ring(&self) -> Vec<P2> {
-        let mut ring = self.plus.clone();
-        ring.extend(self.minus.iter().rev().copied());
+        self.slice(0.0, 1.0)
+    }
+
+    /// The outline of the stretch between two parameters along the wall.
+    ///
+    /// This is how a pier or a lintel gets its plan shape: [`super::openings`]
+    /// decides *which* stretches are solid, and this turns one of them into a
+    /// polygon. A slice that reaches an end of the wall inherits that end's
+    /// mitre corner, so a pier beside a corner still meets its neighbour
+    /// exactly — which is the reason the two sides are kept rather than a ring.
+    pub fn slice(&self, t0: f32, t1: f32) -> Vec<P2> {
+        let mut ring = sub_side(&self.ts, &self.plus, t0, t1);
+        let mut back = sub_side(&self.ts, &self.minus, t0, t1);
+        back.reverse();
+        ring.extend(back);
         plan::normalise_ccw(&mut ring);
         ring
     }
+}
+
+/// One side of the wall between two parameters: the interpolated start, every
+/// original sample strictly inside, then the interpolated end. Keeping the
+/// interior samples is what preserves a curved wall's arc through a slice.
+fn sub_side(ts: &[f32], pts: &[P2], t0: f32, t1: f32) -> Vec<P2> {
+    const EDGE: f32 = 1e-6;
+    let mut out = vec![lerp_at(ts, pts, t0)];
+    for (i, &t) in ts.iter().enumerate() {
+        if t > t0 + EDGE && t < t1 - EDGE {
+            out.push(pts[i]);
+        }
+    }
+    out.push(lerp_at(ts, pts, t1));
+    out
+}
+
+/// The point at parameter `t`, interpolated between samples.
+fn lerp_at(ts: &[f32], pts: &[P2], t: f32) -> P2 {
+    let last = ts.len() - 1;
+    if t <= ts[0] {
+        return pts[0];
+    }
+    if t >= ts[last] {
+        return pts[last];
+    }
+    for i in 1..=last {
+        if t <= ts[i] {
+            let span = ts[i] - ts[i - 1];
+            let f = if span > 0.0 { (t - ts[i - 1]) / span } else { 0.0 };
+            return plan::add(pts[i - 1], plan::scale(plan::sub(pts[i], pts[i - 1]), f));
+        }
+    }
+    pts[last]
 }
 
 /// A patch over a junction whose mitre fell back to butt joints.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct JunctionFiller {
     pub ring: Vec<P2>,
+    /// The two walls whose ends left this notch. The patch spans where both of
+    /// them exist -- the *intersection* of their vertical extents. A half wall
+    /// meeting a full one leaves a notch only as high as the shorter, and
+    /// filling to the taller would poke a stub into the air above it.
+    pub walls: [WallId; 2],
 }
 
 /// Why a wall produced no footprint. Both are loud on purpose: a wall silently
@@ -227,7 +279,10 @@ fn solve_junction(
             }
             None => {
                 if let Some(ring) = filler_ring(mp, r1.edge_a.origin, r2.edge_b.origin) {
-                    fillers.push(JunctionFiller { ring });
+                    fillers.push(JunctionFiller {
+                        ring,
+                        walls: [r1.inc.wall, r2.inc.wall],
+                    });
                 }
             }
         }
