@@ -8,7 +8,7 @@
 
 use std::path::Path;
 
-use mogen_core::{AlphaMode, Material, MaterialShader, SceneGraph};
+use mogen_core::{AlphaMode, Material, SceneGraph};
 
 use crate::lower::material::ensure_named_defaults;
 
@@ -53,7 +53,7 @@ pub(super) fn ensure_defaults(graph: &mut SceneGraph, origin: Option<&Path>) {
             m.alpha_mode = AlphaMode::Blend;
             m.transmission = 0.9;
             m.double_sided = true;
-            m.shader = MaterialShader::Water;
+            m.shader_name = Some(mogen_core::shader::WATER.to_string());
             m
         }),
     ];

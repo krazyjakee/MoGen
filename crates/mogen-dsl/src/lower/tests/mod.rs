@@ -15,6 +15,7 @@ mod parametric_surfaces;
 mod physics;
 mod poly;
 mod primitives;
+mod shader;
 
 pub(super) fn lower_src(src: &str) -> SceneGraph {
     let ast = crate::parser::parse(src).expect("parse");

@@ -311,7 +311,14 @@ impl Renderer {
             let uv_scale = b.uv_scale;
             let emissive = b.emissive;
             let emissive_strength = b.emissive_strength;
-            let shader_id = b.shader.shader_id();
+            // Preview shader selector for the monolithic program's branch.
+            // Phase 3 replaces this with a per-material program cache; for now
+            // only the built-in water shader has a dedicated branch.
+            let shader_id = if b.shader_name.as_deref() == Some(mogen_core::shader::WATER) {
+                1
+            } else {
+                0
+            };
             let index_start = b.index_start;
             let index_count = b.index_count;
             let textures = self.draw_textures[idx];

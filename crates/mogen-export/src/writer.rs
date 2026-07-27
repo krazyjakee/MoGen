@@ -6,7 +6,7 @@ use std::path::Path;
 use anyhow::Result;
 use serde_json::{json, Value};
 
-use mogen_core::{ColliderShape, MaterialId, Mesh, NodeId, SceneGraph, SceneNode};
+use mogen_core::{ColliderShape, MaterialId, Mesh, NodeId, SceneGraph, SceneNode, ShaderParamValue};
 
 use crate::accessor::{
     push_colors, push_indices, push_joints, push_normals, push_positions, push_uvs, push_weights,
@@ -351,7 +351,12 @@ fn build_glb_with_options_and_source_inner<F: Fn(&str)>(
     let light_table = collect_lights(scene);
 
     for (i, n) in scene.nodes.iter().enumerate() {
-        nodes.push(emit_node(n, mesh_index_for_node[i], light_table.node_to_index[i]));
+        nodes.push(emit_node(
+            n,
+            mesh_index_for_node[i],
+            light_table.node_to_index[i],
+            shader_extras(scene, n.material),
+        ));
     }
 
     let mut materials: Vec<Value> = scene
@@ -531,7 +536,55 @@ fn build_glb_with_options_and_source_inner<F: Fn(&str)>(
     Ok(out)
 }
 
-fn emit_node(n: &SceneNode, mesh: Option<usize>, light: Option<usize>) -> Value {
+/// Project a material's preview shader (name + resolved params) into a JSON
+/// value for the referencing node's `extras.shader`. glTF has no place for
+/// shader code or a per-material `extras`, so the metadata rides on every node
+/// that binds the material. Params merge the shader's declared defaults with
+/// the material's overrides; keys are emitted in deterministic (sorted) order.
+/// Returns `None` for the standard-PBR common case.
+fn shader_extras(scene: &SceneGraph, mat: Option<MaterialId>) -> Option<Value> {
+    let m = mat.and_then(|id| scene.materials.get(id.0 as usize))?;
+    let name = m.shader_name.as_ref()?;
+
+    let mut params: std::collections::BTreeMap<String, Value> = std::collections::BTreeMap::new();
+    if let Some(decl) = scene.find_shader_scoped(name, m.origin.as_deref()) {
+        for p in &decl.params {
+            if let Some(v) = decl.resolve_param(&p.name, &m.shader_params) {
+                params.insert(p.name.clone(), param_to_json(&v));
+            }
+        }
+    }
+    // Overrides for params the referenced shader doesn't declare (or when the
+    // shader isn't in the graph) still ride along so nothing is silently lost.
+    for (k, v) in &m.shader_params {
+        params
+            .entry(k.clone())
+            .or_insert_with(|| param_to_json(v));
+    }
+
+    let mut obj = serde_json::Map::new();
+    obj.insert("name".into(), Value::String(name.clone()));
+    if !params.is_empty() {
+        obj.insert("params".into(), Value::Object(params.into_iter().collect()));
+    }
+    Some(Value::Object(obj))
+}
+
+fn param_to_json(v: &ShaderParamValue) -> Value {
+    match v {
+        ShaderParamValue::Float(f) => json!(f),
+        ShaderParamValue::Vec2(a) => json!(a),
+        ShaderParamValue::Vec3(a) => json!(a),
+        ShaderParamValue::Vec4(a) => json!(a),
+    }
+}
+
+fn emit_node(
+    n: &SceneNode,
+    mesh: Option<usize>,
+    light: Option<usize>,
+    shader: Option<Value>,
+) -> Value {
     let mut obj = serde_json::Map::new();
     obj.insert("name".into(), Value::String(n.name.clone()));
 
@@ -634,6 +687,12 @@ fn emit_node(n: &SceneNode, mesh: Option<usize>, light: Option<usize>) -> Value 
             phys.insert("center_of_gravity".into(), json!([c[0], c[1], c[2]]));
         }
         extras.insert("physics".into(), Value::Object(phys));
+    }
+    // Preview shader metadata projected from the node's material. mogen can't
+    // embed GLSL in glTF, so a downstream consumer (or MoGen Studio) reads this
+    // name + params and binds the real shader. See `shader_extras`.
+    if let Some(sh) = shader {
+        extras.insert("shader".into(), sh);
     }
     if !extras.is_empty() {
         obj.insert("extras".into(), Value::Object(extras));
