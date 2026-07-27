@@ -8,6 +8,7 @@
 //! `circulation::plan` and added to every storey at the same XY so a stair
 //! at floor N lands directly above the stair at floor N-1.
 
+pub(crate) mod adjacency;
 mod common;
 mod grid;
 mod bsp;

@@ -19,6 +19,7 @@ use mogen_core::{Connector, NodeId, SceneGraph, Transform};
 use crate::ast::Node;
 
 use super::super::config::BuildingCfg;
+use super::super::layout::adjacency::{self, WallAxis};
 use super::super::layout::{cell_kind_label, cell_kind_role, cell_type, CellKind, Floorplate};
 use super::openings::OpeningPlan;
 use super::wall_build::wall_with_holes;
@@ -35,7 +36,7 @@ pub(super) fn emit_rooms(
     let h = cfg.ceiling_height;
     let wt = cfg.wall_thickness;
 
-    let walls = collect_interior_walls(plate);
+    let walls = adjacency::interior_walls(plate);
 
     let mut cell_ids: Vec<NodeId> = Vec::with_capacity(plate.rooms.len());
     for (i, cell) in plate.rooms.iter().enumerate() {
@@ -101,12 +102,13 @@ pub(super) fn emit_rooms(
         cell_ids.push(cell_id);
     }
 
-    for (idx, (lo, hi, axis, fixed, range)) in walls.iter().enumerate() {
-        let length = range.1 - range.0;
+    for (idx, run) in walls.iter().enumerate() {
+        let (lo, hi, axis, fixed, range) = (&run.a, &run.b, &run.axis, &run.at, &run.span);
+        let length = run.length();
         if length <= wt * 1.5 {
             continue;
         }
-        let mid_along = 0.5 * (range.0 + range.1);
+        let mid_along = run.midpoint();
         // Wall mesh has its long axis on local X. A "Vertical" wall (a
         // vertical line on the floor plan, running along world Z at fixed
         // world X) therefore needs a 90° Y rotation to map its local X axis
@@ -170,63 +172,6 @@ pub(super) fn emit_rooms(
         inherit_material_from_chain(wall_id, graph);
     }
     Ok(())
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum WallAxis {
-    Vertical,
-    Horizontal,
-}
-
-fn collect_interior_walls(
-    plate: &Floorplate,
-) -> Vec<(usize, usize, WallAxis, f32, (f32, f32))> {
-    let mut out = Vec::new();
-    let n = plate.rooms.len();
-    for i in 0..n {
-        for j in (i + 1)..n {
-            // Elevators emit their own four-sided shaft enclosure in
-            // `emit/circulation.rs` (N/E/S solid + W with one cutout
-            // per storey at the elevator's centred opening). Adding a
-            // per-storey cell-shared wall on the elevator face here
-            // would double the wall and let the cell-wall door cutout
-            // — which lands on the overlap midpoint, not the elevator
-            // centre — block the shaft's correctly-placed cutout.
-            if matches!(plate.rooms[i].kind, CellKind::Elevator)
-                || matches!(plate.rooms[j].kind, CellKind::Elevator)
-            {
-                continue;
-            }
-            let a = &plate.rooms[i].rect;
-            let b = &plate.rooms[j].rect;
-            if (a.x_max - b.x_min).abs() < 1e-3 {
-                let lo = a.z_min.max(b.z_min);
-                let hi = a.z_max.min(b.z_max);
-                if hi > lo {
-                    out.push((i, j, WallAxis::Vertical, a.x_max, (lo, hi)));
-                }
-            } else if (b.x_max - a.x_min).abs() < 1e-3 {
-                let lo = a.z_min.max(b.z_min);
-                let hi = a.z_max.min(b.z_max);
-                if hi > lo {
-                    out.push((i, j, WallAxis::Vertical, b.x_max, (lo, hi)));
-                }
-            } else if (a.z_max - b.z_min).abs() < 1e-3 {
-                let lo = a.x_min.max(b.x_min);
-                let hi = a.x_max.min(b.x_max);
-                if hi > lo {
-                    out.push((i, j, WallAxis::Horizontal, a.z_max, (lo, hi)));
-                }
-            } else if (b.z_max - a.z_min).abs() < 1e-3 {
-                let lo = a.x_min.max(b.x_min);
-                let hi = a.x_max.min(b.x_max);
-                if hi > lo {
-                    out.push((i, j, WallAxis::Horizontal, b.z_max, (lo, hi)));
-                }
-            }
-        }
-    }
-    out
 }
 
 fn door_belongs_to_wall(
