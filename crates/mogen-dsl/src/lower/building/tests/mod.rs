@@ -7,6 +7,7 @@ mod furnish;
 mod layouts;
 mod matrix;
 mod multi_storey;
+mod parity;
 mod roof_and_cellar;
 mod single_storey;
 
