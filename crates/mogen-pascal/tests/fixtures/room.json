@@ -1,0 +1,122 @@
+{
+    "nodes": {
+        "l0": {
+            "id": "l0",
+            "type": "level",
+            "level": 0,
+            "height": 2.7,
+            "parentId": null,
+            "children": [
+                "s0",
+                "w0",
+                "w1",
+                "w2",
+                "w3"
+            ]
+        },
+        "s0": {
+            "id": "s0",
+            "type": "slab",
+            "parentId": "l0",
+            "polygon": [
+                [
+                    0,
+                    0
+                ],
+                [
+                    6,
+                    0
+                ],
+                [
+                    6,
+                    4
+                ],
+                [
+                    0,
+                    4
+                ]
+            ],
+            "elevation": 0.05,
+            "thickness": 0.05,
+            "children": []
+        },
+        "w0": {
+            "id": "w0",
+            "type": "wall",
+            "parentId": "l0",
+            "start": [
+                0,
+                0
+            ],
+            "end": [
+                6,
+                0
+            ],
+            "thickness": 0.2,
+            "children": [
+                "d0"
+            ]
+        },
+        "w1": {
+            "id": "w1",
+            "type": "wall",
+            "parentId": "l0",
+            "start": [
+                6,
+                0
+            ],
+            "end": [
+                6,
+                4
+            ],
+            "thickness": 0.2,
+            "children": []
+        },
+        "w2": {
+            "id": "w2",
+            "type": "wall",
+            "parentId": "l0",
+            "start": [
+                6,
+                4
+            ],
+            "end": [
+                0,
+                4
+            ],
+            "thickness": 0.2,
+            "children": []
+        },
+        "w3": {
+            "id": "w3",
+            "type": "wall",
+            "parentId": "l0",
+            "start": [
+                0,
+                4
+            ],
+            "end": [
+                0,
+                0
+            ],
+            "thickness": 0.2,
+            "children": []
+        },
+        "d0": {
+            "id": "d0",
+            "type": "door",
+            "parentId": "w0",
+            "position": [
+                3.0,
+                1.05,
+                0
+            ],
+            "width": 0.9,
+            "height": 2.1,
+            "children": []
+        }
+    },
+    "rootNodeIds": [
+        "l0"
+    ]
+}

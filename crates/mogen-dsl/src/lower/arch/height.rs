@@ -111,10 +111,29 @@ pub(super) fn slab_support(model: &ArchModel, wall: &Wall) -> f32 {
     let n = ((length / SUPPORT_SAMPLE_STEP).ceil() as usize + 1)
         .clamp(SUPPORT_SAMPLES_MIN, SUPPORT_SAMPLES_MAX);
     let offset = wall.curve_offset.unwrap_or(0.0);
-    let samples: Vec<P2> = (0..n)
+    let half = 0.5 * wall.thickness.max(0.0);
+
+    // Each sample is the wall's two *faces*, not its centreline. That is not a
+    // refinement — it is the difference between working and not.
+    //
+    // A perimeter wall's centreline runs exactly along the edge of the slab it
+    // stands on, and `point_in_ring` is explicitly unspecified for points on a
+    // boundary. Sampling the centreline therefore makes support a coin flip
+    // for the commonest case in any building: in a plain four-wall room, two
+    // walls came out supported and two did not, from identical geometry.
+    //
+    // The faces sit half a thickness either side, so neither is ever on the
+    // boundary. Matching their rule, a sample counts when *either* face is
+    // over the slab — a wall on the perimeter is held up by its inner half.
+    let samples: Vec<(P2, P2)> = (0..n)
         .map(|i| {
             let t = i as f32 / (n - 1) as f32;
-            curve::frame_at(s, e, offset, t).point
+            let f = curve::frame_at(s, e, offset, t);
+            let normal = [-f.tangent[1], f.tangent[0]];
+            (
+                plan::add(f.point, plan::scale(normal, half)),
+                plan::sub(f.point, plan::scale(normal, half)),
+            )
         })
         .collect();
 
@@ -134,7 +153,10 @@ pub(super) fn slab_support(model: &ArchModel, wall: &Wall) -> f32 {
     for slab in model.slabs.iter().filter(|s| s.level == wall.level) {
         let mask: Vec<bool> = samples
             .iter()
-            .map(|p| plan::point_in_polygon(*p, &slab.poly.outer, &slab.poly.holes))
+            .map(|(a, b)| {
+                plan::point_in_polygon(*a, &slab.poly.outer, &slab.poly.holes)
+                    || plan::point_in_polygon(*b, &slab.poly.outer, &slab.poly.holes)
+            })
             .collect();
         let hits = mask.iter().filter(|b| **b).count();
         let supported = length * (hits as f32) / (n as f32);
@@ -487,6 +509,63 @@ mod tests {
         assert!((span.top - 2.7).abs() < EPS, "{span:?}");
         assert!(span.base < span.top, "the shell hangs below: {span:?}");
         assert!((span.height() - CEILING_SHELL_THICKNESS).abs() < EPS);
+    }
+
+    #[test]
+    fn walls_on_a_slabs_edge_all_agree_that_they_are_supported() {
+        // The commonest arrangement in any building: a room's four walls
+        // centred on the slab's boundary. Sampling the centreline put every
+        // sample exactly on that boundary, where `point_in_ring` is
+        // unspecified — so two walls came out supported and two did not, from
+        // geometry that is identical up to a rotation.
+        //
+        // The bug was invisible per wall. It showed up as a room whose total
+        // wall volume landed precisely halfway between the two possible
+        // answers.
+        let mut m = model(&[(0, 2.7)]);
+        slab(&mut m, 0, rect(0.0, 0.0, 6.0, 4.0), 0.05);
+
+        let corners = [[0.0, 0.0], [6.0, 0.0], [6.0, 4.0], [0.0, 4.0]];
+        for i in 0..4 {
+            m.push_wall(Wall {
+                id: WallId(0),
+                level: LevelId(0),
+                start: corners[i],
+                end: corners[(i + 1) % 4],
+                thickness: 0.2,
+                height: None,
+                curve_offset: None,
+                openings: Vec::new(),
+                material: None,
+            });
+        }
+
+        let bases: Vec<f32> = m.walls.iter().map(|w| slab_support(&m, w)).collect();
+        assert!(
+            bases.iter().all(|b| (b - 0.05).abs() < EPS),
+            "every wall stands on the slab; got {bases:?}"
+        );
+    }
+
+    #[test]
+    fn a_wall_hanging_off_the_edge_of_its_slab_is_still_supported() {
+        // Only the inner face is over the slab. Their rule takes the minimum
+        // of whichever faces *are* supported, so one is enough — which is what
+        // holds a perimeter wall up.
+        let mut m = model(&[(0, 2.7)]);
+        slab(&mut m, 0, rect(0.0, 0.0, 6.0, 4.0), 0.05);
+        let id = m.push_wall(Wall {
+            id: WallId(0),
+            level: LevelId(0),
+            start: [0.0, 0.0],
+            end: [6.0, 0.0],
+            thickness: 0.2,
+            height: None,
+            curve_offset: None,
+            openings: Vec::new(),
+            material: None,
+        });
+        assert!((slab_support(&m, &m.walls[id.0 as usize]) - 0.05).abs() < EPS);
     }
 
     #[test]

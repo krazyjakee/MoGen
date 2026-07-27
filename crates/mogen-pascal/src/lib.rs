@@ -185,4 +185,102 @@ mod tests {
     fn first_lines(s: &str) -> String {
         s.lines().take(6).collect::<Vec<_>>().join("\n")
     }
+
+    // ---- A scene whose answer is known --------------------------------
+    //
+    // Their demo is a sandbox: six walls scattered across a plan, two roofs,
+    // no coherent building. Useful for robustness, useless for correctness,
+    // because nothing about it has a right answer to check against.
+    //
+    // `room.json` is the opposite — a closed 6×4 room, 0.2m walls, one 0.9×2.1
+    // door meeting the floor. Every number below is derivable by hand, so this
+    // is what actually pins the behaviour of the mitre solver, the opening
+    // slicer and the sink working together.
+
+    const ROOM: &str = include_str!("../tests/fixtures/room.json");
+
+    fn room_graph() -> mogen_core::SceneGraph {
+        let out = import(ROOM, "room").expect("imports");
+        assert!(out.report.notes.is_empty(), "{:?}", out.report);
+        let ast = mogen_dsl::parse(&out.source)
+            .unwrap_or_else(|e| panic!("{e}\n---\n{}", out.source));
+        mogen_dsl::lower(&ast).unwrap_or_else(|e| panic!("{e}\n---\n{}", out.source))
+    }
+
+    #[test]
+    fn a_closed_room_imports_to_exactly_the_expected_parts() {
+        let graph = room_graph();
+        let mut names: Vec<&str> = graph
+            .nodes
+            .iter()
+            .filter(|n| n.mesh.is_some())
+            .map(|n| n.name.as_str())
+            .collect();
+        names.sort_unstable();
+
+        // The doored wall splits into two piers and a lintel. There is no
+        // sill, because the door's bottom edge *is* the floor — a zero-height
+        // panel would be degenerate geometry.
+        assert_eq!(
+            names,
+            vec![
+                "slab_0",
+                "wall_0_panel0",
+                "wall_0_panel1",
+                "wall_0_panel2",
+                "wall_1",
+                "wall_2",
+                "wall_3",
+            ]
+        );
+    }
+
+    #[test]
+    fn the_rooms_walls_tile_their_ring_without_overlapping() {
+        // Four mitred walls around a 6×4 centreline rectangle cover exactly
+        // the annulus between the outer and inner rectangles. Too much volume
+        // means the corners are double-counted; too little means there is a
+        // gap at each one.
+        let graph = room_graph();
+        let (t, w, d) = (0.2_f32, 6.0_f32, 4.0_f32);
+        let plan_area = (w + t) * (d + t) - (w - t) * (d - t);
+
+        // Every wall stands on the slab, so each is the storey height less the
+        // slab's elevation. If this ever comes out halfway between 2.65 and
+        // 2.7, support has gone back to being decided per wall.
+        let wall_h = 2.7 - 0.05;
+        let expected = plan_area * wall_h - 0.9 * 2.1 * t;
+
+        let volume: f32 = graph
+            .nodes
+            .iter()
+            .filter(|n| n.name.starts_with("wall_"))
+            .filter_map(|n| n.mesh.as_ref())
+            .map(mesh_volume)
+            .sum();
+        assert!(
+            (volume - expected).abs() < 0.02,
+            "walls occupy {volume} m³, expected {expected} m³"
+        );
+    }
+
+    /// Signed volume via the divergence theorem: a closed mesh gives the
+    /// enclosed volume, and an unclosed one does not.
+    fn mesh_volume(mesh: &mogen_core::Mesh) -> f32 {
+        let p = &mesh.positions;
+        mesh.indices
+            .chunks_exact(3)
+            .map(|t| {
+                let (a, b, c) = (
+                    p[t[0] as usize],
+                    p[t[1] as usize],
+                    p[t[2] as usize],
+                );
+                (a[0] * (b[1] * c[2] - c[1] * b[2]) - a[1] * (b[0] * c[2] - c[0] * b[2])
+                    + a[2] * (b[0] * c[1] - c[0] * b[1]))
+                    / 6.0
+            })
+            .sum::<f32>()
+            .abs()
+    }
 }

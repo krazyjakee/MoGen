@@ -4,6 +4,7 @@ pub(crate) mod bench;
 pub(crate) mod binary;
 pub(crate) mod build;
 pub(crate) mod generate;
+pub(crate) mod import;
 pub(crate) mod inspect;
 pub(crate) mod mcp;
 pub(crate) mod modify;

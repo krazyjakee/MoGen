@@ -15,6 +15,7 @@ use commands::auth::dispatch as auth_dispatch;
 use commands::bench::bench;
 use commands::build::build;
 use commands::generate::{generate, GenerateArgs};
+use commands::import::import;
 use commands::inspect::{check, dump_scene, inspect, parse_cmd};
 use commands::mcp::run as run_mcp_server;
 use commands::modify::{modify, ModifyArgs};
@@ -57,6 +58,7 @@ fn main() -> ExitCode {
             let out = out.unwrap_or_else(|| input.with_extension(default_ext));
             build(input, out, format.map(Into::into))
         }
+        Cmd::Import { input, out, name } => import(input, out, name),
         Cmd::Parse { input } => parse_cmd(input),
         Cmd::Check { input, json } => check(input, json),
         Cmd::DumpScene { input, json } => dump_scene(input, json),

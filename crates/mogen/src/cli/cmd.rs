@@ -49,6 +49,21 @@ pub(crate) enum Cmd {
         #[arg(long, value_enum)]
         format: Option<BuildFormatArg>,
     },
+    /// Convert a pascalorg/editor scene (`.json`) into DSL source.
+    ///
+    /// Unlike `build`, this writes a `.mog` file rather than a binary: the
+    /// point of importing is to get source you can edit. Anything the
+    /// importer could not use is reported and written into the file's
+    /// header as a comment, so a partly-understood scene still opens.
+    Import {
+        input: PathBuf,
+        /// Output path. Defaults to `<input>.mog` alongside the JSON.
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+        /// Name for the emitted `scene`. Defaults to the output file stem.
+        #[arg(long)]
+        name: Option<String>,
+    },
     /// Parse a DSL file and print the AST.
     Parse { input: PathBuf },
     /// Validate a DSL file (semantic + reference checks). Exit non-zero on any error.

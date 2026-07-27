@@ -8,6 +8,7 @@ default = ["csg"]
 csg = ["mogen-dsl/csg"]
 
 [dependencies]
+mogen-core = { workspace = true }
 mogen-dsl = { workspace = true, default-features = false }
 serde = { workspace = true }
 serde_json = { workspace = true }

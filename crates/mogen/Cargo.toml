@@ -17,6 +17,7 @@ mogen-validate = { workspace = true, features = ["csg"] }
 mogen-export = { workspace = true, features = ["textures", "merge", "fbx"] }
 mogen-llm = { workspace = true }
 mogen-moghub-client = { workspace = true, features = ["oauth"] }
+mogen-pascal = { workspace = true }
 mogen-render = { workspace = true }
 mogen-update = { workspace = true }
 anyhow = { workspace = true }
