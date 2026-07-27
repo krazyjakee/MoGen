@@ -635,6 +635,15 @@ fn emit_node(n: &SceneNode, mesh: Option<usize>, light: Option<usize>) -> Value 
         }
         extras.insert("physics".into(), Value::Object(phys));
     }
+    // Author-supplied `extras="{…}"` goes on last so an explicit key wins over
+    // the derived one above. That is deliberate: it lets a converter or an
+    // engine-specific payload override `role`/`tags` without us having to
+    // anticipate every key someone might want to set.
+    if let Some(user) = &n.extras {
+        for (k, v) in user {
+            extras.insert(k.clone(), v.clone());
+        }
+    }
     if !extras.is_empty() {
         obj.insert("extras".into(), Value::Object(extras));
     }

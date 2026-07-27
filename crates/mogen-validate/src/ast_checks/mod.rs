@@ -32,7 +32,7 @@ use collect::{
     ImportResolution,
 };
 use rules::check_anim_required;
-use schema::{as_string_or_ident, attr_type, value_kind, value_matches};
+use schema::{as_string_or_ident, attr_type, json_kind, value_kind, value_matches};
 
 pub fn validate_ast(ast: &[Node]) -> Vec<Diagnostic> {
     validate_ast_with_source(ast, None)
@@ -414,6 +414,35 @@ fn check_attrs(
                         )
                         .with_span(n.span),
                     );
+                }
+            }
+        }
+        // `extras` is merged verbatim into the exported glTF `node.extras`,
+        // which is a JSON object — so the literal has to parse *and* has to be
+        // an object. Checked here rather than at lowering so the author gets a
+        // span instead of a bare error, and so a malformed literal never
+        // reaches the exporter.
+        if k == "extras" {
+            if let Some(raw) = as_string_or_ident(v) {
+                match serde_json::from_str::<serde_json::Value>(raw) {
+                    Ok(serde_json::Value::Object(_)) => {}
+                    Ok(other) => diags.push(
+                        Diagnostic::error(
+                            "E0106",
+                            format!(
+                                "attribute \"extras\" expects a JSON object, got {}",
+                                json_kind(&other)
+                            ),
+                        )
+                        .with_span(n.span),
+                    ),
+                    Err(e) => diags.push(
+                        Diagnostic::error(
+                            "E0106",
+                            format!("attribute \"extras\" is not valid JSON: {e}"),
+                        )
+                        .with_span(n.span),
+                    ),
                 }
             }
         }

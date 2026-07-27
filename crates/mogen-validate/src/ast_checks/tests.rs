@@ -111,6 +111,61 @@ mod import_validator_tests {
     }
 }
 
+mod extras_attr_tests {
+    use super::super::*;
+    use mogen_core::Diagnostic;
+
+    fn diags_for(src: &str) -> Vec<Diagnostic> {
+        let ast = mogen_dsl::parse(src).expect("parse");
+        validate_ast(&ast)
+    }
+
+    #[test]
+    fn valid_object_literal_passes() {
+        let src = r#"scene { box "ok" (size=[1,1,1], extras="{\"a\": 1}") }"#;
+        let diags = diags_for(src);
+        assert!(!diags.iter().any(|d| d.code == "E0106"), "got {diags:?}");
+        // And it is a known attribute, so no "not used by" warning either.
+        assert!(!diags.iter().any(|d| d.code == "W0102"), "got {diags:?}");
+    }
+
+    #[test]
+    fn malformed_json_errors_with_a_span() {
+        let src = r#"scene { box "bad" (size=[1,1,1], extras="{not json}") }"#;
+        let diags = diags_for(src);
+        let e = diags
+            .iter()
+            .find(|d| d.code == "E0106")
+            .unwrap_or_else(|| panic!("E0106 not raised, got {diags:?}"));
+        assert!(e.span.is_some(), "diagnostic must carry a span");
+    }
+
+    #[test]
+    fn non_object_json_errors() {
+        // glTF `node.extras` is an object; a bare array or scalar can't merge.
+        for literal in [r#"[1, 2]"#, "42", r#"\"text\""#] {
+            let src = format!(r#"scene {{ box "b" (size=[1,1,1], extras="{literal}") }}"#);
+            let diags = diags_for(&src);
+            assert!(
+                diags.iter().any(|d| d.code == "E0106"),
+                "expected E0106 for extras={literal}, got {diags:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn nested_object_literal_passes() {
+        let src = r#"
+            scene {
+              box "lamp" (size=[1,1,1],
+                          extras="{\"interactive\": {\"controls\": [{\"kind\": \"toggle\"}]}}")
+            }
+        "#;
+        let diags = diags_for(src);
+        assert!(!diags.iter().any(|d| d.code == "E0106"), "got {diags:?}");
+    }
+}
+
 mod meta_block_tests {
     use super::super::*;
     use mogen_core::{Diagnostic, Severity};

@@ -116,6 +116,7 @@ pub(super) fn lower_into(
         graph.nodes[id.0 as usize].tags =
             tags.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect();
     }
+    apply_extras(node, id, graph);
 
     // Material lookup. Scoped by `node.origin` so geometry imported from
     // another `.mog` file binds to that file's materials before falling back
@@ -289,6 +290,18 @@ fn synthesize_decal_material(node: &Node, decal_name: &str) -> Material {
     mat
 }
 
+/// Stash a validated `extras="{…}"` literal on the scene node. Validation has
+/// already proved it parses to a JSON object, so a malformed literal here is
+/// silently ignored rather than failing the build — `lower` can run without
+/// `validate_ast` (Studio's live preview does exactly that mid-edit), and a
+/// half-typed literal shouldn't blank the viewport.
+pub(super) fn apply_extras(node: &Node, id: NodeId, graph: &mut SceneGraph) {
+    let Some(Value::String(raw)) = node.attr("extras") else { return };
+    if let Ok(serde_json::Value::Object(map)) = serde_json::from_str(raw) {
+        graph.nodes[id.0 as usize].extras = Some(map);
+    }
+}
+
 pub(super) fn apply_metadata(node: &Node, id: NodeId, graph: &mut SceneGraph) -> Result<()> {
     if let Some(Value::String(role)) = node.attr("role") {
         graph.nodes[id.0 as usize].role = Some(role.clone());
@@ -299,6 +312,7 @@ pub(super) fn apply_metadata(node: &Node, id: NodeId, graph: &mut SceneGraph) ->
         graph.nodes[id.0 as usize].tags =
             tags.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect();
     }
+    apply_extras(node, id, graph);
     if let Some(Value::String(mat_name)) = node.attr("mat") {
         let mid = graph
             .find_material_scoped(mat_name, node.origin.as_deref())

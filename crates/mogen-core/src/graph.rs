@@ -221,6 +221,13 @@ pub struct SceneNode {
     pub tags: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub role: Option<String>,
+    /// Author-supplied glTF `node.extras` entries, merged over the derived ones
+    /// (`role`, `tags`, `physics`, `collider`, `lod`) at export. Parsed and
+    /// checked for object-ness during validation, so by the time it lands here
+    /// it is known-good. Carries engine-specific payloads and metadata that
+    /// converters need to round-trip.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extras: Option<serde_json::Map<String, serde_json::Value>>,
     /// Original DSL node kind (box, cylinder, group, …). Useful in extras.
     pub kind: String,
     /// Byte range of the AST node that produced this scene node, when the
@@ -317,6 +324,7 @@ impl Default for SceneNode {
             cast_shadow: true,
             tags: Vec::new(),
             role: None,
+            extras: None,
             kind: String::new(),
             source_span: None,
             editable: true,

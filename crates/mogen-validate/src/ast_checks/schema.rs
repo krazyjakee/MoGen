@@ -53,6 +53,13 @@ pub const GEOMETRY_COMMON_ATTRS: &[&str] = &[
     // the realtime shadow pre-pass and from the exported glTF shadow hint.
     // Default is true, so authors only ever write the attribute to disable it.
     "cast_shadow",
+    // Free-form metadata: `extras="{…}"` is a JSON object literal merged
+    // verbatim into the exported glTF `node.extras` alongside the derived
+    // entries (`role`, `tags`, `physics`, `collider`, `lod`). The escape hatch
+    // for engine-specific payloads and for round-tripping metadata carried by
+    // converters. Well-formedness is checked here, not at lowering, so a
+    // malformed literal reports with a span.
+    "extras",
     // Deformation modifiers — composable variety knobs that work on any
     // primitive. Apply between primitive construction and anchor shift, so
     // the deformed mesh is what attach/connector logic sees. Stochastic
@@ -736,6 +743,7 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         | ("light", "outer_cone") => "number",
         (_, "mat") | (_, "role") | (_, "skin") | (_, "bind") => "string",
         (_, "tags") => "string",
+        (_, "extras") => "string",
         (_, "collider") => "string",
         _ => return None,
     };
@@ -802,6 +810,19 @@ pub(super) fn value_kind(v: &Value) -> &'static str {
         Value::ListString(_) => "list of string",
         Value::Gradient(_) => "gradient",
         Value::FaceList(_) => "list of face",
+    }
+}
+
+/// Name a parsed JSON value for the `extras` diagnostic. Mirrors `value_kind`
+/// so both halves of an attribute error read the same way.
+pub(super) fn json_kind(v: &serde_json::Value) -> &'static str {
+    match v {
+        serde_json::Value::Null => "null",
+        serde_json::Value::Bool(_) => "a boolean",
+        serde_json::Value::Number(_) => "a number",
+        serde_json::Value::String(_) => "a string",
+        serde_json::Value::Array(_) => "an array",
+        serde_json::Value::Object(_) => "an object",
     }
 }
 

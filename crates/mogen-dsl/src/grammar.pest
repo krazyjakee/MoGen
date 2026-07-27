@@ -57,6 +57,9 @@ unit        = @{ density_unit | mass_unit | length_unit }
 density_unit = @{ mass_unit ~ "/" ~ ("m3" | "m³") }
 mass_unit   = @{ "kg" | "g" | "t" | "lb" | "oz" | "st" }
 length_unit = @{ "mm" | "cm" | "km" | "m" | "in" | "ft" | "yd" }
-string    = @{ "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
+// A backslash escapes the next character, so `\"` embeds a quote and `\\` a
+// backslash. Needed for JSON payloads in `extras=`. Other escapes pass through
+// verbatim (see `unquote` in parser.rs) so texture paths keep working.
+string    = @{ "\"" ~ ("\\" ~ ANY | !"\"" ~ ANY)* ~ "\"" }
 ident     = @{ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }
 param_ref = @{ "$" ~ (ASCII_ALPHA | "_") ~ (ASCII_ALPHANUMERIC | "_")* }

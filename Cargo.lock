@@ -2692,6 +2692,7 @@ version = "0.1.11"
 dependencies = [
  "glam 0.30.10",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2705,6 +2706,7 @@ dependencies = [
  "mogen-geom",
  "pest",
  "pest_derive",
+ "serde_json",
  "thiserror 1.0.69",
 ]
 

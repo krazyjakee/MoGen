@@ -555,8 +555,41 @@ fn parse_cmp_op(s: &str) -> Result<BinOp> {
     }
 }
 
+/// Strip the surrounding quotes and resolve backslash escapes.
+///
+/// Only `\"` and `\\` are special — everything else after a backslash is left
+/// alone, backslash included. That keeps Windows-style texture paths
+/// (`"tex\normal.png"`) working verbatim instead of silently turning `\n` into
+/// a newline, and it means the only strings whose meaning changed when escapes
+/// were introduced are those containing `\"` or `\\`, which no `.mog` in the
+/// corpus did.
 fn unquote(s: &str) -> String {
-    s.trim_matches('"').to_string()
+    let body = s.strip_prefix('"').unwrap_or(s);
+    let body = body.strip_suffix('"').unwrap_or(body);
+
+    if !body.contains('\\') {
+        return body.to_string();
+    }
+
+    let mut out = String::with_capacity(body.len());
+    let mut chars = body.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('"') => out.push('"'),
+            Some('\\') => out.push('\\'),
+            // Unknown escape: keep both characters as written.
+            Some(other) => {
+                out.push('\\');
+                out.push(other);
+            }
+            None => out.push('\\'),
+        }
+    }
+    out
 }
 
 #[cfg(test)]
