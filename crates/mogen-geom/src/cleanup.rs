@@ -138,6 +138,51 @@ pub fn is_closed_manifold(mesh: &Mesh) -> bool {
     edge_counts.values().all(|&c| c == 2)
 }
 
+/// Signed volume of a triangle mesh via the divergence theorem — positive for
+/// the outward winding the exporter expects. Only meaningful on a closed mesh;
+/// on an open one the result is the volume of the shell closed through the
+/// origin, which is why callers pair this with a closedness or emptiness check.
+pub fn mesh_volume(mesh: &Mesh) -> f32 {
+    // f64 accumulation: the per-triangle terms of a thin solid nearly cancel,
+    // and f32 rounding alone can swamp the residual we are testing for.
+    let mut sum = 0.0_f64;
+    for tri in mesh.indices.chunks_exact(3) {
+        let [a, b, c] = [tri[0] as usize, tri[1] as usize, tri[2] as usize];
+        let pa = Vec3::from_array(mesh.positions[a]).as_dvec3();
+        let pb = Vec3::from_array(mesh.positions[b]).as_dvec3();
+        let pc = Vec3::from_array(mesh.positions[c]).as_dvec3();
+        sum += pa.dot(pb.cross(pc));
+    }
+    (sum / 6.0) as f32
+}
+
+/// True when a mesh bounds no meaningful volume: it is empty, or it is a flat
+/// or collapsed shell whose signed volume vanishes relative to its own extent.
+/// Manifold happily returns such a sheet — the convex hull of coplanar points
+/// comes back as back-to-back triangle fans, not as an empty mesh — so anything
+/// that must produce a *solid* tests this rather than testing for emptiness.
+///
+/// The tolerance is scale-relative (volume against the cube of the bounding
+/// diagonal), so a legitimately thin-but-solid slab still passes at any unit
+/// scale while an exactly-planar hull does not.
+pub fn is_degenerate_solid(mesh: &Mesh) -> bool {
+    if mesh.positions.is_empty() || mesh.indices.len() < 3 {
+        return true;
+    }
+    let mut lo = Vec3::splat(f32::INFINITY);
+    let mut hi = Vec3::splat(f32::NEG_INFINITY);
+    for p in &mesh.positions {
+        let v = Vec3::from_array(*p);
+        lo = lo.min(v);
+        hi = hi.max(v);
+    }
+    let diag = (hi - lo).length();
+    if !diag.is_finite() || diag <= 0.0 {
+        return true;
+    }
+    mesh_volume(mesh).abs() <= 1e-6 * diag * diag * diag
+}
+
 /// Drop triangles with (near) zero area, as well as any triangle whose indices
 /// collapsed to fewer than three distinct vertices.
 pub fn cull_degenerate(mesh: &Mesh) -> Mesh {
@@ -445,6 +490,46 @@ mod tests {
     fn empty_mesh_is_not_closed() {
         let empty = Mesh::default();
         assert!(!is_closed_manifold(&empty));
+    }
+
+    #[test]
+    fn box_volume_matches_its_dimensions() {
+        let mesh = crate::box_mesh([2.0, 3.0, 4.0], mogen_core::UvMode::default());
+        let v = mesh_volume(&mesh);
+        assert!((v - 24.0).abs() < 1e-3, "got {v}");
+        assert!(!is_degenerate_solid(&mesh));
+    }
+
+    #[test]
+    fn a_flat_sheet_bounds_no_volume() {
+        // Two back-to-back triangle pairs spanning a unit square: closed enough
+        // to survive a CSG round trip, but enclosing nothing. This is the shape
+        // Manifold hands back for the convex hull of coplanar points.
+        let mesh = Mesh {
+            positions: vec![
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [1.0, 1.0, 0.0],
+                [0.0, 1.0, 0.0],
+            ],
+            normals: vec![[0.0, 0.0, 1.0]; 4],
+            indices: vec![0, 1, 2, 0, 2, 3, 0, 2, 1, 0, 3, 2],
+            ..Default::default()
+        };
+        assert!(is_degenerate_solid(&mesh));
+    }
+
+    #[test]
+    fn a_thin_slab_is_still_a_solid() {
+        // The tolerance is scale-relative, so a wafer far thinner than any
+        // modelled part must not be mistaken for a degenerate sheet.
+        let mesh = crate::box_mesh([1.0, 1e-3, 1.0], mogen_core::UvMode::default());
+        assert!(!is_degenerate_solid(&mesh));
+    }
+
+    #[test]
+    fn empty_mesh_is_degenerate() {
+        assert!(is_degenerate_solid(&Mesh::default()));
     }
 
     #[test]

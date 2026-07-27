@@ -14,7 +14,7 @@ pub mod xform;
 
 pub use cleanup::{
     clean_csg_output, cull_coplanar_opposites, cull_degenerate, is_closed_manifold,
-    recompute_normals, weld_vertices,
+    is_degenerate_solid, mesh_volume, recompute_normals, weld_vertices,
 };
 pub use conform::{
     build_path_frames, conform_mesh, conform_patch, subdivide_along_axis, Axis, AxisMap,
