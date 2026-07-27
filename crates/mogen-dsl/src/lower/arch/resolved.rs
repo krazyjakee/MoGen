@@ -128,6 +128,23 @@ pub(super) struct Marker {
     pub tags: Vec<String>,
 }
 
+/// A material the solids refer to by name.
+///
+/// The solver never invents these — it only carries [`MatRef`] names — so they
+/// come from whichever producer built the model. Kept minimal on purpose: a
+/// field here is a field every producer has to have an answer for, and the
+/// place to add richness is the DSL's own `material`, not this.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(super) struct MaterialDecl {
+    pub name: String,
+    /// Linear RGB.
+    pub color: Option<[f32; 3]>,
+    pub metallic: Option<f32>,
+    pub roughness: Option<f32>,
+    /// Path to an albedo image, relative to the emitted file.
+    pub texture: Option<String>,
+}
+
 #[derive(Clone, Debug, Default)]
 pub(super) struct ResolvedGeometry {
     pub solids: Vec<Solid>,
