@@ -8,6 +8,10 @@ use glam::Vec3;
 use mogen_core::Mesh;
 
 const WELD_EPS: f32 = 1e-4;
+/// Normals are compared on a coarser grid than positions: the tiny orientation
+/// jitter CSG output carries shouldn't stop two otherwise-identical vertices
+/// from merging. Matches the tolerance `cull_coplanar_opposites` uses.
+const NORMAL_EPS: f32 = 1e-3;
 
 /// Merge vertices whose positions are within `eps`. Normals of merged vertices
 /// are averaged and renormalized. Indices are rewritten to reference the
@@ -92,6 +96,132 @@ pub fn weld_vertices(mesh: &Mesh, eps: f32) -> Mesh {
         uvs: new_uvs,
         indices,
         ..Default::default()
+    }
+}
+
+/// Key for grouping candidate-identical vertices into hash buckets. Every
+/// channel is quantised, so a bucket hit only means "probably equal" — the
+/// caller still verifies each candidate against the real epsilons.
+#[derive(PartialEq, Eq, Hash)]
+struct VertexKey {
+    pos: [i64; 3],
+    normal: [i64; 3],
+    uv: [i64; 2],
+    joints: [u16; 4],
+    weights: [i64; 4],
+    color: [i64; 4],
+}
+
+fn quant<const N: usize>(v: [f32; N], scale: f32) -> [i64; N] {
+    v.map(|c| (c * scale).round() as i64)
+}
+
+fn near<const N: usize>(a: [f32; N], b: [f32; N], eps: f32) -> bool {
+    a.iter().zip(b.iter()).all(|(x, y)| (x - y).abs() <= eps)
+}
+
+/// Merge vertices that agree on *every* attribute — position, normal, UV, and
+/// any skinning / vertex-colour channels — to within an epsilon.
+///
+/// This is deliberately narrower than [`weld_vertices`], which merges purely by
+/// position and *averages* the other channels. This pass never alters a
+/// surviving vertex's data; it only drops exact duplicates. A vertex that
+/// differs from its neighbour in any channel — a genuine UV seam, a shading
+/// split — keeps its own copy. Triangle count and surface topology are
+/// therefore unchanged, so a watertight mesh stays watertight.
+///
+/// Output order follows input vertex order, so the result is deterministic.
+pub fn weld_identical_vertices(mesh: &Mesh) -> Mesh {
+    let n_verts = mesh.positions.len();
+    if n_verts == 0 {
+        return mesh.clone();
+    }
+    // Channels are optional; a mismatched length means "absent" rather than
+    // risking an index panic on a malformed mesh.
+    let has_uvs = mesh.uvs.len() == n_verts;
+    let has_skin = mesh.joints.len() == n_verts && mesh.weights.len() == n_verts;
+    let has_colors = mesh.colors.len() == n_verts;
+
+    let pos_scale = 1.0 / WELD_EPS;
+    let n_scale = 1.0 / NORMAL_EPS;
+
+    let mut buckets: HashMap<VertexKey, Vec<u32>> = HashMap::new();
+    let mut remap = vec![0u32; n_verts];
+    let mut positions: Vec<[f32; 3]> = Vec::new();
+    let mut normals: Vec<[f32; 3]> = Vec::new();
+    let mut uvs: Vec<[f32; 2]> = Vec::new();
+    let mut joints: Vec<[u16; 4]> = Vec::new();
+    let mut weights: Vec<[f32; 4]> = Vec::new();
+    let mut colors: Vec<[f32; 4]> = Vec::new();
+
+    for (i, &p) in mesh.positions.iter().enumerate() {
+        let nrm = mesh.normals[i];
+        let uv = if has_uvs { mesh.uvs[i] } else { [0.0; 2] };
+        let jnt = if has_skin { mesh.joints[i] } else { [0u16; 4] };
+        let wgt = if has_skin { mesh.weights[i] } else { [0.0; 4] };
+        let col = if has_colors { mesh.colors[i] } else { [0.0; 4] };
+
+        let key = VertexKey {
+            pos: quant(p, pos_scale),
+            normal: quant(nrm, n_scale),
+            // UVs are in world-space metres here, so they share the position grid.
+            uv: quant(uv, pos_scale),
+            joints: jnt,
+            weights: quant(wgt, pos_scale),
+            color: quant(col, pos_scale),
+        };
+
+        let list = buckets.entry(key).or_default();
+        let mut found = None;
+        for &j in list.iter() {
+            let k = j as usize;
+            if !near(p, positions[k], WELD_EPS) || !near(nrm, normals[k], NORMAL_EPS) {
+                continue;
+            }
+            if has_uvs && !near(uv, uvs[k], WELD_EPS) {
+                continue;
+            }
+            if has_skin && (jnt != joints[k] || !near(wgt, weights[k], WELD_EPS)) {
+                continue;
+            }
+            if has_colors && !near(col, colors[k], WELD_EPS) {
+                continue;
+            }
+            found = Some(j);
+            break;
+        }
+
+        remap[i] = match found {
+            Some(j) => j,
+            None => {
+                let j = positions.len() as u32;
+                positions.push(p);
+                normals.push(nrm);
+                if has_uvs {
+                    uvs.push(uv);
+                }
+                if has_skin {
+                    joints.push(jnt);
+                    weights.push(wgt);
+                }
+                if has_colors {
+                    colors.push(col);
+                }
+                list.push(j);
+                j
+            }
+        };
+    }
+
+    let indices: Vec<u32> = mesh.indices.iter().map(|i| remap[*i as usize]).collect();
+    Mesh {
+        positions,
+        normals,
+        uvs,
+        indices,
+        joints,
+        weights,
+        colors,
     }
 }
 
@@ -300,14 +430,25 @@ pub fn clean_csg_output(mesh: &Mesh) -> Mesh {
 /// sloped and sheared faces tile at the same texel density as flat ones.
 ///
 /// Choosing a basis per face means a vertex shared by faces with different
-/// normals needs a different UV per face, so the mesh is unwelded into
-/// independent triangles. The smooth per-vertex normals are duplicated, so only
-/// the vertex count grows — shading and watertight geometry are unchanged.
+/// normals needs a different UV per face, so the mesh is first unwelded into
+/// independent triangles. That is only *locally* necessary, though: coplanar
+/// neighbours — the common case for walls, floors and box-with-holes CSG —
+/// derive the same basis and so project to the same UV. A re-weld pass on the
+/// full attribute tuple therefore restores their shared vertices while leaving
+/// the genuine seams split, keeping the vertex count close to the input's
+/// instead of a flat `n_tris * 3`. The smooth per-vertex normals are carried
+/// through unchanged, so shading and watertight geometry are unaffected.
 pub fn assign_per_face_uvs(mesh: &Mesh) -> Mesh {
+    let n_verts = mesh.positions.len();
+    let has_skin = mesh.joints.len() == n_verts && mesh.weights.len() == n_verts;
+    let has_colors = mesh.colors.len() == n_verts;
     let n_tris = mesh.indices.len() / 3;
     let mut positions = Vec::with_capacity(n_tris * 3);
     let mut normals = Vec::with_capacity(n_tris * 3);
     let mut uvs = Vec::with_capacity(n_tris * 3);
+    let mut joints = Vec::with_capacity(if has_skin { n_tris * 3 } else { 0 });
+    let mut weights = Vec::with_capacity(if has_skin { n_tris * 3 } else { 0 });
+    let mut colors = Vec::with_capacity(if has_colors { n_tris * 3 } else { 0 });
     let mut indices = Vec::with_capacity(n_tris * 3);
     for tri in mesh.indices.chunks_exact(3) {
         let [i0, i1, i2] = [tri[0] as usize, tri[1] as usize, tri[2] as usize];
@@ -338,19 +479,28 @@ pub fn assign_per_face_uvs(mesh: &Mesh) -> Mesh {
         for &i in &[i0, i1, i2] {
             positions.push(mesh.positions[i]);
             normals.push(mesh.normals[i]);
+            if has_skin {
+                joints.push(mesh.joints[i]);
+                weights.push(mesh.weights[i]);
+            }
+            if has_colors {
+                colors.push(mesh.colors[i]);
+            }
         }
         uvs.push(project(p0));
         uvs.push(project(p1));
         uvs.push(project(p2));
         indices.extend_from_slice(&[base, base + 1, base + 2]);
     }
-    Mesh {
+    weld_identical_vertices(&Mesh {
         positions,
         normals,
         uvs,
         indices,
-        ..Default::default()
-    }
+        joints,
+        weights,
+        colors,
+    })
 }
 
 #[cfg(test)]
@@ -468,6 +618,106 @@ mod tests {
             (uv_len - 2.0_f32.sqrt()).abs() < 1e-5,
             "edge UV span {uv_len} should equal the true edge length √2"
         );
+    }
+
+    #[test]
+    fn per_face_uvs_reweld_coplanar_neighbours() {
+        // Two coplanar triangles forming a unit quad, handed in as a triangle
+        // soup with no sharing. They share the same face normal, so they get
+        // the same tangent basis and the same UVs along the shared diagonal —
+        // the re-weld must recover the 4 shared corners from 6 soup vertices
+        // without touching the triangle count.
+        let mesh = Mesh {
+            positions: vec![
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [1.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [1.0, 1.0, 0.0],
+                [0.0, 1.0, 0.0],
+            ],
+            normals: vec![[0.0, 0.0, 1.0]; 6],
+            indices: vec![0, 1, 2, 3, 4, 5],
+            ..Default::default()
+        };
+        let out = assign_per_face_uvs(&mesh);
+        assert_eq!(out.indices.len(), 6, "triangle count must not change");
+        assert_eq!(out.positions.len(), 4, "coplanar neighbours should re-weld");
+        assert_eq!(out.uvs.len(), out.positions.len());
+    }
+
+    #[test]
+    fn per_face_uvs_keep_genuine_seams_split() {
+        // Two triangles meeting at a right angle along the shared edge
+        // (0,0,0)-(1,0,0). Their face normals differ, so the shared edge is a
+        // real UV seam: those vertices must NOT be merged.
+        let mesh = Mesh {
+            positions: vec![
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0],
+            ],
+            // Distinct per-vertex normals too — nothing here may collapse.
+            normals: vec![
+                [0.0, 0.0, 1.0],
+                [0.0, 0.0, 1.0],
+                [0.0, 0.0, 1.0],
+                [0.0, -1.0, 0.0],
+                [0.0, -1.0, 0.0],
+                [0.0, -1.0, 0.0],
+            ],
+            indices: vec![0, 1, 2, 3, 4, 5],
+            ..Default::default()
+        };
+        let out = assign_per_face_uvs(&mesh);
+        assert_eq!(out.indices.len(), 6);
+        assert_eq!(out.positions.len(), 6, "a real seam must stay unwelded");
+    }
+
+    #[test]
+    fn per_face_uvs_preserve_skin_and_colour_channels() {
+        // Regression guard: the old `..Default::default()` silently dropped
+        // joints/weights/colors. They must survive per-vertex.
+        let mesh = Mesh {
+            positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            normals: vec![[0.0, 0.0, 1.0]; 3],
+            indices: vec![0, 1, 2],
+            joints: vec![[1, 0, 0, 0], [2, 0, 0, 0], [3, 0, 0, 0]],
+            weights: vec![[1.0, 0.0, 0.0, 0.0]; 3],
+            colors: vec![
+                [1.0, 0.0, 0.0, 1.0],
+                [0.0, 1.0, 0.0, 1.0],
+                [0.0, 0.0, 1.0, 1.0],
+            ],
+            ..Default::default()
+        };
+        let out = assign_per_face_uvs(&mesh);
+        assert_eq!(out.positions.len(), 3);
+        // Vertices differ in joints/colors, so ordering is the input ordering.
+        assert_eq!(out.joints, mesh.joints);
+        assert_eq!(out.weights, mesh.weights);
+        assert_eq!(out.colors, mesh.colors);
+    }
+
+    #[test]
+    fn weld_identical_keeps_vertices_differing_only_in_skin() {
+        // Same position/normal/uv but different joint bindings — merging these
+        // would silently rebind geometry to the wrong bone.
+        let mesh = Mesh {
+            positions: vec![[0.0, 0.0, 0.0]; 2],
+            normals: vec![[0.0, 0.0, 1.0]; 2],
+            uvs: vec![[0.0, 0.0]; 2],
+            indices: vec![0, 1],
+            joints: vec![[1, 0, 0, 0], [7, 0, 0, 0]],
+            weights: vec![[1.0, 0.0, 0.0, 0.0]; 2],
+            ..Default::default()
+        };
+        let out = weld_identical_vertices(&mesh);
+        assert_eq!(out.positions.len(), 2);
+        assert_eq!(out.indices, vec![0, 1]);
     }
 
     #[test]
