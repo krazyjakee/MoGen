@@ -320,6 +320,7 @@ golden_test!(wave_water, "nature/wave_water", Source::Example);
 golden_test!(heightfield_terrain, "nature/heightfield_terrain", Source::Example);
 golden_test!(bezier_fender, "features/bezier_fender", Source::Example);
 golden_test!(metaball_blob, "nature/metaball_blob", Source::Example);
+golden_test!(hull_ramp, "features/hull_ramp", Source::Example);
 // Length-unit suffix feature — locks that unit-bearing source lowers to the
 // same geometry as the bare-metre equivalents.
 golden_test!(units_blueprint, "features/units_blueprint", Source::Example);
