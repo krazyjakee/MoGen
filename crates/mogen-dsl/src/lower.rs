@@ -1,4 +1,5 @@
 mod anim;
+mod arch;
 mod blob;
 mod branch;
 mod building;
