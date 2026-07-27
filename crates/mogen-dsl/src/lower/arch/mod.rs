@@ -38,8 +38,11 @@
 pub(crate) mod consts;
 pub(crate) mod curve;
 pub(crate) mod ir;
+pub(crate) mod junction;
+pub(crate) mod miter;
 pub(crate) mod openings;
 pub(crate) mod plan;
+pub(crate) mod resolved;
 pub(crate) mod validate;
 
 #[cfg(test)]
