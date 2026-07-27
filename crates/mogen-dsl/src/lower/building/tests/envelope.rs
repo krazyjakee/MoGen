@@ -229,3 +229,96 @@ fn the_seal_holds_for_every_style() {
         }
     }
 }
+
+/// Every point where three or more interior walls meet must be solid.
+///
+/// This is a hole the IR port opened and this test is what found it. Mitred
+/// wedges tile the *ring* around a junction and never its middle: with four
+/// walls meeting — which a BSP floorplate produces at nearly every interior
+/// intersection — each one stops at the near edge of the central
+/// thickness-square and the square belongs to none of them. The result is a
+/// full-height column of nothing at each crossing, invisible in plan and
+/// unmissable from inside the room.
+///
+/// The fix lives in `arch::miter`, which now patches any junction whose wedges
+/// leave area behind. This guards it from both sides: the pre-port box builder
+/// passed by overlapping instead, so a regression to either behaviour is caught.
+///
+/// Walls *end* at these junctions rather than crossing them — a BSP splits a
+/// plate, it does not draw lines over it — so the junctions are found by
+/// coincident endpoints, not by segment intersection.
+#[test]
+fn interior_wall_junctions_are_solid() {
+    for style in ["grid", "maze", "office-core"] {
+        let src = STACKED
+            .replace("office-core", style)
+            .replace("floors_above=3", "floors_above=1");
+        let g = lower_src(&src);
+
+        let mut ends: Vec<[f32; 2]> = Vec::new();
+        let mut tris: Vec<[Vec3; 3]> = Vec::new();
+        for (i, n) in g.nodes.iter().enumerate() {
+            if !matches!(n.role.as_deref(), Some("interior_wall") | Some("service_wall")) {
+                continue;
+            }
+            let Some(mesh) = &n.mesh else { continue };
+            let id = NodeId(i as u32);
+            tris.extend(world_tris(&g, id));
+
+            // The centreline endpoints, recovered from the node frame. Taken
+            // from the mesh's own local extent rather than the wall's nominal
+            // length, so a mitre that lengthened one end is accounted for.
+            let (mut lo, mut hi) = (f32::INFINITY, f32::NEG_INFINITY);
+            for p in &mesh.positions {
+                lo = lo.min(p[0]);
+                hi = hi.max(p[0]);
+            }
+            let w = world_of(&g, id);
+            for x in [lo, hi] {
+                let p = w.transform_point3(Vec3::new(x, 0.0, 0.0));
+                ends.push([p.x, p.z]);
+            }
+        }
+        assert!(ends.len() > 6, "{style}: expected interior walls");
+
+        // Group nearby endpoints. They are *near*, not coincident: mitring
+        // moves each wall's end to its own corner of the junction, up to half a
+        // thickness away from the centreline crossing. So the tolerance is one
+        // thickness — comfortably more than the spread within a junction, and
+        // orders of magnitude less than the gap between two of them.
+        const TOL: f32 = 0.2;
+        let mut used = vec![false; ends.len()];
+        let mut checked = 0;
+        for i in 0..ends.len() {
+            if used[i] {
+                continue;
+            }
+            let group: Vec<usize> = (i..ends.len())
+                .filter(|&j| {
+                    !used[j]
+                        && (ends[j][0] - ends[i][0]).abs() < TOL
+                        && (ends[j][1] - ends[i][1]).abs() < TOL
+                })
+                .collect();
+            for &j in &group {
+                used[j] = true;
+            }
+            if group.len() < 3 {
+                continue;
+            }
+            checked += 1;
+            // The junction itself is the group's centroid, not any one end.
+            let p = [
+                group.iter().map(|&j| ends[j][0]).sum::<f32>() / group.len() as f32,
+                group.iter().map(|&j| ends[j][1]).sum::<f32>() / group.len() as f32,
+            ];
+            assert!(
+                tris.iter().any(|t| covers_xz(t, p)),
+                "{style}: {} walls meet at {p:?} and nothing covers it — the \
+                 wedges around that junction left its middle open",
+                group.len(),
+            );
+        }
+        assert!(checked > 0, "{style}: found no multi-wall junctions, so this proves nothing");
+    }
+}

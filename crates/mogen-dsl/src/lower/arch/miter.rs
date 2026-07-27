@@ -29,6 +29,13 @@
 //! any corner further than [`MITER_LIMIT`] half-thicknesses from the junction.
 //! Rejected wedges leave both walls butt-ended, which can open a notch — so
 //! this module also emits a small [`JunctionFiller`] solid over each one.
+//!
+//! # The middle
+//!
+//! Wedges tile the *ring* around a junction. They never cover its middle, and
+//! from three walls upwards the middle has area — for four walls crossing it is
+//! the full thickness-by-thickness square, and every wall stops at its edge.
+//! So a [`JunctionFiller`] also goes over that, on the same terms.
 
 use super::consts::MITER_LIMIT;
 use super::curve;
@@ -270,14 +277,18 @@ fn solve_junction(
     });
 
     let n = rays.len();
+    let mut boundary: Vec<P2> = Vec::with_capacity(n * 2);
     for i in 0..n {
         let (r1, r2) = (rays[i], rays[(i + 1) % n]);
         match wedge_corner(&r1, &r2, mp) {
             Some(p) => {
                 assign(corners, r1.inc, true, p);
                 assign(corners, r2.inc, false, p);
+                boundary.push(p);
             }
             None => {
+                boundary.push(r1.edge_a.origin);
+                boundary.push(r2.edge_b.origin);
                 if let Some(ring) = filler_ring(mp, r1.edge_a.origin, r2.edge_b.origin) {
                     fillers.push(JunctionFiller {
                         ring,
@@ -285,6 +296,30 @@ fn solve_junction(
                     });
                 }
             }
+        }
+    }
+
+    // The wedges tile the *ring* around a junction and never its middle, and
+    // once there are three or more of them the middle has area. Four walls
+    // meeting is the case that matters, because a BSP floorplate produces one
+    // at nearly every interior intersection: each wall stops at the near edge
+    // of the central thickness-square, so the square belongs to none of them.
+    // That is a full-height column of nothing at every crossing — invisible in
+    // plan, unmissable from inside the room.
+    //
+    // With two rays this same hull degenerates to the segment joining the inner
+    // corner to the outer one, which is why an L needs no patch and gets none.
+    // The rule is therefore uniform and the arity test is only an early exit.
+    if n >= 3 {
+        if let Some(ring) = core_ring(&boundary) {
+            let mut walls: Vec<WallId> = rays.iter().map(|r| r.inc.wall).collect();
+            walls.sort_unstable();
+            walls.dedup();
+            // Attributed to the two lowest ids present. Arbitrary, but a patch
+            // has to belong to *some* pair to get a height, and this pair is
+            // the same on every run.
+            let pair = [walls[0], *walls.get(1).unwrap_or(&walls[0])];
+            fillers.push(JunctionFiller { ring, walls: pair });
         }
     }
 }
@@ -328,6 +363,17 @@ fn assign(corners: &mut [WallCorners], inc: Incidence, is_a: bool, p: P2) {
 /// meeting at 178° leave a sliver of a few square centimetres that is
 /// nonetheless a 3 mm slot running the full height of the wall. Anything the
 /// hull reports as genuinely two-dimensional gets patched.
+/// The polygon at the centre of a junction that the wedges around it leave
+/// uncovered.
+fn core_ring(boundary: &[P2]) -> Option<Vec<P2>> {
+    let mut ring = plan::convex_hull(boundary);
+    if ring.len() < 3 || plan::area(&ring) < 1e-9 {
+        return None;
+    }
+    plan::normalise_ccw(&mut ring);
+    Some(ring)
+}
+
 fn filler_ring(mp: P2, a: P2, b: P2) -> Option<Vec<P2>> {
     let mut ring = plan::convex_hull(&[mp, a, b]);
     if ring.len() < 3 || plan::area(&ring) < 1e-9 {
@@ -697,10 +743,9 @@ mod tests {
 
         let sol = solve_level(&m.walls, LevelId(0));
         assert!(sol.rejected.is_empty(), "{:?}", sol.rejected);
-        assert!(sol.fillers.is_empty(), "four right angles need no patching");
 
-        // Every arm stops on the square hole at the centre, so all four share
-        // the same four corner points.
+        // Every arm stops on the square at the centre, so all four share the
+        // same four corner points.
         for id in ids {
             let ring = ring_of(&sol, id);
             assert_eq!(ring.len(), 4);
@@ -708,5 +753,34 @@ mod tests {
                 ring.iter().filter(|p| plan::distance(**p, [0.0, 0.0]) < 0.2).collect();
             assert_eq!(near.len(), 2, "arm {id:?} should meet the crossing twice: {ring:?}");
         }
+
+        // And that square belongs to none of them, so it has to be patched.
+        // This assertion used to read `fillers.is_empty()` — "four right angles
+        // need no patching" — which was the bug written down as a fact. Four
+        // arms stopping on a square leave the square empty; that is a
+        // 0.2 × 0.2 column of nothing running the full height of the wall.
+        assert_eq!(sol.fillers.len(), 1, "the centre square is unpatched");
+        let patch = &sol.fillers[0];
+        assert!(
+            (plan::area(&patch.ring) - 0.04).abs() < 1e-5,
+            "patch should be the thickness square, got area {}",
+            plan::area(&patch.ring),
+        );
+        for p in &patch.ring {
+            assert!(plan::distance(*p, [0.0, 0.0]) < 0.15, "patch corner {p:?} is not at the centre");
+        }
+    }
+
+    #[test]
+    fn a_right_angle_needs_no_patch() {
+        // The other half of the rule: two walls meeting leave a hull that
+        // degenerates to the segment from the inner corner to the outer one, so
+        // nothing is emitted. If this ever starts producing a patch, every
+        // corner in every building gains a redundant overlapping solid.
+        let mut m = model();
+        wall(&mut m, [-4.0, 0.0], [0.0, 0.0], 0.2);
+        wall(&mut m, [0.0, 0.0], [0.0, 4.0], 0.2);
+        let sol = solve_level(&m.walls, LevelId(0));
+        assert!(sol.fillers.is_empty(), "{:?}", sol.fillers);
     }
 }

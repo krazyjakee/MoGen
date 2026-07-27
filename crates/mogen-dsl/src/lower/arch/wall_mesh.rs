@@ -97,14 +97,47 @@ pub fn solve_wall_meshes(requests: &[WallRequest]) -> Vec<Mesh> {
         by_id[fp.wall.0 as usize] = Some(fp);
     }
 
-    requests
+    let mut out: Vec<Mesh> = requests
         .iter()
         .enumerate()
         .map(|(i, r)| match by_id[i] {
             Some(fp) => build(r, fp),
             None => Mesh::default(),
         })
-        .collect()
+        .collect();
+
+    // Butt-jointed corners leave a notch, and the notch is a hole in the
+    // building. The solver hands back a patch for each one; without this they
+    // would be silently dropped, which is the failure mode that matters most
+    // here — an angle shallow enough to defeat the mitre is exactly the angle
+    // nobody thinks to look at.
+    //
+    // A patch belongs to a junction rather than to a wall, so it is attached to
+    // the lower-numbered of the two walls that made it. That is arbitrary but
+    // it is *stable*, which is what the caller needs: the patch has to live on
+    // some node, and it must be the same node every run.
+    for filler in &solution.fillers {
+        let mut hosts = [filler.walls[0].0 as usize, filler.walls[1].0 as usize];
+        hosts.sort_unstable();
+        let Some(&host) = hosts.iter().find(|&&i| !out[i].positions.is_empty()) else {
+            continue;
+        };
+        let r = &requests[host];
+        let ring: Vec<P2> = filler.ring.iter().map(|p| to_local(*p, r)).collect();
+        if let Ok(m) = mesh::prism(&ring, &[], -0.5 * r.height, 0.5 * r.height) {
+            let mut acc = std::mem::take(&mut out[host]);
+            append(&mut acc, &m);
+            out[host] = acc;
+        }
+    }
+
+    out
+}
+
+/// A world plan point in a request's own frame.
+fn to_local(p: P2, r: &WallRequest) -> P2 {
+    let d = plan::sub(p, r.centre);
+    [plan::dot(d, r.axis_x), plan::dot(d, r.axis_z)]
 }
 
 fn build(r: &WallRequest, fp: &miter::WallFootprint) -> Mesh {
@@ -135,10 +168,7 @@ fn build(r: &WallRequest, fp: &miter::WallFootprint) -> Mesh {
         let ring: Vec<P2> = fp
             .slice(t0.clamp(0.0, 1.0), t1.clamp(0.0, 1.0))
             .into_iter()
-            .map(|p| {
-                let d = plan::sub(p, r.centre);
-                [plan::dot(d, r.axis_x), plan::dot(d, r.axis_z)]
-            })
+            .map(|p| to_local(p, r))
             .collect();
 
         match mesh::prism(&ring, &[], panel.y0, panel.y1) {
@@ -297,6 +327,49 @@ mod tests {
         // Same invariant per wall: the centreline box, less the opening.
         let expected = (5.0 * 2.5 - 1.0 * 1.2) * t;
         assert!((volume(m) - expected).abs() < 1e-4, "{}", volume(m));
+    }
+
+    #[test]
+    fn a_shallow_corner_gets_its_notch_patched() {
+        // Below the mitre limit the solver butts both walls and hands back a
+        // patch instead. Dropping that patch leaves a notch open through the
+        // full wall height, and a 6° corner is precisely the case nobody
+        // inspects. So: the pair must still hold at least the volume of their
+        // two centreline boxes minus their overlap, rather than visibly less.
+        let t = 0.2;
+        let h = 2.5;
+        let a = WallRequest {
+            start: [-5.0, 0.0],
+            end: [0.0, 0.0],
+            thickness: t,
+            height: h,
+            axis_x: [1.0, 0.0],
+            axis_z: [0.0, 1.0],
+            centre: [-2.5, 0.0],
+            holes: Vec::new(),
+        };
+        // Six degrees off straight — well inside MITER_LIMIT's reach.
+        let (dx, dz) = (5.0f32 * 0.9945, 5.0f32 * 0.1045);
+        let b = WallRequest {
+            start: [0.0, 0.0],
+            end: [dx, dz],
+            centre: [0.5 * dx, 0.5 * dz],
+            axis_x: [0.9945, 0.1045],
+            axis_z: [-0.1045, 0.9945],
+            ..a.clone()
+        };
+        let meshes = solve_wall_meshes(&[a, b]);
+        let total: f32 = meshes.iter().map(volume).sum();
+        // Two 5 m centreline boxes, less the wedge their butt ends cannot
+        // reach. Anything materially under this means the patch went missing.
+        let boxes = 2.0 * 5.0 * t * h;
+        assert!(
+            total > boxes - 0.5 * t * t * h && total < boxes + 0.5 * t * t * h,
+            "{total} vs ~{boxes}",
+        );
+        for m in &meshes {
+            assert!(!m.positions.is_empty(), "a wall vanished");
+        }
     }
 
     #[test]

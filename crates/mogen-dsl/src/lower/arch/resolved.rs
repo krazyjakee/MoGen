@@ -147,7 +147,7 @@ pub(super) struct ResolvedGeometry {
 /// between a diagnostic and a hole someone finds in the engine three weeks
 /// later.
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub(super) enum ShapeError {
+pub(crate) enum ShapeError {
     /// A prism with `top <= base`.
     ZeroHeight,
     /// Fewer than three points, or a ring that crosses itself. `extrude_mesh`
