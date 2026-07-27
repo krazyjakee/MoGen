@@ -1,11 +1,12 @@
 use anyhow::{anyhow, bail, Result};
 
 use mogen_core::{
-    AlphaMode, Gradient, GradientAxis, GradientKind, GradientStop, Material, MaterialShader,
-    NodeId, SceneGraph, TextureRef, UvMode,
+    AlphaMode, Gradient, GradientAxis, GradientKind, GradientStop, Material, NodeId, SceneGraph,
+    TextureRef, UvMode,
 };
 
 use crate::ast::{GradientDef, Node, Value};
+use crate::lower::shader::value_to_param;
 
 pub(super) fn collect_materials(ast: &[Node], graph: &mut SceneGraph) -> Result<()> {
     for n in ast {
@@ -131,18 +132,29 @@ fn register_material(node: &Node, graph: &mut SceneGraph) -> Result<()> {
         mat.uv_scale = pair;
     }
 
-    let shader_attr = node
-        .attr("shader")
-        .and_then(|v| match v {
-            Value::String(s) | Value::Ident(s) => Some(s.as_str()),
-            _ => None,
-        });
-    if let Some(kind) = shader_attr {
-        mat.shader = match kind {
-            "standard" | "pbr" => MaterialShader::Standard,
-            "water" => MaterialShader::Water,
-            other => bail!("unknown shader \"{other}\" — expected standard or water"),
+    // `shader="<name>"` names a preview shader (built-in `water` or a user
+    // `shader "<name>"` declaration). `standard`/`pbr` are the implicit PBR
+    // path — recorded as `None`. Unknown names are *not* rejected here; the
+    // validator resolves references against declared + built-in shaders and
+    // emits a spanned diagnostic (E0106) so the error points at the material.
+    if let Some(kind) = node.attr_string("shader") {
+        mat.shader_name = match kind {
+            "standard" | "pbr" => None,
+            other => Some(other.to_string()),
         };
+    }
+    // `shader_params (speed=3.5, tint=[…])` — a child node whose attributes feed
+    // the referenced shader's declared params. Values that can't populate a
+    // uniform are dropped here; the validator warns on unknown/mistyped params.
+    for c in &node.children {
+        if c.kind != "shader_params" {
+            continue;
+        }
+        for (k, v) in &c.attrs {
+            if let Some(pv) = value_to_param(v) {
+                mat.shader_params.insert(k.clone(), pv);
+            }
+        }
     }
 
     mat.origin = node.origin.clone();

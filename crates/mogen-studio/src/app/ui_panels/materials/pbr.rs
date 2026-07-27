@@ -13,7 +13,7 @@ pub(super) fn render(
     mat: &mogen_core::Material,
     pending: &mut Vec<(String, &'static str, String)>,
 ) {
-    use mogen_core::{AlphaMode, MaterialShader, UvMode};
+    use mogen_core::{AlphaMode, UvMode};
 
     // Colour + alpha
     ui.horizontal(|ui| {
@@ -325,31 +325,27 @@ pub(super) fn render(
     // join this dropdown when added.
     ui.horizontal(|ui| {
         ui.label("Shader");
-        let mut shader = mat.shader;
+        // Studio-only preview shader. `None`/`standard` = the regular PBR path;
+        // `water` is the built-in preset. User `shader "…"` declarations are
+        // authored in source — this dropdown exposes the built-in options.
+        let current = mat.shader_name.as_deref().unwrap_or("standard");
+        let mut choice = current.to_string();
         let shader_id = egui::Id::new(("shader", idx, mat.name.as_str()));
         egui::ComboBox::from_id_salt(shader_id)
-            .selected_text(match shader {
-                MaterialShader::Standard => "standard (PBR)",
-                MaterialShader::Water => "water",
+            .selected_text(match current {
+                "standard" => "standard (PBR)",
+                other => other,
             })
             .show_ui(ui, |ui| {
                 let mut changed = false;
                 changed |= ui
-                    .selectable_value(
-                        &mut shader,
-                        MaterialShader::Standard,
-                        "standard (PBR)",
-                    )
+                    .selectable_value(&mut choice, "standard".to_string(), "standard (PBR)")
                     .changed();
                 changed |= ui
-                    .selectable_value(&mut shader, MaterialShader::Water, "water")
+                    .selectable_value(&mut choice, "water".to_string(), "water")
                     .changed();
                 if changed {
-                    let v = match shader {
-                        MaterialShader::Standard => "\"standard\"",
-                        MaterialShader::Water => "\"water\"",
-                    };
-                    pending.push((mat.name.clone(), "shader", v.to_string()));
+                    pending.push((mat.name.clone(), "shader", format!("\"{choice}\"")));
                 }
             });
     });

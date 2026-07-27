@@ -1327,3 +1327,145 @@ mod physics_validator_tests {
         );
     }
 }
+
+mod shader_validator_tests {
+    use super::super::*;
+    use mogen_core::Diagnostic;
+    use std::path::Path;
+
+    fn diags_for(src: &str) -> Vec<Diagnostic> {
+        let ast = mogen_dsl::parse(src).expect("parse");
+        validate_ast(&ast)
+    }
+
+    fn diags_for_with_source(src: &str, base: Option<&Path>) -> Vec<Diagnostic> {
+        let ast = mogen_dsl::parse(src).expect("parse");
+        validate_ast_with_source(&ast, base)
+    }
+
+    #[test]
+    fn unknown_shader_reference_errors() {
+        let src = r#"material "pond" (color=[0.1,0.2,0.3], shader="bogus")"#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "E0106"),
+            "expected E0106 for unknown shader, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn standard_and_pbr_shader_values_are_not_flagged() {
+        let src = r#"
+            material "a" (color=[0.1,0.2,0.3], shader="standard")
+            material "b" (color=[0.1,0.2,0.3], shader="pbr")
+        "#;
+        let diags = diags_for(src);
+        assert!(
+            !diags.iter().any(|d| d.code == "E0106"),
+            "standard/pbr are the implicit PBR path, not a reference, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn builtin_water_shader_is_valid_without_declaration() {
+        let src = r#"material "sea" (color=[0,0.3,0.5], shader="water")"#;
+        let diags = diags_for(src);
+        assert!(
+            !diags.iter().any(|d| d.code == "E0106"),
+            "built-in water shader should not need a declaration, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn declared_shader_reference_is_valid() {
+        let src = r#"
+            shader "ripple" (source="shaders/ripple.glsl") {
+              param "speed" (type=float, default=2.0)
+            }
+            material "pond" (color=[0.1,0.2,0.3], shader="ripple") {
+              shader_params (speed=3.5)
+            }
+        "#;
+        let diags = diags_for(src);
+        assert!(
+            !diags.iter().any(|d| d.code == "E0106" || d.code == "W0108"),
+            "declared shader + known param should validate clean, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn unknown_shader_param_warns() {
+        let src = r#"
+            shader "ripple" (source="shaders/ripple.glsl") {
+              param "speed" (type=float, default=2.0)
+            }
+            material "pond" (color=[0.1,0.2,0.3], shader="ripple") {
+              shader_params (tint=[0,0.4,0.6])
+            }
+        "#;
+        let diags = diags_for(src);
+        assert!(
+            diags.iter().any(|d| d.code == "W0108"),
+            "expected W0108 for a param the shader never declared, got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn unknown_shader_reference_not_suppressed_by_unrelated_import() {
+        // Regression test: an import elsewhere in the file must not blanket-
+        // suppress the unknown-shader check for materials that don't reference
+        // anything from the import. Only genuinely unresolved imports should
+        // back off (mirrors the unknown-module check).
+        let dir = write_tmp(
+            "shader_unrelated_import",
+            &[("lib.mog", r#"material "brick" (color=[0.5,0.3,0.2])"#)],
+        );
+        let src = r#"
+            import "lib.mog"
+            scene {
+              box "b" (size=[1,1,1], mat="pond_mat")
+              material "pond_mat" (color=[0.1,0.2,0.3], shader="totally_bogus_typo")
+            }
+        "#;
+        let diags = diags_for_with_source(src, Some(dir.as_path()));
+        assert!(
+            diags.iter().any(|d| d.code == "E0106"),
+            "unrelated import must not suppress a local shader typo, got: {diags:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn unknown_shader_reference_suppressed_without_import_source() {
+        // Without a base dir we can't resolve imports at all, so we can't rule
+        // out the shader being declared in the imported file — suppress, same
+        // as the unknown-module check.
+        let src = r#"
+            import "lib.mog"
+            scene { box "b" (size=[1,1,1], mat="pond_mat") }
+            material "pond_mat" (color=[0.1,0.2,0.3], shader="maybe_in_lib")
+        "#;
+        let diags = diags_for_with_source(src, None);
+        assert!(
+            !diags.iter().any(|d| d.code == "E0106"),
+            "unknown-shader must be suppressed when imports can't be resolved, got: {diags:?}"
+        );
+    }
+
+    fn write_tmp(label: &str, files: &[(&str, &str)]) -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "mogen-validate-shaders-{}-{}-{}",
+            std::process::id(),
+            id,
+            label
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        for (name, contents) in files {
+            std::fs::write(dir.join(name), contents).unwrap();
+        }
+        dir
+    }
+}

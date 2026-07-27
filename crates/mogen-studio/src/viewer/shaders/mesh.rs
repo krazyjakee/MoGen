@@ -441,7 +441,25 @@ void brdf_direct(vec3 N, vec3 V, vec3 L, vec3 albedo, float metallic, float roug
     spec_out = spec * NdL;
 }
 
+// User-shader injection point. `user_shader::assemble_fs` replaces this marker
+// with either a `mogen_user_dispatch` stub (the standard program) or the
+// injected `fragment_N()` functions + dispatch (when the scene declares
+// shaders). Keep this text byte-for-byte in sync with `user_shader::PLACEHOLDER`.
+//@MOGEN_USER_SHADER_DISPATCH@
+
 void main() {
+    // Per-material preview shaders with id >= 2 are user/injected GLSL: run the
+    // dispatch and take its RGBA as the final colour (the "replace" contract).
+    // id 0 (standard PBR) and id 1 (built-in water) fall through to the paths
+    // below; this branch is inert in the standard program (dispatch is a stub).
+    if (u_material_shader >= 2) {
+        vec4 uc = mogen_user_dispatch(u_material_shader);
+        if (u_alpha_mode == 1 && uc.a < u_alpha_cutoff) {
+            discard;
+        }
+        frag = uc;
+        return;
+    }
     vec2 uv = v_uv;
     // Gather material samples. Per-vertex COLOR_0 multiplies the base colour
     // per the glTF spec (white default when the mesh has no colour channel),
