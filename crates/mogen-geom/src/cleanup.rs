@@ -721,6 +721,32 @@ mod tests {
     }
 
     #[test]
+    fn weld_identical_treats_mismatched_channel_lengths_as_absent() {
+        // A malformed mesh whose `uvs`/`joints`/`weights`/`colors` don't match
+        // `positions.len()` must not index out of bounds — the channel is
+        // simply treated as absent, same as an empty one.
+        let mesh = Mesh {
+            positions: vec![[0.0, 0.0, 0.0]; 2],
+            normals: vec![[0.0, 0.0, 1.0]; 2],
+            uvs: vec![[0.0, 0.0]],
+            indices: vec![0, 1],
+            joints: vec![[1, 0, 0, 0]],
+            weights: vec![[1.0, 0.0, 0.0, 0.0]],
+            colors: vec![[1.0, 0.0, 0.0, 1.0]],
+        };
+        let out = weld_identical_vertices(&mesh);
+        assert_eq!(
+            out.positions.len(),
+            1,
+            "identical position/normal should still merge"
+        );
+        assert!(out.uvs.is_empty());
+        assert!(out.joints.is_empty());
+        assert!(out.weights.is_empty());
+        assert!(out.colors.is_empty());
+    }
+
+    #[test]
     fn recompute_normals_averages_adjacent_face_normals() {
         // Single triangle in the XY plane — vertex normal should be +Z.
         let mesh = Mesh {
