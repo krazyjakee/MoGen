@@ -71,6 +71,38 @@ impl Role {
     }
 }
 
+/// Where a solid's shape sits. A shape's coordinates are expressed **in its
+/// solid's placement frame**, so [`Placement::IDENTITY`] means world space.
+///
+/// Walls and slabs are already solved in world plan coordinates and use the
+/// identity. Roofs do not: a roof segment carries a rotation, and baking that
+/// into every hull point would mean nudging a roof's angle rewrites every
+/// number in the emitted source. Building the shape in a local frame keeps the
+/// rotation editable as a single attribute.
+///
+/// Only Y rotation, because that is the only rotation a building has. A roof
+/// tilted about X is a different roof.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct Placement {
+    pub translation: P3,
+    /// Radians about +Y.
+    pub rotation: f32,
+}
+
+impl Placement {
+    pub const IDENTITY: Placement = Placement { translation: [0.0; 3], rotation: 0.0 };
+
+    pub fn is_identity(&self) -> bool {
+        self.translation == [0.0; 3] && self.rotation == 0.0
+    }
+}
+
+impl Default for Placement {
+    fn default() -> Self {
+        Self::IDENTITY
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Solid {
     /// Stable, derived from the source element — never a running counter, so
@@ -79,6 +111,7 @@ pub(super) struct Solid {
     pub role: Role,
     pub level: LevelId,
     pub shape: Shape,
+    pub placement: Placement,
     pub material: Option<MatRef>,
 }
 
@@ -348,6 +381,7 @@ mod tests {
             role: Role::Wall,
             level: LevelId(0),
             shape,
+            placement: Placement::IDENTITY,
             material: None,
         };
         let g = ResolvedGeometry {

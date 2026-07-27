@@ -44,6 +44,7 @@ pub(crate) mod miter;
 pub(crate) mod openings;
 pub(crate) mod plan;
 pub(crate) mod resolved;
+pub(crate) mod roof;
 pub(crate) mod validate;
 
 #[cfg(test)]
