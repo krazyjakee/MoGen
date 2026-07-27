@@ -138,29 +138,12 @@ pub fn is_closed_manifold(mesh: &Mesh) -> bool {
     edge_counts.values().all(|&c| c == 2)
 }
 
-/// Signed volume of a triangle mesh via the divergence theorem — positive for
-/// the outward winding the exporter expects. Only meaningful on a closed mesh;
-/// on an open one the result is the volume of the shell closed through the
-/// origin, which is why callers pair this with a closedness or emptiness check.
-pub fn mesh_volume(mesh: &Mesh) -> f32 {
-    // f64 accumulation: the per-triangle terms of a thin solid nearly cancel,
-    // and f32 rounding alone can swamp the residual we are testing for.
-    let mut sum = 0.0_f64;
-    for tri in mesh.indices.chunks_exact(3) {
-        let [a, b, c] = [tri[0] as usize, tri[1] as usize, tri[2] as usize];
-        let pa = Vec3::from_array(mesh.positions[a]).as_dvec3();
-        let pb = Vec3::from_array(mesh.positions[b]).as_dvec3();
-        let pc = Vec3::from_array(mesh.positions[c]).as_dvec3();
-        sum += pa.dot(pb.cross(pc));
-    }
-    (sum / 6.0) as f32
-}
-
 /// True when a mesh bounds no meaningful volume: it is empty, or it is a flat
-/// or collapsed shell whose signed volume vanishes relative to its own extent.
-/// Manifold happily returns such a sheet — the convex hull of coplanar points
-/// comes back as back-to-back triangle fans, not as an empty mesh — so anything
-/// that must produce a *solid* tests this rather than testing for emptiness.
+/// or collapsed shell whose enclosed volume vanishes relative to its own
+/// extent. Manifold happily returns such a sheet — the convex hull of coplanar
+/// points comes back as back-to-back triangle fans, not as an empty mesh — so
+/// anything that must produce a *solid* tests this rather than testing for
+/// emptiness.
 ///
 /// The tolerance is scale-relative (volume against the cube of the bounding
 /// diagonal), so a legitimately thin-but-solid slab still passes at any unit
@@ -180,7 +163,7 @@ pub fn is_degenerate_solid(mesh: &Mesh) -> bool {
     if !diag.is_finite() || diag <= 0.0 {
         return true;
     }
-    mesh_volume(mesh).abs() <= 1e-6 * diag * diag * diag
+    mesh.solid_volume() <= 1e-6 * diag * diag * diag
 }
 
 /// Drop triangles with (near) zero area, as well as any triangle whose indices
@@ -493,9 +476,11 @@ mod tests {
     }
 
     #[test]
-    fn box_volume_matches_its_dimensions() {
+    fn an_ordinary_box_is_not_degenerate() {
         let mesh = crate::box_mesh([2.0, 3.0, 4.0], mogen_core::UvMode::default());
-        let v = mesh_volume(&mesh);
+        // Sanity-check the volume the guard reads, so a failure below points at
+        // the threshold rather than at the measurement.
+        let v = mesh.solid_volume();
         assert!((v - 24.0).abs() < 1e-3, "got {v}");
         assert!(!is_degenerate_solid(&mesh));
     }
