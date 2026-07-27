@@ -9,6 +9,7 @@ mod grid;
 mod imposter;
 mod mesh;
 mod shadow;
+pub(super) mod user_shader;
 
 pub(super) use gizmo::{GIZMO_FS, GIZMO_VS};
 pub(super) use grid::{GRID_FS, GRID_VS};

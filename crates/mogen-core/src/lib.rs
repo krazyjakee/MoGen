@@ -9,6 +9,7 @@ pub mod material;
 pub mod mesh;
 pub mod meta;
 pub mod physics;
+pub mod shader;
 pub mod skin;
 pub mod transform;
 
@@ -22,8 +23,9 @@ pub use graph::{
 pub use gradient::{Gradient, GradientAxis, GradientKind, GradientStop};
 pub use meta::Meta;
 pub use light::{Light, LightKind};
-pub use material::{AlphaMode, Material, MaterialId, MaterialShader, TextureRef, UvMode};
+pub use material::{AlphaMode, Material, MaterialId, TextureRef, UvMode};
 pub use mesh::Mesh;
 pub use physics::{PhysicsBody, PhysicsId, PhysicsMaterial};
+pub use shader::{ShaderDecl, ShaderParamDef, ShaderParamType, ShaderParamValue};
 pub use skin::{Skin, SkinId};
 pub use transform::Transform;

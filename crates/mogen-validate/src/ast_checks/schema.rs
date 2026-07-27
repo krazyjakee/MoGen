@@ -6,7 +6,7 @@
 use mogen_dsl::ast::Value;
 
 pub const KNOWN_KINDS: &[&str] = &[
-    "scene", "group", "solid", "material", "physics", "connector", "attach", "conform", "mirror", "array",
+    "scene", "group", "solid", "material", "physics", "shader", "param", "shader_params", "connector", "attach", "conform", "mirror", "array",
     "stack", "grid",
     "meta",
     "box", "plane", "quad", "cylinder", "cone", "sphere", "capsule", "torus",
@@ -127,7 +127,7 @@ pub fn common_attrs_for_kind(kind: &str) -> &'static [&'static str] {
         "skeleton" | "bone" => TRANSFORM_COMMON_ATTRS,
         "light" => LIGHT_COMMON_ATTRS,
         "decal" => DECAL_COMMON_ATTRS,
-        "material" | "physics" | "connector" | "attach"
+        "material" | "physics" | "shader" | "param" | "shader_params" | "connector" | "attach"
         | "joint" | "clip" | "track"
         | "spin" | "open_close" | "wave" | "flap" | "idle"
         | "lod_scale" | "meta"
@@ -296,6 +296,11 @@ pub fn attrs_for_kind(kind: &str) -> &'static [&'static str] {
         "wave" | "flap" => &["target", "axis", "amplitude", "hz", "easing"],
         "idle" => &["target", "amplitude", "hz", "easing"],
         "skeleton" => &[],
+        // Shader declaration + its `param` children. `shader_params` (the
+        // material-side override block) carries arbitrary param names, so it's
+        // handled specially in the walker rather than by a closed attr list.
+        "shader" => &["source"],
+        "param" => &["type", "default"],
         "bone" => &["envelope"],
         "attach" => &["parent", "child", "socket", "plug", "offset", "twist"],
         "conform" => &[
@@ -673,6 +678,9 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         ("coil", "handedness") => "string",
         ("material", "color") | ("material", "emissive") => "vec3",
         ("material", "alpha_mode") | ("material", "uv_mode") | ("material", "shader") => "string",
+        // `shader` declaration source + `param` type spelling. `param` `default`
+        // is intentionally untyped — it varies with the param's `type`.
+        ("shader", "source") | ("param", "type") => "string",
         ("material", "uv_scale") => "number or vec2",
         ("material", "base_color_texture")
         | ("material", "metallic_roughness_texture")

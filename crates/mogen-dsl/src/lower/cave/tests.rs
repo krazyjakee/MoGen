@@ -526,9 +526,9 @@ cave "spring" (seed=1, size=[18, 8, 18], chambers=4, resolution=40, pools=2)
     let g = lower_src(src);
     let water = g.find_material("cave_water").expect("default water material");
     assert_eq!(
-        g.materials[water.0 as usize].shader,
-        mogen_core::MaterialShader::Water,
-        "cave water should use the animated water shader"
+        g.materials[water.0 as usize].shader_name.as_deref(),
+        Some(mogen_core::shader::WATER),
+        "cave water should use the built-in water shader"
     );
     let pools = g
         .nodes

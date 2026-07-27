@@ -16,6 +16,7 @@ mod layout;
 mod light;
 mod lod;
 mod material;
+mod shader;
 mod node;
 mod physics;
 mod poi;
@@ -45,6 +46,7 @@ use crate::skin_lower::{bind_meshes, lower_skeleton};
 use anim::{is_anim_decl, lower_animations};
 use lod::{collect_origin_lods, extract_lod_scale, LodByOriginGuard};
 use material::collect_materials;
+use shader::{collect_shaders, ensure_builtin_shaders};
 use node::lower_into;
 use physics::collect_physics;
 
@@ -234,6 +236,12 @@ pub fn lower_with_loader(
     // match, which is how user-declared materials shadow imported ones.
     collect_materials(&expanded, &mut graph)?;
     collect_materials(&imported_decls, &mut graph)?;
+    // Shader declarations hoist in the same pass and on the same dedupe rules;
+    // materials reference them by name via `shader=`. Built-in presets (water)
+    // are seeded last so a user `shader "water"` shadows them.
+    collect_shaders(&expanded, &mut graph)?;
+    collect_shaders(&imported_decls, &mut graph)?;
+    ensure_builtin_shaders(&mut graph);
     // Physics substances hoist in the same pass, on the same dedupe rules, so
     // `phys=` references resolve during Pass 2 exactly like `mat=`.
     collect_physics(&expanded, &mut graph)?;
@@ -244,6 +252,7 @@ pub fn lower_with_loader(
         match n.kind.as_str() {
             "material" => {} // already handled
             "physics" => {} // hoisted in Pass 1
+            "shader" => {} // hoisted in Pass 1
             "lod_scale" => {} // build-time setting, consumed above
             "meta" => {} // already lifted onto graph.meta
             k if is_anim_decl(k) => {} // pass 3
@@ -254,6 +263,7 @@ pub fn lower_with_loader(
                 for c in &n.children {
                     if c.kind == "material"
                         || c.kind == "physics"
+                        || c.kind == "shader"
                         || c.kind == "attach"
                         || c.kind == "conform"
                         || is_anim_decl(&c.kind)

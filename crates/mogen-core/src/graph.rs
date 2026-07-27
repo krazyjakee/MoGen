@@ -9,7 +9,7 @@ use glam::{Quat, Vec3};
 
 use crate::{
     Aabb, Clip, Connector, Joint, Light, Material, MaterialId, Mesh, Meta, PhysicsBody,
-    PhysicsId, PhysicsMaterial, Skin, SkinId, Span, Transform,
+    PhysicsId, PhysicsMaterial, ShaderDecl, Skin, SkinId, Span, Transform,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -348,6 +348,13 @@ pub struct SceneGraph {
     /// resolved into a per-node [`PhysicsBody`] snapshot at lowering time.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub physics: Vec<PhysicsMaterial>,
+    /// Declared `shader "<name>" { … }` preview shaders, hoisted in the same
+    /// pass as materials and seeded with the built-in presets (e.g. `water`).
+    /// Materials reference these by name via `shader=`. Studio compiles the
+    /// referenced GLSL for live preview; export ignores the source but projects
+    /// name + params into `node.extras`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shaders: Vec<ShaderDecl>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub joints: Vec<Joint>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -501,6 +508,31 @@ impl SceneGraph {
             return Some(PhysicsId(idx as u32));
         }
         self.find_physics(name)
+    }
+
+    pub fn add_shader(&mut self, shader: ShaderDecl) {
+        self.shaders.push(shader);
+    }
+
+    /// Whether a shader `<name>` exists — either declared or a built-in preset.
+    pub fn has_shader(&self, name: &str) -> bool {
+        crate::shader::builtin_names().contains(&name)
+            || self.shaders.iter().any(|s| s.name == name)
+    }
+
+    /// Look up a declared shader by name, preferring one from the caller's file
+    /// (`origin`), then any bare-name match. Mirrors [`Self::find_material_scoped`].
+    /// Built-in presets that were never seeded (or were shadowed away) return
+    /// `None` here — callers that only need the name use [`Self::has_shader`].
+    pub fn find_shader_scoped(&self, name: &str, origin: Option<&Path>) -> Option<&ShaderDecl> {
+        if let Some(s) = self
+            .shaders
+            .iter()
+            .find(|s| s.name == name && s.origin.as_deref() == origin)
+        {
+            return Some(s);
+        }
+        self.shaders.iter().find(|s| s.name == name)
     }
 
     /// Rewrite every relative texture path on every material so it's anchored
