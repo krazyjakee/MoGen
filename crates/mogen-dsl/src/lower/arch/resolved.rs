@@ -22,11 +22,9 @@
 //! must be convex; the concave ones (Dutch, Mansard, Gambrel) are therefore
 //! composed from several convex tiers rather than one hull.
 
-use super::ir::{LevelId, MatRef, Polygon};
+use super::ir::{LevelId, MatRef, Marker, Polygon};
+pub use super::ir::P3;
 use super::plan;
-
-/// A point in 3D world space: `[x, y, z]`, metres, +Y up.
-pub(super) type P3 = [f32; 3];
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum Shape {
@@ -115,19 +113,6 @@ pub(super) struct Solid {
     pub material: Option<MatRef>,
 }
 
-/// A transform-only point of interest: a door slot, a furniture anchor, an
-/// imported item. Carries no geometry — the engine populates it.
-#[derive(Clone, Debug, PartialEq)]
-pub(super) struct Marker {
-    pub name: String,
-    /// Free-form, exported to `node.extras.role`.
-    pub role: String,
-    pub position: P3,
-    /// Radians about +Y.
-    pub rotation: f32,
-    pub tags: Vec<String>,
-}
-
 /// A material the solids refer to by name.
 ///
 /// The solver never invents these — it only carries [`MatRef`] names — so they
@@ -135,7 +120,7 @@ pub(super) struct Marker {
 /// field here is a field every producer has to have an answer for, and the
 /// place to add richness is the DSL's own `material`, not this.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub(super) struct MaterialDecl {
+pub struct MaterialDecl {
     pub name: String,
     /// Linear RGB.
     pub color: Option<[f32; 3]>,

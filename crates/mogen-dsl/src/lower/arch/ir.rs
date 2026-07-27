@@ -22,42 +22,45 @@
 //!   solver, and hash iteration order is the classic way determinism dies.
 
 /// A point in the ground plane: `[x, z]`, metres, world space.
-pub(crate) type P2 = [f32; 2];
+pub type P2 = [f32; 2];
+
+/// A point in 3D world space: `[x, y, z]`, metres, +Y up.
+pub type P3 = [f32; 3];
 
 /// Storey ordinal. `0` is ground, negatives are basements. Not an index —
 /// levels are looked up by this value.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub(crate) struct LevelId(pub i32);
+pub struct LevelId(pub i32);
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub(crate) struct WallId(pub u32);
+pub struct WallId(pub u32);
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub(crate) struct SlabId(pub u32);
+pub struct SlabId(pub u32);
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub(crate) struct CeilingId(pub u32);
+pub struct CeilingId(pub u32);
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub(crate) struct RoofId(pub u32);
+pub struct RoofId(pub u32);
 
 /// A material by name, resolved against the scene graph at emit time. Names
 /// rather than indices so a producer needn't know the material table.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub(crate) struct MatRef(pub String);
+pub struct MatRef(pub String);
 
 /// One storey. `height` is **floor-to-floor** — confirmed against
 /// pascalorg/editor, whose schema says so twice. Getting this wrong delaminates
 /// every storey above ground by one slab thickness.
 #[derive(Clone, Debug)]
-pub(crate) struct Level {
+pub struct Level {
     pub id: LevelId,
     pub name: Option<String>,
     pub height: f32,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum OpeningKind {
+pub enum OpeningKind {
     Door,
     Window,
     /// A bare hole — no leaf, no frame.
@@ -68,7 +71,7 @@ pub(crate) enum OpeningKind {
 
 /// A rectangular hole in a wall, positioned in the wall's own frame.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct Opening {
+pub struct Opening {
     pub kind: OpeningKind,
     /// Distance of the opening's centre from `Wall::start`, measured **along
     /// the centreline** — arc length when the wall curves, not chord distance.
@@ -89,7 +92,7 @@ pub(crate) struct Opening {
 /// A wall as a centreline plus a thickness, which is what makes mitred corners
 /// and curvature expressible at all.
 #[derive(Clone, Debug)]
-pub(crate) struct Wall {
+pub struct Wall {
     pub id: WallId,
     pub level: LevelId,
     /// Centreline start. Thickness is distributed ±`thickness/2` about it.
@@ -124,7 +127,7 @@ pub(crate) struct Wall {
 /// A closed outer ring with optional holes. Rings are not required to repeat
 /// their first point; winding is normalised by the solver.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub(crate) struct Polygon {
+pub struct Polygon {
     pub outer: Vec<P2>,
     pub holes: Vec<Vec<P2>>,
 }
@@ -132,7 +135,7 @@ pub(crate) struct Polygon {
 /// A floor plate. The solid spans `[elevation - thickness, elevation]`, so
 /// `elevation` is the walking surface.
 #[derive(Clone, Debug)]
-pub(crate) struct Slab {
+pub struct Slab {
     pub id: SlabId,
     pub level: LevelId,
     pub poly: Polygon,
@@ -145,7 +148,7 @@ pub(crate) struct Slab {
 /// A ceiling surface. Carries no thickness — the solver gives it
 /// [`consts::CEILING_SHELL_THICKNESS`] so it can be a closed solid.
 #[derive(Clone, Debug)]
-pub(crate) struct Ceiling {
+pub struct Ceiling {
     pub id: CeilingId,
     pub level: LevelId,
     pub poly: Polygon,
@@ -155,7 +158,7 @@ pub(crate) struct Ceiling {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum RoofType {
+pub enum RoofType {
     Hip,
     Gable,
     Shed,
@@ -176,7 +179,7 @@ pub(crate) enum RoofType {
 /// into one pair would turn every imported mansard into a gambrel while leaving
 /// it a perfectly plausible roof.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct RoofParams {
+pub struct RoofParams {
     /// Gambrel: fraction of the half-run at which the lower slope breaks.
     pub gambrel_lower_width: f32,
     /// Gambrel: fraction of total rise taken by the lower slope.
@@ -213,7 +216,7 @@ impl Default for RoofParams {
 /// Non-rectangular roofs come from composing several segments, not from giving
 /// a segment a polygon — which matches how their editor models it.
 #[derive(Clone, Debug)]
-pub(crate) struct RoofSegment {
+pub struct RoofSegment {
     pub id: RoofId,
     pub level: LevelId,
     pub centre: P2,
@@ -234,17 +237,35 @@ pub(crate) struct RoofSegment {
     pub material: Option<MatRef>,
 }
 
+/// A transform-only point of interest: a door slot, a furniture anchor, an
+/// imported item. Carries no geometry — the engine populates it.
+///
+/// Lives on the model rather than on the solved output because a producer
+/// *supplies* these; the solver only passes them through. An importer turning
+/// a sofa into an anchor knows where the sofa is, and no amount of geometry
+/// solving would rediscover it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Marker {
+    pub name: String,
+    /// Free-form, exported to `node.extras.role`.
+    pub role: String,
+    pub position: P3,
+    /// Radians about +Y.
+    pub rotation: f32,
+    pub tags: Vec<String>,
+}
+
 /// Which producer built this model. Only used for diagnostics and provenance
 /// tags — the solver treats both identically, which is the point.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum ModelSource {
+pub enum ModelSource {
     PascalEditor,
     BuildingGenerator,
 }
 
 /// A whole building, ready to solve.
 #[derive(Clone, Debug)]
-pub(crate) struct ArchModel {
+pub struct ArchModel {
     /// Sorted ascending by `LevelId`; checked by `validate`.
     pub levels: Vec<Level>,
     /// Index == `WallId.0`.
@@ -255,6 +276,8 @@ pub(crate) struct ArchModel {
     pub ceilings: Vec<Ceiling>,
     /// Index == `RoofId.0`.
     pub roofs: Vec<RoofSegment>,
+    /// Points of interest, passed through to the output untouched.
+    pub markers: Vec<Marker>,
     pub source: ModelSource,
 }
 
@@ -266,6 +289,7 @@ impl ArchModel {
             slabs: Vec::new(),
             ceilings: Vec::new(),
             roofs: Vec::new(),
+            markers: Vec::new(),
             source,
         }
     }

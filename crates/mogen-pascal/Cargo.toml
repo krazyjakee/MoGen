@@ -1,0 +1,13 @@
+[package]
+name = "mogen-pascal"
+version.workspace = true
+edition.workspace = true
+
+[features]
+default = ["csg"]
+csg = ["mogen-dsl/csg"]
+
+[dependencies]
+mogen-dsl = { workspace = true, default-features = false }
+serde = { workspace = true }
+serde_json = { workspace = true }

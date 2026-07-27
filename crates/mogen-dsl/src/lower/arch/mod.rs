@@ -51,3 +51,36 @@ pub(crate) mod validate;
 
 #[cfg(test)]
 mod tests;
+
+// ---------------------------------------------------------------------------
+// Public façade
+//
+// Producers live outside this crate -- `mogen-pascal` today, and anything else
+// that wants to describe a building rather than author geometry. They need the
+// IR vocabulary and exactly one verb. Everything else (the mitre solver, the
+// height rules, the sinks) stays private, because exposing it would invite a
+// producer to do geometry, which is the one thing this layering exists to
+// prevent.
+
+pub use ir::{
+    ArchModel, Ceiling, CeilingId, Level, LevelId, MatRef, Marker, ModelSource, Opening,
+    OpeningKind, Polygon, RoofId, RoofParams, RoofSegment, RoofType, Slab, SlabId, Wall, WallId,
+    P2, P3,
+};
+pub use resolved::MaterialDecl;
+
+/// Solve a model and write it out as `.mog` source.
+///
+/// The single entry point for a producer: build an [`ArchModel`], call this,
+/// write the string to a file. Warnings about anything dropped along the way
+/// are emitted as comments in the file's header rather than returned
+/// separately, so they survive being saved and show up in a diff.
+pub fn to_mog(
+    scene_name: &str,
+    header: &[String],
+    materials: &[MaterialDecl],
+    model: &ArchModel,
+) -> String {
+    let geometry = resolve::solve(model);
+    sink::mog_text::write_mog(scene_name, header, materials, &geometry)
+}

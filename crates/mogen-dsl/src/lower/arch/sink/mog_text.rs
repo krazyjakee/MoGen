@@ -39,7 +39,7 @@
 
 use std::fmt::Write as _;
 
-use super::super::ir::MatRef;
+use super::super::ir::{MatRef, Marker};
 use super::super::plan;
 use super::super::resolved::{MaterialDecl, Placement, ResolvedGeometry, Shape, Solid, P3};
 
@@ -250,7 +250,13 @@ fn common_attrs(
     format!(", {}", attrs.join(", "))
 }
 
-fn marker_line(m: &super::super::resolved::Marker) -> String {
+/// A marker, as an empty `group` carrying its role and tags.
+///
+/// Not `poi`: that is the *scene-graph* kind `lower/poi.rs` stamps on nodes it
+/// builds programmatically, and the DSL has no such surface node — emitting it
+/// makes the file fail to lower. A childless `group` is exactly a transform
+/// with metadata, and `role` / `tags` reach `node.extras` the same way.
+fn marker_line(m: &Marker) -> String {
     let mut attrs = vec![format!(
         "pos=[{}, {}, {}]",
         num(m.position[0]),
@@ -264,7 +270,7 @@ fn marker_line(m: &super::super::resolved::Marker) -> String {
     if !m.tags.is_empty() {
         attrs.push(format!("tags={}", quote(&m.tags.join(","))));
     }
-    format!("poi {} ({})", quote(&m.name), attrs.join(", "))
+    format!("group {} ({}) {{ }}", quote(&m.name), attrs.join(", "))
 }
 
 /// A hole ring wound for `extrude`'s `hole=`, which earcut wants running
@@ -345,7 +351,7 @@ fn num(v: f32) -> String {
 mod tests {
     use super::*;
     use crate::lower::arch::ir::{LevelId, Polygon};
-    use crate::lower::arch::resolved::{Marker, Role};
+    use crate::lower::arch::resolved::Role;
 
     fn square(size: f32) -> Vec<[f32; 2]> {
         vec![[0.0, 0.0], [size, 0.0], [size, size], [0.0, size]]
@@ -552,7 +558,7 @@ mod tests {
             ..Default::default()
         };
         let out = render(&g);
-        assert!(out.contains("poi \"sofa_1\""), "{out}");
+        assert!(out.contains("group \"sofa_1\""), "{out}");
         assert!(out.contains("role=\"furniture\""), "{out}");
         assert!(out.contains("tags=\"seating,imported\""), "{out}");
     }

@@ -38,6 +38,11 @@ pub(super) fn solve(model: &ArchModel) -> ResolvedGeometry {
         out.warnings.push(format!("model: {problem:?}"));
     }
 
+    // Markers are producer data. The solver passes them through untouched --
+    // an importer turning a sofa into an anchor already knows where the sofa
+    // is, and no amount of geometry solving would rediscover it.
+    out.markers = model.markers.clone();
+
     // Levels are solved independently, in id order so the output never depends
     // on the order elements were declared in.
     let mut levels: Vec<LevelId> = model.levels.iter().map(|l| l.id).collect();
