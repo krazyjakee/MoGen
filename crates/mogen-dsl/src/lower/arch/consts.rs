@@ -51,3 +51,33 @@ pub(super) const CEILING_SHELL_THICKNESS: f32 = 0.02;
 /// Slack allowed when checking that two solids actually meet (roof sitting on
 /// wall tops, slab rim overlapping a wall footprint).
 pub(super) const CONNECTIVITY_SLOP: f32 = 0.002;
+
+/// A slab must carry at least this much of a wall's length to count as
+/// supporting it. Their `WALL_SLAB_MIN_OVERLAP`; stops a slab that merely
+/// clips a wall's corner from deciding where the whole wall stands.
+pub(super) const SLAB_MIN_OVERLAP: f32 = 0.05;
+
+/// Fraction of a wall's length a slab tier must cover to win outright. Their
+/// `WALL_SLAB_SUPPORT_MAJORITY`.
+pub(super) const SLAB_SUPPORT_MAJORITY: f32 = 0.5;
+
+/// Slabs whose elevations differ by less than this are one tier, so a wall
+/// spanning several slabs poured at the same level elects them together. Their
+/// `WALL_SLAB_ELEVATION_POOL_EPSILON`.
+pub(super) const ELEVATION_POOL_EPS: f32 = 1e-4;
+
+/// Spacing of the samples taken along a wall's centreline when measuring how
+/// much of it a slab carries.
+///
+/// Ours, not theirs — they compute exact overlap intervals. Sampling is the
+/// simplification, but it has to be a *resolution* rather than a fixed count:
+/// with a fixed count each sample stands for `length / n` metres, so on a long
+/// wall one stray sample can represent more than [`SLAB_MIN_OVERLAP`] and a
+/// slab clipping the very end of a wall hoists the whole wall onto it. At 10 mm
+/// a sample is always well under that threshold, whatever the wall's length.
+pub(super) const SUPPORT_SAMPLE_STEP: f32 = 0.01;
+
+/// Bounds on the sample count, so a 100 mm nib still gets a usable measurement
+/// and a 200 m wall does not cost 20,000 point-in-polygon tests per slab.
+pub(super) const SUPPORT_SAMPLES_MIN: usize = 9;
+pub(super) const SUPPORT_SAMPLES_MAX: usize = 4096;

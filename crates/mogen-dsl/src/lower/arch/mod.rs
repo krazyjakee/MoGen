@@ -37,6 +37,7 @@
 
 pub(crate) mod consts;
 pub(crate) mod curve;
+pub(crate) mod height;
 pub(crate) mod ir;
 pub(crate) mod junction;
 pub(crate) mod miter;
