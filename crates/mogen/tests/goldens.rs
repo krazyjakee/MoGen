@@ -324,6 +324,20 @@ golden_test!(metaball_blob, "nature/metaball_blob", Source::Example);
 // same geometry as the bare-metre equivalents.
 golden_test!(units_blueprint, "features/units_blueprint", Source::Example);
 
+// Procedural `building` generator. Locked because the generator is about to
+// be retargeted onto the shared architectural IR, and until now NOTHING held
+// its output: `buildings/simple_house` is hand-authored DSL that never touches
+// a `building` node, and the nine `examples/procgen/*.mog` that do had no
+// committed `.glb` at all. A refactor without these is unverifiable.
+//
+// Four, chosen to span the axes that actually change geometry rather than to
+// be numerous: single vs multi storey, a flat roof against a sloped one, and a
+// core-and-corridor layout against a domestic one.
+golden_test!(procgen_grid_office, "procgen/grid_office", Source::Example);
+golden_test!(procgen_three_storey_house, "procgen/three_storey_house", Source::Example);
+golden_test!(procgen_gabled_house, "procgen/gabled_house", Source::Example);
+golden_test!(procgen_office_core, "procgen/office_core", Source::Example);
+
 // Test-only fixtures: minimal scenes that lock specific compiler behaviours.
 golden_test!(hierarchy_test, "hierarchy_test", Source::Fixture);
 golden_test!(mirror_test, "mirror_test", Source::Fixture);
