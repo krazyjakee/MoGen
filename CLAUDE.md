@@ -29,6 +29,7 @@ cargo test -p mogen-geom csg::tests::difference_basic -- --exact
 ./scripts/run-mogen.sh parse    examples/furniture/chair.mog               # dump AST
 ./scripts/run-mogen.sh dump-scene examples/furniture/chair.mog --json      # dump lowered SceneGraph
 ./scripts/run-mogen.sh inspect  chair.glb                        # read back + summarize a GLB
+./scripts/run-mogen.sh import   scene.json --out house.mog       # pascalorg/editor JSON → .mog SOURCE, not a GLB
 ./scripts/run-mogen.sh generate "a wooden stool" --out stool.glb     # Gemini-driven; needs GEMINI_API_KEY
 ./scripts/run-mogen.sh modify   examples/furniture/chair.mog "make legs taller" # LLM edit of an existing .mog
 ./scripts/run-mogen.sh bench    --prompts benches/prompts.txt         # ≥80% success gate
