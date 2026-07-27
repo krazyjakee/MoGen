@@ -49,6 +49,7 @@ mogen-export = { workspace = true, features = ["textures", "merge", "lod", "impo
 mogen-render = { workspace = true }
 mogen-llm = { workspace = true }
 mogen-moghub-client = { workspace = true, features = ["oauth"] }
+mogen-pascal = { workspace = true }
 mogen-update = { workspace = true }
 anyhow = { workspace = true }
 glam = { workspace = true }

@@ -398,6 +398,12 @@ fn roof_type(s: Option<&str>) -> RoofType {
 /// Rather than guess at colours we cannot see, each one becomes a plain grey
 /// declaration the user can edit. A named grey material is a starting point; a
 /// dangling reference is a file that will not load.
+///
+/// Vendoring their texture library (~11 MB of WebP/JPG across 65 materials) was
+/// considered and **declined**: it would sit in this repository's history
+/// permanently, for third-party content, to save an edit the user can make in
+/// seconds. The preset name is preserved here precisely so textures can be
+/// attached later — by hand, or by a future opt-in fetch — without re-importing.
 pub fn material_decls(model: &ArchModel) -> Vec<mogen_dsl::lower::arch::MaterialDecl> {
     let mut names: Vec<String> = model
         .walls

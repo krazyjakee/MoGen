@@ -327,6 +327,8 @@ pub(super) enum MenuAction {
     OpenPath(PathBuf),
     ClearRecent,
     ImportDsl,
+    /// Convert a pascalorg/editor `.json` scene into a new unsaved tab.
+    ImportPascalScene,
     Save,
     SaveAs,
     Build,

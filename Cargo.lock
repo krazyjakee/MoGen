@@ -2839,6 +2839,7 @@ dependencies = [
  "mogen-export",
  "mogen-llm",
  "mogen-moghub-client",
+ "mogen-pascal",
  "mogen-render",
  "mogen-update",
  "mogen-validate",

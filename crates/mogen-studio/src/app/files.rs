@@ -434,6 +434,68 @@ impl MogenStudioApp {
         self.open_picker(super::file_picker::PickerMode::Import);
     }
 
+    /// Convert a pascalorg/editor scene into a new **unsaved** tab.
+    ///
+    /// Nothing is written to disk. An import is a conversion the user should
+    /// get to look at — and reject — before it becomes a file, and dropping a
+    /// `scene.mog` next to their `scene.json` uninvited is how you quietly
+    /// clobber someone's work. Save As gives it a home.
+    ///
+    /// The dialog is synchronous, matching `save_index`.
+    pub(super) fn import_pascal_dialog(&mut self) {
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("Pascal scene", &["json"])
+            .set_directory(&self.project_root)
+            .pick_file()
+        else {
+            return;
+        };
+
+        let json = match fs::read_to_string(&path) {
+            Ok(j) => j,
+            Err(e) => {
+                self.active_mut().status = format!("import failed: {e}");
+                return;
+            }
+        };
+
+        let stem = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "imported".to_string());
+
+        let imported = match mogen_pascal::import(&json, &stem) {
+            Ok(i) => i,
+            Err(e) => {
+                self.active_mut().status =
+                    format!("not a Pascal scene: {e}");
+                return;
+            }
+        };
+
+        // Same shape as `duplicate_file`: a dirty untitled tab with no path,
+        // so the tab bar shows it needs saving and Save falls through to
+        // Save As.
+        let tab_id = self.next_tab_id();
+        let counts = imported
+            .report
+            .summary()
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "nothing recognised".into());
+
+        let mut f = FileState::untitled(tab_id);
+        f.source = imported.source;
+        f.dirty = true;
+        f.needs_compile = true;
+        f.last_edit_at = Some(Instant::now());
+        f.status = format!("imported {stem} — {counts} · save to give it a path");
+        self.files.push(f);
+        let idx = self.files.len() - 1;
+        self.activate(idx);
+    }
+
     /// Route OS drag-and-drop onto the window into the tab stack. Each `.mog`
     /// drop goes through `open_path` so it reuses the "focus if already open"
     /// and "replace pristine untitled" logic; non-`.mog` drops are reported

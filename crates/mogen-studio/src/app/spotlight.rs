@@ -90,6 +90,12 @@ fn command_catalog(ctx: &egui::Context) -> Vec<Command> {
             action: CommandAction::Menu(MenuAction::ImportDsl),
         },
         Command {
+            label: "Import Pascal Scene…",
+            hint: String::new(),
+            keywords: "pascal json convert architectural floorplan",
+            action: CommandAction::Menu(MenuAction::ImportPascalScene),
+        },
+        Command {
             label: "Save",
             hint: sc(ctx, ShortcutAction::Save),
             keywords: "write disk persist",

@@ -113,6 +113,18 @@ impl MogenStudioApp {
                     action = MenuAction::ImportDsl;
                     ui.close_menu();
                 }
+                if ui
+                    .button("Import Pascal Scene…")
+                    .on_hover_text(
+                        "Convert a pascalorg/editor .json scene into DSL source, \
+                         as a new unsaved tab. Nothing is written to disk until \
+                         you save it.",
+                    )
+                    .clicked()
+                {
+                    action = MenuAction::ImportPascalScene;
+                    ui.close_menu();
+                }
                 ui.menu_button("Open Recent", |ui| {
                     if self.settings.recent_files.is_empty() {
                         ui.label(
@@ -652,6 +664,7 @@ impl MogenStudioApp {
             }
             MenuAction::ClearRecent => self.clear_recent(),
             MenuAction::ImportDsl => self.import_dialog(),
+            MenuAction::ImportPascalScene => self.import_pascal_dialog(),
             MenuAction::Save => self.save(),
             MenuAction::SaveAs => self.save_as(),
             MenuAction::Build => self.open_build_dialog(),
