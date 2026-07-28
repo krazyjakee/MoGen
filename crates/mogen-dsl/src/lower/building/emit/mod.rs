@@ -21,7 +21,6 @@ mod rooms;
 mod modules;
 mod skylight;
 mod roof;
-mod wall_build;
 mod furnish;
 
 use anyhow::Result;

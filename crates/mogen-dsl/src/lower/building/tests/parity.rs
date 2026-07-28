@@ -1,14 +1,22 @@
-//! The measuring instrument for the IR port.
+//! A fingerprint of the whole generator, across 48 buildings.
 //!
-//! Retargeting the generator onto `lower::arch` is meant to move exactly one
-//! thing: perimeter wall corners stop being double-covered. Everything else —
-//! the node tree, every POI transform, every furniture slot, every interior
-//! wall — must come out bit-identical. This file is how that claim gets
-//! checked, and it is written *before* the port so the baseline is the real
-//! pre-port output rather than a rationalisation of whatever came out after.
+//! Written to measure the port onto `lower::arch` — the claim was that
+//! perimeter wall corners stop being double-covered and *nothing else* moves,
+//! and there was no way to check a claim like that about 48 buildings. It did
+//! its job: it caught the perimeter delta landing on `4·wt²·h` per storey to
+//! the fourth decimal, and it caught interior walls moving when a `slice` bug
+//! slanted every cut.
 //!
-//! It is scaffolding. Step 11 of the plan deletes it along with
-//! `emit/wall_build.rs`.
+//! The plan said to delete it afterwards, along with the box builder. Keeping
+//! it instead, because what it actually is — now that the port is done — is the
+//! only test that would notice a POI transform drifting by a millimetre. The
+//! goldens lock four buildings as opaque GLB bytes; this locks 48 at the level
+//! of *which tier changed*, which is the difference between "something moved"
+//! and "the furniture moved". It costs 20 KB and about a second.
+//!
+//! Regenerate the baseline with `MOGEN_GOLDENS_UPDATE=1`, the same variable the
+//! GLB goldens use — but read the diff first. A change in `poi` or `slot` is
+//! almost always a bug; a change in `tree` means geometry was renamed.
 //!
 //! # Why hashes and not a full dump
 //!
@@ -30,10 +38,6 @@
 //! diff -ru /tmp/before /tmp/after
 //! ```
 //!
-//! Regenerate the committed baseline with `MOGEN_GOLDENS_UPDATE=1`, the same
-//! variable the GLB goldens use. Doing that during the port defeats the point;
-//! it is for step 11, once the deltas have been read and accepted.
-//!
 //! # The five tiers
 //!
 //! | Tier | Tolerance | What a change means |
@@ -44,12 +48,12 @@
 //! | `aabb` | 1e-4 | some mesh changed shape or place |
 //! | `role` volumes | 1e-4, listed in full | how much geometry each role owns |
 //!
-//! The role volumes are deliberately *not* hashed. They are the one tier where
-//! a change is expected, so they are written out as readable lines: after the
-//! perimeter port, `exterior_wall` should fall by `4·wt²·h` per storey — the
-//! four corner columns that today are covered twice — and every other role
-//! should hold still. A number that moves in the wrong place is visible here
-//! without recovering a dump.
+//! The role volumes are deliberately *not* hashed. They are the tier most
+//! likely to move for a good reason, so they are written out as readable lines
+//! and a diff says which roles gained or lost geometry and by how much. That is
+//! what made the perimeter port checkable: `exterior_wall` fell by exactly
+//! `4·wt²·h` per storey — the four corner columns the box builder covered
+//! twice — and every other role held still.
 
 use super::lower_src;
 use glam::{Mat4, Vec3};

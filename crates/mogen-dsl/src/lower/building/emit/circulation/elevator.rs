@@ -15,7 +15,7 @@ use crate::ast::Node;
 use crate::lower::building::circulation::CirculationCell;
 use crate::lower::building::config::BuildingCfg;
 use crate::lower::building::emit::openings::elevator_door_z;
-use crate::lower::building::emit::wall_build::wall_with_holes;
+use crate::lower::arch;
 use crate::lower::building::layout::{CellKind, Rect2, StoreyPlate};
 use crate::lower::poi::{emit_poi_group, PoiDebug, PoiMarker};
 
@@ -64,7 +64,7 @@ pub(super) fn emit_elevator(
     // N/E/S solid walls, full-height. The W face is split into one piece
     // per storey below so each storey's door cutout can shift along Z to
     // match its own room layout — a single full-height wall could only
-    // hold one X column per door (wall_with_holes merges X-overlapping
+    // hold one X column per door (the opening planner merges X-overlapping
     // spans), so the per-storey shifts would smear into one giant hole.
     let (adj_n, adj_e, adj_s) = shaft_face_adjacencies(&cell.rect, storeys);
     emit_shaft_enclosure(
@@ -208,8 +208,22 @@ fn emit_elevator_west_walls(
         // Door bottom flush with the storey floor (= piece bottom + ct/2).
         let cy_local = -0.5 * piece_height + 0.5 * door_h + 0.5 * cfg.ceiling_thickness;
         let hole = [along, cy_local, door_w_default, door_h];
-        let mesh = wall_with_holes([w_length, piece_height, thickness], &[hole]);
         let pos = Vec3::new(-0.5 * cell_w - half, piece_centre_y, 0.0);
+        // Solved alone, and it has to be: these pieces stack one per storey at
+        // the same plan position, and the mitre solver reads a stack as several
+        // walls sharing both endpoints. The piece meets nothing in plan anyway,
+        // so it squares off at both ends exactly as the box builder left it.
+        let mesh = arch::solve_lone_wall_mesh(&arch::WallRequest {
+            // Rotated +π/2 about Y, so local +X runs along the group's −Z.
+            start: [pos.x, 0.5 * w_length],
+            end: [pos.x, -0.5 * w_length],
+            thickness,
+            height: piece_height,
+            axis_x: [0.0, -1.0],
+            axis_z: [1.0, 0.0],
+            centre: [pos.x, 0.0],
+            holes: vec![hole],
+        });
         let rot = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
         let id = graph.add_child(
             group,

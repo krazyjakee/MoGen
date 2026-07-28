@@ -140,6 +140,22 @@ fn to_local(p: P2, r: &WallRequest) -> P2 {
     [plan::dot(d, r.axis_x), plan::dot(d, r.axis_z)]
 }
 
+/// One wall that meets nothing.
+///
+/// Not a convenience wrapper — it is a statement, and calling
+/// [`solve_wall_meshes`] with a one-element slice would say the same thing less
+/// clearly. The generator has walls that genuinely stand alone: an elevator's
+/// west face, a column filler. Those come in *stacks*, one piece per storey at
+/// the same plan position, and the mitre solver works in plan with no notion of
+/// height — hand it the stack and it sees four walls sharing both endpoints and
+/// mitres them into each other. So they must be solved one at a time, and the
+/// name is there to stop someone helpfully batching them later.
+pub fn solve_lone_wall_mesh(request: &WallRequest) -> Mesh {
+    solve_wall_meshes(std::slice::from_ref(request))
+        .pop()
+        .unwrap_or_default()
+}
+
 fn build(r: &WallRequest, fp: &miter::WallFootprint) -> Mesh {
     let length = plan::distance(r.start, r.end);
     if length <= 0.0 || r.height <= 0.0 || r.thickness <= 0.0 {

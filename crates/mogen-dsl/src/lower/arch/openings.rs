@@ -7,7 +7,8 @@
 //! This is deliberately **mesh-free**. It answers "what solid rectangles are
 //! left?" and nothing more, so the same planning serves a mesh builder, a
 //! `.mog` text writer, and a mitred wall whose end faces are trapezoids rather
-//! than square. Extracted from `building/emit/wall_build.rs`, whose algorithm
+//! than square. Extracted from the `building` generator's box builder (since
+//! deleted), whose algorithm
 //! this is; that module is now a thin wrapper that turns these panels into
 //! boxes.
 //!

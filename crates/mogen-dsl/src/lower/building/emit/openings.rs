@@ -561,7 +561,7 @@ fn place_windows(
     // Minimum centre-to-centre pitch — one window width of solid wall
     // between adjacent openings. Two `cw`-wide windows at this pitch
     // leave a `cw`-wide pier, which also keeps the wall mesh's
-    // `wall_with_holes` cutouts from merging.
+    // cutouts from merging in the opening planner.
     let pitch = 2.0 * cw;
 
     let mut segments: Vec<ExtSeg> = Vec::new();

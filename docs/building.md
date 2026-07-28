@@ -654,7 +654,8 @@ Tranches 2-3 added (each ≤ 800 lines):
   layout/office.rs       office-core style (T3, thin wrapper over hotel core)
   emit/circulation.rs    stairs + elevators (T2)
   emit/skylight.rs       top-floor skylight cutouts + module stamps (T2)
-  emit/wall_build.rs     wall-with-holes mesh assembly (T2 refactor)
+  emit/wall_build.rs     wall-with-holes mesh assembly (T2 refactor; since
+                         replaced by lower/arch — see below)
 ```
 
 Tranche 4 added (all ≤ 800 lines):
@@ -668,6 +669,35 @@ Tranche 4 added (all ≤ 800 lines):
 
 Each file ≤ 800 lines. If any approaches the cap, split by sub-concern
 (e.g. `emit/shell.rs` could split into `shell_walls.rs` + `shell_slabs.rs`).
+
+## Walls come from the architectural IR
+
+`emit/wall_build.rs` is gone. Every wall the generator emits — perimeter,
+interior, elevator shaft face, column filler — is now built by
+`lower::arch::solve_wall_meshes`, which the Pascal importer shares. The
+generator supplies each wall's centreline and the frame it wants the mesh in;
+`arch` mitres the corners and hands back one mesh per wall.
+
+What this changed, and nothing else did:
+
+- Corners are covered **once**. The box builder padded every wall a full
+  thickness past both ends, so each corner was built twice. `exterior_wall`
+  volume fell by exactly `4·wt²·h` per storey and the outer envelope did not
+  move.
+- Junctions where three or more walls meet are **patched**. Mitred wedges tile
+  the ring around a junction and not its middle, so a four-way crossing — which
+  a BSP floorplate produces almost everywhere — used to leave a full-height
+  column of nothing.
+
+Node names, node transforms, POI transforms and furniture slots are untouched
+by design: the generator keeps ownership of those and `arch` only supplies
+geometry. `building/tests/parity.rs` holds that line across 48 configurations.
+
+The generator still owns its slabs (`emit/shell.rs`) and roofs
+(`emit/roof.rs`). Slabs stay because the current CSG path carries the
+floor-division seal fix, and roofs because `arch/roof.rs` already exists for the
+importer and porting the generator's would mean two implementations of the same
+five shapes.
 
 ---
 

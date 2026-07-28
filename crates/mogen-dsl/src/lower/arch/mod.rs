@@ -29,10 +29,13 @@
 //!   becomes a silent hole. [`plan::ring_is_simple`] is the guard in front of
 //!   that.
 
-// The solver is built bottom-up and nothing outside `arch/` consumes it until
-// the sinks land, so most of it is legitimately unreferenced right now. Without
-// this the crate emits ~40 dead-code warnings that would drown anything real.
-// Remove once `sink/mog_text.rs` is wired in.
+// Both sinks are wired in now, so most of this is live. What stays
+// unreferenced is IR surface one producer needs and the other does not:
+// `curve::sample_centreline` and `plan::offset_polyline` serve curved walls,
+// which only the importer can express, and `Role::GableWall` waits on a roof
+// port that was deliberately not done. Deleting them would mean writing them
+// again for the next producer, so they stay — and the allow is what keeps that
+// handful from drowning a warning that matters.
 #![allow(dead_code)]
 
 pub(crate) mod consts;
@@ -69,7 +72,7 @@ pub use ir::{
     P2, P3,
 };
 pub use resolved::MaterialDecl;
-pub use wall_mesh::{solve_wall_meshes, WallRequest};
+pub use wall_mesh::{solve_lone_wall_mesh, solve_wall_meshes, WallRequest};
 
 /// Solve a model and write it out as `.mog` source.
 ///

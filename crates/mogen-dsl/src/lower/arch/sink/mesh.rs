@@ -1,9 +1,14 @@
-//! `ResolvedGeometry` → `Mesh`. The phase-2 sink.
+//! Plan polygon → closed `Mesh`. The phase-2 sink.
 //!
-//! The text sink writes `.mog` source and lets the ordinary lowering path
-//! build geometry. The `building` generator cannot do that — it is *inside*
-//! that path — so it needs the solved shapes as meshes directly. This is that
+//! The text sink writes `.mog` source and lets the ordinary lowering path build
+//! geometry. The `building` generator cannot do that — it is *inside* that
+//! path — so it needs solved shapes as meshes directly. This is that
 //! translation, and nothing else: no solving, no fallbacks, no repair.
+//!
+//! Prisms only. [`super::super::resolved::Shape`] also has a `Hull` variant for
+//! sloped roofs, and there is deliberately no builder for it here: the roof
+//! port was not done, so a hull path would be code with no caller and no
+//! pressure on it. `mogen_geom::hull_mesh` is one line away when that changes.
 //!
 //! # Why this does not call `extrude_mesh`
 //!
@@ -19,16 +24,14 @@
 //! every cap edge is used once by the cap and once by a side. `closed_check`
 //! asserts it in tests rather than trusting the argument.
 //!
-//! Hulls are the exception — those go to Manifold, because computing a convex
-//! hull is exactly what it is for, and it returns a closed mesh or an empty
-//! one, never a subtly broken one. An empty return is caught, not passed on.
+//! The checks live in [`prism`] itself rather than in its callers. A caller
+//! that forgets to validate is precisely the failure this module exists to
+//! prevent, and nothing in the output would reveal that it happened.
 
-use glam::{Mat4, Quat, Vec3};
 use mogen_core::Mesh;
 
 use super::super::ir::P2;
 use super::super::plan;
-use super::super::resolved::{Placement, Shape, ShapeError, Solid};
 
 /// Why a shape could not become a mesh.
 ///
@@ -36,52 +39,28 @@ use super::super::resolved::{Placement, Shape, ShapeError, Solid};
 /// These are about this sink being unable to render a shape that was fine.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(crate) enum MeshError {
-    /// The shape failed its own validity check.
-    Shape(ShapeError),
-    /// Ear clipping stalled with polygon left over. For a ring that passed
-    /// [`plan::ring_is_simple`] this should be unreachable; it is an error
-    /// rather than a panic because "should be unreachable" has a poor record.
+    /// `top <= base`.
+    ZeroHeight,
+    /// Fewer than three points, or a ring that crosses itself.
+    BadRing,
+    /// A hole that leaves its outer ring, so the "hole" is a second disjoint
+    /// shape and cutting it produces a self-intersecting bridge.
+    HoleOutsideOuter,
+    /// Ear clipping stalled with polygon left over. Unreachable for a ring that
+    /// passed the checks above; an error rather than a panic because "should be
+    /// unreachable" has a poor record.
     Triangulation,
-    /// Manifold returned nothing for a hull.
-    EmptyHull,
-    /// The build is missing the `csg` feature, so hulls are unavailable.
-    NoCsg,
 }
 
 impl std::fmt::Display for MeshError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            MeshError::Shape(e) => write!(f, "invalid shape: {e:?}"),
+            MeshError::ZeroHeight => write!(f, "prism has no height"),
+            MeshError::BadRing => write!(f, "plan ring is degenerate or self-intersecting"),
+            MeshError::HoleOutsideOuter => write!(f, "hole leaves its outer ring"),
             MeshError::Triangulation => write!(f, "could not triangulate the plan ring"),
-            MeshError::EmptyHull => write!(f, "hull came back empty"),
-            MeshError::NoCsg => write!(f, "hulls need the `csg` feature"),
         }
     }
-}
-
-/// One solid's mesh, in its own placement frame.
-///
-/// The placement stays *out* of the mesh deliberately. A roof segment carries
-/// a rotation, and a caller that wants it as a node transform — which is how
-/// the `building` generator emits — must not receive it pre-baked.
-pub(in crate::lower::arch) fn solid_mesh(solid: &Solid) -> Result<Mesh, MeshError> {
-    shape_mesh(&solid.shape)
-}
-
-pub(in crate::lower::arch) fn shape_mesh(shape: &Shape) -> Result<Mesh, MeshError> {
-    shape.check().map_err(MeshError::Shape)?;
-    match shape {
-        Shape::Prism { poly, base, top } => prism(&poly.outer, &poly.holes, *base, *top),
-        Shape::Hull { points } => hull(points),
-    }
-}
-
-/// The matrix a caller applies to put a shape's mesh where its solid lives.
-pub(in crate::lower::arch) fn placement_matrix(p: &Placement) -> Mat4 {
-    Mat4::from_rotation_translation(
-        Quat::from_rotation_y(p.rotation),
-        Vec3::from(p.translation),
-    )
 }
 
 // ---------------------------------------------------------------------------
@@ -102,6 +81,24 @@ pub(crate) fn prism(
     base: f32,
     top: f32,
 ) -> Result<Mesh, MeshError> {
+    // Checked here rather than by the caller, because a caller that forgets is
+    // the exact failure this module exists to prevent and there is no way to
+    // tell from the output that it happened.
+    if top <= base {
+        return Err(MeshError::ZeroHeight);
+    }
+    if !plan::ring_is_simple(outer) {
+        return Err(MeshError::BadRing);
+    }
+    for hole in holes {
+        if !plan::ring_is_simple(hole) {
+            return Err(MeshError::BadRing);
+        }
+        if !hole.iter().all(|p| plan::point_in_ring(*p, outer)) {
+            return Err(MeshError::HoleOutsideOuter);
+        }
+    }
+
     let mut rings: Vec<Vec<P2>> = Vec::with_capacity(1 + holes.len());
     let mut o = outer.to_vec();
     plan::normalise_ccw(&mut o);
@@ -291,27 +288,10 @@ fn strictly_inside(p: P2, a: P2, b: P2, c: P2) -> bool {
     (d0 > 0.0 && d1 > 0.0 && d2 > 0.0) || (d0 < 0.0 && d1 < 0.0 && d2 < 0.0)
 }
 
-// ---------------------------------------------------------------------------
-// hulls
-// ---------------------------------------------------------------------------
-
-#[cfg(feature = "csg")]
-fn hull(points: &[[f32; 3]]) -> Result<Mesh, MeshError> {
-    let m = mogen_geom::hull_mesh(points);
-    if m.indices.is_empty() {
-        return Err(MeshError::EmptyHull);
-    }
-    Ok(m)
-}
-
-#[cfg(not(feature = "csg"))]
-fn hull(_points: &[[f32; 3]]) -> Result<Mesh, MeshError> {
-    Err(MeshError::NoCsg)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use glam::Vec3;
     use mogen_geom::is_closed_manifold;
 
     fn square(s: f32) -> Vec<P2> {
@@ -387,28 +367,23 @@ mod tests {
         // The failure the whole module exists to avoid: `extrude_mesh` would
         // return a capless tube here and say nothing.
         let bowtie = vec![[0.0, 0.0], [2.0, 2.0], [2.0, 0.0], [0.0, 2.0]];
-        let shape = Shape::Prism {
-            poly: super::super::super::ir::Polygon { outer: bowtie, holes: Vec::new() },
-            base: 0.0,
-            top: 1.0,
-        };
-        assert!(matches!(
-            shape_mesh(&shape),
-            Err(MeshError::Shape(ShapeError::BadRing(_)))
-        ));
+        assert_eq!(prism(&bowtie, &[], 0.0, 1.0).err(), Some(MeshError::BadRing));
     }
 
     #[test]
     fn a_zero_height_prism_is_refused() {
-        let shape = Shape::Prism {
-            poly: super::super::super::ir::Polygon { outer: square(1.0), holes: Vec::new() },
-            base: 2.0,
-            top: 2.0,
-        };
-        assert!(matches!(
-            shape_mesh(&shape),
-            Err(MeshError::Shape(ShapeError::ZeroHeight))
-        ));
+        assert_eq!(prism(&square(1.0), &[], 2.0, 2.0).err(), Some(MeshError::ZeroHeight));
+    }
+
+    #[test]
+    fn a_hole_that_escapes_its_outer_ring_is_refused() {
+        // Bridging one of these produces a self-intersecting ring, and the
+        // "hole" was never a hole — it is a second disjoint shape.
+        let stray = vec![[5.0, 5.0], [6.0, 5.0], [6.0, 6.0], [5.0, 6.0]];
+        assert_eq!(
+            prism(&square(2.0), &[stray], 0.0, 1.0).err(),
+            Some(MeshError::HoleOutsideOuter),
+        );
     }
 
     #[test]

@@ -328,7 +328,7 @@ fn circulation_cells_get_shaft_walls() {
     //   storey (3) so each storey's door cutout can shift along Z to
     //   match its own room layout. A single full-height west wall
     //   could only hold one X column per door, so per-storey shifts
-    //   would smear into one giant hole via `wall_with_holes` merge.
+    //   would smear into one giant hole via the opening planner's merge.
     let g = lower_src(MULTI_FLOOR_SRC);
     let walls = g
         .nodes
@@ -362,7 +362,7 @@ fn door_bfs_never_connects_stair_to_elevator() {
         // Skip if this wall is a stair↔elevator wall (both are
         // circulation cells). We just need to check the wall isn't
         // carrying a door — i.e. it's a solid 24-vertex box, not a
-        // wall_with_holes mesh.
+        // solved wall mesh.
         // Walk up to the parent cell to see its kind via the group name.
         let parent_idx = n.parent.unwrap();
         let parent_name = &g.nodes[parent_idx.0 as usize].name;

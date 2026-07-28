@@ -38,7 +38,7 @@ use crate::ast::{Node, Value};
 use crate::lower::building::circulation::CirculationKind;
 use crate::lower::building::config::BuildingCfg;
 use crate::lower::building::emit::modules::emit_interior_door_slot;
-use crate::lower::building::emit::wall_build::wall_with_holes;
+use crate::lower::arch;
 use crate::lower::building::layout::{BuildingLayout, CellKind, Floorplate};
 
 mod elevator;
@@ -174,7 +174,7 @@ pub(in super::super) fn emit_circulation(
 /// gets its own door cutout when the gap is wide enough to be a usable
 /// alcove and the storey has an adjacent room. A single multi-storey
 /// slab can't carry per-floor doors at the same z midpoint because
-/// `wall_with_holes` merges x-overlapping cutouts into one giant hole.
+/// the opening planner merges x-overlapping cutouts into one giant hole.
 fn emit_column_fillers(
     node: &Node,
     cfg: &BuildingCfg,
@@ -263,7 +263,20 @@ fn emit_column_fillers(
                 carved_door = true;
             }
 
-            let mesh = wall_with_holes([length, h, thickness], &local_holes);
+            // One at a time: the fillers for one gap stack per storey at the
+            // same plan position, and a stack looks to the mitre solver like
+            // several walls sharing both ends.
+            let mesh = arch::solve_lone_wall_mesh(&arch::WallRequest {
+                // Rotated +π/2 about Y, so local +X runs along world −Z.
+                start: [column_x, z_centre + 0.5 * length],
+                end: [column_x, z_centre - 0.5 * length],
+                thickness,
+                height: h,
+                axis_x: [0.0, -1.0],
+                axis_z: [1.0, 0.0],
+                centre: [column_x, z_centre],
+                holes: local_holes.clone(),
+            });
             let id = graph.add_child(
                 parent,
                 format!("column_filler_{idx}_{}", storey_label(s)),
