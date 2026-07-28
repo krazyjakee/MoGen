@@ -65,7 +65,8 @@ mogen-dsl  ──parse──►  AST  ──validate_ast──►  lower  ──
   detection, expansion cache), `lower.rs` (geometry/materials/transforms/CSG/mirror/array),
   `attach.rs` (connector frame alignment), `anim_lower.rs` (joints, clips, procedural
   templates), `skin_lower.rs` (skeletons, bones, automatic weight binding). Every AST node
-  preserves pest spans — diagnostics depend on this.
+  preserves pest spans — diagnostics depend on this. `lower/arch/` is a separate layer with
+  its own rules — see **Architectural IR** below.
 - **mogen-validate** — two-phase validator. `validate_ast` runs on the parsed AST (unknown
   kinds, missing/typo attrs, unknown references). `validate_graph` runs on the lowered
   `SceneGraph` (topology, weights summing to 1, skeleton-root ancestry, etc.). Both produce
@@ -121,6 +122,35 @@ mogen-dsl  ──parse──►  AST  ──validate_ast──►  lower  ──
   - `pick.rs` — screen-space ray cast (Möller–Trumbore) mapping clicks to `NodeId`s.
   - `theme.rs` — five colour-scheme presets (Dark, Light, Sunset, Nord, HighContrast)
     persisted by label and applied to egui visuals.
+
+## Architectural IR (`lower/arch/`)
+
+A shared vocabulary for buildings — walls as **centrelines** (start/end + thickness + optional
+sagitta arc), slabs as polygons with holes, roofs as a type plus a pitch — modelled on
+pascalorg/editor's data model (MIT). Two producers fill in an `ArchModel`: `mogen-pascal`'s
+importer, and the `building` generator. One solver (`resolve::solve`) turns it into shapes, and
+two sinks emit those as either `.mog` source (`sink/mog_text.rs`) or meshes (`sink/mesh.rs`).
+
+**The rule that makes it worth having: producers only map fields; every piece of geometry maths
+lives in `arch/`.** A mitre solved in a producer is a mitre the next producer has to write again.
+
+Invariants, each enforced by test:
+
+- **No RNG.** Nothing here may reach `lower::rng`. Ties break by deterministic index, and ids
+  are `Vec` indices precisely so the solver never needs a hash map.
+- **Watertight by construction.** Every output shape is a closed solid; there is no
+  open-surface variant for a sink to mishandle. `sink/mesh.rs` builds prisms by ear-clipping
+  rather than calling `extrude_mesh`, which returns a capless tube on a self-intersecting ring
+  and reports nothing.
+- **Junctions are covered exactly once.** Mitred wedges tile the ring around a junction, never
+  its middle, so `miter` patches any junction whose wedges leave area — a four-way crossing
+  otherwise leaves a full-height column of nothing.
+
+The `building` generator gets a narrower verb than the importer does: `solve_wall_meshes` takes
+centrelines plus the frame each mesh is wanted in, and returns geometry only. Node names,
+transforms, POI anchors and furniture slots stay with the generator, which is why retargeting it
+was a change to geometry rather than to everything. `building/tests/parity.rs` holds that line
+across 48 configurations.
 
 ## Procedural generators
 
