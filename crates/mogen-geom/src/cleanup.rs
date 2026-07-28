@@ -9,6 +9,11 @@ use mogen_core::Mesh;
 
 const WELD_EPS: f32 = 1e-4;
 
+/// Grid that face normals are snapped to before a UV tangent basis is derived
+/// from them. Matches the normal tolerance `cull_coplanar_opposites` uses to
+/// decide two triangles share a plane.
+const NORMAL_SNAP: f32 = 1e-3;
+
 /// Merge vertices whose positions are within `eps`. Normals of merged vertices
 /// are averaged and renormalized. Indices are rewritten to reference the
 /// canonical vertex for each cluster.
@@ -328,9 +333,12 @@ pub fn clean_csg_output(mesh: &Mesh) -> Mesh {
 /// sloped and sheared faces tile at the same texel density as flat ones.
 ///
 /// Choosing a basis per face means a vertex shared by faces with different
-/// normals needs a different UV per face, so the mesh is unwelded into
-/// independent triangles. The smooth per-vertex normals are duplicated, so only
-/// the vertex count grows — shading and watertight geometry are unchanged.
+/// normals needs a different UV per face, so the projection pass unwelds into
+/// independent triangles. It then re-shares every corner that came out
+/// identical, via [`dedup_exact_vertices`] — coplanar neighbours within one
+/// face agree on all three attributes, so only genuine UV seams cost a
+/// duplicate. The smooth per-vertex normals are carried through untouched, so
+/// shading and watertight geometry are unchanged either way.
 pub fn assign_per_face_uvs(mesh: &Mesh) -> Mesh {
     let n_tris = mesh.indices.len() / 3;
     let mut positions = Vec::with_capacity(n_tris * 3);
@@ -349,6 +357,18 @@ pub fn assign_per_face_uvs(mesh: &Mesh) -> Mesh {
         if n.length_squared() < 0.5 {
             n = Vec3::Z;
         }
+        // Snap the normal to a coarse grid before deriving a basis from it, so
+        // that every triangle tiling one flat face derives the *same* basis.
+        // Triangulating a quad hands the cross product different edge vectors
+        // per triangle, and the results disagree in the last ULP (and in the
+        // sign bit of zero components, which winding alone flips). Left alone,
+        // that splits the shared corners of a flat face into UVs like 0.45 vs
+        // 0.44999996 — a hairline texture discontinuity mid-face, and a
+        // duplicate vertex that dedup can do nothing with. The grid is the same
+        // 1e-3 `cull_coplanar_opposites` uses to decide two faces share a plane;
+        // it rotates the basis by at most ~0.06°, uniformly across the face, so
+        // the projection is unchanged in everything but name.
+        n = snap_normal(n);
         // Orthonormal tangent basis in the plane ⟂ n. Seed with the world axis
         // least aligned with n so the cross product never degenerates.
         let (ax, ay, az) = (n.x.abs(), n.y.abs(), n.z.abs());
@@ -372,11 +392,96 @@ pub fn assign_per_face_uvs(mesh: &Mesh) -> Mesh {
         uvs.push(project(p2));
         indices.extend_from_slice(&[base, base + 1, base + 2]);
     }
-    Mesh {
+    dedup_exact_vertices(&Mesh {
         positions,
         normals,
         uvs,
         indices,
+        ..Default::default()
+    })
+}
+
+/// Map `-0.0` to `+0.0`, leaving every other value bit-identical. Signed zero is
+/// numerically invisible but breaks any hash keyed on raw float bits.
+fn unsign_zero(v: f32) -> f32 {
+    if v == 0.0 {
+        0.0
+    } else {
+        v
+    }
+}
+
+/// Quantize a unit normal onto a `NORMAL_SNAP` grid and renormalize, so normals
+/// that agree to within float noise become bit-identical. Renormalizing is
+/// itself float maths, but it is a pure function of the snapped input, so equal
+/// inputs still yield equal outputs — which is the property callers need.
+fn snap_normal(n: Vec3) -> Vec3 {
+    let q = |v: f32| unsign_zero((v / NORMAL_SNAP).round() * NORMAL_SNAP);
+    let snapped = Vec3::new(q(n.x), q(n.y), q(n.z)).normalize_or_zero();
+    if snapped.length_squared() < 0.5 {
+        return n;
+    }
+    Vec3::new(
+        unsign_zero(snapped.x),
+        unsign_zero(snapped.y),
+        unsign_zero(snapped.z),
+    )
+}
+
+/// Merge vertices that are *numerically equal* on position, normal and UV,
+/// rewriting indices onto the survivors.
+///
+/// Unlike [`weld_vertices`], this makes no geometric judgement: it merges only
+/// what is already interchangeable, so it can never move a vertex, average a
+/// normal, or smear a UV across a seam. That makes it safe to run after a pass
+/// that unwelds by construction — [`assign_per_face_uvs`] emits three vertices
+/// per triangle, and the coplanar triangles tiling one flat face re-share their
+/// corners here instead of shipping five duplicates of every box corner.
+///
+/// Keys are `f32::to_bits` after collapsing `-0.0` to `+0.0`, so the two zeroes
+/// merge — they compare equal as floats and render identically, and CSG output
+/// produces both spellings for the same coordinate. Survivors keep first-seen
+/// order, which makes the output deterministic.
+///
+/// Deliberately private: the key covers position/normal/UV only, and joints,
+/// weights and colours are dropped rather than remapped. That is sound for the
+/// one caller — CSG output is never skinned or vertex-coloured — but would
+/// silently corrupt a skinned mesh, so this must not become public without
+/// folding those attributes into both the key and the output.
+fn dedup_exact_vertices(mesh: &Mesh) -> Mesh {
+    let has_uvs = mesh.has_uvs();
+    let mut seen: HashMap<([u32; 3], [u32; 3], [u32; 2]), u32> = HashMap::new();
+    let mut remap = vec![0u32; mesh.positions.len()];
+    let mut positions: Vec<[f32; 3]> = Vec::with_capacity(mesh.positions.len());
+    let mut normals: Vec<[f32; 3]> = Vec::with_capacity(mesh.normals.len());
+    let mut uvs: Vec<[f32; 2]> = Vec::with_capacity(mesh.uvs.len());
+
+    let bits = |v: f32| unsign_zero(v).to_bits();
+    for i in 0..mesh.positions.len() {
+        let p = mesh.positions[i];
+        let n = mesh.normals[i];
+        let uv = if has_uvs { mesh.uvs[i] } else { [0.0, 0.0] };
+        let key = (
+            [bits(p[0]), bits(p[1]), bits(p[2])],
+            [bits(n[0]), bits(n[1]), bits(n[2])],
+            [bits(uv[0]), bits(uv[1])],
+        );
+        remap[i] = *seen.entry(key).or_insert_with(|| {
+            let idx = positions.len() as u32;
+            positions.push(p);
+            normals.push(n);
+            if has_uvs {
+                uvs.push(uv);
+            }
+            idx
+        });
+    }
+
+    Mesh {
+        positions,
+        normals,
+        uvs,
+        indices: mesh.indices.iter().map(|&i| remap[i as usize]).collect(),
         ..Default::default()
     }
 }
@@ -538,6 +643,105 @@ mod tests {
             (uv_len - 2.0_f32.sqrt()).abs() < 1e-5,
             "edge UV span {uv_len} should equal the true edge length √2"
         );
+    }
+
+    #[test]
+    fn per_face_uvs_reshare_corners_within_one_flat_face() {
+        // A unit quad split into two coplanar triangles sharing the diagonal
+        // 1–2. Both triangles derive the same tangent basis from the same
+        // normal, so the shared corners project to the same UV and must come
+        // back welded: 4 verts, not 6. Two triangles' worth of indices remain.
+        let mesh = Mesh {
+            positions: vec![
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [1.0, 1.0, 0.0],
+            ],
+            normals: vec![[0.0, 0.0, 1.0]; 4],
+            indices: vec![0, 1, 2, 1, 3, 2],
+            ..Default::default()
+        };
+        let out = assign_per_face_uvs(&mesh);
+        assert_eq!(out.positions.len(), 4, "coplanar corners should re-share");
+        assert_eq!(out.indices.len(), 6);
+        // The diagonal really is shared, not two coincident copies.
+        assert_eq!(out.indices[1], out.indices[3]);
+        assert_eq!(out.indices[2], out.indices[5]);
+    }
+
+    #[test]
+    fn per_face_uvs_keep_a_seam_across_a_normal_discontinuity() {
+        // Two triangles meeting along edge 1–2 at a right angle: one in the XY
+        // plane, one in the YZ plane. They need different tangent bases, so the
+        // shared edge must stay duplicated — 6 verts, no merging across the
+        // seam — or the texture would smear around the corner.
+        let mesh = Mesh {
+            positions: vec![
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [1.0, 1.0, 0.0],
+                [1.0, 0.0, 1.0],
+            ],
+            normals: vec![[0.0, 0.0, 1.0]; 4],
+            indices: vec![0, 1, 2, 1, 3, 2],
+            ..Default::default()
+        };
+        let out = assign_per_face_uvs(&mesh);
+        assert_eq!(out.positions.len(), 6, "a UV seam must not be welded away");
+    }
+
+    #[test]
+    fn dedup_exact_vertices_preserves_the_triangle_soup() {
+        // Identical corners collapse; the resolved triangles are unchanged.
+        let mesh = Mesh {
+            positions: vec![
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+            ],
+            normals: vec![[0.0, 0.0, 1.0]; 6],
+            uvs: vec![
+                [0.0, 0.0],
+                [1.0, 0.0],
+                [0.0, 1.0],
+                [0.0, 0.0],
+                [1.0, 0.0],
+                [0.0, 1.0],
+            ],
+            indices: vec![0, 1, 2, 3, 4, 5],
+            ..Default::default()
+        };
+        let out = dedup_exact_vertices(&mesh);
+        assert_eq!(out.positions.len(), 3);
+        assert_eq!(out.indices, vec![0, 1, 2, 0, 1, 2]);
+    }
+
+    #[test]
+    fn dedup_exact_vertices_splits_on_any_differing_attribute() {
+        // Same position and normal, different UV — these are not interchangeable
+        // and merging them would smear a texture seam.
+        let mesh = Mesh {
+            positions: vec![[0.0, 0.0, 0.0]; 2],
+            normals: vec![[0.0, 0.0, 1.0]; 2],
+            uvs: vec![[0.0, 0.0], [1.0, 0.0]],
+            indices: vec![0, 1],
+            ..Default::default()
+        };
+        assert_eq!(dedup_exact_vertices(&mesh).positions.len(), 2);
+
+        // Same position and UV, different normal — a hard shading edge.
+        let mesh = Mesh {
+            positions: vec![[0.0, 0.0, 0.0]; 2],
+            normals: vec![[0.0, 0.0, 1.0], [0.0, 1.0, 0.0]],
+            uvs: vec![[0.0, 0.0]; 2],
+            indices: vec![0, 1],
+            ..Default::default()
+        };
+        assert_eq!(dedup_exact_vertices(&mesh).positions.len(), 2);
     }
 
     #[test]
