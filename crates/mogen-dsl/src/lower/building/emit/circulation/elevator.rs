@@ -197,23 +197,11 @@ fn emit_elevator_west_walls(
             Some(ec) => elevator_door_z(cfg, &sp.plate, ec),
             None => elev_centre_z,
         };
-        // Wall rotation = +π/2 about Y, so wall local +X maps to parent
-        // local -Z. Door at parent (elevator-group) local Z =
-        // z_world - elev_centre_z ⇒ wall local x = elev_centre_z - z_world.
-        let along = elev_centre_z - z_world;
-
         let storey_y = s as f32 * step;
         let piece_centre_y = storey_y + 0.5 * cfg.ceiling_height - y_centre;
         let piece_height = step;
-        // Door bottom flush with the storey floor (= piece bottom + ct/2).
-        let cy_local = -0.5 * piece_height + 0.5 * door_h + 0.5 * cfg.ceiling_thickness;
-        let hole = [along, cy_local, door_w_default, door_h];
         let pos = Vec3::new(-0.5 * cell_w - half, piece_centre_y, 0.0);
-        // Solved alone, and it has to be: these pieces stack one per storey at
-        // the same plan position, and the mitre solver reads a stack as several
-        // walls sharing both endpoints. The piece meets nothing in plan anyway,
-        // so it squares off at both ends exactly as the box builder left it.
-        let mesh = arch::solve_lone_wall_mesh(&arch::WallRequest {
+        let mut req = arch::WallRequest {
             // Rotated +π/2 about Y, so local +X runs along the group's −Z.
             start: [pos.x, 0.5 * w_length],
             end: [pos.x, -0.5 * w_length],
@@ -222,8 +210,22 @@ fn emit_elevator_west_walls(
             axis_x: [0.0, -1.0],
             axis_z: [1.0, 0.0],
             centre: [pos.x, 0.0],
-            holes: vec![hole],
-        });
+            holes: Vec::new(),
+        };
+        // The door in the group's plan frame, and its sill a half
+        // ceiling-thickness up from the piece's base, which puts it flush with
+        // the storey floor.
+        req.holes = vec![req.hole(
+            [pos.x, z_world - elev_centre_z],
+            0.5 * cfg.ceiling_thickness,
+            door_w_default,
+            door_h,
+        )];
+        // Solved alone, and it has to be: these pieces stack one per storey at
+        // the same plan position, and the mitre solver reads a stack as several
+        // walls sharing both endpoints. The piece meets nothing in plan anyway,
+        // so it squares off at both ends exactly as the box builder left it.
+        let mesh = arch::solve_lone_wall_mesh(&req);
         let rot = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
         let id = graph.add_child(
             group,

@@ -16,7 +16,7 @@ use crate::lower::arch;
 use super::super::circulation::{CirculationKind, CirculationPlan, STAIR_ENTRY_DEPTH};
 use super::super::config::BuildingCfg;
 use super::super::layout::{Floorplate, Rect2, WallSide};
-use super::openings::{Opening, OpeningPlan};
+use super::openings::OpeningPlan;
 use super::StoreyCtx;
 
 pub(super) fn emit_shell(
@@ -247,15 +247,7 @@ fn wall_request(
     };
 
     let (length, mid_pos, _) = wall_frame(bounds, side, wt);
-    let holes = plan
-        .entrances
-        .iter()
-        .chain(plan.windows.iter())
-        .filter(|op| op.side == Some(side))
-        .filter_map(|op| opening_local(op, side, bounds, length, h))
-        .collect();
-
-    arch::WallRequest {
+    let mut req = arch::WallRequest {
         start,
         end,
         thickness: wt,
@@ -263,8 +255,24 @@ fn wall_request(
         axis_x,
         axis_z,
         centre: mid_pos,
-        holes,
-    }
+        holes: Vec::new(),
+    };
+
+    // The wall projects its own openings -- see `WallRequest::hole`. This used
+    // to be a four-armed match on the compass side, and two of the four arms
+    // had been wrong at some point.
+    req.holes = plan
+        .entrances
+        .iter()
+        .chain(plan.windows.iter())
+        .filter(|op| op.side == Some(side))
+        // An opening as wide as the wall or as tall as the storey is not an
+        // opening, it is a missing wall. Left out rather than cut, so the wall
+        // stays solid and the window model sits against it.
+        .filter(|op| op.width < length - 0.2 && op.height < h - 0.1)
+        .map(|op| req.hole([op.x, op.z], op.sill, op.width, op.height))
+        .collect();
+    req
 }
 
 fn emit_perimeter_wall(
@@ -338,37 +346,6 @@ fn wall_frame(bounds: &Rect2, side: WallSide, wt: f32) -> (f32, [f32; 2], Quat) 
             Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),
         ),
     }
-}
-
-fn opening_local(
-    op: &Opening,
-    side: WallSide,
-    bounds: &Rect2,
-    length: f32,
-    height: f32,
-) -> Option<[f32; 4]> {
-    // Map the opening's world position into the wall mesh's local X axis
-    // (its long axis). The wall is rotated around Y so that its local +X
-    // points along the perimeter; the sign here matches that rotation:
-    //   North (rot=identity):     local +X → world +X →  along =  Δx
-    //   South (rot=180° Y):       local +X → world -X →  along = -Δx
-    //   East  (rot=-90° Y):       local +X → world +Z →  along =  Δz
-    //   West  (rot=+90° Y):       local +X → world -Z →  along = -Δz
-    // Previously East/West were swapped, which placed every perimeter
-    // hole mirrored about the wall's centre — the visible symptom was
-    // that east/west window models sat in front of the wrong-sized hole
-    // (small window in a large hole, large in a small).
-    let along = match side {
-        WallSide::North => op.x - 0.5 * (bounds.x_min + bounds.x_max),
-        WallSide::South => -(op.x - 0.5 * (bounds.x_min + bounds.x_max)),
-        WallSide::East => op.z - 0.5 * (bounds.z_min + bounds.z_max),
-        WallSide::West => -(op.z - 0.5 * (bounds.z_min + bounds.z_max)),
-    };
-    let cy = op.sill + 0.5 * op.height - 0.5 * height;
-    if op.width >= length - 0.2 || op.height >= height - 0.1 {
-        return None;
-    }
-    Some([along, cy, op.width, op.height])
 }
 
 fn side_tag(side: WallSide) -> &'static str {

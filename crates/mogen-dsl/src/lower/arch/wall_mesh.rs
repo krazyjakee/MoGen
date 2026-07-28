@@ -56,6 +56,35 @@ pub struct WallRequest {
     pub holes: Vec<[f32; 4]>,
 }
 
+impl WallRequest {
+    /// An opening, from where it sits in the world rather than where it sits on
+    /// the wall.
+    ///
+    /// This exists because the generator had written it three times — once for
+    /// perimeter walls keyed on a compass side, once for interior walls keyed
+    /// on a plan axis, once inline for elevator doors — and each had its own
+    /// sign convention to get wrong. Two of them had been wrong: perimeter east
+    /// and west were swapped, putting every side window in front of a hole
+    /// sized for a different window, and interior vertical walls were mirrored
+    /// about their own centre.
+    ///
+    /// A wall already knows which way it faces, so it can answer this itself,
+    /// and there is one sign to get right instead of eight.
+    ///
+    /// `at` is the opening's position in the same plan frame as `centre`, and
+    /// `sill` is its bottom edge measured up from the wall's own base — not
+    /// from the storey floor, which is a different datum wherever a wall does
+    /// not start at one.
+    pub fn hole(&self, at: P2, sill: f32, width: f32, height: f32) -> [f32; 4] {
+        [
+            plan::dot(plan::sub(at, self.centre), self.axis_x),
+            sill + 0.5 * height - 0.5 * self.height,
+            width,
+            height,
+        ]
+    }
+}
+
 /// Solve a set of walls together and return one mesh each, in each request's
 /// own frame.
 ///

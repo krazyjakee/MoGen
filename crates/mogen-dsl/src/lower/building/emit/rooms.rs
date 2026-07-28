@@ -118,8 +118,7 @@ pub(super) fn emit_rooms(
             continue;
         }
         let f = wall_frame(run, h);
-        request_of_run.push(Some(requests.len()));
-        requests.push(arch::WallRequest {
+        let mut req = arch::WallRequest {
             start: f.start,
             end: f.end,
             thickness: wt,
@@ -127,8 +126,21 @@ pub(super) fn emit_rooms(
             axis_x: f.axis_x,
             axis_z: f.axis_z,
             centre: [f.centre.x, f.centre.z],
-            holes: door_holes(run, plan, h),
-        });
+            holes: Vec::new(),
+        };
+        // The wall projects its own doors. This was a match on the plan axis
+        // whose vertical arm had been mirrored about the wall's own centre --
+        // harmless only because doors happen to sit at the shared edge's
+        // midpoint today, and wrong the moment a T-junction clamps one
+        // off-centre.
+        req.holes = plan
+            .interior_doors
+            .iter()
+            .filter(|d| door_belongs_to_wall(d, &run.axis, run.at, &run.span))
+            .map(|d| req.hole([d.x, d.z], 0.0, d.width, d.height))
+            .collect();
+        request_of_run.push(Some(requests.len()));
+        requests.push(req);
     }
     let meshes = arch::solve_wall_meshes(&requests);
 
@@ -216,34 +228,6 @@ fn wall_frame(run: &adjacency::WallRun, h: f32) -> WallFrame {
             axis_z: [0.0, 1.0],
         },
     }
-}
-
-/// The doorways cut into one interior wall, in its own centred elevation.
-fn door_holes(run: &adjacency::WallRun, plan: &OpeningPlan, h: f32) -> Vec<[f32; 4]> {
-    let mid_along = run.midpoint();
-    plan.interior_doors
-        .iter()
-        .filter(|d| door_belongs_to_wall(d, &run.axis, run.at, &run.span))
-        .map(|door| {
-            // Vertical interior walls are rotated +90° around Y (local +X →
-            // world −Z), so a door at world Z maps to local X =
-            // −(door.z − mid_along). Horizontal walls stay at identity so
-            // local X = door.x − mid_along. Doors currently always sit at the
-            // shared edge midpoint, which masks the difference, but the
-            // formula has to be right for the off-centre cases T-junction
-            // clamping produces.
-            let along = match run.axis {
-                WallAxis::Vertical => mid_along - door.z,
-                WallAxis::Horizontal => door.x - mid_along,
-            };
-            [
-                along,
-                0.5 * door.height - 0.5 * h,
-                door.width,
-                door.height,
-            ]
-        })
-        .collect()
 }
 
 fn door_belongs_to_wall(

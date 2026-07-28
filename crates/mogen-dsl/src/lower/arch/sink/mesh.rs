@@ -87,23 +87,25 @@ pub(crate) fn prism(
     if top <= base {
         return Err(MeshError::ZeroHeight);
     }
-    if !plan::ring_is_simple(outer) {
+    let outer = dedup(outer);
+    if !plan::ring_is_simple(&outer) {
         return Err(MeshError::BadRing);
     }
-    for hole in holes {
+    let holes: Vec<Vec<P2>> = holes.iter().map(|h| dedup(h)).collect();
+    for hole in &holes {
         if !plan::ring_is_simple(hole) {
             return Err(MeshError::BadRing);
         }
-        if !hole.iter().all(|p| plan::point_in_ring(*p, outer)) {
+        if !hole.iter().all(|p| plan::point_in_ring(*p, &outer)) {
             return Err(MeshError::HoleOutsideOuter);
         }
     }
 
     let mut rings: Vec<Vec<P2>> = Vec::with_capacity(1 + holes.len());
-    let mut o = outer.to_vec();
+    let mut o = outer;
     plan::normalise_ccw(&mut o);
     rings.push(o);
-    for h in holes {
+    for h in &holes {
         let mut h = h.clone();
         plan::normalise_ccw(&mut h);
         // A hole winds against its outer ring, so the wall it presents faces
@@ -170,6 +172,28 @@ pub(crate) fn prism(
     }
 
     Ok(m)
+}
+
+/// Drop repeated points, including the wrap-around pair.
+///
+/// A mitre can pinch one side of a wall to nothing, and the slice that comes
+/// back is then a quad with two coincident corners — a triangle written down
+/// badly. `ring_is_simple` rejects it, correctly, because a zero-length edge is
+/// degenerate. Rejecting it *here* would mean dropping a real piece of wall and
+/// leaving a slit where a 12 mm pier should be, which is how this was found. So
+/// the ring is tidied first and only then judged.
+fn dedup(ring: &[P2]) -> Vec<P2> {
+    const EPS: f32 = 1e-7;
+    let mut out: Vec<P2> = Vec::with_capacity(ring.len());
+    for p in ring {
+        if out.last().is_none_or(|q| plan::distance(*q, *p) > EPS) {
+            out.push(*p);
+        }
+    }
+    while out.len() > 1 && plan::distance(out[0], *out.last().expect("non-empty")) <= EPS {
+        out.pop();
+    }
+    out
 }
 
 /// Cut each hole into the outer ring with a pair of coincident bridge edges,
@@ -368,6 +392,29 @@ mod tests {
         // return a capless tube here and say nothing.
         let bowtie = vec![[0.0, 0.0], [2.0, 2.0], [2.0, 0.0], [0.0, 2.0]];
         assert_eq!(prism(&bowtie, &[], 0.0, 1.0).err(), Some(MeshError::BadRing));
+    }
+
+    #[test]
+    fn a_pinched_quad_is_built_as_the_triangle_it_is() {
+        // What a mitre produces when it squeezes one side of a wall to nothing:
+        // a quad with two coincident corners. Refusing it drops a real piece of
+        // wall and leaves a slit — which is how the de-duplication came to
+        // exist, after a 12 mm pier vanished from a radial floorplan.
+        let pinched = vec![[0.0, 0.0], [1.0, 0.0], [1.0, 0.0], [0.0, 1.0]];
+        let m = prism(&pinched, &[], 0.0, 2.0).unwrap();
+        assert!(closed(&m));
+        assert!((volume(&m) - 0.5 * 1.0 * 1.0 * 2.0).abs() < 1e-5, "{}", volume(&m));
+    }
+
+    #[test]
+    fn a_ring_that_repeats_its_first_point_is_still_that_ring() {
+        // Producers differ on whether a closed ring repeats its start. Both
+        // spellings have to mean the same solid.
+        let mut closed_form = square(1.0);
+        closed_form.push(closed_form[0]);
+        let a = prism(&square(1.0), &[], 0.0, 3.0).unwrap();
+        let b = prism(&closed_form, &[], 0.0, 3.0).unwrap();
+        assert_eq!(a.positions, b.positions);
     }
 
     #[test]
