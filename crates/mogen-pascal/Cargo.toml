@@ -12,3 +12,9 @@ mogen-core = { workspace = true }
 mogen-dsl = { workspace = true, default-features = false }
 serde = { workspace = true }
 serde_json = { workspace = true }
+
+[dev-dependencies]
+# Tests only: `real_project.rs` puts an imported scene through the same
+# post-lowering validation `mogen build` runs, and checks every mesh is closed.
+mogen-validate = { workspace = true }
+mogen-geom = { workspace = true }

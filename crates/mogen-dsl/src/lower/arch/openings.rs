@@ -53,6 +53,35 @@ impl Panel {
     }
 }
 
+/// The part of a hole that falls inside the wall, as `[cx, cy, w, h]` in the
+/// same centred frame, or `None` when too little of it does to be worth
+/// cutting.
+///
+/// Shared with whoever wants to *fill* the hole rather than cut it — a door
+/// leaf has to land in the gap the cut actually made, not in the gap the
+/// producer asked for, and a window overhanging the end of its wall is cut
+/// short here. Two copies of this arithmetic is how a door ends up half a
+/// jamb away from its own doorway.
+pub(crate) fn clipped_hole(length: f32, height: f32, hole: [f32; 4]) -> Option<[f32; 4]> {
+    let [along, cy, w, h] = hole;
+    if w <= 0.0 || h <= 0.0 {
+        return None;
+    }
+    let (half_x, half_y) = (0.5 * length, 0.5 * height);
+
+    let x0 = (along - 0.5 * w).max(-half_x);
+    let x1 = (along + 0.5 * w).min(half_x);
+    if x1 - x0 < MIN_PANEL {
+        return None;
+    }
+    let y0 = (cy - 0.5 * h).max(-half_y);
+    let y1 = (cy + 0.5 * h).min(half_y);
+    if y1 - y0 < MIN_PANEL {
+        return None;
+    }
+    Some([0.5 * (x0 + x1), 0.5 * (y0 + y1), x1 - x0, y1 - y0])
+}
+
 /// Plan the solid panels of a wall elevation.
 ///
 /// Returns a single full-extent panel when nothing is cut, and an empty vector
@@ -75,21 +104,10 @@ pub(crate) fn solid_panels(length: f32, height: f32, holes: &[[f32; 4]]) -> Vec<
     // Clip each hole to the wall, discarding any that end up too small to be
     // worth cutting.
     let mut spans: Vec<(f32, f32, f32, f32)> = Vec::new();
-    for &[along, cy, w, h] in holes {
-        if w <= 0.0 || h <= 0.0 {
-            continue;
+    for hole in holes {
+        if let Some([cx, cy, w, h]) = clipped_hole(length, height, *hole) {
+            spans.push((cx - 0.5 * w, cx + 0.5 * w, cy - 0.5 * h, cy + 0.5 * h));
         }
-        let x0 = (along - 0.5 * w).max(-half_x);
-        let x1 = (along + 0.5 * w).min(half_x);
-        if x1 - x0 < MIN_PANEL {
-            continue;
-        }
-        let y0 = (cy - 0.5 * h).max(-half_y);
-        let y1 = (cy + 0.5 * h).min(half_y);
-        if y1 - y0 < MIN_PANEL {
-            continue;
-        }
-        spans.push((x0, x1, y0, y1));
     }
     if spans.is_empty() {
         return vec![whole];

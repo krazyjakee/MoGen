@@ -73,6 +73,9 @@ pub struct Node {
     pub curve_offset: Option<f32>,
 
     // -- slab / ceiling / zone --
+    /// Bare ring, or a `{type:"polygon", points:[…]}` wrapper — see
+    /// [`de_polygon`].
+    #[serde(default, deserialize_with = "de_polygon")]
     pub polygon: Option<Vec<[f32; 2]>>,
     pub holes: Option<Vec<Vec<[f32; 2]>>>,
     pub elevation: Option<f32>,
@@ -136,6 +139,39 @@ pub struct Asset {
     pub dimensions: Option<Vec<f32>>,
 }
 
+/// A polygon ring, in either of the two shapes their data uses.
+///
+/// Their *file export* writes a bare `[[x, z], …]`, and that is what slab and
+/// ceiling nodes carry. But `site` nodes — and only `site` nodes, in the scenes
+/// seen so far — carry the editor's internal wrapper,
+/// `{"type": "polygon", "points": [[x, z], …]}`. The difference is invisible
+/// until you load a scene straight out of the running app rather than out of
+/// its exporter, at which point one node in the file refuses to parse and takes
+/// the whole scene with it.
+///
+/// Both are accepted, and anything else is `None` rather than an error, for the
+/// same reason every other field here is optional: a shape we have not seen
+/// should cost us one polygon, not the file.
+fn de_polygon<'de, D>(d: D) -> Result<Option<Vec<[f32; 2]>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Shape {
+        Bare(Vec<[f32; 2]>),
+        Wrapped {
+            points: Vec<[f32; 2]>,
+        },
+        Other(serde::de::IgnoredAny),
+    }
+
+    Ok(match Option::<Shape>::deserialize(d)? {
+        Some(Shape::Bare(p)) | Some(Shape::Wrapped { points: p }) => Some(p),
+        _ => None,
+    })
+}
+
 impl Node {
     /// Whether the editor would draw this node. Absent means visible.
     pub fn is_visible(&self) -> bool {
@@ -171,6 +207,30 @@ impl Node {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn polygon_reads_both_shapes() {
+        // Slabs out of their exporter carry a bare ring...
+        let slab: Node = serde_json::from_str(
+            r#"{"id":"s","type":"slab","polygon":[[0,0],[4,0],[4,3]]}"#,
+        )
+        .unwrap();
+        assert_eq!(slab.polygon.unwrap(), vec![[0.0, 0.0], [4.0, 0.0], [4.0, 3.0]]);
+
+        // ...but a site out of the running app wraps it, and used to take the
+        // whole scene down with it.
+        let site: Node = serde_json::from_str(
+            r#"{"id":"t","type":"site","polygon":
+                {"type":"polygon","points":[[0,0],[4,0],[4,3]]}}"#,
+        )
+        .unwrap();
+        assert_eq!(site.polygon.unwrap(), vec![[0.0, 0.0], [4.0, 0.0], [4.0, 3.0]]);
+
+        // A third shape costs one polygon, not the file.
+        let odd: Node =
+            serde_json::from_str(r#"{"id":"u","type":"slab","polygon":"circle"}"#).unwrap();
+        assert!(odd.polygon.is_none());
+    }
 
     #[test]
     fn a_node_with_unknown_fields_still_deserialises() {

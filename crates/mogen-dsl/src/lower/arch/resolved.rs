@@ -22,7 +22,7 @@
 //! must be convex; the concave ones (Dutch, Mansard, Gambrel) are therefore
 //! composed from several convex tiers rather than one hull.
 
-use super::ir::{LevelId, MatRef, Marker, Polygon};
+use super::ir::{LevelId, MatRef, Marker, OpeningKind, Polygon};
 pub use super::ir::P3;
 use super::plan;
 
@@ -113,6 +113,44 @@ pub(super) struct Solid {
     pub material: Option<MatRef>,
 }
 
+/// A door or window: placed by the solver, shaped by the sink.
+///
+/// Cutting the hole is geometry and lives here; deciding what a door *looks*
+/// like is not. The text sink instantiates the stdlib `door_simple` /
+/// `window_simple` modules so the imported file stays editable — swap the
+/// module name and every door in the building changes — and a mesh sink is
+/// free to build its own leaf. Either way both get the same answer to the only
+/// question that needs solving: where is the doorway, and which way does it
+/// face?
+///
+/// Without this, an opening is only ever an absence. That reads as a building
+/// with no windows rather than a building with glass in them, and it throws
+/// away the [`OpeningKind`] the producer took the trouble to supply.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct OpeningInstance {
+    /// Derived from the wall and the opening's index within it, so adding a
+    /// window to one wall does not rename the doors in another.
+    pub name: String,
+    pub kind: OpeningKind,
+    pub level: LevelId,
+    /// The centre of the threshold: mid-width, mid-thickness, at the sill —
+    /// which is where both stdlib modules are anchored.
+    pub position: P3,
+    /// Radians about +Y, turning local +Z onto the wall's normal — square
+    /// across the wall, so the leaf sits flush in its own reveal.
+    ///
+    /// *Which* normal is not knowable here: nothing in the IR says which side
+    /// of a wall is outside, and inferring it from ring winding would be a
+    /// guess that silently reverses for a producer that winds the other way.
+    /// The stdlib door and window are near enough symmetric front-to-back that
+    /// picking one side consistently reads correctly either way.
+    pub rotation: f32,
+    /// The **clipped** extents: what the cut actually left, not what the
+    /// producer asked for.
+    pub width: f32,
+    pub height: f32,
+}
+
 /// A material the solids refer to by name.
 ///
 /// The solver never invents these — it only carries [`MatRef`] names — so they
@@ -133,6 +171,8 @@ pub struct MaterialDecl {
 #[derive(Clone, Debug, Default)]
 pub(super) struct ResolvedGeometry {
     pub solids: Vec<Solid>,
+    /// Doors and windows, in the holes the panels left for them.
+    pub openings: Vec<OpeningInstance>,
     pub markers: Vec<Marker>,
     /// Things a producer got away with but should hear about — an unknown node
     /// kind, a wall dropped as degenerate. Never fatal.

@@ -36,6 +36,16 @@ pub(super) const CURVE_EPSILON: f32 = 1e-6;
 /// mitre point exists and the joint butts instead.
 pub(super) const COLLINEAR_EPS: f32 = 1e-4;
 
+/// How far off a line a point may sit and still count as *on* it when deciding
+/// whether two ring edges lie along one another.
+///
+/// Deliberately a distance rather than a cross product, so it means the same
+/// thing on a 0.1 m nib as on a 40 m run: a raw cross product scales with both
+/// edge lengths, which is how a test tuned on short edges silently stops firing
+/// on long ones. 0.1 mm is far below any real wall feature and far above f32
+/// noise at plan coordinates.
+pub(super) const OVERLAP_EPS: f32 = 1e-4;
+
 /// Walls shorter than this are dropped rather than emitted as slivers.
 pub(super) const MIN_WALL_H: f32 = 0.05;
 

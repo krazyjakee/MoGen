@@ -1,0 +1,221 @@
+// Imported from a pascalorg/editor scene as "gatehouse.pascal".
+// 26 walls · 3 slabs · 3 ceilings · 2 roof segments · 12 markers
+// Skipped 2 nodes: site (1), guide (1)
+//
+// 7 item(s) needed attention:
+//   model: DegenerateWall { index: 24 }
+//   model: RingSelfIntersects { kind: "ceiling", index: 2 }
+//   wall 24: zero length or thickness, dropped
+//   wall 25: curves tighter than its own thickness, dropped
+//   slab_2: HoleOutsideOuter, dropped
+//   ceiling_2: BadRing("outer"), dropped
+//   roof 0: eave sat 0.800m below the walls under it; raised to meet them
+
+material "door_frame" (color=[0.92, 0.91, 0.88], roughness=0.6)
+material "door_leaf" (color=[0.4, 0.22, 0.1], roughness=0.55)
+material "window_frame" (color=[0.95, 0.95, 0.95], roughness=0.4)
+material "window_glass" (color=[0.72, 0.86, 0.95], roughness=0.05)
+
+scene "gatehouse.pascal" {
+  group "level_0" {
+    extrude "wall_0_panel0" (points=[[-7.15, -4.15], [-5.85, -4.15], [-5.85, -3.85], [-6.85, -3.85]], height=2.45, pos=[0, 1.275, 0], role="wall")
+    extrude "wall_0_panel1" (points=[[-5.85, -4.15], [-4.65, -4.15], [-4.65, -3.85], [-5.85, -3.85]], height=1.1, pos=[0, 0.6, 0], role="wall")
+    extrude "wall_0_panel2" (points=[[-5.85, -4.15], [-4.65, -4.15], [-4.65, -3.85], [-5.85, -3.85]], height=0.15, pos=[0, 2.425, 0], role="wall")
+    extrude "wall_0_panel3" (points=[[-4.65, -4.15], [-2.35, -4.15], [-2.35, -3.85], [-4.65, -3.85]], height=2.45, pos=[0, 1.275, 0], role="wall")
+    extrude "wall_0_panel4" (points=[[-2.35, -4.15], [-1.15, -4.15], [-1.15, -3.85], [-2.35, -3.85]], height=1.1, pos=[0, 0.6, 0], role="wall")
+    extrude "wall_0_panel5" (points=[[-2.35, -4.15], [-1.15, -4.15], [-1.15, -3.85], [-2.35, -3.85]], height=0.15, pos=[0, 2.425, 0], role="wall")
+    extrude "wall_0_panel6" (points=[[-1.15, -4.15], [-0.5, -4.15], [-0.5, -3.85], [-1.15, -3.85]], height=2.45, pos=[0, 1.275, 0], role="wall")
+    extrude "wall_0_panel7" (points=[[-0.5, -4.15], [0.5, -4.15], [0.5, -3.85], [-0.5, -3.85]], height=0.35, pos=[0, 2.325, 0], role="wall")
+    extrude "wall_0_panel8" (points=[[0.5, -4.15], [1.15, -4.15], [1.15, -3.85], [0.5, -3.85]], height=2.45, pos=[0, 1.275, 0], role="wall")
+    extrude "wall_0_panel9" (points=[[1.15, -4.15], [2.35, -4.15], [2.35, -3.85], [1.15, -3.85]], height=1.1, pos=[0, 0.6, 0], role="wall")
+    extrude "wall_0_panel10" (points=[[1.15, -4.15], [2.35, -4.15], [2.35, -3.85], [1.15, -3.85]], height=0.15, pos=[0, 2.425, 0], role="wall")
+    extrude "wall_0_panel11" (points=[[2.35, -4.15], [4.65, -4.15], [4.65, -3.85], [2.35, -3.85]], height=2.45, pos=[0, 1.275, 0], role="wall")
+    extrude "wall_0_panel12" (points=[[4.65, -4.15], [5.85, -4.15], [5.85, -3.85], [4.65, -3.85]], height=1.1, pos=[0, 0.6, 0], role="wall")
+    extrude "wall_0_panel13" (points=[[4.65, -4.15], [5.85, -4.15], [5.85, -3.85], [4.65, -3.85]], height=0.15, pos=[0, 2.425, 0], role="wall")
+    extrude "wall_0_panel14" (points=[[5.85, -4.15], [7.15, -4.15], [6.85, -3.85], [5.85, -3.85]], height=2.45, pos=[0, 1.275, 0], role="wall")
+    extrude "wall_1_panel0" (points=[[7.15, -4.15], [7.15, -2.6], [6.85, -2.6], [6.85, -3.85]], height=2.45, pos=[0, 1.275, 0], role="wall")
+    extrude "wall_1_panel1" (points=[[7.15, -2.6], [7.15, -1.4], [6.85, -1.4], [6.85, -2.6]], height=1.1, pos=[0, 0.6, 0], role="wall")
+    extrude "wall_1_panel2" (points=[[7.15, -2.6], [7.15, -1.4], [6.85, -1.4], [6.85, -2.6]], height=0.15, pos=[0, 2.425, 0], role="wall")
+    extrude "wall_1_panel3" (points=[[7.15, -1.4], [7.15, 1.4], [6.85, 1.4], [6.85, -1.4]], height=2.45, pos=[0, 1.275, 0], role="wall")
+    extrude "wall_1_panel4" (points=[[7.15, 1.4], [7.15, 2.6], [6.85, 2.6], [6.85, 1.4]], height=1.1, pos=[0, 0.6, 0], role="wall")
+    extrude "wall_1_panel5" (points=[[7.15, 1.4], [7.15, 2.6], [6.85, 2.6], [6.85, 1.4]], height=0.15, pos=[0, 2.425, 0], role="wall")
+    extrude "wall_1_panel6" (points=[[7.15, 2.6], [7.15, 4.15], [6.85, 3.85], [6.85, 2.6]], height=2.45, pos=[0, 1.275, 0], role="wall")
+    extrude "wall_2_panel0" (points=[[7.15, 4.15], [5.6, 4.15], [5.6, 3.85], [6.85, 3.85]], height=2.45, pos=[0, 1.275, 0], role="wall")
+    extrude "wall_2_panel1" (points=[[5.6, 4.15], [4.4, 4.15], [4.4, 3.85], [5.6, 3.85]], height=1.1, pos=[0, 0.6, 0], role="wall")
+    extrude "wall_2_panel2" (points=[[5.6, 4.15], [4.4, 4.15], [4.4, 3.85], [5.6, 3.85]], height=0.15, pos=[0, 2.425, 0], role="wall")
+    extrude "wall_2_panel3" (points=[[4.4, 4.15], [3.15, 4.15], [2.85, 3.85], [4.4, 3.85]], height=2.45, pos=[0, 1.275, 0], role="wall")
+    extrude "wall_3_panel0" (points=[[3.15, 4.15], [3.15, 5.9], [2.85, 5.9], [2.85, 3.85]], height=2.45, pos=[0, 1.275, 0], role="wall")
+    extrude "wall_3_panel1" (points=[[3.15, 5.9], [3.15, 7.1], [2.85, 7.1], [2.85, 5.9]], height=1.1, pos=[0, 0.6, 0], role="wall")
+    extrude "wall_3_panel2" (points=[[3.15, 5.9], [3.15, 7.1], [2.85, 7.1], [2.85, 5.9]], height=0.15, pos=[0, 2.425, 0], role="wall")
+    extrude "wall_3_panel3" (points=[[3.15, 7.1], [3.15, 9.15], [2.85, 8.85], [2.85, 7.1]], height=2.45, pos=[0, 1.275, 0], role="wall")
+    extrude "wall_4_panel0" (points=[[3.15, 9.15], [0.6, 9.15], [0.6, 8.85], [2.85, 8.85]], height=2.45, pos=[0, 1.275, 0], role="wall")
+    extrude "wall_4_panel1" (points=[[0.6, 9.15], [-0.6, 9.15], [-0.6, 8.85], [0.6, 8.85]], height=1.1, pos=[0, 0.6, 0], role="wall")
+    extrude "wall_4_panel2" (points=[[0.6, 9.15], [-0.6, 9.15], [-0.6, 8.85], [0.6, 8.85]], height=0.15, pos=[0, 2.425, 0], role="wall")
+    extrude "wall_4_panel3" (points=[[-0.6, 9.15], [-3.15, 9.15], [-2.85, 8.85], [-0.6, 8.85]], height=2.45, pos=[0, 1.275, 0], role="wall")
+    extrude "wall_5_panel0" (points=[[-3.15, 9.15], [-3.15, 7.1], [-2.85, 7.1], [-2.85, 8.85]], height=2.45, pos=[0, 1.275, 0], role="wall")
+    extrude "wall_5_panel1" (points=[[-3.15, 7.1], [-3.15, 5.9], [-2.85, 5.9], [-2.85, 7.1]], height=1.1, pos=[0, 0.6, 0], role="wall")
+    extrude "wall_5_panel2" (points=[[-3.15, 7.1], [-3.15, 5.9], [-2.85, 5.9], [-2.85, 7.1]], height=0.15, pos=[0, 2.425, 0], role="wall")
+    extrude "wall_5_panel3" (points=[[-3.15, 5.9], [-3.15, 4.15], [-2.85, 3.85], [-2.85, 5.9]], height=2.45, pos=[0, 1.275, 0], role="wall")
+    extrude "wall_6_panel0" (points=[[-3.15, 4.15], [-4.4, 4.15], [-4.4, 3.85], [-2.85, 3.85]], height=2.45, pos=[0, 1.275, 0], role="wall")
+    extrude "wall_6_panel1" (points=[[-4.4, 4.15], [-5.6, 4.15], [-5.6, 3.85], [-4.4, 3.85]], height=1.1, pos=[0, 0.6, 0], role="wall")
+    extrude "wall_6_panel2" (points=[[-4.4, 4.15], [-5.6, 4.15], [-5.6, 3.85], [-4.4, 3.85]], height=0.15, pos=[0, 2.425, 0], role="wall")
+    extrude "wall_6_panel3" (points=[[-5.6, 4.15], [-7.15, 4.15], [-6.85, 3.85], [-5.6, 3.85]], height=2.45, pos=[0, 1.275, 0], role="wall")
+    extrude "wall_7_panel0" (points=[[-7.15, 4.15], [-7.15, 2.6], [-6.85, 2.6], [-6.85, 3.85]], height=2.45, pos=[0, 1.275, 0], role="wall")
+    extrude "wall_7_panel1" (points=[[-7.15, 2.6], [-7.15, 1.4], [-6.85, 1.4], [-6.85, 2.6]], height=1.1, pos=[0, 0.6, 0], role="wall")
+    extrude "wall_7_panel2" (points=[[-7.15, 2.6], [-7.15, 1.4], [-6.85, 1.4], [-6.85, 2.6]], height=0.15, pos=[0, 2.425, 0], role="wall")
+    extrude "wall_7_panel3" (points=[[-7.15, 1.4], [-7.15, -1.4], [-6.85, -1.4], [-6.85, 1.4]], height=2.45, pos=[0, 1.275, 0], role="wall")
+    extrude "wall_7_panel4" (points=[[-7.15, -1.4], [-7.15, -2.6], [-6.85, -2.6], [-6.85, -1.4]], height=1.1, pos=[0, 0.6, 0], role="wall")
+    extrude "wall_7_panel5" (points=[[-7.15, -1.4], [-7.15, -2.6], [-6.85, -2.6], [-6.85, -1.4]], height=0.15, pos=[0, 2.425, 0], role="wall")
+    extrude "wall_7_panel6" (points=[[-7.15, -2.6], [-7.15, -4.15], [-6.85, -3.85], [-6.85, -2.6]], height=2.45, pos=[0, 1.275, 0], role="wall")
+    extrude "wall_8_panel0" (points=[[-1.925, -3.85], [-1.925, -0.45], [-2.075, -0.45], [-2.075, -3.85]], height=2.45, pos=[0, 1.275, 0], role="wall")
+    extrude "wall_8_panel1" (points=[[-1.925, -0.45], [-1.925, 0.45], [-2.075, 0.45], [-2.075, -0.45]], height=0.05, pos=[0, 0.075, 0], role="wall")
+    extrude "wall_8_panel2" (points=[[-1.925, -0.45], [-1.925, 0.45], [-2.075, 0.45], [-2.075, -0.45]], height=0.4, pos=[0, 2.3, 0], role="wall")
+    extrude "wall_8_panel3" (points=[[-1.925, 0.45], [-1.925, 4], [-2.075, 4], [-2.075, 0.45]], height=2.45, pos=[0, 1.275, 0], role="wall")
+    extrude "wall_9_panel0" (points=[[2.075, -3.85], [2.075, -0.45], [1.925, -0.45], [1.925, -3.85]], height=2.45, pos=[0, 1.275, 0], role="wall")
+    extrude "wall_9_panel1" (points=[[2.075, -0.45], [2.075, 0.45], [1.925, 0.45], [1.925, -0.45]], height=0.05, pos=[0, 0.075, 0], role="wall")
+    extrude "wall_9_panel2" (points=[[2.075, -0.45], [2.075, 0.45], [1.925, 0.45], [1.925, -0.45]], height=0.4, pos=[0, 2.3, 0], role="wall")
+    extrude "wall_9_panel3" (points=[[2.075, 0.45], [2.075, 4], [1.925, 4], [1.925, 0.45]], height=2.45, pos=[0, 1.275, 0], role="wall")
+    extrude "wall_10_panel0" (points=[[-6.85, 0.425], [-4.95, 0.425], [-4.95, 0.575], [-6.85, 0.575]], height=2.45, pos=[0, 1.275, 0], role="wall")
+    extrude "wall_10_panel1" (points=[[-4.95, 0.425], [-4.05, 0.425], [-4.05, 0.575], [-4.95, 0.575]], height=0.05, pos=[0, 0.075, 0], role="wall")
+    extrude "wall_10_panel2" (points=[[-4.95, 0.425], [-4.05, 0.425], [-4.05, 0.575], [-4.95, 0.575]], height=0.4, pos=[0, 2.3, 0], role="wall")
+    extrude "wall_10_panel3" (points=[[-4.05, 0.425], [-2.075, 0.425], [-2.075, 0.575], [-4.05, 0.575]], height=2.45, pos=[0, 1.275, 0], role="wall")
+    extrude "wall_11_panel0" (points=[[2.075, 0.425], [4.05, 0.425], [4.05, 0.575], [2.075, 0.575]], height=2.45, pos=[0, 1.275, 0], role="wall")
+    extrude "wall_11_panel1" (points=[[4.05, 0.425], [4.95, 0.425], [4.95, 0.575], [4.05, 0.575]], height=0.05, pos=[0, 0.075, 0], role="wall")
+    extrude "wall_11_panel2" (points=[[4.05, 0.425], [4.95, 0.425], [4.95, 0.575], [4.05, 0.575]], height=0.4, pos=[0, 2.3, 0], role="wall")
+    extrude "wall_11_panel3" (points=[[4.95, 0.425], [6.85, 0.425], [6.85, 0.575], [4.95, 0.575]], height=2.45, pos=[0, 1.275, 0], role="wall")
+    extrude "wall_12_panel0" (points=[[-2.85, 6.425], [-0.45, 6.425], [-0.45, 6.575], [-2.85, 6.575]], height=2.45, pos=[0, 1.275, 0], role="wall")
+    extrude "wall_12_panel1" (points=[[-0.45, 6.425], [0.45, 6.425], [0.45, 6.575], [-0.45, 6.575]], height=0.05, pos=[0, 0.075, 0], role="wall")
+    extrude "wall_12_panel2" (points=[[-0.45, 6.425], [0.45, 6.425], [0.45, 6.575], [-0.45, 6.575]], height=0.4, pos=[0, 2.3, 0], role="wall")
+    extrude "wall_12_panel3" (points=[[0.45, 6.425], [2.85, 6.425], [2.85, 6.575], [0.45, 6.575]], height=2.45, pos=[0, 1.275, 0], role="wall")
+    extrude "wall_joint_7_10" (points=[[-7.15, 0.5], [-6.85, 0.425], [-6.85, 0.575]], height=2.45, pos=[0, 1.275, 0], role="wall_joint")
+    extrude "wall_joint_5_12" (points=[[-3.15, 6.5], [-2.85, 6.425], [-2.85, 6.575]], height=2.45, pos=[0, 1.275, 0], role="wall_joint")
+    extrude "wall_joint_0_8" (points=[[-2.075, -3.85], [-2, -4.15], [-1.925, -3.85]], height=2.45, pos=[0, 1.275, 0], role="wall_joint")
+    extrude "wall_joint_8_10" (points=[[-2.075, 0.425], [-1.925, 0.5], [-2.075, 0.575]], height=2.45, pos=[0, 1.275, 0], role="wall_joint")
+    extrude "wall_joint_0_9" (points=[[1.925, -3.85], [2, -4.15], [2.075, -3.85]], height=2.45, pos=[0, 1.275, 0], role="wall_joint")
+    extrude "wall_joint_9_11" (points=[[1.925, 0.5], [2.075, 0.425], [2.075, 0.575]], height=2.45, pos=[0, 1.275, 0], role="wall_joint")
+    extrude "wall_joint_3_12" (points=[[2.85, 6.425], [3.15, 6.5], [2.85, 6.575]], height=2.45, pos=[0, 1.275, 0], role="wall_joint")
+    extrude "wall_joint_1_11" (points=[[6.85, 0.425], [7.15, 0.5], [6.85, 0.575]], height=2.45, pos=[0, 1.275, 0], role="wall_joint")
+    extrude "slab_0" (points=[[-7, -4], [7, -4], [7, 4], [3, 4], [3, 9], [-3, 9], [-3, 4], [-7, 4]], height=0.2, pos=[0, -0.05, 0], role="slab")
+    extrude "ceiling_0" (points=[[-7, -4], [7, -4], [7, 4], [3, 4], [3, 9], [-3, 9], [-3, 4], [-7, 4]], hole=[[0.6, 3.4], [2.4, 3.4], [2.4, 1], [0.6, 1]], height=0.02, pos=[0, -0.01, 0], role="ceiling")
+    group "wall_0_door0" (pos=[0, 0.05, -4], role="door", mat="door_leaf") { use "door_simple" (width=1, height=2.1) }
+    group "wall_0_window0" (pos=[-5.25, 1.15, -4], role="window", mat="window_glass") { use "window_simple" (width=1.2, height=1.2) }
+    group "wall_0_window1" (pos=[-1.75, 1.15, -4], role="window", mat="window_glass") { use "window_simple" (width=1.2, height=1.2) }
+    group "wall_0_window2" (pos=[1.75, 1.15, -4], role="window", mat="window_glass") { use "window_simple" (width=1.2, height=1.2) }
+    group "wall_0_window3" (pos=[5.25, 1.15, -4], role="window", mat="window_glass") { use "window_simple" (width=1.2, height=1.2) }
+    group "wall_1_window0" (pos=[7, 1.15, -2], ry=-90, role="window", mat="window_glass") { use "window_simple" (width=1.2, height=1.2) }
+    group "wall_1_window1" (pos=[7, 1.15, 2], ry=-90, role="window", mat="window_glass") { use "window_simple" (width=1.2, height=1.2) }
+    group "wall_2_window0" (pos=[5, 1.15, 4], ry=-180, role="window", mat="window_glass") { use "window_simple" (width=1.2, height=1.2) }
+    group "wall_3_window0" (pos=[3, 1.15, 6.5], ry=-90, role="window", mat="window_glass") { use "window_simple" (width=1.2, height=1.2) }
+    group "wall_4_window0" (pos=[0, 1.15, 9], ry=-180, role="window", mat="window_glass") { use "window_simple" (width=1.2, height=1.2) }
+    group "wall_5_window0" (pos=[-3, 1.15, 6.5], ry=90, role="window", mat="window_glass") { use "window_simple" (width=1.2, height=1.2) }
+    group "wall_6_window0" (pos=[-5, 1.15, 4], ry=-180, role="window", mat="window_glass") { use "window_simple" (width=1.2, height=1.2) }
+    group "wall_7_window0" (pos=[-7, 1.15, 2], ry=90, role="window", mat="window_glass") { use "window_simple" (width=1.2, height=1.2) }
+    group "wall_7_window1" (pos=[-7, 1.15, -2], ry=90, role="window", mat="window_glass") { use "window_simple" (width=1.2, height=1.2) }
+    group "wall_8_door0" (pos=[-2, 0.1, 0], ry=-90, role="door", mat="door_leaf") { use "door_simple" (width=0.9, height=2) }
+    group "wall_9_door0" (pos=[2, 0.1, 0], ry=-90, role="door", mat="door_leaf") { use "door_simple" (width=0.9, height=2) }
+    group "wall_10_door0" (pos=[-4.5, 0.1, 0.5], role="door", mat="door_leaf") { use "door_simple" (width=0.9, height=2) }
+    group "wall_11_door0" (pos=[4.5, 0.1, 0.5], role="door", mat="door_leaf") { use "door_simple" (width=0.9, height=2) }
+    group "wall_12_door0" (pos=[0, 0.1, 6.5], role="door", mat="door_leaf") { use "door_simple" (width=0.9, height=2) }
+  }
+  group "level_3" {
+    extrude "wall_13_panel0" (points=[[-7.15, -4.15], [-5.85, -4.15], [-5.85, -3.85], [-6.85, -3.85]], height=2.45, pos=[0, 3.775, 0], role="wall")
+    extrude "wall_13_panel1" (points=[[-5.85, -4.15], [-4.65, -4.15], [-4.65, -3.85], [-5.85, -3.85]], height=1.2, pos=[0, 3.15, 0], role="wall")
+    extrude "wall_13_panel2" (points=[[-5.85, -4.15], [-4.65, -4.15], [-4.65, -3.85], [-5.85, -3.85]], height=0.05, pos=[0, 4.975, 0], role="wall")
+    extrude "wall_13_panel3" (points=[[-4.65, -4.15], [-2.35, -4.15], [-2.35, -3.85], [-4.65, -3.85]], height=2.45, pos=[0, 3.775, 0], role="wall")
+    extrude "wall_13_panel4" (points=[[-2.35, -4.15], [-1.15, -4.15], [-1.15, -3.85], [-2.35, -3.85]], height=1.2, pos=[0, 3.15, 0], role="wall")
+    extrude "wall_13_panel5" (points=[[-2.35, -4.15], [-1.15, -4.15], [-1.15, -3.85], [-2.35, -3.85]], height=0.05, pos=[0, 4.975, 0], role="wall")
+    extrude "wall_13_panel6" (points=[[-1.15, -4.15], [1.15, -4.15], [1.15, -3.85], [-1.15, -3.85]], height=2.45, pos=[0, 3.775, 0], role="wall")
+    extrude "wall_13_panel7" (points=[[1.15, -4.15], [2.35, -4.15], [2.35, -3.85], [1.15, -3.85]], height=1.2, pos=[0, 3.15, 0], role="wall")
+    extrude "wall_13_panel8" (points=[[1.15, -4.15], [2.35, -4.15], [2.35, -3.85], [1.15, -3.85]], height=0.05, pos=[0, 4.975, 0], role="wall")
+    extrude "wall_13_panel9" (points=[[2.35, -4.15], [4.65, -4.15], [4.65, -3.85], [2.35, -3.85]], height=2.45, pos=[0, 3.775, 0], role="wall")
+    extrude "wall_13_panel10" (points=[[4.65, -4.15], [5.85, -4.15], [5.85, -3.85], [4.65, -3.85]], height=1.2, pos=[0, 3.15, 0], role="wall")
+    extrude "wall_13_panel11" (points=[[4.65, -4.15], [5.85, -4.15], [5.85, -3.85], [4.65, -3.85]], height=0.05, pos=[0, 4.975, 0], role="wall")
+    extrude "wall_13_panel12" (points=[[5.85, -4.15], [7.15, -4.15], [6.85, -3.85], [5.85, -3.85]], height=2.45, pos=[0, 3.775, 0], role="wall")
+    extrude "wall_14_panel0" (points=[[7.15, -4.15], [7.15, -2.6], [6.85, -2.6], [6.85, -3.85]], height=2.45, pos=[0, 3.775, 0], role="wall")
+    extrude "wall_14_panel1" (points=[[7.15, -2.6], [7.15, -1.4], [6.85, -1.4], [6.85, -2.6]], height=1.2, pos=[0, 3.15, 0], role="wall")
+    extrude "wall_14_panel2" (points=[[7.15, -2.6], [7.15, -1.4], [6.85, -1.4], [6.85, -2.6]], height=0.05, pos=[0, 4.975, 0], role="wall")
+    extrude "wall_14_panel3" (points=[[7.15, -1.4], [7.15, 1.4], [6.85, 1.4], [6.85, -1.4]], height=2.45, pos=[0, 3.775, 0], role="wall")
+    extrude "wall_14_panel4" (points=[[7.15, 1.4], [7.15, 2.6], [6.85, 2.6], [6.85, 1.4]], height=1.2, pos=[0, 3.15, 0], role="wall")
+    extrude "wall_14_panel5" (points=[[7.15, 1.4], [7.15, 2.6], [6.85, 2.6], [6.85, 1.4]], height=0.05, pos=[0, 4.975, 0], role="wall")
+    extrude "wall_14_panel6" (points=[[7.15, 2.6], [7.15, 3.925], [6.85, 3.925], [6.85, 2.6]], height=2.45, pos=[0, 3.775, 0], role="wall")
+    extrude "wall_15_panel0" (points=[[7, 4.15], [5.6, 4.15], [5.6, 3.85], [7, 3.85]], height=2.45, pos=[0, 3.775, 0], role="wall")
+    extrude "wall_15_panel1" (points=[[5.6, 4.15], [4.4, 4.15], [4.4, 3.85], [5.6, 3.85]], height=1.2, pos=[0, 3.15, 0], role="wall")
+    extrude "wall_15_panel2" (points=[[5.6, 4.15], [4.4, 4.15], [4.4, 3.85], [5.6, 3.85]], height=0.05, pos=[0, 4.975, 0], role="wall")
+    extrude "wall_15_panel3" (points=[[4.4, 4.15], [3.15, 4.15], [2.85, 3.85], [4.4, 3.85]], height=2.45, pos=[0, 3.775, 0], role="wall")
+    extrude "wall_16_panel0" (points=[[3.15, 4.15], [3.15, 5.9], [2.85, 5.9], [2.85, 3.85]], height=2.45, pos=[0, 3.775, 0], role="wall")
+    extrude "wall_16_panel1" (points=[[3.15, 5.9], [3.15, 7.1], [2.85, 7.1], [2.85, 5.9]], height=1.2, pos=[0, 3.15, 0], role="wall")
+    extrude "wall_16_panel2" (points=[[3.15, 5.9], [3.15, 7.1], [2.85, 7.1], [2.85, 5.9]], height=0.05, pos=[0, 4.975, 0], role="wall")
+    extrude "wall_16_panel3" (points=[[3.15, 7.1], [3.15, 9.15], [2.85, 8.85], [2.85, 7.1]], height=2.45, pos=[0, 3.775, 0], role="wall")
+    extrude "wall_17_panel0" (points=[[3.15, 9.15], [0.6, 9.15], [0.6, 8.85], [2.85, 8.85]], height=2.45, pos=[0, 3.775, 0], role="wall")
+    extrude "wall_17_panel1" (points=[[0.6, 9.15], [-0.6, 9.15], [-0.6, 8.85], [0.6, 8.85]], height=1.2, pos=[0, 3.15, 0], role="wall")
+    extrude "wall_17_panel2" (points=[[0.6, 9.15], [-0.6, 9.15], [-0.6, 8.85], [0.6, 8.85]], height=0.05, pos=[0, 4.975, 0], role="wall")
+    extrude "wall_17_panel3" (points=[[-0.6, 9.15], [-3.15, 9.15], [-2.85, 8.85], [-0.6, 8.85]], height=2.45, pos=[0, 3.775, 0], role="wall")
+    extrude "wall_18_panel0" (points=[[-3.15, 9.15], [-3.15, 7.1], [-2.85, 7.1], [-2.85, 8.85]], height=2.45, pos=[0, 3.775, 0], role="wall")
+    extrude "wall_18_panel1" (points=[[-3.15, 7.1], [-3.15, 5.9], [-2.85, 5.9], [-2.85, 7.1]], height=1.2, pos=[0, 3.15, 0], role="wall")
+    extrude "wall_18_panel2" (points=[[-3.15, 7.1], [-3.15, 5.9], [-2.85, 5.9], [-2.85, 7.1]], height=0.05, pos=[0, 4.975, 0], role="wall")
+    extrude "wall_18_panel3" (points=[[-3.15, 5.9], [-3.15, 4.15], [-2.85, 3.85], [-2.85, 5.9]], height=2.45, pos=[0, 3.775, 0], role="wall")
+    extrude "wall_19_panel0" (points=[[-3.15, 4.15], [-4.4, 4.15], [-4.4, 3.85], [-2.85, 3.85]], height=2.45, pos=[0, 3.775, 0], role="wall")
+    extrude "wall_19_panel1" (points=[[-4.4, 4.15], [-5.6, 4.15], [-5.6, 3.85], [-4.4, 3.85]], height=1.2, pos=[0, 3.15, 0], role="wall")
+    extrude "wall_19_panel2" (points=[[-4.4, 4.15], [-5.6, 4.15], [-5.6, 3.85], [-4.4, 3.85]], height=0.05, pos=[0, 4.975, 0], role="wall")
+    extrude "wall_19_panel3" (points=[[-5.6, 4.15], [-7.15, 4.15], [-6.85, 3.85], [-5.6, 3.85]], height=2.45, pos=[0, 3.775, 0], role="wall")
+    extrude "wall_20_panel0" (points=[[-7.15, 4.15], [-7.15, 2.6], [-6.85, 2.6], [-6.85, 3.85]], height=2.45, pos=[0, 3.775, 0], role="wall")
+    extrude "wall_20_panel1" (points=[[-7.15, 2.6], [-7.15, 1.4], [-6.85, 1.4], [-6.85, 2.6]], height=1.2, pos=[0, 3.15, 0], role="wall")
+    extrude "wall_20_panel2" (points=[[-7.15, 2.6], [-7.15, 1.4], [-6.85, 1.4], [-6.85, 2.6]], height=0.05, pos=[0, 4.975, 0], role="wall")
+    extrude "wall_20_panel3" (points=[[-7.15, 1.4], [-7.15, -1.4], [-6.85, -1.4], [-6.85, 1.4]], height=2.45, pos=[0, 3.775, 0], role="wall")
+    extrude "wall_20_panel4" (points=[[-7.15, -1.4], [-7.15, -2.6], [-6.85, -2.6], [-6.85, -1.4]], height=1.2, pos=[0, 3.15, 0], role="wall")
+    extrude "wall_20_panel5" (points=[[-7.15, -1.4], [-7.15, -2.6], [-6.85, -2.6], [-6.85, -1.4]], height=0.05, pos=[0, 4.975, 0], role="wall")
+    extrude "wall_20_panel6" (points=[[-7.15, -2.6], [-7.15, -4.15], [-6.85, -3.85], [-6.85, -2.6]], height=2.45, pos=[0, 3.775, 0], role="wall")
+    extrude "wall_21_panel0" (points=[[0.075, -3.85], [0.075, -0.45], [-0.075, -0.45], [-0.075, -3.85]], height=2.45, pos=[0, 3.775, 0], role="wall")
+    extrude "wall_21_panel1" (points=[[0.075, -0.45], [0.075, 0.45], [-0.075, 0.45], [-0.075, -0.45]], height=0.05, pos=[0, 2.575, 0], role="wall")
+    extrude "wall_21_panel2" (points=[[0.075, -0.45], [0.075, 0.45], [-0.075, 0.45], [-0.075, -0.45]], height=0.4, pos=[0, 4.8, 0], role="wall")
+    extrude "wall_21_panel3" (points=[[0.075, 0.45], [0.075, 4], [-0.075, 4], [-0.075, 0.45]], height=2.45, pos=[0, 3.775, 0], role="wall")
+    extrude "wall_22_panel0" (points=[[-6.85, -0.075], [-0.45, -0.075], [-0.45, 0.075], [-6.85, 0.075]], height=2.45, pos=[0, 3.775, 0], role="wall")
+    extrude "wall_22_panel1" (points=[[-0.45, -0.075], [0.45, -0.075], [0.45, 0.075], [-0.45, 0.075]], height=0.05, pos=[0, 2.575, 0], role="wall")
+    extrude "wall_22_panel2" (points=[[-0.45, -0.075], [0.45, -0.075], [0.45, 0.075], [-0.45, 0.075]], height=0.4, pos=[0, 4.8, 0], role="wall")
+    extrude "wall_22_panel3" (points=[[0.45, -0.075], [6.85, -0.075], [6.85, 0.075], [0.45, 0.075]], height=2.45, pos=[0, 3.775, 0], role="wall")
+    extrude "wall_23_panel0" (points=[[-2.85, 5.925], [-0.45, 5.925], [-0.45, 6.075], [-2.85, 6.075]], height=2.45, pos=[0, 3.775, 0], role="wall")
+    extrude "wall_23_panel1" (points=[[-0.45, 5.925], [0.45, 5.925], [0.45, 6.075], [-0.45, 6.075]], height=0.05, pos=[0, 2.575, 0], role="wall")
+    extrude "wall_23_panel2" (points=[[-0.45, 5.925], [0.45, 5.925], [0.45, 6.075], [-0.45, 6.075]], height=0.4, pos=[0, 4.8, 0], role="wall")
+    extrude "wall_23_panel3" (points=[[0.45, 5.925], [2.85, 5.925], [2.85, 6.075], [0.45, 6.075]], height=2.45, pos=[0, 3.775, 0], role="wall")
+    extrude "wall_joint_20_22" (points=[[-7.15, 0], [-6.85, -0.075], [-6.85, 0.075]], height=2.45, pos=[0, 3.775, 0], role="wall_joint")
+    extrude "wall_joint_18_23" (points=[[-3.15, 6], [-2.85, 5.925], [-2.85, 6.075]], height=2.45, pos=[0, 3.775, 0], role="wall_joint")
+    extrude "wall_joint_13_21" (points=[[-0.075, -3.85], [0, -4.15], [0.075, -3.85]], height=2.45, pos=[0, 3.775, 0], role="wall_joint")
+    extrude "wall_joint_16_23" (points=[[2.85, 5.925], [3.15, 6], [2.85, 6.075]], height=2.45, pos=[0, 3.775, 0], role="wall_joint")
+    extrude "wall_joint_14_22" (points=[[6.85, -0.075], [7.15, 0], [6.85, 0.075]], height=2.45, pos=[0, 3.775, 0], role="wall_joint")
+    extrude "wall_joint_14_15" (points=[[6.85, 3.925], [7, 3.85], [7.15, 3.925], [7, 4.15]], height=2.45, pos=[0, 3.775, 0], role="wall_joint")
+    extrude "slab_1" (points=[[-7, -4], [7, -4], [7, 4], [3, 4], [3, 9], [-3, 9], [-3, 4], [-7, 4]], hole=[[0.6, 3.4], [2.4, 3.4], [2.4, 1], [0.6, 1]], height=0.2, pos=[0, 2.45, 0], role="slab")
+    extrude "ceiling_1" (points=[[-7, -4], [7, -4], [7, 4], [3, 4], [3, 9], [-3, 9], [-3, 4], [-7, 4]], height=0.02, pos=[0, 2.49, 0], role="ceiling")
+    group "wall_13_window0" (pos=[-5.25, 3.75, -4], role="window", mat="window_glass") { use "window_simple" (width=1.2, height=1.2) }
+    group "wall_13_window1" (pos=[-1.75, 3.75, -4], role="window", mat="window_glass") { use "window_simple" (width=1.2, height=1.2) }
+    group "wall_13_window2" (pos=[1.75, 3.75, -4], role="window", mat="window_glass") { use "window_simple" (width=1.2, height=1.2) }
+    group "wall_13_window3" (pos=[5.25, 3.75, -4], role="window", mat="window_glass") { use "window_simple" (width=1.2, height=1.2) }
+    group "wall_14_window0" (pos=[7, 3.75, -2], ry=-90, role="window", mat="window_glass") { use "window_simple" (width=1.2, height=1.2) }
+    group "wall_14_window1" (pos=[7, 3.75, 2], ry=-90, role="window", mat="window_glass") { use "window_simple" (width=1.2, height=1.2) }
+    group "wall_15_window0" (pos=[5, 3.75, 4], ry=-180, role="window", mat="window_glass") { use "window_simple" (width=1.2, height=1.2) }
+    group "wall_16_window0" (pos=[3, 3.75, 6.5], ry=-90, role="window", mat="window_glass") { use "window_simple" (width=1.2, height=1.2) }
+    group "wall_17_window0" (pos=[0, 3.75, 9], ry=-180, role="window", mat="window_glass") { use "window_simple" (width=1.2, height=1.2) }
+    group "wall_18_window0" (pos=[-3, 3.75, 6.5], ry=90, role="window", mat="window_glass") { use "window_simple" (width=1.2, height=1.2) }
+    group "wall_19_window0" (pos=[-5, 3.75, 4], ry=-180, role="window", mat="window_glass") { use "window_simple" (width=1.2, height=1.2) }
+    group "wall_20_window0" (pos=[-7, 3.75, 2], ry=90, role="window", mat="window_glass") { use "window_simple" (width=1.2, height=1.2) }
+    group "wall_20_window1" (pos=[-7, 3.75, -2], ry=90, role="window", mat="window_glass") { use "window_simple" (width=1.2, height=1.2) }
+    group "wall_21_door0" (pos=[0, 2.6, 0], ry=-90, role="door", mat="door_leaf") { use "door_simple" (width=0.9, height=2) }
+    group "wall_22_door0" (pos=[0, 2.6, 0], role="door", mat="door_leaf") { use "door_simple" (width=0.9, height=2) }
+    group "wall_23_door0" (pos=[0, 2.6, 6], role="door", mat="door_leaf") { use "door_simple" (width=0.9, height=2) }
+  }
+  group "level_5" {
+    hull "roof_0" (points=[[-4.6, 0, -7.6], [4.6, 0, -7.6], [4.6, 0, 7.6], [-4.6, 0, 7.6], [0, 4.1419, -7.6], [0, 4.1419, -7.6], [0, 4.1419, 7.6], [0, 4.1419, 7.6]], pos=[0, 5, 0], ry=90, role="roof")
+    hull "roof_1" (points=[[-3.6, 0, -3.1], [3.6, 0, -3.1], [3.6, 0, 3.1], [-3.6, 0, 3.1], [-3.6, 2.7913, 0], [3.6, 2.7913, 0], [3.6, 2.7913, 0], [-3.6, 2.7913, 0]], pos=[0, 5, 6], role="roof")
+  }
+  group "Sofa" (pos=[-4.5, 0, -2], role="seating", tags="imported,mogen/seating") { }
+  group "Armchair" (pos=[-5.5, 0, 1.6], ry=89.9544, role="seating", tags="imported,mogen/seating") { }
+  group "Dining Table" (pos=[4.5, 0, -2], role="table", tags="imported,mogen/table") { }
+  group "Kitchen Counter" (pos=[4.5, 0, 2.2], ry=179.9088, role="storage", tags="imported,mogen/storage") { }
+  group "Wood Stove" (pos=[0, 0, -3.2], role="appliance", tags="imported,mogen/appliance") { }
+  group "Workbench" (pos=[0, 0, 7.8], role="table", tags="imported,mogen/table") { }
+  group "Shelving" (pos=[-2.6, 0, 5.4], ry=89.9544, role="storage", tags="imported,mogen/storage") { }
+  group "Bed" (pos=[-4, 0, -2], role="bed", tags="imported,mogen/bed") { }
+  group "Bed" (pos=[4, 0, -2], role="bed", tags="imported,mogen/bed") { }
+  group "Wardrobe" (pos=[-4, 0, 2.6], ry=179.9088, role="storage", tags="imported,mogen/storage") { }
+  group "Desk" (pos=[4, 0, 2.6], ry=179.9088, role="table", tags="imported,mogen/table") { }
+  group "Cot" (pos=[0, 0, 7.6], role="bed", tags="imported,mogen/bed") { }
+}

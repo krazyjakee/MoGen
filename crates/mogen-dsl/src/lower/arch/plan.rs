@@ -5,7 +5,7 @@
 //! stated once, in [`left_normal`], because getting it wrong mirrors geometry
 //! silently: the result stays a perfectly valid shape, just the wrong one.
 
-use super::consts::{COLLINEAR_EPS, SNAP_MM};
+use super::consts::{COLLINEAR_EPS, CURVE_EPSILON, OVERLAP_EPS, SNAP_MM};
 use super::ir::P2;
 
 /// Quantise a coordinate onto the junction grid.
@@ -182,7 +182,9 @@ pub(super) fn ring_is_simple(ring: &[P2]) -> bool {
             }
             let b0 = ring[j];
             let b1 = ring[(j + 1) % n];
-            if segments_properly_cross(a0, a1, b0, b1) {
+            if segments_properly_cross(a0, a1, b0, b1)
+                || segments_overlap_collinearly(a0, a1, b0, b1)
+            {
                 return false;
             }
         }
@@ -190,7 +192,47 @@ pub(super) fn ring_is_simple(ring: &[P2]) -> bool {
     true
 }
 
-/// Strict crossing — touching at an endpoint does not count.
+/// Two non-adjacent edges running *along* one another rather than through.
+///
+/// [`segments_properly_cross`] needs the four orientations to have strictly
+/// opposite signs, so a pair of edges lying on the same line and sharing a
+/// stretch of it scores zero four times and reads as "no intersection". That is
+/// not a corner case -- it is what an inverted offset produces. Bow a wall
+/// tighter than its own half-thickness and the inner edge turns inside out,
+/// leaving the ring's two closing edges collinear and overlapping: a ring with
+/// no interior, which earcut hands back as a capless tube.
+///
+/// Found via a wall that was rejected at the origin and accepted six metres
+/// away. Nothing changed but its coordinates -- f32 noise near the origin
+/// tilted the two edges just enough to register as a true crossing, and further
+/// out it did not. The proper-crossing test was never what caught this shape;
+/// it only happened to fire, in one place.
+fn segments_overlap_collinearly(a0: P2, a1: P2, b0: P2, b1: P2) -> bool {
+    let d = sub(a1, a0);
+    let len = length(d);
+    if len < CURVE_EPSILON {
+        return false;
+    }
+    let dir = [d[0] / len, d[1] / len];
+
+    // Both of b's endpoints must lie on a's line. Measured as a distance, so
+    // the threshold means the same on a 0.1 m nib as on a 40 m run; a raw cross
+    // product would scale with both edge lengths.
+    let off = |p: P2| perp_dot(dir, sub(p, a0)).abs();
+    if off(b0) > OVERLAP_EPS || off(b1) > OVERLAP_EPS {
+        return false;
+    }
+
+    // Collinear, so they intersect iff their 1-D spans share more than a point.
+    let at = |p: P2| dot(dir, sub(p, a0));
+    let (lo, hi) = {
+        let (u, v) = (at(b0), at(b1));
+        if u <= v { (u, v) } else { (v, u) }
+    };
+    hi.min(len) - lo.max(0.0) > OVERLAP_EPS
+}
+
+/// Strict crossing -- touching at an endpoint does not count.
 fn segments_properly_cross(a0: P2, a1: P2, b0: P2, b1: P2) -> bool {
     let d1 = perp_dot(sub(a1, a0), sub(b0, a0));
     let d2 = perp_dot(sub(a1, a0), sub(b1, a0));
@@ -316,6 +358,52 @@ mod tests {
         // the shape that silently loses its caps in the triangulator.
         let bowtie = [[0.0, 0.0], [1.0, 1.0], [1.0, 0.0], [0.0, 1.0]];
         assert!(!ring_is_simple(&bowtie));
+    }
+
+    #[test]
+    fn edges_lying_along_one_another_are_not_simple() {
+        // The shape an inverted offset leaves behind: the ring doubles back
+        // along itself, so it encloses nothing. There is no proper crossing
+        // anywhere in it -- every orientation test scores zero -- which is why
+        // it used to pass.
+        let doubled = [[0.0, 0.0], [2.0, 0.0], [0.5, 0.0], [1.5, 0.0]];
+        assert!(!ring_is_simple(&doubled));
+
+        // Touching end-to-end is not overlapping, and a rectangle's opposite
+        // sides are parallel without being collinear. Neither may trip it.
+        let touching = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
+        assert!(ring_is_simple(&touching));
+        let long_thin = [[0.0, 0.0], [40.0, 0.0], [40.0, 0.05], [0.0, 0.05]];
+        assert!(ring_is_simple(&long_thin));
+    }
+
+    #[test]
+    fn simplicity_does_not_depend_on_where_the_building_sits() {
+        // This started as a real wall that was rejected at the origin and
+        // accepted six metres away -- the shape was the same, only the
+        // coordinates moved. Because `ring_is_simple` is the sole guard in
+        // front of the triangulator, "accepted" there meant a capless tube and
+        // no diagnostic, so the bug's symptom was a hole that appeared only in
+        // buildings drawn away from the origin.
+        //
+        // The offsets are deliberately awkward rather than round: a translation
+        // that is exact in binary would move the ring without disturbing any of
+        // the arithmetic, and prove nothing.
+        // A ring doubled back along itself. Whether f32 noise tilts the two
+        // collinear edges into a detectable crossing depends on how large the
+        // coordinates are, so before the overlap test existed this was rejected
+        // at the origin and accepted a few metres out -- and "accepted" meant a
+        // capless tube with no diagnostic.
+        let ring: Vec<P2> = vec![[0.0, 0.0], [2.0, 0.0], [0.5, 0.0], [1.5, 0.0]];
+        assert!(!ring_is_simple(&ring), "doubled-back ring at the origin");
+
+        for (dx, dz) in [(6.1, 2.4), (-37.3, 91.7), (410.5, -260.9)] {
+            let moved: Vec<P2> = ring.iter().map(|p| [p[0] + dx, p[1] + dz]).collect();
+            assert!(
+                !ring_is_simple(&moved),
+                "the same ring became simple once moved to ({dx}, {dz})"
+            );
+        }
     }
 
     #[test]

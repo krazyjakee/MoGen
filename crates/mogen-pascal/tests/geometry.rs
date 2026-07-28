@@ -246,3 +246,47 @@ fn a_mitred_corner_joins_without_a_seam() {
         .count();
     assert_eq!(owners, 2, "both walls should reach {corner:?}");
 }
+
+#[test]
+fn a_roof_segment_rides_its_containers_transform() {
+    // A `roof` emits nothing itself, which makes it easy to carry the traversal
+    // through it and drop the transform on the way -- leaving the roof at the
+    // world origin rather than over the house. Their own demo scene keeps every
+    // roof container at the origin, so this only shows up on a real project.
+    //
+    // Container at [10, 3, 5], segment at local origin, so the answer is the
+    // container's own position: asymmetric on all three axes, and off by
+    // something different if any one is dropped.
+    let json = r#"{"nodes":{
+        "l0":{"id":"l0","type":"level","level":0,"parentId":null,"children":["r"]},
+        "r":{"id":"r","type":"roof","parentId":"l0","position":[10,3,5],
+             "rotation":0,"children":["s"]},
+        "s":{"id":"s","type":"roof-segment","parentId":"r","position":[0,0,0],
+             "roofType":"gable","width":4,"depth":6,"pitch":45,"wallHeight":0}
+    },"rootNodeIds":["l0"]}"#;
+
+    // Not `bounds`: that one drops x/z translation because a wall carries its
+    // plan position inside the mesh, but a roof is a `hull` whose position sits
+    // on the node -- which is the very thing under test.
+    let g = build(json);
+    let (mut lo, mut hi) = ([f32::INFINITY; 3], [f32::NEG_INFINITY; 3]);
+    for n in g.nodes.iter().filter(|n| n.name.starts_with("roof")) {
+        let Some(mesh) = &n.mesh else { continue };
+        let t = n.transform.translation;
+        for p in &mesh.positions {
+            for (a, v) in [p[0] + t.x, p[1] + t.y, p[2] + t.z].iter().enumerate() {
+                lo[a] = lo[a].min(*v);
+                hi[a] = hi[a].max(*v);
+            }
+        }
+    }
+    assert!(lo[0].is_finite(), "no roof mesh emitted");
+    let [x, y, z] = [[lo[0], hi[0]], [lo[1], hi[1]], [lo[2], hi[2]]];
+    let mid = |[lo, hi]: [f32; 2]| 0.5 * (lo + hi);
+    assert!((mid(x) - 10.0).abs() < 1e-3, "x centred at {}, want 10", mid(x));
+    assert!((mid(z) - 5.0).abs() < 1e-3, "z centred at {}, want 5", mid(z));
+    // The eaves sit on the container's Y; the ridge rises 2 m above them
+    // (half of a 4 m span at 45°).
+    assert!((y[0] - 3.0).abs() < 1e-3, "eaves at {}, want 3", y[0]);
+    assert!((y[1] - 5.0).abs() < 1e-3, "ridge at {}, want 5", y[1]);
+}

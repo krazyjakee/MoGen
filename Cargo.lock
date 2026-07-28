@@ -2786,6 +2786,8 @@ version = "0.1.11"
 dependencies = [
  "mogen-core",
  "mogen-dsl",
+ "mogen-geom",
+ "mogen-validate",
  "serde",
  "serde_json",
 ]

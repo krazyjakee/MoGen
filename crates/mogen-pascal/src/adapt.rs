@@ -135,7 +135,7 @@ pub fn to_model(scene: &Scene) -> (ArchModel, Report) {
             "wall" => add_wall(scene, node, level, &mut model, &mut report),
             "slab" => add_slab(node, level, &mut model, &mut report),
             "ceiling" => add_ceiling(node, level, &mut model, &mut report),
-            "roof-segment" => add_segment(node, level, &mut model, &mut report),
+            "roof-segment" => add_segment(scene, node, level, &mut model, &mut report),
             // A legacy roof carries its shape directly instead of in children.
             "roof" => add_legacy_roof(node, level, &mut model, &mut report),
 
@@ -261,19 +261,52 @@ fn add_ceiling(node: &Node, level: LevelId, m: &mut ArchModel, r: &mut Report) {
     r.ceilings += 1;
 }
 
-fn add_segment(node: &Node, level: LevelId, m: &mut ArchModel, r: &mut Report) {
+/// A `roof-segment`, moved into its parent `roof`'s frame.
+///
+/// The `roof` node is a container, so nothing is emitted *for* it — but it
+/// still carries a transform, and its segments are positioned relative to that.
+/// Reading only the segment's own position leaves the roof at the world origin
+/// instead of over the house. The editor's own demo scene keeps its roof
+/// containers at the origin, which is exactly why this hid: the offset is zero
+/// there, and a real project is the first thing that moves one.
+///
+/// Applied the way a transform composes — the container's rotation turns the
+/// segment's offset *and* adds to its own heading — and the container's Y folds
+/// into `wall_height`, which is where [`arch`] adds the segment's base above
+/// its level plane.
+fn add_segment(
+    scene: &Scene,
+    node: &Node,
+    level: LevelId,
+    m: &mut ArchModel,
+    r: &mut Report,
+) {
+    let parent = node
+        .parent_id
+        .as_ref()
+        .and_then(|id| scene.nodes.get(id))
+        .filter(|p| p.kind == "roof");
+    let (px, py, pz, prot) = match parent {
+        Some(p) => (p.pos(0), p.pos(1), p.pos(2), p.rotation_y()),
+        None => (0.0, 0.0, 0.0, 0.0),
+    };
+    let (sin, cos) = prot.sin_cos();
+    let (lx, lz) = (node.pos(0), node.pos(2));
+    // +Y rotation in their plan coords, matching `arch::plan`.
+    let centre = [px + lx * cos + lz * sin, pz - lx * sin + lz * cos];
+
     let d = RoofParams::default();
     m.push_roof(RoofSegment {
         id: RoofId(0),
         level,
-        centre: [node.pos(0), node.pos(2)],
+        centre,
         width: node.width.unwrap_or(0.0),
         depth: node.depth.unwrap_or(0.0),
-        rotation: node.rotation_y(),
+        rotation: node.rotation_y() + prot,
         pitch_deg: node.pitch.unwrap_or(40.0),
         roof_type: roof_type(node.roof_type.as_deref()),
         overhang: node.overhang.unwrap_or(0.0),
-        wall_height: node.wall_height.unwrap_or(0.0),
+        wall_height: node.wall_height.unwrap_or(0.0) + py,
         params: RoofParams {
             gambrel_lower_width: node.gambrel_lower_width.unwrap_or(d.gambrel_lower_width),
             gambrel_lower_height: node.gambrel_lower_height.unwrap_or(d.gambrel_lower_height),

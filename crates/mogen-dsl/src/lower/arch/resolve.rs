@@ -22,10 +22,10 @@
 //! importer can put them in the generated file's header.
 
 use super::height::{self, HeightError};
-use super::ir::{ArchModel, LevelId, Opening, Polygon, Wall};
+use super::ir::{ArchModel, LevelId, Opening, OpeningKind, Polygon, Wall};
 use super::miter::{self, FootprintError, JunctionFiller, WallFootprint};
-use super::openings::solid_panels;
-use super::resolved::{Placement, ResolvedGeometry, Role, Shape, Solid};
+use super::openings::{clipped_hole, solid_panels};
+use super::resolved::{OpeningInstance, Placement, ResolvedGeometry, Role, Shape, Solid};
 use super::roof;
 use super::validate;
 use super::{curve, junction};
@@ -97,11 +97,17 @@ pub(super) fn solve(model: &ArchModel) -> ResolvedGeometry {
     }
 
     for seg in &model.roofs {
-        let solids = roof::solids(model, seg);
-        if solids.is_empty() {
+        let roof = roof::solids(model, seg);
+        if roof.solids.is_empty() {
             out.warnings.push(format!("roof {}: produced no geometry", seg.id.0));
         }
-        out.solids.extend(solids);
+        if let Some(by) = roof.raised {
+            out.warnings.push(format!(
+                "roof {}: eave sat {by:.3}m below the walls under it; raised to meet them",
+                seg.id.0
+            ));
+        }
+        out.solids.extend(roof.solids);
     }
 
     out
@@ -128,14 +134,16 @@ fn emit_wall(model: &ArchModel, wall: &Wall, fp: &WallFootprint, out: &mut Resol
         return;
     }
 
+    // Panel Y is measured from the wall's mid-height.
+    let mid = span.base + 0.5 * height_m;
+    emit_openings(wall, length, height_m, mid, out);
+
     for (i, panel) in panels.iter().enumerate() {
         // Panel X runs -length/2 .. +length/2; the footprint runs 0 .. 1.
         let t0 = (panel.x0 / length + 0.5).clamp(0.0, 1.0);
         let t1 = (panel.x1 / length + 0.5).clamp(0.0, 1.0);
         let ring = fp.slice(t0, t1);
 
-        // Panel Y is measured from the wall's mid-height.
-        let mid = span.base + 0.5 * height_m;
         let shape = Shape::Prism {
             poly: Polygon { outer: ring, holes: Vec::new() },
             base: mid + panel.y0,
@@ -163,6 +171,63 @@ fn emit_wall(model: &ArchModel, wall: &Wall, fp: &WallFootprint, out: &mut Resol
     }
 }
 
+/// Place a door or window in every hole this wall's panels left behind.
+///
+/// The pose comes off the centreline rather than off the panels either side:
+/// on a curved wall the two piers face different directions, and splitting the
+/// difference is the only answer that puts the leaf square in its own doorway.
+///
+/// A [`OpeningKind::Passage`] is a hole someone wanted to stay a hole, and a
+/// [`OpeningKind::Niche`] has no leaf either — neither gets an instance.
+fn emit_openings(
+    wall: &Wall,
+    length: f32,
+    height_m: f32,
+    mid: f32,
+    out: &mut ResolvedGeometry,
+) {
+    let (s, e) = junction::ends(wall);
+    let offset = wall.curve_offset.unwrap_or(0.0);
+    // Per-kind, so adding a window to a wall does not renumber its door.
+    let (mut doors, mut windows) = (0u32, 0u32);
+
+    for opening in &wall.openings {
+        let label = match opening.kind {
+            OpeningKind::Door => "door",
+            OpeningKind::Window => "window",
+            OpeningKind::Passage | OpeningKind::Niche => continue,
+        };
+        let hole = hole_of(opening, length, height_m);
+        let Some([cx, cy, width, height]) = clipped_hole(length, height_m, hole) else {
+            continue;
+        };
+
+        // `cx` is measured from the wall's mid-length; the centreline runs
+        // 0 → 1 over the same arc.
+        let frame = curve::frame_at(s, e, offset, cx / length + 0.5);
+        // Their normal, as in `curve::chord_frame`: the wall's face direction.
+        let normal = [-frame.tangent[1], frame.tangent[0]];
+
+        let n = match opening.kind {
+            OpeningKind::Door => &mut doors,
+            _ => &mut windows,
+        };
+        out.openings.push(OpeningInstance {
+            name: format!("wall_{}_{label}{n}", wall.id.0),
+            kind: opening.kind,
+            level: wall.level,
+            // Both stdlib modules are anchored at the sill, so this is the
+            // bottom of the hole and not its centre.
+            position: [frame.point[0], mid + cy - 0.5 * height, frame.point[1]],
+            // The +Y rotation taking local +Z onto `normal`.
+            rotation: normal[0].atan2(normal[1]),
+            width,
+            height,
+        });
+        *n += 1;
+    }
+}
+
 /// Convert the IR's openings into the `[along, centre_y, w, h]` holes
 /// [`solid_panels`] expects.
 ///
@@ -170,17 +235,16 @@ fn emit_wall(model: &ArchModel, wall: &Wall, fp: &WallFootprint, out: &mut Resol
 /// wall's start but the panel frame is centred, and `sill` is the opening's
 /// bottom edge while the panel frame wants its centre.
 fn holes(wall: &Wall, length: f32, height_m: f32) -> Vec<[f32; 4]> {
-    wall.openings
-        .iter()
-        .map(|o: &Opening| {
-            [
-                o.along - 0.5 * length,
-                o.sill + 0.5 * o.height - 0.5 * height_m,
-                o.width,
-                o.height,
-            ]
-        })
-        .collect()
+    wall.openings.iter().map(|o| hole_of(o, length, height_m)).collect()
+}
+
+fn hole_of(o: &Opening, length: f32, height_m: f32) -> [f32; 4] {
+    [
+        o.along - 0.5 * length,
+        o.sill + 0.5 * o.height - 0.5 * height_m,
+        o.width,
+        o.height,
+    ]
 }
 
 /// Patch a butt-jointed corner, over the range where both its walls exist.
@@ -400,6 +464,105 @@ mod tests {
         // Two piers and a lintel; no sill, because the door meets the floor.
         assert_eq!(panels.len(), 3, "{panels:?}");
         assert!(g.check().is_empty(), "{:?}", g.check());
+    }
+
+    #[test]
+    fn a_door_is_placed_in_the_hole_its_panels_left() {
+        // The wall runs along z = 0 from x = 0 to x = 6. A door 3 m along it
+        // belongs on the centreline at the floor, facing across the wall — not
+        // at the wall's face, and not at the opening's mid-height, which is
+        // where the IR keeps it.
+        let mut m = model();
+        let ids = room(&mut m, 6.0, 4.0);
+        m.walls[ids[0].0 as usize].openings.push(Opening {
+            kind: OpeningKind::Door,
+            along: 3.0,
+            sill: 0.0,
+            width: 0.9,
+            height: 2.1,
+        });
+
+        let g = solve(&m);
+        assert_eq!(g.openings.len(), 1, "{:?}", g.openings);
+        let o = &g.openings[0];
+        assert_eq!(o.name, "wall_0_door0");
+        assert_eq!(o.kind, OpeningKind::Door);
+        assert_eq!(o.position, [3.0, 0.0, 0.0]);
+        assert_eq!((o.width, o.height), (0.9, 2.1));
+        // Square across the wall: this one runs along +X, so its normal is +Z
+        // and the leaf needs no turn at all.
+        assert_eq!(o.rotation, 0.0);
+
+        // ...and the wall beside it does need one. A pose that came out the
+        // same for both would mean the rotation was not being read at all.
+        m.walls[ids[1].0 as usize].openings.push(Opening {
+            kind: OpeningKind::Door,
+            along: 2.0,
+            sill: 0.0,
+            width: 0.9,
+            height: 2.1,
+        });
+        let g = solve(&m);
+        let side = g.openings.iter().find(|o| o.name == "wall_1_door0").expect("second door");
+        assert!(
+            (side.rotation.abs() - std::f32::consts::FRAC_PI_2).abs() < 1e-5,
+            "{side:?}"
+        );
+    }
+
+    #[test]
+    fn a_passage_stays_a_hole() {
+        // `Passage` is the IR's way of saying "leave it open". Filling one
+        // would wall up every archway in the building.
+        let mut m = model();
+        let ids = room(&mut m, 6.0, 4.0);
+        m.walls[ids[0].0 as usize].openings.push(Opening {
+            kind: OpeningKind::Passage,
+            along: 3.0,
+            sill: 0.0,
+            width: 0.9,
+            height: 2.1,
+        });
+        assert!(solve(&m).openings.is_empty());
+    }
+
+    #[test]
+    fn an_opening_that_was_never_cut_gets_no_door() {
+        // A door hanging off the end of its wall cuts nothing, so filling it
+        // would leave a leaf floating beside the building.
+        let mut m = model();
+        let ids = room(&mut m, 6.0, 4.0);
+        m.walls[ids[0].0 as usize].openings.push(Opening {
+            kind: OpeningKind::Door,
+            along: 40.0,
+            sill: 0.0,
+            width: 0.9,
+            height: 2.1,
+        });
+        let g = solve(&m);
+        assert!(g.openings.is_empty(), "{:?}", g.openings);
+        assert_eq!(g.solids.len(), 4, "and the wall is still whole");
+    }
+
+    #[test]
+    fn a_clipped_opening_is_filled_at_the_size_it_was_actually_cut() {
+        // Half a window over the end of a wall leaves half a hole. The leaf
+        // has to match the hole, or it hangs out past the corner.
+        let mut m = model();
+        let ids = room(&mut m, 6.0, 4.0);
+        m.walls[ids[0].0 as usize].openings.push(Opening {
+            kind: OpeningKind::Window,
+            along: 6.0,
+            sill: 1.0,
+            width: 1.2,
+            height: 1.0,
+        });
+
+        let g = solve(&m);
+        assert_eq!(g.openings.len(), 1);
+        let o = &g.openings[0];
+        assert!((o.width - 0.6).abs() < 1e-5, "{o:?}");
+        assert!((o.position[0] - 5.7).abs() < 1e-5, "{o:?}");
     }
 
     #[test]

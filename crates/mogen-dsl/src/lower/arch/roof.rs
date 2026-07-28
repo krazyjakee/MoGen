@@ -41,10 +41,21 @@
 //! [`resolved::Placement`] so an author can turn a roof without every
 //! coordinate in the file changing.
 
-use super::consts::MIN_PANEL;
+use super::consts::{CONNECTIVITY_SLOP, MIN_PANEL};
+use super::curve;
 use super::ir::{ArchModel, RoofSegment, RoofType};
+use super::junction;
 use super::resolved::{Placement, Role, Shape, Solid, P3};
 use super::height;
+
+/// One segment's worth of roof, plus what had to be corrected to place it.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct RoofSolids {
+    pub solids: Vec<Solid>,
+    /// How far the eave was lifted to clear the walls under it, if at all.
+    /// The caller turns this into a warning; the geometry is already correct.
+    pub raised: Option<f32>,
+}
 
 /// A rectangle centred on the local origin, given as half-extents. A zero
 /// half-extent is a legitimate degenerate case: a ridge, or an apex.
@@ -94,16 +105,27 @@ impl Tier {
 /// Returns an empty vector for a degenerate segment rather than emitting a
 /// shape that will fail downstream — the caller reports it as a warning. Every
 /// shape returned has already passed [`Shape::check`].
-pub(super) fn solids(model: &ArchModel, seg: &RoofSegment) -> Vec<Solid> {
+pub(super) fn solids(model: &ArchModel, seg: &RoofSegment) -> RoofSolids {
     let Ok(plane) = height::level_plane_y(model, seg.level).ok_or(()) else {
-        return Vec::new();
+        return RoofSolids { solids: Vec::new(), raised: None };
     };
+
+    // Where the producer asked for the eave, and where the walls will actually
+    // let it sit. Only ever raised: a roof floating above its walls is a knee
+    // wall someone meant, but a roof *below* them is a row of walls poking out
+    // through the slopes, and nothing downstream can tell that from a design.
+    let wanted = plane + seg.wall_height;
+    let eave = match supported_top(model, seg) {
+        Some(top) if top > wanted => top,
+        _ => wanted,
+    };
+    let raised = (eave > wanted).then_some(eave - wanted);
 
     // The eave footprint is the segment grown by its overhang on every side.
     let hw = 0.5 * seg.width + seg.overhang;
     let hd = 0.5 * seg.depth + seg.overhang;
     if hw <= MIN_PANEL || hd <= MIN_PANEL {
-        return Vec::new();
+        return RoofSolids { solids: Vec::new(), raised: None };
     }
     let base = Rect { hw, hd };
 
@@ -120,7 +142,9 @@ pub(super) fn solids(model: &ArchModel, seg: &RoofSegment) -> Vec<Solid> {
             upper: base,
             upper_y: 0.0,
         }],
-        RoofType::Shed => return shed(seg, base, rise, plane),
+        RoofType::Shed => {
+            return RoofSolids { solids: shed(seg, base, rise, eave), raised }
+        }
         RoofType::Gable => vec![Tier { lower: base, lower_y: 0.0, upper: ridge(base, 0.0), upper_y: rise }],
         RoofType::Hip => {
             vec![Tier { lower: base, lower_y: 0.0, upper: ridge(base, half_run), upper_y: rise }]
@@ -142,7 +166,45 @@ pub(super) fn solids(model: &ArchModel, seg: &RoofSegment) -> Vec<Solid> {
         RoofType::Dutch => dutch(base, rise, half_run, seg),
     };
 
-    finish(seg, tiers, plane)
+    RoofSolids { solids: finish(seg, tiers, eave), raised }
+}
+
+/// The highest top among the walls this segment covers, or `None` if it
+/// covers none.
+///
+/// "Covers" is the whole of a wall's centreline lying inside the eave
+/// rectangle, and the *whole* is what makes it discriminating. A roof drawn to
+/// its building's footprint has every perimeter centreline running along its
+/// edge, so it holds them all up. A porch roof tucked against a two-storey
+/// wall does not: that wall runs on past the porch, so the porch keeps the
+/// height it was given instead of jumping to the house's eaves.
+///
+/// Testing the centreline rather than the footprint is deliberate. A wall's
+/// faces sit half a thickness either side of it, so a roof sized exactly to
+/// its walls — the ordinary case — never quite contains them, and a footprint
+/// test would hold up nothing at all.
+fn supported_top(model: &ArchModel, seg: &RoofSegment) -> Option<f32> {
+    let (sin, cos) = seg.rotation.sin_cos();
+    let hw = 0.5 * seg.width + seg.overhang + CONNECTIVITY_SLOP;
+    let hd = 0.5 * seg.depth + seg.overhang + CONNECTIVITY_SLOP;
+
+    model
+        .walls
+        .iter()
+        .filter(|w| {
+            let (s, e) = junction::ends(w);
+            curve::sample_centreline(s, e, w.curve_offset).iter().all(|p| {
+                // Undo the segment's placement: `ry` maps local (x, z) to
+                // world (x·cos + z·sin, −x·sin + z·cos), so this is its
+                // inverse.
+                let (dx, dz) = (p[0] - seg.centre[0], p[1] - seg.centre[1]);
+                let (lx, lz) = (dx * cos - dz * sin, dx * sin + dz * cos);
+                lx.abs() <= hw && lz.abs() <= hd
+            })
+        })
+        .filter_map(|w| height::wall_span(model, w).ok())
+        .map(|span| span.top)
+        .reduce(f32::max)
 }
 
 /// The ridge of a hipped or gabled roof: the base rectangle with its **short**
@@ -208,7 +270,7 @@ fn dutch(base: Rect, rise: f32, half_run: f32, seg: &RoofSegment) -> Vec<Tier> {
 /// Not expressible as a `Tier`, whose upper rectangle is always centred. Built
 /// directly as the hull of the eave rectangle and the two raised corners along
 /// +Z.
-fn shed(seg: &RoofSegment, base: Rect, rise: f32, plane: f32) -> Vec<Solid> {
+fn shed(seg: &RoofSegment, base: Rect, rise: f32, eave: f32) -> Vec<Solid> {
     let points = vec![
         [-base.hw, 0.0, -base.hd],
         [base.hw, 0.0, -base.hd],
@@ -221,11 +283,11 @@ fn shed(seg: &RoofSegment, base: Rect, rise: f32, plane: f32) -> Vec<Solid> {
         [-base.hw, -seg.params.deck_thickness, -base.hd],
         [base.hw, -seg.params.deck_thickness, -base.hd],
     ];
-    finish_shapes(seg, vec![Shape::Hull { points }], plane)
+    finish_shapes(seg, vec![Shape::Hull { points }], eave)
 }
 
-fn finish(seg: &RoofSegment, tiers: Vec<Tier>, plane: f32) -> Vec<Solid> {
-    finish_shapes(seg, tiers.iter().map(Tier::hull).collect(), plane)
+fn finish(seg: &RoofSegment, tiers: Vec<Tier>, eave: f32) -> Vec<Solid> {
+    finish_shapes(seg, tiers.iter().map(Tier::hull).collect(), eave)
 }
 
 /// Wrap shapes as solids, dropping any that fail their own closure check.
@@ -234,9 +296,9 @@ fn finish(seg: &RoofSegment, tiers: Vec<Tier>, plane: f32) -> Vec<Solid> {
 /// so its hull is flat — and a flat hull is an empty mesh, not an error, which
 /// is exactly the silent hole this whole layer exists to prevent. Dropping it
 /// here means the roof loses a tier it could never have rendered anyway.
-fn finish_shapes(seg: &RoofSegment, shapes: Vec<Shape>, plane: f32) -> Vec<Solid> {
+fn finish_shapes(seg: &RoofSegment, shapes: Vec<Shape>, eave: f32) -> Vec<Solid> {
     let placement = Placement {
-        translation: [seg.centre[0], plane + seg.wall_height, seg.centre[1]],
+        translation: [seg.centre[0], eave, seg.centre[1]],
         rotation: seg.rotation,
     };
     let multi = shapes.len() > 1;
@@ -263,9 +325,17 @@ fn finish_shapes(seg: &RoofSegment, shapes: Vec<Shape>, plane: f32) -> Vec<Solid
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::lower::arch::ir::{Level, LevelId, ModelSource, RoofId, RoofParams};
+    use crate::lower::arch::ir::{
+        Level, LevelId, ModelSource, RoofId, RoofParams, Wall, WallId,
+    };
 
     const EPS: f32 = 1e-4;
+
+    /// Most of these tests only care about the shapes, so they read the
+    /// shapes. The eave-raising cases below call `super::solids` directly.
+    fn solids(m: &ArchModel, seg: &RoofSegment) -> Vec<Solid> {
+        super::solids(m, seg).solids
+    }
 
     fn model() -> ArchModel {
         let mut m = ArchModel::new(ModelSource::PascalEditor);
@@ -516,6 +586,96 @@ mod tests {
 
         assert_eq!(points(&rotated[0]), points(&square[0]), "points must not move");
         assert_eq!(rotated[0].placement.rotation, 0.7);
+    }
+
+    /// A room of `top`-tall walls centred on the origin, `w` × `d` between
+    /// centrelines.
+    fn walled(m: &mut ArchModel, w: f32, d: f32, top: f32) {
+        let (hw, hd) = (0.5 * w, 0.5 * d);
+        let c = [[-hw, -hd], [hw, -hd], [hw, hd], [-hw, hd]];
+        for i in 0..4 {
+            m.push_wall(Wall {
+                id: WallId(0),
+                level: LevelId(0),
+                start: c[i],
+                end: c[(i + 1) % 4],
+                thickness: 0.3,
+                height: Some(top),
+                curve_offset: None,
+                openings: Vec::new(),
+                material: None,
+            });
+        }
+    }
+
+    fn eave(out: &RoofSolids) -> f32 {
+        out.solids[0].placement.translation[1]
+    }
+
+    #[test]
+    fn a_roof_that_would_sink_into_its_walls_is_lifted_onto_them() {
+        // The defect this exists for: an eave below the walls it covers puts a
+        // band of wall out through the slopes, and every one of those walls is
+        // a perfectly valid closed solid, so nothing downstream can tell it
+        // from a design.
+        let mut m = model();
+        walled(&mut m, 8.0, 5.0, 2.6);
+        let mut seg = segment(RoofType::Gable, 8.0, 5.0);
+        seg.wall_height = 0.0;
+
+        let out = super::solids(&m, &seg);
+        assert_eq!(eave(&out), 2.6, "the eave should rest on the wall tops");
+        assert_eq!(out.raised, Some(2.6));
+    }
+
+    #[test]
+    fn a_roof_already_clear_of_its_walls_is_left_where_it_was_put() {
+        // Only ever raised. A roof above its walls is a knee wall someone
+        // meant, and pulling it down would be the solver overruling a design.
+        let mut m = model();
+        walled(&mut m, 8.0, 5.0, 2.6);
+        let mut seg = segment(RoofType::Gable, 8.0, 5.0);
+        seg.wall_height = 3.4;
+
+        let out = super::solids(&m, &seg);
+        assert_eq!(eave(&out), 3.4);
+        assert_eq!(out.raised, None);
+    }
+
+    #[test]
+    fn a_porch_roof_is_not_hoisted_by_the_wall_it_abuts() {
+        // A 2 m porch against a two-storey wall. The wall's centreline runs
+        // along the porch's own edge, so anything testing *overlap* would lift
+        // the porch to 6 m; requiring the whole centreline is what keeps it at
+        // the height it was drawn.
+        let mut m = model();
+        walled(&mut m, 8.0, 5.0, 6.0);
+        let mut seg = segment(RoofType::Shed, 3.0, 2.0);
+        seg.centre = [0.0, -3.5];
+        seg.wall_height = 2.4;
+
+        let out = super::solids(&m, &seg);
+        assert_eq!(eave(&out), 2.4);
+        assert_eq!(out.raised, None);
+    }
+
+    #[test]
+    fn the_lift_follows_a_rotated_segment() {
+        // A segment turned a quarter turn covers a different set of walls, and
+        // reading its extents without undoing the rotation swaps them.
+        let mut m = model();
+        // A long thin room on Z: only a segment turned to match spans it.
+        walled(&mut m, 2.0, 12.0, 2.6);
+        let mut seg = segment(RoofType::Gable, 3.0, 14.0);
+        seg.wall_height = 0.0;
+        assert_eq!(super::solids(&m, &seg).raised, Some(2.6));
+
+        seg.rotation = std::f32::consts::FRAC_PI_2;
+        assert_eq!(
+            super::solids(&m, &seg).raised,
+            None,
+            "turned across the room, it covers no wall midpoint"
+        );
     }
 
     #[test]

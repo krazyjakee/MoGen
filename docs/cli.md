@@ -226,6 +226,66 @@ mogen dump-scene <input.mog> [--json]
 
 ---
 
+## `import`
+
+Convert a [pascalorg/editor](https://github.com/pascalorg/editor) scene
+into DSL source.
+
+```sh
+mogen import <scene.json> [--out <house.mog>] [--name <scene-name>]
+```
+
+| flag | meaning |
+|---|---|
+| `--out` | Output path. Defaults to `<input>.mog` beside the JSON. |
+| `--name` | Name for the emitted `scene`. Defaults to the output file stem. |
+
+Unlike `build`, this writes **`.mog` source, not a GLB** — the point of
+importing is to get something you can then edit.
+
+Walls, slabs, ceilings, roofs and openings become geometry; furniture and
+fixtures become POI markers rather than meshes, matching the convention the
+procedural generators already use. A door or window comes back as the hole
+*and* the thing in it — a posed group wrapping `use "door_simple"` /
+`use "window_simple"` — so re-aiming every door in the building is a one-word
+edit rather than a modelling job. Node kinds we don't model (MEP, cabinets,
+drawing sheets, guides) are *reported*, never fatal: their format has no
+version field and plugins can register their own kinds, so refusing to open a
+file because of one unknown node would be wrong.
+
+Everything the importer could not use is written into the output's header as
+a comment, so a partly-understood scene still opens and the gaps are diffable:
+
+```
+// Imported from a pascalorg/editor scene as "gatehouse".
+// 26 walls · 3 slabs · 3 ceilings · 2 roof segments · 12 markers
+// Skipped 2 nodes: site (1), guide (1)
+//
+// 7 item(s) needed attention:
+//   wall 25: curves tighter than its own thickness, dropped
+//   slab_2: HoleOutsideOuter, dropped
+//   roof 0: eave sat 0.800m below the walls under it; raised to meet them
+//   …
+```
+
+Not everything in that list is a refusal — the roof line above is a
+*correction*. A roof placed below the walls it covers leaves them poking out
+through its slopes, and since every one of those walls is still a valid closed
+solid, nothing further down the pipeline would notice. The eave is lifted onto
+the wall tops and the move is reported.
+
+Those `dropped` lines are worth reading rather than ignoring. Their editor
+tolerates plan polygons that self-intersect or whose holes hang outside the
+outer ring; we cannot, because a hole in the input becomes a hole in the
+output mesh. A dropped shape is a deliberate refusal to emit unwatertight
+geometry, not a parse failure.
+
+`examples/buildings/gatehouse.pascal.json` is a worked example — a two-storey
+cross-gabled house that deliberately includes several of these defects. See
+that folder's `README.md`.
+
+---
+
 ## `inspect`
 
 Read a GLB and print its top-level structure: scenes, meshes, materials,

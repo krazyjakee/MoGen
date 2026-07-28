@@ -39,9 +39,11 @@
 
 use std::fmt::Write as _;
 
-use super::super::ir::{MatRef, Marker};
+use super::super::ir::{MatRef, Marker, OpeningKind};
 use super::super::plan;
-use super::super::resolved::{MaterialDecl, Placement, ResolvedGeometry, Shape, Solid, P3};
+use super::super::resolved::{
+    MaterialDecl, OpeningInstance, Placement, ResolvedGeometry, Shape, Solid, P3,
+};
 
 /// How far a `difference` cutter over-runs the solid it cuts, top and bottom.
 ///
@@ -49,6 +51,17 @@ use super::super::resolved::{MaterialDecl, Placement, ResolvedGeometry, Shape, S
 /// slivers, so the cutter is deliberately taller than the thing it passes
 /// through.
 const CUT_OVERRUN: f32 = 0.01;
+
+/// The stdlib modules an opening is filled with. Both are authored
+/// bottom-anchored in the wall plane with +Z outward, which is the contract
+/// [`OpeningInstance`]'s pose is written against.
+const DOOR_MODULE: &str = "door_simple";
+const WINDOW_MODULE: &str = "window_simple";
+
+/// Material bound on a door's wrapper group so the stdlib slab picks it up.
+const DOOR_LEAF_MAT: &str = "door_leaf";
+/// The same for a window's pane. Named as the `building` generator names it.
+const WINDOW_GLASS_MAT: &str = "window_glass";
 
 /// Render a whole file: header comments, material declarations, then the scene.
 ///
@@ -62,6 +75,7 @@ pub(in crate::lower::arch) fn write_mog(
     g: &ResolvedGeometry,
 ) -> String {
     let mut s = String::new();
+    let materials = with_opening_materials(materials, g);
     let declared: Vec<&str> = materials.iter().map(|m| m.name.as_str()).collect();
 
     // A `mat=` naming a material the file never declares is a hard lowering
@@ -105,7 +119,7 @@ pub(in crate::lower::arch) fn write_mog(
         s.push('\n');
     }
 
-    for m in materials {
+    for m in &materials {
         let _ = writeln!(s, "{}", material_line(m));
     }
     if !materials.is_empty() {
@@ -116,7 +130,8 @@ pub(in crate::lower::arch) fn write_mog(
 
     // Grouped by level, in order, so the file reads like a building rather
     // than like a dump.
-    let mut levels: Vec<_> = g.solids.iter().map(|s| s.level).collect();
+    let mut levels: Vec<_> =
+        g.solids.iter().map(|s| s.level).chain(g.openings.iter().map(|o| o.level)).collect();
     levels.sort_unstable();
     levels.dedup();
 
@@ -126,6 +141,9 @@ pub(in crate::lower::arch) fn write_mog(
             for line in solid_lines(solid, &declared) {
                 let _ = writeln!(s, "    {line}");
             }
+        }
+        for opening in g.openings.iter().filter(|o| o.level == level) {
+            let _ = writeln!(s, "    {}", opening_line(opening));
         }
         let _ = writeln!(s, "  }}");
     }
@@ -248,6 +266,90 @@ fn common_attrs(
     }
 
     format!(", {}", attrs.join(", "))
+}
+
+/// A door or window, as a posed `group` wrapping a stdlib `use`.
+///
+/// Why a module rather than boxes written out here: the point of importing to
+/// source is that the result is editable, and `use "door_simple"` is one word
+/// away from `use "my_oak_door"` for every door in the building at once.
+/// Writing the leaf and its frame as literal boxes would be five lines per
+/// opening that nobody could re-aim.
+///
+/// Both stdlib modules are authored bottom-anchored in the wall plane with +Z
+/// out, which is exactly what [`OpeningInstance`] promises, so the wrapper
+/// carries the pose and the module carries the shape.
+fn opening_line(o: &OpeningInstance) -> String {
+    let (module, role, mat) = match o.kind {
+        OpeningKind::Door => (DOOR_MODULE, "door", DOOR_LEAF_MAT),
+        _ => (WINDOW_MODULE, "window", WINDOW_GLASS_MAT),
+    };
+
+    let mut attrs = vec![format!(
+        "pos=[{}, {}, {}]",
+        num(o.position[0]),
+        num(o.position[1]),
+        num(o.position[2])
+    )];
+    if o.rotation != 0.0 {
+        attrs.push(format!("ry={}", num(o.rotation.to_degrees())));
+    }
+    attrs.push(format!("role={}", quote(role)));
+    // Bound on the wrapper, not the module: the leaf and the pane carry no
+    // `mat=` of their own precisely so the caller can choose one here, the
+    // same way the `building` generator does.
+    attrs.push(format!("mat={}", quote(mat)));
+
+    format!(
+        "group {} ({}) {{ use {} (width={}, height={}) }}",
+        quote(&o.name),
+        attrs.join(", "),
+        quote(module),
+        num(o.width),
+        num(o.height)
+    )
+}
+
+/// Declare the materials the emitted `use` lines depend on, unless the
+/// producer already named them.
+///
+/// The stdlib modules bind `mat="door_frame"` / `mat="window_frame"`
+/// internally, and an unknown material name is a **hard** lowering error — so
+/// emitting a door without these turns the whole file into a build failure
+/// rather than an unpainted door. They belong here rather than in a producer
+/// because it is this sink that decides to write `use` at all.
+///
+/// Colours match the `building` generator's defaults, so an imported house and
+/// a generated one read alike side by side. The leaf gets its own name rather
+/// than the generator's `ext_door` / `int_door` pair: the IR carries no
+/// inside/outside flag, and picking one of those two would be a claim no
+/// producer has made.
+fn with_opening_materials(materials: &[MaterialDecl], g: &ResolvedGeometry) -> Vec<MaterialDecl> {
+    let mut out = materials.to_vec();
+    let has = |kind: fn(OpeningKind) -> bool| g.openings.iter().any(|o| kind(o.kind));
+
+    let mut wanted: Vec<(&str, [f32; 3], f32)> = Vec::new();
+    if has(|k| matches!(k, OpeningKind::Door)) {
+        wanted.push(("door_frame", [0.92, 0.91, 0.88], 0.6));
+        wanted.push((DOOR_LEAF_MAT, [0.40, 0.22, 0.10], 0.55));
+    }
+    if has(|k| matches!(k, OpeningKind::Window)) {
+        wanted.push(("window_frame", [0.95, 0.95, 0.95], 0.4));
+        wanted.push((WINDOW_GLASS_MAT, [0.72, 0.86, 0.95], 0.05));
+    }
+
+    for (name, color, roughness) in wanted {
+        if out.iter().any(|m| m.name == name) {
+            continue;
+        }
+        out.push(MaterialDecl {
+            name: name.to_string(),
+            color: Some(color),
+            roughness: Some(roughness),
+            ..Default::default()
+        });
+    }
+    out
 }
 
 /// A marker, as an empty `group` carrying its role and tags.

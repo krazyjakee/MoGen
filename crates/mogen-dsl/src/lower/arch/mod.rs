@@ -31,10 +31,10 @@
 
 // Both sinks are wired in now, so most of this is live. What stays
 // unreferenced is IR surface one producer needs and the other does not:
-// `curve::sample_centreline` and `plan::offset_polyline` serve curved walls,
-// which only the importer can express, and `Role::GableWall` waits on a roof
-// port that was deliberately not done. Deleting them would mean writing them
-// again for the next producer, so they stay — and the allow is what keeps that
+// `plan::offset_polyline` and `plan::left_normal` serve curved walls, which
+// only the importer can express, and `Role::GableWall` waits on a roof port
+// that was deliberately not done. Deleting them would mean writing them again
+// for the next producer, so they stay — and the allow is what keeps that
 // handful from drowning a warning that matters.
 #![allow(dead_code)]
 
