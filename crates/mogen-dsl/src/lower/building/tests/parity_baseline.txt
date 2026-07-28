@@ -5,12 +5,12 @@
 tree ac7d07ac74e0ea50 n=265
 poi  98bb819ea2a81251 n=102
 slot dc7aead62e5cccb5 n=17
-aabb 200c5ac8a3414273 n=102
+aabb 820e269902f7f183 n=102
 role - n=78 vol=1.2883
 role ceiling n=1 vol=37.3189
-role exterior_wall n=4 vol=16.0604
+role exterior_wall n=4 vol=15.9103
 role floor n=1 vol=37.3189
-role interior_wall n=10 vol=13.2359
+role interior_wall n=10 vol=13.2136
 role service_wall n=4 vol=2.2155
 role shaft_wall n=4 vol=1.0342
 
@@ -18,9 +18,9 @@ role shaft_wall n=4 vol=1.0342
 tree 37e806617185bad9 n=467
 poi  6ef84cbfe75e9e0d n=198
 slot a09e469a4fce4c56 n=20
-aabb 70da88eef6a209a3 n=176
+aabb 4dec41cb9d35b3ab n=176
 role - n=122 vol=2.8648
-role exterior_wall n=12 vol=50.6507
+role exterior_wall n=12 vol=50.2003
 role floor n=3 vol=107.9494
 role gable_wall n=2 vol=4.5987
 role handrail n=7 vol=0.3448
@@ -34,9 +34,9 @@ role stair_landing n=2 vol=0.3200
 tree 9294ef8ad776e65c n=347
 poi  870341954b326776 n=154
 slot 6c355d8da5189dc9 n=14
-aabb 591a786ef924e6ed n=123
+aabb fe650e04c603945d n=123
 role - n=82 vol=1.6681
-role exterior_wall n=8 vol=33.3557
+role exterior_wall n=8 vol=33.0553
 role floor n=2 vol=72.6341
 role gable_wall n=2 vol=4.5987
 role handrail n=4 vol=0.1909
@@ -50,9 +50,9 @@ role stair_landing n=1 vol=0.1600
 tree 4bcbe823c784ba11 n=584
 poi  7328013a81fa2e42 n=242
 slot c2c9c0a00296659c n=26
-aabb fb939fee854b24da n=226
+aabb 3de3656454889e8a n=226
 role - n=162 vol=4.0615
-role exterior_wall n=16 vol=67.9460
+role exterior_wall n=16 vol=67.3454
 role floor n=4 vol=143.2647
 role handrail n=10 vol=0.4987
 role interior_wall n=4 vol=13.1727
@@ -65,11 +65,11 @@ role stair_landing n=3 vol=0.4800
 tree 47446354dc35c2c5 n=259
 poi  29edb6f2ee8bbabd n=100
 slot b862a575649af914 n=16
-aabb d043f209090ddda6 n=99
+aabb b1737c4d23525f96 n=99
 role - n=74 vol=1.1976
-role exterior_wall n=4 vol=16.0604
+role exterior_wall n=4 vol=15.9103
 role floor n=1 vol=37.3189
-role interior_wall n=10 vol=13.2428
+role interior_wall n=10 vol=13.2137
 role roof n=2 vol=698.5599
 role service_wall n=4 vol=2.4423
 role shaft_wall n=4 vol=1.0342
@@ -78,9 +78,9 @@ role shaft_wall n=4 vol=1.0342
 tree e813a4470afaf1bc n=443
 poi  83b4518d2cd8bfce n=195
 slot 4dace627f7baaf8b n=17
-aabb ea43fb0967343683 n=161
+aabb 3dbb928aab32a663 n=161
 role - n=110 vol=2.5925
-role exterior_wall n=12 vol=50.6508
+role exterior_wall n=12 vol=50.2003
 role floor n=3 vol=107.9494
 role handrail n=7 vol=0.3449
 role interior_wall n=5 vol=16.9195
@@ -93,13 +93,13 @@ role stair_landing n=2 vol=0.3200
 tree b1ced44f677014df n=379
 poi  d1727396a6c07f2b n=150
 slot 588c621b404b72b3 n=20
-aabb f91df79068568962 n=148
+aabb 7ffd6975c817c70a n=148
 role - n=106 vol=2.2127
 role ceiling n=1 vol=37.3189
-role exterior_wall n=8 vol=33.3556
+role exterior_wall n=8 vol=33.0553
 role floor n=2 vol=72.6341
 role handrail n=4 vol=0.1910
-role interior_wall n=10 vol=14.3218
+role interior_wall n=10 vol=14.3116
 role service_wall n=8 vol=4.4310
 role shaft_wall n=8 vol=4.3925
 role stair_landing n=1 vol=0.1600
@@ -108,9 +108,9 @@ role stair_landing n=1 vol=0.1600
 tree bb127d16a1e6aa42 n=546
 poi  128669a85c0106de n=225
 slot b78f4b7c32d50209 n=22
-aabb 06b5f92ea095fe47 n=213
+aabb 2fef16f1b5bb6b37 n=213
 role - n=146 vol=3.6984
-role exterior_wall n=16 vol=67.9460
+role exterior_wall n=16 vol=67.3454
 role floor n=4 vol=143.2646
 role gable_wall n=2 vol=4.5987
 role handrail n=10 vol=0.4987
@@ -124,9 +124,9 @@ role stair_landing n=3 vol=0.4800
 tree d07228e13f46702b n=215
 poi  bc0be02e8f97cbd5 n=99
 slot ab3627deaedc932e n=8
-aabb 7ab5b88474e1dcb6 n=72
+aabb f45c9fc141ef0646 n=72
 role - n=42 vol=0.4715
-role exterior_wall n=4 vol=16.0604
+role exterior_wall n=4 vol=15.9103
 role floor n=1 vol=37.3189
 role gable_wall n=2 vol=4.5987
 role interior_wall n=13 vol=14.8013
@@ -138,12 +138,12 @@ role shaft_wall n=4 vol=1.0342
 tree 882adff17a6ab56d n=478
 poi  41a9310f58172ee1 n=192
 slot 941dfe38010fef7b n=23
-aabb 6685ec9e3ee328b5 n=187
+aabb 8bb3a0ba5275a175 n=187
 role - n=134 vol=3.1371
-role exterior_wall n=12 vol=50.6507
+role exterior_wall n=12 vol=50.2003
 role floor n=3 vol=107.9494
 role handrail n=7 vol=0.3448
-role interior_wall n=7 vol=14.4086
+role interior_wall n=7 vol=14.4033
 role roof n=1 vol=236.7219
 role service_wall n=12 vol=6.6466
 role shaft_wall n=9 vol=6.5887
@@ -153,12 +153,12 @@ role stair_landing n=2 vol=0.3200
 tree 574b50a042a518a6 n=370
 poi  12ae7fae9ffb75ae n=151
 slot 37a9ba9f01fe94b3 n=18
-aabb 14f15d488570ff1b n=141
+aabb d9f5310024cba55b n=141
 role - n=98 vol=2.0312
-role exterior_wall n=8 vol=33.3556
+role exterior_wall n=8 vol=33.0553
 role floor n=2 vol=72.6341
 role handrail n=4 vol=0.1909
-role interior_wall n=10 vol=14.3269
+role interior_wall n=10 vol=14.3117
 role roof n=2 vol=698.5599
 role service_wall n=8 vol=4.8846
 role shaft_wall n=8 vol=4.3925
@@ -168,9 +168,9 @@ role stair_landing n=1 vol=0.1600
 tree aae2cee52374b430 n=529
 poi  0b07d529550f9eef n=223
 slot 5fe52ad01d05ebf1 n=20
-aabb 252fb0559265fbd8 n=202
+aabb 8dd8255a9d1c1ba0 n=202
 role - n=138 vol=3.5169
-role exterior_wall n=16 vol=67.9460
+role exterior_wall n=16 vol=67.3453
 role floor n=4 vol=143.2646
 role handrail n=10 vol=0.4988
 role interior_wall n=4 vol=13.3995
@@ -183,28 +183,28 @@ role stair_landing n=3 vol=0.4800
 tree a40a8fb969a029d2 n=275
 poi  21fcab0e378862fe n=106
 slot 4d8d28c30370a6e4 n=17
-aabb 24e4259dec72d367 n=106
+aabb 7623383eb450f3b7 n=106
 role - n=78 vol=1.2883
 role ceiling n=1 vol=37.3189
-role exterior_wall n=4 vol=16.0604
+role exterior_wall n=4 vol=15.9103
 role floor n=1 vol=37.3189
-role interior_wall n=14 vol=15.6905
-role service_wall n=5 vol=3.0416
+role interior_wall n=14 vol=15.6652
+role service_wall n=5 vol=3.0382
 role shaft_wall n=3 vol=0.7402
 
 ## hotel-corridor/gabled/s3/c0/seed7
 tree ef9cf47d7c58e56f n=496
 poi  8e65047c67add63e n=197
 slot a48b1d7bb32ebc4b n=23
-aabb 05ee0026b893837c n=194
+aabb 8c8ececed25aa284 n=194
 role - n=134 vol=3.1371
-role exterior_wall n=12 vol=50.6507
+role exterior_wall n=12 vol=50.2004
 role floor n=3 vol=107.9494
 role gable_wall n=2 vol=4.5987
 role handrail n=7 vol=0.3448
-role interior_wall n=10 vol=27.2630
+role interior_wall n=10 vol=27.2566
 role roof n=2 vol=310.3121
-role service_wall n=15 vol=9.1249
+role service_wall n=15 vol=9.1147
 role shaft_wall n=7 vol=4.8247
 role stair_landing n=2 vol=0.3200
 
@@ -212,15 +212,15 @@ role stair_landing n=2 vol=0.3200
 tree fd14d62795a0ade5 n=391
 poi  79c8e318033cbd8f n=152
 slot fec48ff661bdc388 n=20
-aabb e462e62e54306e82 n=153
+aabb 97802d86e5d2d022 n=153
 role - n=106 vol=2.2127
-role exterior_wall n=8 vol=33.3556
+role exterior_wall n=8 vol=33.0553
 role floor n=2 vol=72.6341
 role gable_wall n=2 vol=4.5987
 role handrail n=4 vol=0.1909
-role interior_wall n=12 vol=21.4707
+role interior_wall n=12 vol=21.4609
 role roof n=2 vol=372.4317
-role service_wall n=10 vol=6.0833
+role service_wall n=10 vol=6.0765
 role shaft_wall n=6 vol=3.2165
 role stair_landing n=1 vol=0.1600
 
@@ -228,14 +228,14 @@ role stair_landing n=1 vol=0.1600
 tree 6c4ae244b0f530bf n=598
 poi  9850c98469c63260 n=242
 slot 810704dd7351b304 n=26
-aabb 23f164e0cb0ecb16 n=232
+aabb e6528a746e03893e n=232
 role - n=162 vol=4.0615
-role exterior_wall n=16 vol=67.9459
+role exterior_wall n=16 vol=67.3454
 role floor n=4 vol=143.2646
 role handrail n=10 vol=0.4987
-role interior_wall n=8 vol=33.0543
+role interior_wall n=8 vol=33.0523
 role roof n=1 vol=236.7219
-role service_wall n=20 vol=12.1666
+role service_wall n=20 vol=12.1530
 role shaft_wall n=8 vol=6.4330
 role stair_landing n=3 vol=0.4800
 
@@ -243,27 +243,27 @@ role stair_landing n=3 vol=0.4800
 tree 14b955dbf4b98541 n=277
 poi  49eef78af3820e77 n=106
 slot 0d2d7953a67b7c11 n=17
-aabb 0c1836ef74bb161f n=107
+aabb 10ebd80044a2578f n=107
 role - n=78 vol=1.2883
-role exterior_wall n=4 vol=16.0604
+role exterior_wall n=4 vol=15.9103
 role floor n=1 vol=37.3189
-role interior_wall n=14 vol=15.6905
+role interior_wall n=14 vol=15.6652
 role roof n=2 vol=698.5599
-role service_wall n=5 vol=3.0416
+role service_wall n=5 vol=3.0382
 role shaft_wall n=3 vol=0.7402
 
 ## hotel-corridor/shed/s3/c0/seed91
 tree f75b64e7051d1647 n=493
 poi  6e27c82b1c38d582 n=197
 slot 706d1c5904400019 n=23
-aabb 0db3a59ca5985ce8 n=191
+aabb fc1c25d825f7c450 n=191
 role - n=134 vol=3.1371
-role exterior_wall n=12 vol=50.6507
+role exterior_wall n=12 vol=50.2003
 role floor n=3 vol=107.9494
 role handrail n=7 vol=0.3448
-role interior_wall n=10 vol=27.2630
+role interior_wall n=10 vol=27.2566
 role roof n=1 vol=310.3121
-role service_wall n=15 vol=9.1249
+role service_wall n=15 vol=9.1147
 role shaft_wall n=7 vol=4.8247
 role stair_landing n=2 vol=0.3200
 
@@ -271,14 +271,14 @@ role stair_landing n=2 vol=0.3200
 tree bf6d6bd15e09e235 n=387
 poi  d2a846dab3e1dc0a n=152
 slot 4d70505500f7b21a n=20
-aabb 9ce747bc7c86dde3 n=150
+aabb 45bde451486d492b n=150
 role - n=106 vol=2.2127
 role ceiling n=1 vol=37.3189
-role exterior_wall n=8 vol=33.3556
+role exterior_wall n=8 vol=33.0553
 role floor n=2 vol=72.6341
 role handrail n=4 vol=0.1909
-role interior_wall n=12 vol=21.4707
-role service_wall n=10 vol=6.0833
+role interior_wall n=12 vol=21.4609
+role service_wall n=10 vol=6.0765
 role shaft_wall n=6 vol=3.2165
 role stair_landing n=1 vol=0.1600
 
@@ -286,15 +286,15 @@ role stair_landing n=1 vol=0.1600
 tree 8d4340e326fc3fde n=601
 poi  42cce84900dac638 n=242
 slot 45bdfd2b7b1a7d41 n=26
-aabb 05cabfe2ca1e23bf n=235
+aabb 9fba897246830817 n=235
 role - n=162 vol=4.0615
-role exterior_wall n=16 vol=67.9459
+role exterior_wall n=16 vol=67.3454
 role floor n=4 vol=143.2646
 role gable_wall n=2 vol=4.5987
 role handrail n=10 vol=0.4987
-role interior_wall n=8 vol=33.0543
+role interior_wall n=8 vol=33.0523
 role roof n=2 vol=310.3121
-role service_wall n=20 vol=12.1666
+role service_wall n=20 vol=12.1530
 role shaft_wall n=8 vol=6.4330
 role stair_landing n=3 vol=0.4800
 
@@ -302,28 +302,28 @@ role stair_landing n=3 vol=0.4800
 tree bbb68c411805b29b n=280
 poi  c88b923c94bcd083 n=107
 slot 34640a9d9cac21be n=17
-aabb e201a761af9d0b70 n=109
+aabb 6fbf355b68fd4c80 n=109
 role - n=78 vol=1.2883
-role exterior_wall n=4 vol=16.0604
+role exterior_wall n=4 vol=15.9103
 role floor n=1 vol=37.3189
 role gable_wall n=2 vol=4.5987
-role interior_wall n=14 vol=15.6905
+role interior_wall n=14 vol=15.6652
 role roof n=2 vol=372.4317
-role service_wall n=5 vol=3.0416
+role service_wall n=5 vol=3.0382
 role shaft_wall n=3 vol=0.7402
 
 ## office-core/hipped/s3/c0/seed1
 tree 55bea0825c92311d n=493
 poi  4566a45b62986335 n=197
 slot bd679ef09a925a49 n=23
-aabb b46652e5eed3760e n=191
+aabb 49d2bc8c241e7e2e n=191
 role - n=134 vol=3.1371
-role exterior_wall n=12 vol=50.6507
+role exterior_wall n=12 vol=50.2004
 role floor n=3 vol=107.9494
 role handrail n=7 vol=0.3448
-role interior_wall n=10 vol=27.2630
+role interior_wall n=10 vol=27.2566
 role roof n=1 vol=236.7219
-role service_wall n=15 vol=9.1249
+role service_wall n=15 vol=9.1147
 role shaft_wall n=7 vol=4.8247
 role stair_landing n=2 vol=0.3200
 
@@ -331,14 +331,14 @@ role stair_landing n=2 vol=0.3200
 tree 8fb59e42dea71477 n=389
 poi  2a541d2cb6d95a7a n=152
 slot d9b47b68924d5676 n=20
-aabb adb43b5eac1e782f n=151
+aabb 66122a2e0bff9b0f n=151
 role - n=106 vol=2.2127
-role exterior_wall n=8 vol=33.3556
+role exterior_wall n=8 vol=33.0553
 role floor n=2 vol=72.6341
 role handrail n=4 vol=0.1909
-role interior_wall n=12 vol=21.4707
+role interior_wall n=12 vol=21.4609
 role roof n=2 vol=698.5599
-role service_wall n=10 vol=6.0833
+role service_wall n=10 vol=6.0765
 role shaft_wall n=6 vol=3.2165
 role stair_landing n=1 vol=0.1600
 
@@ -346,14 +346,14 @@ role stair_landing n=1 vol=0.1600
 tree 817041cabfcc3d98 n=598
 poi  cc1fb621211c9442 n=242
 slot 0d3e089faed21a4d n=26
-aabb 040319d90f38c149 n=232
+aabb cd6ca0553bdc2929 n=232
 role - n=162 vol=4.0615
-role exterior_wall n=16 vol=67.9459
+role exterior_wall n=16 vol=67.3454
 role floor n=4 vol=143.2646
 role handrail n=10 vol=0.4987
-role interior_wall n=8 vol=33.0543
+role interior_wall n=8 vol=33.0523
 role roof n=1 vol=310.3121
-role service_wall n=20 vol=12.1666
+role service_wall n=20 vol=12.1530
 role shaft_wall n=8 vol=6.4330
 role stair_landing n=3 vol=0.4800
 
@@ -361,28 +361,28 @@ role stair_landing n=3 vol=0.4800
 tree 8c4b32b59781b33d n=286
 poi  1c58a9f8821b10d6 n=104
 slot ce304eca508db154 n=18
-aabb 7f5b4151918630c6 n=117
+aabb 615685070e732e96 n=117
 role - n=82 vol=1.3791
 role ceiling n=1 vol=37.3189
-role exterior_wall n=4 vol=16.0604
+role exterior_wall n=4 vol=15.9103
 role floor n=1 vol=37.3189
-role interior_wall n=20 vol=17.5657
-role service_wall n=5 vol=2.2043
+role interior_wall n=20 vol=17.5247
+role service_wall n=5 vol=2.2030
 role shaft_wall n=4 vol=1.0342
 
 ## radial/gabled/s3/c0/seed7
 tree fcd37988cfa54592 n=593
 poi  590b3437b06cb278 n=246
 slot 713f26866bcbf5f4 n=27
-aabb 2664eab8741c4723 n=226
+aabb a5b1e1a19971ffeb n=226
 role - n=150 vol=3.5001
-role exterior_wall n=12 vol=50.6507
+role exterior_wall n=12 vol=50.2004
 role floor n=3 vol=107.9494
 role gable_wall n=2 vol=4.5987
 role handrail n=7 vol=0.3448
-role interior_wall n=24 vol=30.2467
+role interior_wall n=24 vol=30.2145
 role roof n=2 vol=310.3121
-role service_wall n=15 vol=7.2768
+role service_wall n=15 vol=7.2708
 role shaft_wall n=9 vol=6.5887
 role stair_landing n=2 vol=0.3200
 
@@ -390,15 +390,15 @@ role stair_landing n=2 vol=0.3200
 tree a32d0b58a4792642 n=378
 poi  6ce629c153ddfb40 n=163
 slot 35040314fb94d818 n=15
-aabb 073ce5c9c4bd2c07 n=139
+aabb f2a74200393e6c27 n=139
 role - n=86 vol=1.7589
-role exterior_wall n=8 vol=33.3556
+role exterior_wall n=8 vol=33.0553
 role floor n=2 vol=72.6341
 role gable_wall n=2 vol=4.5987
 role handrail n=4 vol=0.1909
-role interior_wall n=16 vol=21.0604
+role interior_wall n=16 vol=21.0502
 role roof n=2 vol=372.4317
-role service_wall n=10 vol=5.0763
+role service_wall n=10 vol=5.0740
 role shaft_wall n=8 vol=4.3925
 role stair_landing n=1 vol=0.1600
 
@@ -406,14 +406,14 @@ role stair_landing n=1 vol=0.1600
 tree c69dd301ce48ef42 n=800
 poi  1a48784ee42eef78 n=330
 slot 297eafd362fbda42 n=38
-aabb 54af7f621d8681ce n=306
+aabb 0355d5f4c2af1e9e n=306
 role - n=210 vol=5.1506
-role exterior_wall n=16 vol=67.9459
+role exterior_wall n=16 vol=67.3454
 role floor n=4 vol=143.2647
 role handrail n=10 vol=0.4987
-role interior_wall n=32 vol=40.3285
+role interior_wall n=32 vol=40.2860
 role roof n=1 vol=236.7219
-role service_wall n=20 vol=8.7984
+role service_wall n=20 vol=8.7872
 role shaft_wall n=10 vol=8.7850
 role stair_landing n=3 vol=0.4800
 
@@ -421,27 +421,27 @@ role stair_landing n=3 vol=0.4800
 tree 66868eaa7ea0a43f n=282
 poi  f7b92359b61fed30 n=104
 slot aa59adffd6ebaeae n=17
-aabb 409b09bce9ffa863 n=114
+aabb ec7f88b1dbacb393 n=114
 role - n=78 vol=1.2883
-role exterior_wall n=4 vol=16.0604
+role exterior_wall n=4 vol=15.9103
 role floor n=1 vol=37.3189
-role interior_wall n=20 vol=17.5645
+role interior_wall n=20 vol=17.5247
 role roof n=2 vol=698.5599
-role service_wall n=5 vol=2.4273
+role service_wall n=5 vol=2.4237
 role shaft_wall n=4 vol=1.0342
 
 ## radial/shed/s3/c0/seed91
 tree f905acb0846aed45 n=557
 poi  ce1f9a68de13b7f9 n=243
 slot 7fe7eb7c36022a62 n=22
-aabb 00c8d733c2dc7778 n=203
+aabb 2bd747422078af20 n=203
 role - n=130 vol=3.0463
-role exterior_wall n=12 vol=50.6507
+role exterior_wall n=12 vol=50.2003
 role floor n=3 vol=107.9494
 role handrail n=7 vol=0.3449
-role interior_wall n=24 vol=31.1436
+role interior_wall n=24 vol=31.1216
 role roof n=1 vol=310.3121
-role service_wall n=15 vol=7.5022
+role service_wall n=15 vol=7.4975
 role shaft_wall n=9 vol=6.5887
 role stair_landing n=2 vol=0.3200
 
@@ -449,10 +449,10 @@ role stair_landing n=2 vol=0.3200
 tree f4f7d01460cfaa0e n=379
 poi  7b87145bac6f9f65 n=154
 slot e28af6e9185fefa5 n=20
-aabb 528ce68ff7909a31 n=144
+aabb 910359b97482d7d1 n=144
 role - n=106 vol=2.2127
 role ceiling n=1 vol=37.3189
-role exterior_wall n=8 vol=33.3556
+role exterior_wall n=8 vol=33.0554
 role floor n=2 vol=72.6341
 role handrail n=4 vol=0.1910
 role interior_wall n=6 vol=19.7591
@@ -464,9 +464,9 @@ role stair_landing n=1 vol=0.1600
 tree 075c6902e7a97ba8 n=539
 poi  d0d29d5c6295893e n=218
 slot a3f7c29d7c537143 n=22
-aabb 8f255c6b46c8160a n=213
+aabb 1b4ea1694aa727ba n=213
 role - n=146 vol=3.6984
-role exterior_wall n=16 vol=67.9460
+role exterior_wall n=16 vol=67.3454
 role floor n=4 vol=143.2646
 role gable_wall n=2 vol=4.5987
 role handrail n=10 vol=0.4987
@@ -480,9 +480,9 @@ role stair_landing n=3 vol=0.4800
 tree 51b2d353c889359d n=210
 poi  011e3950e7687491 n=97
 slot 8d39088b17c7cd87 n=8
-aabb 5620c530bd32817d n=69
+aabb b1d00206da939b8d n=69
 role - n=42 vol=0.4715
-role exterior_wall n=4 vol=16.0604
+role exterior_wall n=4 vol=15.9103
 role floor n=1 vol=37.3189
 role gable_wall n=2 vol=4.5987
 role interior_wall n=10 vol=14.8013
@@ -494,9 +494,9 @@ role shaft_wall n=4 vol=1.0342
 tree 24ba1a5425b298f8 n=474
 poi  fd9e9eed24ab696c n=190
 slot 5ee3f14bbdf9cf8c n=23
-aabb 974dd054dc9833eb n=185
+aabb 9e7eb68d7af278e3 n=185
 role - n=134 vol=3.1371
-role exterior_wall n=12 vol=50.6508
+role exterior_wall n=12 vol=50.2003
 role floor n=3 vol=107.9494
 role handrail n=7 vol=0.3448
 role interior_wall n=5 vol=16.4659
@@ -509,9 +509,9 @@ role stair_landing n=2 vol=0.3200
 tree 8ac0fb13a20ff5ce n=369
 poi  c8bf75c38191bfd1 n=154
 slot c2f697d00c68535f n=18
-aabb 55d36223f64d3219 n=137
+aabb 91f96fda0cbb0701 n=137
 role - n=98 vol=2.0312
-role exterior_wall n=8 vol=33.3556
+role exterior_wall n=8 vol=33.0554
 role floor n=2 vol=72.6341
 role handrail n=4 vol=0.1909
 role interior_wall n=6 vol=19.7591
@@ -524,9 +524,9 @@ role stair_landing n=1 vol=0.1600
 tree b902fef66769c4eb n=522
 poi  39dc4ab0b8c7a1a1 n=216
 slot 34e0c3184a481da8 n=20
-aabb 55ef0081c340cb7c n=202
+aabb ec0649b343d7cf9c n=202
 role - n=138 vol=3.5169
-role exterior_wall n=16 vol=67.9460
+role exterior_wall n=16 vol=67.3453
 role floor n=4 vol=143.2646
 role handrail n=10 vol=0.4988
 role interior_wall n=4 vol=13.3995
@@ -539,12 +539,12 @@ role stair_landing n=3 vol=0.4800
 tree 58b5da73114b0336 n=590
 poi  9e66ee7dfe073d98 n=192
 slot aff416501b3afd07 n=39
-aabb acad07a4acde4ee7 n=237
+aabb 32a827ad8f179b37 n=237
 role - n=156 vol=3.5792
 role ceiling n=1 vol=37.3189
-role exterior_wall n=4 vol=17.0684
+role exterior_wall n=4 vol=16.9183
 role floor n=1 vol=37.3189
-role interior_wall n=65 vol=30.8705
+role interior_wall n=65 vol=30.5310
 role service_wall n=6 vol=2.4049
 role shaft_wall n=4 vol=1.0342
 
@@ -552,15 +552,15 @@ role shaft_wall n=4 vol=1.0342
 tree 8ffef6dde439c757 n=1802
 poi  5f892f890c7b2d33 n=577
 slot b35bc76f58a90995 n=115
-aabb 3d84decc9ce5845e n=742
+aabb e6fbbfa03c7d00ce n=742
 role - n=492 vol=11.7812
-role exterior_wall n=12 vol=51.6587
+role exterior_wall n=12 vol=51.2083
 role floor n=3 vol=107.9494
 role gable_wall n=2 vol=4.5987
 role handrail n=7 vol=0.3448
-role interior_wall n=195 vol=92.6141
+role interior_wall n=195 vol=91.5929
 role roof n=2 vol=310.3121
-role service_wall n=18 vol=7.2285
+role service_wall n=18 vol=7.2150
 role shaft_wall n=9 vol=6.5887
 role stair_landing n=2 vol=0.3200
 
@@ -568,15 +568,15 @@ role stair_landing n=2 vol=0.3200
 tree cd99be5fb1abf80d n=953
 poi  0ecbd4fd1397623b n=352
 slot 54191144ee433c65 n=41
-aabb cc3056747989e014 n=349
+aabb 316ce92274ad1a4c n=349
 role - n=180 vol=4.4129
-role exterior_wall n=8 vol=34.3637
+role exterior_wall n=8 vol=34.0633
 role floor n=2 vol=72.6341
 role gable_wall n=2 vol=4.5987
 role handrail n=4 vol=0.1909
-role interior_wall n=130 vol=69.3547
+role interior_wall n=130 vol=69.0026
 role roof n=2 vol=372.4317
-role service_wall n=12 vol=5.0432
+role service_wall n=12 vol=5.0366
 role shaft_wall n=8 vol=4.3925
 role stair_landing n=1 vol=0.1600
 
@@ -584,12 +584,12 @@ role stair_landing n=1 vol=0.1600
 tree bb613098878343b3 n=2420
 poi  636c963124828530 n=774
 slot 7c408796dfd4b635 n=155
-aabb ada08b7911482ba7 n=1000
+aabb 096253ce1dc9ef9f n=1000
 role - n=672 vol=15.9461
-role exterior_wall n=16 vol=68.5507
+role exterior_wall n=16 vol=67.9502
 role floor n=4 vol=143.2647
 role handrail n=10 vol=0.4987
-role interior_wall n=260 vol=123.4142
+role interior_wall n=260 vol=122.0132
 role roof n=1 vol=236.7219
 role service_wall n=24 vol=9.6195
 role shaft_wall n=10 vol=8.7850
@@ -599,27 +599,27 @@ role stair_landing n=3 vol=0.4800
 tree 4b0e736e52e8cea6 n=590
 poi  f699d629b3e235c7 n=190
 slot f6d50cff83735ece n=39
-aabb 04c94e91a01ce6e1 n=238
+aabb 5a8c1342a5a95a91 n=238
 role - n=156 vol=3.5792
-role exterior_wall n=4 vol=17.0684
+role exterior_wall n=4 vol=16.9183
 role floor n=1 vol=37.3189
-role interior_wall n=65 vol=30.8731
+role interior_wall n=65 vol=30.5310
 role roof n=2 vol=698.5599
-role service_wall n=6 vol=2.4095
+role service_wall n=6 vol=2.4050
 role shaft_wall n=4 vol=1.0342
 
 ## maze/shed/s3/c0/seed91
 tree e0a2a3a439946974 n=1546
 poi  cd1ec8717d181900 n=540
 slot ad7aec82d9077095 n=79
-aabb 9e5e9b8ca4661c8a n=595
+aabb 8babcc39c3b8176a n=595
 role - n=348 vol=8.5139
-role exterior_wall n=12 vol=51.6587
+role exterior_wall n=12 vol=51.2083
 role floor n=3 vol=107.9494
 role handrail n=7 vol=0.3449
-role interior_wall n=195 vol=100.2199
+role interior_wall n=195 vol=99.5355
 role roof n=1 vol=310.3121
-role service_wall n=18 vol=7.4547
+role service_wall n=18 vol=7.4416
 role shaft_wall n=9 vol=6.5887
 role stair_landing n=2 vol=0.3200
 
@@ -627,10 +627,10 @@ role stair_landing n=2 vol=0.3200
 tree 1e87cb79b779e83e n=555
 poi  c3dc35843636d7b7 n=238
 slot 4a111efbb751be8e n=22
-aabb 2e720a6971791a03 n=210
+aabb 3d4dfc25d6164693 n=210
 role - n=146 vol=3.6984
 role ceiling n=1 vol=37.3190
-role exterior_wall n=16 vol=67.9460
+role exterior_wall n=16 vol=67.3454
 role floor n=4 vol=143.2646
 role handrail n=10 vol=0.4987
 role interior_wall n=4 vol=13.1727
@@ -642,9 +642,9 @@ role stair_landing n=3 vol=0.4800
 tree 498a75915b041deb n=551
 poi  9b60fb5654917387 n=230
 slot ba13f4b55406ed12 n=22
-aabb 6fd224d249086b09 n=213
+aabb 64ee3c063d917401 n=213
 role - n=146 vol=3.6984
-role exterior_wall n=16 vol=67.9460
+role exterior_wall n=16 vol=67.3454
 role floor n=4 vol=143.2646
 role gable_wall n=2 vol=4.5987
 role handrail n=10 vol=0.4987
@@ -658,15 +658,15 @@ role stair_landing n=3 vol=0.4800
 tree 14a80f7d51726e5e n=601
 poi  f3480e173c082ade n=242
 slot 9edf9398793a0bbd n=26
-aabb 1d7da1a9f572d0c3 n=235
+aabb 341360f6c8d845f3 n=235
 role - n=162 vol=4.0615
-role exterior_wall n=16 vol=67.9459
+role exterior_wall n=16 vol=67.3454
 role floor n=4 vol=143.2646
 role gable_wall n=2 vol=4.5987
 role handrail n=10 vol=0.4988
-role interior_wall n=8 vol=33.0543
+role interior_wall n=8 vol=33.0523
 role roof n=2 vol=372.4317
-role service_wall n=20 vol=12.1666
+role service_wall n=20 vol=12.1530
 role shaft_wall n=8 vol=6.4330
 role stair_landing n=3 vol=0.4800
 
@@ -674,14 +674,14 @@ role stair_landing n=3 vol=0.4800
 tree 90b722754827687e n=598
 poi  f3480e173c082ade n=242
 slot 9edf9398793a0bbd n=26
-aabb 5d52df3bb64ef881 n=232
+aabb c456c90e07fe5b71 n=232
 role - n=162 vol=4.0615
-role exterior_wall n=16 vol=67.9459
+role exterior_wall n=16 vol=67.3454
 role floor n=4 vol=143.2646
 role handrail n=10 vol=0.4988
-role interior_wall n=8 vol=33.0543
+role interior_wall n=8 vol=33.0523
 role roof n=1 vol=236.7219
-role service_wall n=20 vol=12.1666
+role service_wall n=20 vol=12.1530
 role shaft_wall n=8 vol=6.4330
 role stair_landing n=3 vol=0.4800
 
@@ -689,12 +689,12 @@ role stair_landing n=3 vol=0.4800
 tree e1ea2001064202be n=749
 poi  887bdef4f98591b0 n=326
 slot 7b572f5349f95f1b n=30
-aabb 043f3c317c7e2412 n=275
+aabb 4a4927e8cb4ce112 n=275
 role - n=178 vol=4.4245
-role exterior_wall n=16 vol=67.9459
+role exterior_wall n=16 vol=67.3454
 role floor n=4 vol=143.2646
 role handrail n=10 vol=0.4987
-role interior_wall n=32 vol=40.3255
+role interior_wall n=32 vol=40.2860
 role roof n=2 vol=698.5600
 role service_wall n=20 vol=10.6016
 role shaft_wall n=10 vol=8.7850
@@ -704,9 +704,9 @@ role stair_landing n=3 vol=0.4800
 tree 3f7e9a3d46f9bfac n=536
 poi  3a215ffc0a1bc559 n=218
 slot ef08b1f3ace495d4 n=22
-aabb 71f29b2c55f5bd15 n=210
+aabb e3e6ab66e8c0c185 n=210
 role - n=146 vol=3.6984
-role exterior_wall n=16 vol=67.9460
+role exterior_wall n=16 vol=67.3453
 role floor n=4 vol=143.2646
 role handrail n=10 vol=0.4987
 role interior_wall n=4 vol=13.1727

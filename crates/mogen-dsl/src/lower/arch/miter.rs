@@ -53,13 +53,24 @@ use super::plan::{self, Line};
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct WallFootprint {
     pub wall: WallId,
-    /// Sample parameters along the centreline, `0.0 → 1.0`. Two entries for a
-    /// straight wall, [`super::consts::ARC_SEGMENTS`] + 1 for a curved one.
-    pub ts: Vec<f32>,
-    /// The `+n` side, start → end. Same length as `ts`.
+    /// The `+n` side, start → end. Two entries for a straight wall,
+    /// [`super::consts::ARC_SEGMENTS`] + 1 for a curved one.
     pub plus: Vec<P2>,
-    /// The `-n` side, start → end. Same length as `ts`.
+    /// The `-n` side, start → end. Same length as `plus`.
     pub minus: Vec<P2>,
+    /// Where each `plus` sample sits along the **centreline**, as a parameter
+    /// in the same `0 → 1` frame the wall's openings use.
+    ///
+    /// This is not `i / steps`, and the difference is the whole reason the
+    /// field exists. A mitred wall's two sides are different lengths — a
+    /// perimeter wall's outer face runs a thickness longer than its inner one
+    /// at every corner — so interpolating by fraction-of-side puts the two
+    /// sides of a cut at different points along the wall, and a window comes
+    /// out as a slanted parallelogram instead of a rectangle. The end entries
+    /// fall outside `0..1` wherever a mitre juts past the centreline endpoint.
+    pub ts_plus: Vec<f32>,
+    /// The same, for `minus`.
+    pub ts_minus: Vec<f32>,
 }
 
 impl WallFootprint {
@@ -77,8 +88,13 @@ impl WallFootprint {
     /// mitre corner, so a pier beside a corner still meets its neighbour
     /// exactly — which is the reason the two sides are kept rather than a ring.
     pub fn slice(&self, t0: f32, t1: f32) -> Vec<P2> {
-        let mut ring = sub_side(&self.ts, &self.plus, t0, t1);
-        let mut back = sub_side(&self.ts, &self.minus, t0, t1);
+        // A cut in the middle of a wall is square across it; the two ends are
+        // whatever the mitre made them. So a slice that reaches an end takes
+        // that end's corner verbatim, and every interior cut is placed by
+        // centreline parameter on both sides at once.
+        let (whole_start, whole_end) = (t0 <= 0.0, t1 >= 1.0);
+        let mut ring = sub_side(&self.ts_plus, &self.plus, t0, t1, whole_start, whole_end);
+        let mut back = sub_side(&self.ts_minus, &self.minus, t0, t1, whole_start, whole_end);
         back.reverse();
         ring.extend(back);
         plan::normalise_ccw(&mut ring);
@@ -89,15 +105,26 @@ impl WallFootprint {
 /// One side of the wall between two parameters: the interpolated start, every
 /// original sample strictly inside, then the interpolated end. Keeping the
 /// interior samples is what preserves a curved wall's arc through a slice.
-fn sub_side(ts: &[f32], pts: &[P2], t0: f32, t1: f32) -> Vec<P2> {
+fn sub_side(
+    ts: &[f32],
+    pts: &[P2],
+    t0: f32,
+    t1: f32,
+    whole_start: bool,
+    whole_end: bool,
+) -> Vec<P2> {
     const EDGE: f32 = 1e-6;
-    let mut out = vec![lerp_at(ts, pts, t0)];
-    for (i, &t) in ts.iter().enumerate() {
-        if t > t0 + EDGE && t < t1 - EDGE {
+    let last = pts.len() - 1;
+    let mut out = vec![if whole_start { pts[0] } else { lerp_at(ts, pts, t0) }];
+    // Interior samples only. The two ends carry mitre corners whose parameters
+    // sit outside `0..1`, so including them here would put a jut in the middle
+    // of a slice that does not reach the end.
+    for i in 1..last {
+        if ts[i] > t0 + EDGE && ts[i] < t1 - EDGE {
             out.push(pts[i]);
         }
     }
-    out.push(lerp_at(ts, pts, t1));
+    out.push(if whole_end { pts[last] } else { lerp_at(ts, pts, t1) });
     out
 }
 
@@ -417,22 +444,26 @@ fn footprint(w: &Wall, c: WallCorners) -> Result<WallFootprint, FootprintError> 
         plus.push(side(t, 1.0));
         minus.push(side(t, -1.0));
     }
+    let mut ts_plus = ts.clone();
+    let mut ts_minus = ts;
 
-    // Junction corners override the squared-off defaults.
-    if let Some(p) = c.start.plus {
-        plus[0] = p;
-    }
-    if let Some(p) = c.start.minus {
-        minus[0] = p;
-    }
-    if let Some(p) = c.end.plus {
-        *plus.last_mut().expect("non-empty") = p;
-    }
-    if let Some(p) = c.end.minus {
-        *minus.last_mut().expect("non-empty") = p;
-    }
+    // Junction corners override the squared-off defaults, and each brings its
+    // own parameter with it: a mitre moves a corner *along* the wall as well as
+    // across it, by half a thickness per right angle, and pretending it still
+    // sits at 0 or 1 is what slants every cut on the wall.
+    let param = |p: P2| plan::dot(plan::sub(p, chord.start), chord.tangent) / chord.length;
+    let set = |slot: Option<P2>, pts: &mut Vec<P2>, params: &mut Vec<f32>, at_end: bool| {
+        let Some(p) = slot else { return };
+        let i = if at_end { pts.len() - 1 } else { 0 };
+        pts[i] = p;
+        params[i] = param(p);
+    };
+    set(c.start.plus, &mut plus, &mut ts_plus, false);
+    set(c.start.minus, &mut minus, &mut ts_minus, false);
+    set(c.end.plus, &mut plus, &mut ts_plus, true);
+    set(c.end.minus, &mut minus, &mut ts_minus, true);
 
-    let out = WallFootprint { wall: w.id, ts, plus, minus };
+    let out = WallFootprint { wall: w.id, plus, minus, ts_plus, ts_minus };
     if !plan::ring_is_simple(&out.ring()) {
         return Err(FootprintError::SelfIntersecting);
     }
@@ -769,6 +800,61 @@ mod tests {
         for p in &patch.ring {
             assert!(plan::distance(*p, [0.0, 0.0]) < 0.15, "patch corner {p:?} is not at the centre");
         }
+    }
+
+    #[test]
+    fn an_interior_cut_is_square_across_a_mitred_wall() {
+        // A mitre lengthens one side of a wall and shortens the other -- for a
+        // perimeter wall, by a full thickness across its two corners. Slicing
+        // by fraction-of-side then places the two ends of a cut at different
+        // points along the wall, and a window comes out as a parallelogram
+        // leaning by half a thickness. Only the wall's *ends* are allowed to be
+        // non-square; everything between them is a straight cut across.
+        let mut m = model();
+        let a = wall(&mut m, [-5.0, 0.0], [5.0, 0.0], 0.2);
+        wall(&mut m, [5.0, 0.0], [5.0, 6.0], 0.2);
+        wall(&mut m, [-5.0, 6.0], [-5.0, 0.0], 0.2);
+
+        let sol = solve_level(&m.walls, LevelId(0));
+        let fp = sol.footprints.iter().find(|f| f.wall == a).expect("wall a");
+
+        // The two sides really are different lengths, or this proves nothing.
+        let len = |v: &[P2]| plan::distance(v[0], v[v.len() - 1]);
+        assert!(
+            (len(&fp.plus) - len(&fp.minus)).abs() > 0.15,
+            "sides {} and {} -- expected the mitres to make them differ",
+            len(&fp.plus),
+            len(&fp.minus),
+        );
+
+        // A slice well inside the wall: all four corners must sit on just two
+        // values of x, one per cut.
+        let ring = fp.slice(0.4, 0.6);
+        assert_eq!(ring.len(), 4, "{ring:?}");
+        let mut xs: Vec<f32> = ring.iter().map(|p| p[0]).collect();
+        xs.sort_by(f32::total_cmp);
+        assert!((xs[0] - xs[1]).abs() < 1e-4, "cut is slanted: {ring:?}");
+        assert!((xs[2] - xs[3]).abs() < 1e-4, "cut is slanted: {ring:?}");
+        // And at the parameters asked for: 0.4 and 0.6 of a 10 m centreline
+        // starting at -5.
+        assert!((xs[0] - -1.0).abs() < 1e-4, "{xs:?}");
+        assert!((xs[3] - 1.0).abs() < 1e-4, "{xs:?}");
+    }
+
+    #[test]
+    fn a_slice_to_the_end_keeps_the_mitre() {
+        // The other side of the same rule: a cut that reaches an end takes that
+        // end's corner verbatim, juts and all, or the pier beside a corner
+        // stops short of its neighbour.
+        let mut m = model();
+        let a = wall(&mut m, [-5.0, 0.0], [5.0, 0.0], 0.2);
+        wall(&mut m, [5.0, 0.0], [5.0, 6.0], 0.2);
+
+        let sol = solve_level(&m.walls, LevelId(0));
+        let fp = sol.footprints.iter().find(|f| f.wall == a).expect("wall a");
+        let ring = fp.slice(0.6, 1.0);
+        let max_x = ring.iter().map(|p| p[0]).fold(f32::MIN, f32::max);
+        assert!((max_x - 5.1).abs() < 1e-4, "mitre lost at the end: {ring:?}");
     }
 
     #[test]

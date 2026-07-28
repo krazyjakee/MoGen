@@ -11,12 +11,12 @@ use mogen_core::{Mesh, NodeId, SceneGraph, Transform, UvMode};
 use mogen_geom::{box_mesh, clean_csg_output, difference_many, transform_mesh};
 
 use crate::ast::Node;
+use crate::lower::arch;
 
 use super::super::circulation::{CirculationKind, CirculationPlan, STAIR_ENTRY_DEPTH};
 use super::super::config::BuildingCfg;
 use super::super::layout::{Floorplate, Rect2, WallSide};
 use super::openings::{Opening, OpeningPlan};
-use super::wall_build::wall_with_holes;
 use super::StoreyCtx;
 
 pub(super) fn emit_shell(
@@ -99,8 +99,17 @@ pub(super) fn emit_shell(
         (WallSide::South, "wall_S"),
         (WallSide::West, "wall_W"),
     ];
-    for (side, name) in perimeter {
-        emit_perimeter_wall(parent, graph, &origin, cfg, plate, plan, side, name)?;
+    // All four solved together: the corners are mitres, and a mitre is a
+    // property of the junction rather than of either wall. Solved one at a time
+    // they would each square off and the four would double-cover every corner,
+    // which is what the box builder did.
+    let requests: Vec<arch::WallRequest> = perimeter
+        .iter()
+        .map(|(side, _)| wall_request(cfg, plate, plan, *side))
+        .collect();
+    let meshes = arch::solve_wall_meshes(&requests);
+    for ((side, name), mesh) in perimeter.into_iter().zip(meshes) {
+        emit_perimeter_wall(parent, graph, &origin, cfg, plate, side, name, mesh)?;
     }
     Ok(())
 }
@@ -198,33 +207,81 @@ fn emit_slab(
     inherit_material_from_chain(id, graph);
 }
 
+/// One perimeter wall as a centreline the mitre solver can join.
+///
+/// The four centrelines run corner to corner and share their endpoints exactly,
+/// which is what turns four independent walls into one closed loop. Note what
+/// this does *not* change: the centre of each centreline is the same point the
+/// box builder used for the node, so the node transform is untouched and every
+/// test keyed to it keeps passing.
+///
+/// What does change is the length — `width + wt` rather than `width + 2·wt`.
+/// The box builder padded each wall by a full thickness at both ends so the
+/// corners were covered twice; mitring covers each corner once. The outer
+/// envelope is identical, the inner faces are identical, and the difference is
+/// exactly the four `wt × wt` corner columns.
+fn wall_request(
+    cfg: &BuildingCfg,
+    plate: &Floorplate,
+    plan: &OpeningPlan,
+    side: WallSide,
+) -> arch::WallRequest {
+    let bounds = &plate.bounds;
+    let h = cfg.ceiling_height;
+    let wt = cfg.wall_thickness;
+    let half = 0.5 * wt;
+
+    // The four points where the centrelines meet.
+    let (x0, x1) = (bounds.x_min - half, bounds.x_max + half);
+    let (z0, z1) = (bounds.z_min - half, bounds.z_max + half);
+
+    // `axis_x` is each wall's local +X restated as an exact world vector, and
+    // matches the `rot` that `wall_frame` hands the node. Start and end are
+    // listed in that same direction so the wall's own parameterisation runs
+    // forwards.
+    let (start, end, axis_x, axis_z) = match side {
+        WallSide::North => ([x0, z1], [x1, z1], [1.0, 0.0], [0.0, 1.0]),
+        WallSide::South => ([x1, z0], [x0, z0], [-1.0, 0.0], [0.0, -1.0]),
+        WallSide::East => ([x1, z0], [x1, z1], [0.0, 1.0], [-1.0, 0.0]),
+        WallSide::West => ([x0, z1], [x0, z0], [0.0, -1.0], [1.0, 0.0]),
+    };
+
+    let (length, mid_pos, _) = wall_frame(bounds, side, wt);
+    let holes = plan
+        .entrances
+        .iter()
+        .chain(plan.windows.iter())
+        .filter(|op| op.side == Some(side))
+        .filter_map(|op| opening_local(op, side, bounds, length, h))
+        .collect();
+
+    arch::WallRequest {
+        start,
+        end,
+        thickness: wt,
+        height: h,
+        axis_x,
+        axis_z,
+        centre: mid_pos,
+        holes,
+    }
+}
+
 fn emit_perimeter_wall(
     parent: NodeId,
     graph: &mut SceneGraph,
     origin: &Option<std::path::PathBuf>,
     cfg: &BuildingCfg,
     plate: &Floorplate,
-    plan: &OpeningPlan,
     side: WallSide,
     name: &str,
+    mesh: mogen_core::Mesh,
 ) -> Result<()> {
     let bounds = &plate.bounds;
     let h = cfg.ceiling_height;
     let wt = cfg.wall_thickness;
 
-    let (length, mid_pos, rot) = wall_frame(bounds, side, wt);
-
-    let mut local_holes: Vec<[f32; 4]> = Vec::new();
-    for op in plan.entrances.iter().chain(plan.windows.iter()) {
-        if op.side != Some(side) {
-            continue;
-        }
-        if let Some(local) = opening_local(op, side, bounds, length, h) {
-            local_holes.push(local);
-        }
-    }
-
-    let mesh = wall_with_holes([length, h, wt], &local_holes);
+    let (_, mid_pos, rot) = wall_frame(bounds, side, wt);
     let role = "exterior_wall";
     let id = graph.add_child(
         parent,
@@ -248,28 +305,35 @@ fn emit_perimeter_wall(
     Ok(())
 }
 
+/// A perimeter wall's centreline length, node origin and node rotation.
+///
+/// The length is `width + wt`, i.e. from corner *centreline* to corner
+/// centreline: half a thickness past the plate at each end, which is where the
+/// adjacent wall's centreline runs. The box builder used `width + 2·wt` so that
+/// each wall reached the far side of both corners and every corner was built
+/// twice; mitring builds each one once and the envelope is unchanged.
 fn wall_frame(bounds: &Rect2, side: WallSide, wt: f32) -> (f32, [f32; 2], Quat) {
     let mid_x = 0.5 * (bounds.x_min + bounds.x_max);
     let mid_z = 0.5 * (bounds.z_min + bounds.z_max);
     let half_pad = wt * 0.5;
     match side {
         WallSide::North => (
-            bounds.width() + 2.0 * wt,
+            bounds.width() + wt,
             [mid_x, bounds.z_max + half_pad],
             Quat::IDENTITY,
         ),
         WallSide::South => (
-            bounds.width() + 2.0 * wt,
+            bounds.width() + wt,
             [mid_x, bounds.z_min - half_pad],
             Quat::from_rotation_y(std::f32::consts::PI),
         ),
         WallSide::East => (
-            bounds.depth() + 2.0 * wt,
+            bounds.depth() + wt,
             [bounds.x_max + half_pad, mid_z],
             Quat::from_rotation_y(-std::f32::consts::FRAC_PI_2),
         ),
         WallSide::West => (
-            bounds.depth() + 2.0 * wt,
+            bounds.depth() + wt,
             [bounds.x_min - half_pad, mid_z],
             Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),
         ),
