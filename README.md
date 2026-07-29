@@ -68,6 +68,27 @@ The release binary is at `target/release/mogen`. The `./scripts/run-mogen.sh` wr
 
 Drop `chair.glb` into Godot, Blender, three.js, or anything else that reads glTF 2.0.
 
+## Importing Pascal buildings
+
+[pascalorg/editor](https://github.com/pascalorg/editor) is a free web-based
+architectural editor — walls as centrelines, slabs as polygons, roofs as a shape
+plus a pitch. MoGen reads its `.json` scenes and converts them into `.mog`
+source, so you can lay a building out visually and then keep editing it as DSL:
+
+```sh
+./scripts/run-mogen.sh import scene.json --out house.mog
+./scripts/run-mogen.sh build house.mog --out house.glb
+```
+
+Unlike `build`, `import` writes **source, not a binary** — the point is to get a
+file you can edit. Anything the importer could not use is reported and written
+into the file's header as a comment, so a partly-understood scene still opens.
+MoGen Studio has the same flow under **File → Import Pascal Scene…**.
+
+New to the Pascal editor? This short walks through drawing a building in it:
+
+[![How to use the Pascal editor](https://img.youtube.com/vi/99ckljvqyL4/hqdefault.jpg)](https://youtube.com/shorts/99ckljvqyL4)
+
 ## Web preview
 
 The browser preview (`crates/mogen-wasm` + `web/`) runs the same parse → lower
@@ -148,6 +169,7 @@ every node kind, and worked examples live in [`docs/dsl.md`](docs/dsl.md) and
 
 ```
 mogen build      <file.mog> --out <file.glb>           # compile DSL to GLB
+mogen import     <scene.json> --out <file.mog>         # pascalorg/editor scene → editable DSL source
 mogen generate   "a wooden stool" --out out.glb        # generate DSL via Gemini, then compile
 mogen modify     <file.mog> "make the legs taller"     # LLM edit of an existing .mog, then recompile
 mogen animate    <file.mog> "spin the rotor at 120 rpm"  # LLM edit limited to animations
