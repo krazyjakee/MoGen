@@ -85,7 +85,7 @@ file you can edit. Anything the importer could not use is reported and written
 into the file's header as a comment, so a partly-understood scene still opens.
 MoGen Studio has the same flow under **File → Import Pascal Scene…**.
 
-New to the Pascal editor? This short walks through drawing a building in it:
+New to the Pascal editor? This short video walks through drawing a building in it:
 
 [![How to use the Pascal editor](https://img.youtube.com/vi/99ckljvqyL4/hqdefault.jpg)](https://youtube.com/shorts/99ckljvqyL4)
 
