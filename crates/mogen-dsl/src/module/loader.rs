@@ -79,6 +79,31 @@ pub trait Loader {
             _spec.raw
         )
     }
+
+    /// Resolve a **binary** asset a lowered node names — today that is
+    /// `mesh (src="….glb")` — and return its bytes.
+    ///
+    /// The other two methods return [`LoadedFile`], i.e. *source text*, which
+    /// is why this could not reuse them: a GLB is not UTF-8. Until it existed
+    /// the `mesh` primitive read its file with a direct `fs::read` against a
+    /// thread-local source directory, **outside this seam entirely** — so a
+    /// caller could satisfy every `import` in a scene and still fail on the
+    /// first external mesh. That is not hypothetical: a browser lowering `.mog`
+    /// source out of a pre-fetched asset bundle is exactly such a caller, and a
+    /// scene using one could not be lowered there at all.
+    ///
+    /// `spec` is the attribute verbatim; `base_dir` is the directory of the
+    /// `.mog` being lowered — the same one `load` receives.
+    ///
+    /// **The default impl *is* the resolution the primitive already performed**,
+    /// by calling the very same function rather than restating its rule. That
+    /// matters because the primitive still falls back to that function when a
+    /// loader declines: two hand-written copies of one path rule, with the
+    /// second silently masking a mistake in the first, is a divergence waiting
+    /// to happen. Delegating leaves nothing to diverge.
+    fn load_binary(&mut self, spec: &str, base_dir: Option<&Path>) -> Result<Vec<u8>> {
+        mogen_geom::read_glb_bytes(spec, base_dir)
+    }
 }
 
 /// Filesystem-backed [`Loader`] used by the desktop CLI and `mogen-studio`.

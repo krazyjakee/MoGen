@@ -15,7 +15,7 @@ use mogen_geom::{
 };
 
 use crate::ast::Node;
-use crate::lower::source_dir;
+use crate::lower::{mesh_bytes, source_dir};
 
 use super::helpers::{resolve_size3, resolve_size_xy, resolve_size_xz};
 use super::lod::{scaled_count, scaled_subdivisions};
@@ -523,7 +523,16 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
             // .mog. `stdlib:` paths are byte-keyed and don't need a base dir.
             let base = source_dir();
             let load = (|| -> Result<Mesh> {
-                let bytes = read_glb_bytes(src, base.as_deref())?;
+                // The caller's `Loader::load_binary` gets first refusal (see
+                // `collect_mesh_binaries`): a host with no filesystem — the
+                // browser lowering `.mog` source out of a fetched asset bundle
+                // — can only reach an external mesh this way. Falling through
+                // to the disk read when nothing was supplied is what keeps
+                // every loader written before that method behaving identically.
+                let bytes = match mesh_bytes(src) {
+                    Some(b) => b,
+                    None => read_glb_bytes(src, base.as_deref())?,
+                };
                 mesh_from_glb_bytes(&bytes).with_context(|| format!("decoding mesh `{src}`"))
             })();
             return Some(load);

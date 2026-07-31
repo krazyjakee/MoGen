@@ -30,6 +30,7 @@ mod tests;
 
 use anyhow::Result;
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use mogen_core::{subtree_local_aabb, NodeId, SceneGraph};
@@ -69,11 +70,91 @@ thread_local! {
     // `building` node. None outside a `lower()` call.
     pub(super) static MODULE_REGISTRY: RefCell<Option<ModuleRegistry>> =
         const { RefCell::new(None) };
+    // Bytes a caller's `Loader::load_binary` supplied for each `mesh (src=…)`
+    // in this lowering, keyed by the `src` attribute verbatim. Filled by
+    // `collect_mesh_binaries` over the *expanded* AST; read by `primitive_mesh`,
+    // which reads the file itself when a spec is absent.
+    pub(super) static MESH_BYTES: RefCell<HashMap<String, Vec<u8>>> =
+        RefCell::new(HashMap::new());
 }
 
 /// Returns the source directory currently set on the lowering thread, if any.
 pub(super) fn source_dir() -> Option<PathBuf> {
     SOURCE_DIR.with(|s| s.borrow().clone())
+}
+
+/// The bytes the caller's [`Loader`] supplied for `mesh (src=spec)`, if any.
+///
+/// `None` means "nobody supplied these", **not** "this mesh has no bytes" —
+/// the primitive then resolves the file itself, which is what every loader
+/// written before [`Loader::load_binary`] existed relies on.
+pub(super) fn mesh_bytes(spec: &str) -> Option<Vec<u8>> {
+    MESH_BYTES.with(|m| m.borrow().get(spec).cloned())
+}
+
+/// Ask `loader` for the bytes behind every `mesh (src=…)` reachable in `ast`.
+///
+/// **Runs on the expanded AST**, after `expand_modules`, for two reasons that
+/// both bite: a `src=` inside a `module` is `$param`-substituted only by
+/// expansion, and a module nobody `use`s is gone by then — so pre-loading
+/// before expansion would fetch a spec that is not a path yet, and fetch files
+/// for geometry the scene never instantiates.
+///
+/// **Failures are dropped, not raised.** A spec the loader cannot serve is
+/// simply absent from the map, and `primitive_mesh` falls back to reading it
+/// from disk exactly as it always did — so this pass is strictly additive:
+/// every existing caller, including every `Loader` written before
+/// `load_binary` existed, produces precisely the lowering it produced before.
+/// Raising here would also move *when* a missing-file error is reported, from
+/// the node that names it to the whole scene.
+fn collect_mesh_binaries(
+    ast: &[Node],
+    base_dir: Option<&Path>,
+    loader: &mut dyn Loader,
+) -> HashMap<String, Vec<u8>> {
+    fn walk(nodes: &[Node], out: &mut Vec<String>) {
+        for n in nodes {
+            if n.kind == "mesh" {
+                if let Some(src) = n.attr_string("src") {
+                    out.push(src.to_string());
+                }
+            }
+            walk(&n.children, out);
+        }
+    }
+    let mut specs = Vec::new();
+    walk(ast, &mut specs);
+    specs.sort();
+    specs.dedup();
+
+    let mut map = HashMap::new();
+    for spec in specs {
+        if let Ok(bytes) = loader.load_binary(&spec, base_dir) {
+            map.insert(spec, bytes);
+        }
+    }
+    map
+}
+
+/// RAII guard publishing [`MESH_BYTES`] for one `lower()` call, so a previous
+/// (possibly failed) lowering's bytes cannot leak into this one — the reason
+/// [`ColliderRequestsGuard`] exists, one map along.
+struct MeshBytesGuard {
+    prev: HashMap<String, Vec<u8>>,
+}
+
+impl MeshBytesGuard {
+    fn set(map: HashMap<String, Vec<u8>>) -> Self {
+        let prev = MESH_BYTES.with(|m| std::mem::replace(&mut *m.borrow_mut(), map));
+        Self { prev }
+    }
+}
+
+impl Drop for MeshBytesGuard {
+    fn drop(&mut self) {
+        let prev = std::mem::take(&mut self.prev);
+        MESH_BYTES.with(|m| *m.borrow_mut() = prev);
+    }
 }
 
 /// RAII guard that sets the source directory for the duration of a single
@@ -222,6 +303,12 @@ pub fn lower_with_loader(
     // of the call below, and the guard needs an owned value.
     let _reg_guard = ModuleRegistryGuard::set(reg.clone());
     let (expanded, use_parents) = expand_modules(ast, &reg)?;
+
+    // Give the caller's loader a chance to serve every external mesh, now that
+    // module expansion has turned `src=$param` into a real spec and dropped the
+    // modules nobody instantiated. A loader that declines leaves the primitive
+    // reading the file itself, exactly as before.
+    let _mesh_bytes = MeshBytesGuard::set(collect_mesh_binaries(&expanded, base_dir, loader));
 
     let mut graph = SceneGraph::new();
     graph.use_parents = use_parents;
