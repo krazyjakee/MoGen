@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -16,6 +16,46 @@ thread_local! {
     /// a different one (or none at all).
     static LOD_BY_ORIGIN: RefCell<HashMap<PathBuf, f32>> =
         RefCell::new(HashMap::new());
+
+    /// The **caller's** tessellation density for this lowering, set by
+    /// [`crate::lower::lower_with_loader_lod`]. 1.0 = exactly what the source
+    /// asked for, which is what every other entry point passes.
+    ///
+    /// Deliberately a *second* thread-local rather than a different starting
+    /// value for `LOD_SCALE`, and that is the load-bearing part. `LOD_SCALE` is
+    /// **replaced** — not multiplied — by [`LodOriginScaleGuard`] on entry to
+    /// every imported subtree, precisely so one file's `lod_scale` cannot leak
+    /// across an `import`. A caller's request folded into `LOD_SCALE` would be
+    /// erased by that replacement, so asking for a coarse bake would coarsen the
+    /// root file and silently leave every imported subtree at full density.
+    ///
+    /// Kept separate it multiplies through *all* of it — the file's own
+    /// `lod_scale`, each import's, and every per-node `lod=` — which is what
+    /// "give me this whole scene at a quarter density" has to mean.
+    static LOD_REQUEST: Cell<f32> = const { Cell::new(1.0) };
+}
+
+/// RAII guard publishing the caller's requested density for one `lower()` call.
+///
+/// Non-positive and non-finite requests fall back to 1.0 — the rule
+/// [`extract_lod_scale`] already applies to the DSL directive, for the same
+/// reason: a malformed setting must not silently destroy every mesh.
+pub(super) struct LodRequestGuard {
+    prev: f32,
+}
+
+impl LodRequestGuard {
+    pub(super) fn set(scale: f32) -> Self {
+        let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
+        Self { prev: LOD_REQUEST.with(|s| s.replace(scale)) }
+    }
+}
+
+impl Drop for LodRequestGuard {
+    fn drop(&mut self) {
+        let prev = self.prev;
+        LOD_REQUEST.with(|s| s.set(prev));
+    }
 }
 
 /// Find a top-level `lod_scale (value=N)` declaration and return its multiplier.
@@ -59,8 +99,16 @@ pub(super) fn collect_origin_lods(imported: &[Node]) {
     });
 }
 
+/// The density every primitive tessellates at right now: the source's own
+/// scale (file-global, per-origin, per-node — all folded into `LOD_SCALE`)
+/// **times** the caller's request.
+///
+/// A product rather than a choice between the two: an author who marked a hero
+/// prop `lod=2` means "twice whatever else is going on", and that stays true at
+/// every density a baker asks for. Overriding instead would flatten a scene's
+/// authored detail hierarchy the moment anything requested a LOD.
 pub(super) fn current_lod_scale() -> f32 {
-    LOD_SCALE.with(|s| s.get())
+    LOD_SCALE.with(|s| s.get()) * LOD_REQUEST.with(|s| s.get())
 }
 
 /// RAII guard that resets the per-origin LOD map at the start of a

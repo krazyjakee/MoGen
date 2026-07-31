@@ -45,7 +45,7 @@ use crate::module::{
 use crate::skin_lower::{bind_meshes, lower_skeleton};
 
 use anim::{is_anim_decl, lower_animations};
-use lod::{collect_origin_lods, extract_lod_scale, LodByOriginGuard};
+use lod::{collect_origin_lods, extract_lod_scale, LodByOriginGuard, LodRequestGuard};
 use material::collect_materials;
 use shader::{collect_shaders, ensure_builtin_shaders};
 use node::lower_into;
@@ -263,6 +263,38 @@ pub fn lower_with_loader(
     base_dir: Option<&Path>,
     loader: &mut dyn Loader,
 ) -> Result<SceneGraph> {
+    lower_with_loader_lod(ast, base_dir, loader, 1.0)
+}
+
+/// [`lower_with_loader`] at a caller-chosen **tessellation density**.
+///
+/// `lod_scale` multiplies every segment / ring / sample count the lowering
+/// produces: `0.5` halves them, `2.0` doubles them, `1.0` is exactly what every
+/// other entry point does. Non-positive and non-finite values fall back to
+/// `1.0`, the rule the `lod_scale (value=N)` directive already follows.
+///
+/// **This is a bake-time parameter, not an authoring one.** The DSL already has
+/// three ways for a *file* to state its density — the top-level
+/// `lod_scale (value=N)`, each import's own, and a per-node `lod=N` — and this
+/// changes none of them. It is the knob a **caller** needs to lower the same
+/// AST more than once and get genuinely different geometry each time, which is
+/// what building a LOD chain out of retained analytic parameters requires: a
+/// coarse level here is the same sphere re-tessellated, not a decimated mesh,
+/// so it is exact at every level rather than approximate.
+///
+/// The request **multiplies** the source's own scales rather than replacing
+/// them, so an authored detail hierarchy survives: a part marked `lod=2` is
+/// still twice its neighbours at every density anyone asks for.
+///
+/// Existing callers are untouched and produce byte-identical graphs —
+/// `lower_with_loader` passes `1.0`, and a multiply by one changes nothing.
+pub fn lower_with_loader_lod(
+    ast: &[Node],
+    base_dir: Option<&Path>,
+    loader: &mut dyn Loader,
+    lod_scale: f32,
+) -> Result<SceneGraph> {
+    let _lod_req = LodRequestGuard::set(lod_scale);
     let _src = SourceDirGuard::set(base_dir.map(|p| p.to_path_buf()));
     let _coll = ColliderRequestsGuard::fresh();
     // Top-level `lod_scale (value=N)` multiplies primitive default segment/
