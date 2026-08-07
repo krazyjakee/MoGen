@@ -15,17 +15,19 @@
 //
 // Build with: mogen build examples/features/custom_shader.mog --out ripple.glb
 
+meta (mogen_version = "0.1.12")
+
 // `source` resolves relative to this .mog file, the same way texture paths do.
 // Each `param` becomes a uniform the snippet may use under its bare name.
 shader "ripple" (source="shaders/ripple.glsl") {
-  param "speed"     (type=float, default=2.0)
-  param "frequency" (type=float, default=8.0)
+  param "speed"     (type=float, default=1.0)
+  param "frequency" (type=float, default=10.0)
   param "tint"      (type=color, default=[0.0, 0.55, 0.75])
 }
 
 // A material opts in with `shader=` and overrides individual defaults in a
 // `shader_params` block. Omitted params keep the declared default — `frequency`
-// below stays at 8.0. `color` is not decoration here: the snippet mixes it into
+// below stays at 10.0. `color` is not decoration here: the snippet mixes it into
 // the ripple troughs, so it still reads through the custom shading.
 material "pond" (color=[0.05, 0.18, 0.28], roughness=0.35, shader="ripple") {
   shader_params (speed=3.0, tint=[0.1, 0.7, 0.9])
