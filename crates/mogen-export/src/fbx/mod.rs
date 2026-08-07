@@ -80,6 +80,28 @@ pub fn build_fbx_with_options_and_source<F: Fn(&str)>(
     texture_source: &dyn TextureSource,
     progress: F,
 ) -> Result<Vec<u8>> {
+    // Mirror the GLB pipeline's SVG pre-pass. This matters more here than it
+    // does for GLB: FBX emits texture *paths* rather than embedding bytes, so
+    // without this a `.svg` would be written into the FBX verbatim and no DCC
+    // tool could resolve it.
+    #[cfg(feature = "textures-svg")]
+    let svg_owned = if opts.include_textures {
+        crate::svg::rasterize_svg_textures(scene, texture_source)?
+    } else {
+        None
+    };
+    #[cfg(feature = "textures-svg")]
+    let svg_overlay;
+    #[cfg(feature = "textures-svg")]
+    let (scene, texture_source): (&SceneGraph, &dyn TextureSource) = match &svg_owned {
+        Some(r) => {
+            progress("rasterizing SVG textures");
+            svg_overlay = crate::svg::OverlayTextureSource::new(texture_source, &r.images);
+            (&r.scene, &svg_overlay)
+        }
+        None => (scene, texture_source),
+    };
+
     // Mirror the GLB merge pipeline: scoped `solid` pass first, then the
     // global sibling-merge if the caller asked for it. Both stages clone
     // and the latest owned graph wins.

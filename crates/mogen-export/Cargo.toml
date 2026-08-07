@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-default = ["textures", "textures-optimize", "merge", "lod", "imposter"]
+default = ["textures", "textures-optimize", "textures-svg", "merge", "lod", "imposter"]
 # Texture packing. Splits cleanly across two layers so wasm builds can
 # embed images without pulling in `image`/`oxipng` (which depend on C libs
 # that don't cross-compile to wasm32):
@@ -21,6 +21,15 @@ default = ["textures", "textures-optimize", "merge", "lod", "imposter"]
 # and materials export with PBR factors only.
 textures = []
 textures-optimize = ["textures", "dep:image", "dep:oxipng"]
+# - `textures-svg`      — rasterize `.svg` texture references to PNG before
+#                         export, so every downstream consumer (GLB embed,
+#                         FBX paths, Studio preview, derived PBR maps) only
+#                         ever sees raster. On by default for desktop. The
+#                         deps are pure Rust, so unlike `textures-optimize`
+#                         this one *can* be enabled for wasm too — the wasm
+#                         crate just has to opt in explicitly, since it
+#                         builds with `default-features = false`.
+textures-svg = ["textures", "dep:resvg", "dep:usvg"]
 # Sibling-mesh merge module. The merge pass calls into `mogen-geom`'s CSG
 # `union_many`; whichever crate enables the `csg` (desktop) or
 # `unstable-wasm-uu` (wasm) flavor of `mogen-geom` is responsible for
@@ -53,9 +62,14 @@ serde_json = { workspace = true }
 glam = { workspace = true }
 image = { workspace = true, optional = true }
 oxipng = { workspace = true, optional = true }
+resvg = { workspace = true, optional = true }
+usvg = { workspace = true, optional = true }
 fbxcel = { version = "0.9", features = ["writer", "tree"], optional = true }
 meshopt = { workspace = true, optional = true }
 mogen-render = { workspace = true, optional = true }
 
 [dev-dependencies]
 mogen-dsl = { workspace = true, features = ["csg"] }
+# Non-optional here so the `svg` module's tests can decode what they rendered
+# even in a `--no-default-features --features textures-svg` build.
+image = { workspace = true }

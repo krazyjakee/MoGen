@@ -132,6 +132,20 @@ fn register_material(node: &Node, graph: &mut SceneGraph) -> Result<()> {
         mat.uv_scale = pair;
     }
 
+    // Rasterization controls for `.svg` texture slots. Both are inert on
+    // raster textures — the exporter only consults them when a slot's path
+    // actually has an `.svg` extension. Range is enforced at export, where the
+    // material name is available for the message.
+    if let Some(s) = node.attr_number("texture_size") {
+        if s < 1.0 || s.fract() != 0.0 {
+            bail!("texture_size must be a positive whole number of pixels; got {s}");
+        }
+        mat.texture_size = Some(s as u32);
+    }
+    if let Some(w) = node.attr_number("texture_wrap") {
+        mat.texture_wrap = w != 0.0;
+    }
+
     // `shader="<name>"` names a preview shader (built-in `water` or a user
     // `shader "<name>"` declaration). `standard`/`pbr` are the implicit PBR
     // path — recorded as `None`. Unknown names are *not* rejected here; the

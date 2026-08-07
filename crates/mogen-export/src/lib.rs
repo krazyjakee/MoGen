@@ -10,6 +10,8 @@ mod material;
 pub mod merge;
 pub mod options;
 mod skin;
+#[cfg(feature = "textures-svg")]
+pub mod svg;
 mod texture;
 mod writer;
 
@@ -24,6 +26,8 @@ pub use lod::{scene_with_lod, LOD_STAGE_COUNT};
 #[cfg(feature = "imposter")]
 pub use imposter::{bake_scene_imposter, ImposterAtlas};
 pub use texture::{FsTextureSource, MapTextureSource, TextureSource};
+#[cfg(feature = "textures-svg")]
+pub use svg::{is_svg, rasterize_svg_textures, OverlayTextureSource, SvgRaster};
 pub use writer::{
     build_glb_with_options, build_glb_with_options_and_source, write_glb, write_glb_with_options,
 };

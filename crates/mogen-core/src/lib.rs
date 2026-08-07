@@ -23,7 +23,9 @@ pub use graph::{
 pub use gradient::{Gradient, GradientAxis, GradientKind, GradientStop};
 pub use meta::Meta;
 pub use light::{Light, LightKind};
-pub use material::{AlphaMode, Material, MaterialId, TextureRef, UvMode};
+pub use material::{
+    AlphaMode, Material, MaterialId, TextureRef, UvMode, DEFAULT_SVG_SIZE,
+};
 pub use mesh::Mesh;
 pub use physics::{PhysicsBody, PhysicsId, PhysicsMaterial};
 pub use shader::{ShaderDecl, ShaderParamDef, ShaderParamType, ShaderParamValue};
