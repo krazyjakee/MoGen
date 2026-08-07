@@ -331,3 +331,55 @@ fn gradient_axis_must_be_x_y_or_z() {
     let msg = format!("{err:#}");
     assert!(msg.contains("axis"), "wrong error: {msg}");
 }
+
+#[test]
+fn svg_raster_attrs_lower_onto_the_material() {
+    let g = lower_src(
+        r#"
+        material "vector" (color=[1, 1, 1],
+                           base_color_texture="tile.svg",
+                           texture_size=512,
+                           texture_wrap=1)
+        scene { box "b" (size=[1, 1, 1], mat="vector") }
+        "#,
+    );
+    let id = g.find_material("vector").expect("vector material");
+    let mat = &g.materials[id.0 as usize];
+    assert_eq!(mat.texture_size, Some(512));
+    assert!(mat.texture_wrap);
+}
+
+#[test]
+fn svg_raster_attrs_default_when_omitted() {
+    // Absent means "use the exporter's default", not "0" — the distinction
+    // matters because 0 is a rejected size.
+    let g = lower_src(
+        r#"
+        material "plain" (color=[1, 1, 1], base_color_texture="tile.svg")
+        scene { box "b" (size=[1, 1, 1], mat="plain") }
+        "#,
+    );
+    let id = g.find_material("plain").expect("plain material");
+    let mat = &g.materials[id.0 as usize];
+    assert_eq!(mat.texture_size, None);
+    assert!(!mat.texture_wrap);
+}
+
+#[test]
+fn texture_size_rejects_zero_and_fractional_values() {
+    for bad in ["0", "1.5", "-8"] {
+        let src = format!(
+            r#"
+            material "m" (color=[1, 1, 1], base_color_texture="t.svg", texture_size={bad})
+            scene {{ box "b" (size=[1, 1, 1], mat="m") }}
+            "#
+        );
+        let ast = parse(&src).expect("parse");
+        let err = lower(&ast).expect_err("texture_size={bad} must reject");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("texture_size"),
+            "error should name the attribute for {bad}, got: {msg}"
+        );
+    }
+}

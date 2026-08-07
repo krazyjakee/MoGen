@@ -34,6 +34,13 @@ serde_json = "1"
 glam = { version = "0.30", features = ["serde"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 oxipng = { version = "9", default-features = false, features = ["parallel"] }
+# SVG rasterization for `mogen-export`'s `textures-svg` feature. Pure Rust, so
+# unlike `image`/`oxipng` these do cross-compile to wasm32. `usvg`'s default
+# features are off deliberately: they pull in `fontdb`, which enumerates
+# system fonts at render time and would make rasterization depend on which
+# machine ran the build. Text in an SVG must be converted to paths first.
+resvg = { version = "0.48", default-features = false }
+usvg = { version = "0.48", default-features = false }
 # meshoptimizer Rust bindings. Used by `mogen-export`'s LOD pass to generate
 # simplified index buffers via quadric edge collapse. Wraps a small C++ lib
 # behind `cc`; doesn't cross-compile to `wasm32-unknown-unknown`, so wasm

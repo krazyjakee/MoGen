@@ -41,6 +41,12 @@ pub enum UvMode {
     Fit,
 }
 
+/// Edge length used for `.svg` textures when a material doesn't set
+/// [`Material::texture_size`]. Large enough that a detailed vector tile still
+/// reads cleanly on a hero asset, small enough that the default build doesn't
+/// spend megabytes on a flat two-colour pattern.
+pub const DEFAULT_SVG_SIZE: u32 = 1024;
+
 /// A reference to an on-disk image used as a material texture. Paths are
 /// resolved relative to the `.mog` file that declared them. During export the
 /// exporter reads the bytes, embeds them into the GLB binary chunk, and writes
@@ -114,6 +120,19 @@ pub struct Material {
     /// repeats the image within a face, `< 1` zooms into a sub-region.
     pub uv_scale: [f32; 2],
 
+    /// Edge length, in pixels, that `.svg` textures on this material are
+    /// rasterized to at export. SVG has no intrinsic pixel size, so one has to
+    /// be chosen; `None` means the [`DEFAULT_SVG_SIZE`] default. Ignored
+    /// entirely by raster textures, which are embedded at their authored size.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub texture_size: Option<u32>,
+    /// Whether `.svg` textures on this material rasterize with wrap-around, so
+    /// artwork crossing the tile boundary joins up instead of being clipped.
+    /// Off by default because it costs 9 render passes and only changes the
+    /// result for SVGs whose content overflows the viewBox.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub texture_wrap: bool,
+
     /// Albedo texture (multiplied with `base_color`). Expects a sRGB PNG.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub base_color_texture: Option<TextureRef>,
@@ -178,6 +197,8 @@ impl Material {
             shader_name: None,
             shader_params: BTreeMap::new(),
             uv_scale: [1.0, 1.0],
+            texture_size: None,
+            texture_wrap: false,
             base_color_texture: None,
             metallic_roughness_texture: None,
             normal_texture: None,

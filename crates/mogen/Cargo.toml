@@ -14,7 +14,7 @@ mogen-core = { workspace = true }
 mogen-dsl = { workspace = true, features = ["csg"] }
 mogen-binary = { workspace = true }
 mogen-validate = { workspace = true, features = ["csg"] }
-mogen-export = { workspace = true, features = ["textures", "merge", "fbx"] }
+mogen-export = { workspace = true, features = ["textures", "textures-svg", "merge", "fbx"] }
 mogen-llm = { workspace = true }
 mogen-moghub-client = { workspace = true, features = ["oauth"] }
 mogen-pascal = { workspace = true }

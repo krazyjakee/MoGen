@@ -903,14 +903,22 @@ Declared at the top of the file or inside `scene { ... }`. Attributes:
 - `uv_scale` — scalar or vec2; default `1.0`. In `tile` mode: tiles per
   world unit (`2` = denser, `0.5` = bigger). In `fit` mode: multiplies
   `[0, 1]` coords. Vec2 stretches asymmetrically.
-- `base_color_texture` — string path to an `.png`/`.jpg` file on disk,
+- `base_color_texture` — string path to a `.png`/`.jpg`/`.svg` file on disk,
   resolved relative to the `.mog` file. Multiplied against `color`. sRGB.
+  See [SVG textures](#svg-textures) for how `.svg` is handled.
 - `metallic_roughness_texture` — packed metal/rough map (glTF convention:
   green = roughness, blue = metallic). Linear.
 - `normal_texture` — tangent-space normal map. Linear.
 - `occlusion_texture` — ambient occlusion (red channel). Linear.
 - `emissive_texture` — emissive colour map, multiplied against `emissive`.
   sRGB.
+- `texture_size` — positive whole number; default `1024`. Pixel edge length
+  that `.svg` texture slots on this material rasterize to. Ignored by
+  `.png`/`.jpg` slots, which embed at their authored size.
+- `texture_wrap` — `0` (default) or `1`. Rasterize `.svg` slots with
+  wrap-around so artwork crossing the tile boundary reappears on the opposite
+  edge instead of being clipped. No effect on art that stays inside the
+  viewBox, so it is always safe to enable on a tile.
 - `prompt` — free-form subject hint for `mogen textures` when generating
   albedo (e.g. `prompt="navy nylon ripstop weave"`). Steers Gemini away
   from the default "material name + colour" framing; auto-rephrased on
@@ -960,6 +968,65 @@ material "lake" (color=[0.05, 0.32, 0.45], shader="water")
 Texture files are embedded in the output GLB (self-contained, movable
 without sources); missing files are a hard error at export. Reference a
 material via `mat="wood"`; unknown names are a hard error at lowering.
+
+### SVG textures
+
+Any texture slot accepts a `.svg` path. glTF 2.0 has no vector image type —
+its core spec defines only `image/png` and `image/jpeg` — so mogen rasterizes
+SVG to PNG at build time and embeds that. This happens before anything else
+inspects the scene, so the GLB, the FBX exporter, Studio's preview, and the
+derived-PBR pipeline all see raster only; nothing downstream ever encounters a
+`.svg` path.
+
+```
+material "tiles" (
+  color=[1, 1, 1],
+  uv_mode="fit",
+  base_color_texture="textures/hex.svg",
+  texture_size=2048,
+  texture_wrap=1
+)
+```
+
+Notes:
+
+- **Size is yours to choose.** SVG carries no intrinsic pixel size, so
+  `texture_size` (default `1024`) decides it. The viewBox is scaled to fill
+  the square exactly — a non-square viewBox is stretched rather than
+  letterboxed, since these are UV-space tiles where aspect correction belongs
+  to `uv_scale`.
+- **Text must be converted to paths first.** The rasterizer is built without
+  font support on purpose: resolving font names would make output depend on
+  which fonts the build machine happens to have installed, and identical
+  sources must produce identical bytes.
+- **Rasterization is deterministic and uncached.** The same SVG at the same
+  size yields byte-identical output every build, so there is nothing to
+  invalidate. One SVG used at two `texture_size` values embeds twice, as it
+  must.
+- **`texture_wrap=1` synthesises a seamless tile.** The art is drawn on a 3×3
+  lattice and the centre cell kept, so shapes overhanging the viewBox reappear
+  on the opposite edge instead of being clipped. This is the one thing a
+  vector source buys that a supplied PNG cannot — the renderer is ours, so the
+  wrap can be manufactured rather than hand-authored. The nine draws composite
+  normally, which makes the result exactly what painting the art across an
+  endless field of adjacent tiles would give. Art contained by the viewBox is
+  untouched, and overhang narrower than the tile only lands where the centre
+  drew nothing — but a *translucent* shape wider than the whole tile overlaps
+  itself, and reads darker in a band at each edge. The bands match across the
+  join, so the tiling stays seamless; split such a shape if the frame shows.
+
+Seamlessness on a **curved** surface is a separate matter, and `.svg` does not
+by itself fix it: it is a property of the UV layout, not the image format. A
+sphere's equirectangular mapping pinches at the poles no matter what feeds it,
+and `uv_mode="tile"` scales U by world arc length, which lands mid-tile at the
+wrap for most radii. For a seamless sphere, pair a wrap-authored tile with
+`uv_mode="fit"`.
+
+**Not yet compatible with `bundle_lods_and_imposter`.** That export option's
+imposter bake reads texture files straight off disk through its own headless
+GL renderer, independent of the rasterization pass described above, and can't
+decode `.svg` either. Combining the two is a hard error at export time.
+Pre-rasterize the texture to `.png` if you need both.
 
 ---
 

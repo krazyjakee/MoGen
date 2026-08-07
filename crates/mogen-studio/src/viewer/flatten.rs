@@ -29,6 +29,13 @@ pub struct DrawBatch {
     pub normal_texture: Option<PathBuf>,
     pub occlusion_texture: Option<PathBuf>,
     pub emissive_texture: Option<PathBuf>,
+    /// Source material's `texture_size` / `texture_wrap`, copied through so
+    /// `.svg` texture slots rasterize at the author's requested resolution in
+    /// the live viewport too, not just in `mogen build`'s real export. Inert
+    /// for raster (`.png`/`.jpg`) slots. `None` size means "use the exporter's
+    /// default" — see `mogen_export::resolve_svg_size`.
+    pub texture_size: Option<u32>,
+    pub texture_wrap: bool,
     /// PBR scalars copied off the source `Material`. Multiplied with their
     /// corresponding texture (when present) inside the fragment shader.
     pub base_color: [f32; 3],
@@ -487,6 +494,8 @@ pub fn flatten_with_worlds(
                 normal_texture,
                 occlusion_texture,
                 emissive_texture,
+                texture_size,
+                texture_wrap,
                 base_color,
                 base_color_alpha,
                 metallic,
@@ -506,6 +515,8 @@ pub fn flatten_with_worlds(
                     m.normal_texture.as_ref().map(resolve),
                     m.occlusion_texture.as_ref().map(resolve),
                     m.emissive_texture.as_ref().map(resolve),
+                    m.texture_size,
+                    m.texture_wrap,
                     [m.base_color[0], m.base_color[1], m.base_color[2]],
                     m.base_color[3],
                     m.metallic,
@@ -525,6 +536,8 @@ pub fn flatten_with_worlds(
                     None,
                     None,
                     None,
+                    None,
+                    false,
                     [0.78, 0.78, 0.78],
                     1.0,
                     0.0,
@@ -559,6 +572,8 @@ pub fn flatten_with_worlds(
                 normal_texture,
                 occlusion_texture,
                 emissive_texture,
+                texture_size,
+                texture_wrap,
                 base_color,
                 base_color_alpha,
                 metallic,

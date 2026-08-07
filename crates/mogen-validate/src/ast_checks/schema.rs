@@ -278,6 +278,7 @@ pub fn attrs_for_kind(kind: &str) -> &'static [&'static str] {
             "transmission",
             "double_sided",
             "uv_mode", "uv_scale",
+            "texture_size", "texture_wrap",
             "shader",
             "base_color_texture", "metallic_roughness_texture",
             "normal_texture", "occlusion_texture", "emissive_texture",
@@ -674,7 +675,9 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         | ("material", "alpha_cutoff")
         | ("material", "emissive_strength")
         | ("material", "transmission")
-        | ("material", "double_sided") => "number",
+        | ("material", "double_sided")
+        | ("material", "texture_size")
+        | ("material", "texture_wrap") => "number",
         ("coil", "handedness") => "string",
         ("material", "color") | ("material", "emissive") => "vec3",
         ("material", "alpha_mode") | ("material", "uv_mode") | ("material", "shader") => "string",

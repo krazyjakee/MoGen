@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100">
+  <!-- A self-contained emblem: nothing crosses the viewBox, so texture_wrap
+       would be a no-op here. Paths only — no <text> — because the rasterizer
+       is built without font support so that output can't depend on which
+       fonts the build machine has installed. -->
+  <rect x="0" y="0" width="100" height="100" fill="#f4f1e8"/>
+  <circle cx="50" cy="50" r="40" fill="none" stroke="#2b3a55" stroke-width="4"/>
+  <!-- Mountain glyph. -->
+  <path d="M28 64 L44 36 L54 52 L62 42 L74 64 Z" fill="#2b3a55"/>
+  <circle cx="66" cy="32" r="6" fill="#e8c07d"/>
+</svg>

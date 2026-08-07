@@ -206,26 +206,28 @@ impl Renderer {
         self.draw_textures.clear();
         self.draw_textures.reserve(self.batches.len());
         for i in 0..self.batches.len() {
+            let svg_size = self.batches[i].texture_size;
+            let svg_wrap = self.batches[i].texture_wrap;
             let base = self.batches[i]
                 .base_color_texture
                 .clone()
-                .and_then(|p| self.ensure_texture(gl, &p, true));
+                .and_then(|p| self.ensure_texture(gl, &p, true, svg_size, svg_wrap));
             let mr = self.batches[i]
                 .metallic_roughness_texture
                 .clone()
-                .and_then(|p| self.ensure_texture(gl, &p, false));
+                .and_then(|p| self.ensure_texture(gl, &p, false, svg_size, svg_wrap));
             let normal = self.batches[i]
                 .normal_texture
                 .clone()
-                .and_then(|p| self.ensure_texture(gl, &p, false));
+                .and_then(|p| self.ensure_texture(gl, &p, false, svg_size, svg_wrap));
             let ao = self.batches[i]
                 .occlusion_texture
                 .clone()
-                .and_then(|p| self.ensure_texture(gl, &p, false));
+                .and_then(|p| self.ensure_texture(gl, &p, false, svg_size, svg_wrap));
             let emissive = self.batches[i]
                 .emissive_texture
                 .clone()
-                .and_then(|p| self.ensure_texture(gl, &p, true));
+                .and_then(|p| self.ensure_texture(gl, &p, true, svg_size, svg_wrap));
             self.draw_textures.push([base, mr, normal, ao, emissive]);
         }
 

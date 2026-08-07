@@ -126,6 +126,47 @@ fn build_glb_with_options_and_source_inner<F: Fn(&str)>(
     #[cfg(feature = "imposter")] prebaked_imposter: Option<ImposterAtlas>,
     progress: F,
 ) -> Result<Vec<u8>> {
+    // SVG textures rasterize to PNG up front, before the merge stages or the
+    // exporter look at any material, so nothing downstream ever sees a vector
+    // path. See `crate::svg` for why this is a pre-pass rather than a branch
+    // in the decode path. Costs nothing (not even a clone) when the scene
+    // references no SVG, which is the common case.
+    #[cfg(feature = "textures-svg")]
+    let svg_owned = if opts.include_textures {
+        crate::svg::rasterize_svg_textures(scene, texture_source)?
+    } else {
+        None
+    };
+    #[cfg(feature = "textures-svg")]
+    let svg_overlay;
+    #[cfg(feature = "textures-svg")]
+    let (scene, texture_source): (&SceneGraph, &dyn TextureSource) = match &svg_owned {
+        Some(r) => {
+            progress("rasterizing SVG textures");
+            svg_overlay = crate::svg::OverlayTextureSource::new(texture_source, &r.images);
+            (&r.scene, &svg_overlay)
+        }
+        None => (scene, texture_source),
+    };
+
+    // The imposter bake (below) reads texture bytes straight off disk via
+    // `mogen_render`'s own GL loader, which has no `TextureSource` hook and
+    // therefore can't see the in-memory bytes the pass above just produced —
+    // it would instead try to open the synthetic `*.rasterNNNw.png` path,
+    // which never touches disk. Fail with a clear, specific message here
+    // rather than let that surface as a confusing "file not found". Only
+    // applies when we're about to bake internally: a caller-supplied
+    // `prebaked_imposter` (Studio's export flow) skips the bake entirely.
+    #[cfg(all(feature = "imposter", feature = "textures-svg"))]
+    if opts.bundle_lods_and_imposter && svg_owned.is_some() && prebaked_imposter.is_none() {
+        anyhow::bail!(
+            "bundle_lods_and_imposter does not yet support `.svg` textures: \
+             the imposter bake reads texture files directly and can't \
+             rasterize SVG. Pre-rasterize the texture to `.png`, or disable \
+             one of the two options."
+        );
+    }
+
     // Two-stage merge. First, the scoped `solid` pass runs whenever the scene
     // carries any `"solid"`-tagged nodes (opt-in from the DSL — no flag
     // needed). Its clone is skipped if no solid groups are present. Then, if

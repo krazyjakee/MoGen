@@ -1,0 +1,53 @@
+// SVG textures: vector art rasterized at build time.
+//
+// glTF has no vector image type, so `.svg` slots are rasterized to PNG before
+// export and embedded like any other texture. `texture_size` picks the
+// resolution (SVG carries none of its own); `texture_wrap` makes art that
+// overhangs the viewBox reappear on the opposite edge, which is how you get a
+// tile that repeats without a visible join.
+//
+// Build with: mogen build examples/features/svg_texture.mog --out svg.glb
+
+// Wrap on: the circles are centred on the tile edges and corners, so half of
+// each falls outside the viewBox. Without wrap they'd be clipped flat against
+// the border; with it they complete themselves across the seam.
+material "dots" (
+  color             = [1, 1, 1],
+  roughness         = 0.7,
+  uv_mode           = "tile",
+  base_color_texture = "textures/dots.svg",
+  texture_size      = 1024,
+  texture_wrap      = 1
+)
+
+// Wrap off, fit mode: the SVG is a self-contained emblem meant to appear once
+// on the face rather than repeat, so there is nothing to wrap.
+material "emblem" (
+  color             = [1, 1, 1],
+  roughness         = 0.5,
+  uv_mode           = "fit",
+  base_color_texture = "textures/emblem.svg",
+  texture_size      = 512
+)
+
+scene {
+  // A tiled wall. `uv_mode="tile"` repeats the pattern by world unit, which
+  // is what makes the wrap-around matter — every repeat boundary is a seam.
+  box "wall" (size=[3, 2, 0.15], mat="dots")
+
+  // A sign showing the emblem once, edge to edge.
+  panel "sign" (size=[0.8, 0.8, 0.05], mat="emblem", right_of="wall", gap=0.4)
+
+  // The same emblem on a sphere. Seamlessness on a curved surface is a UV
+  // property, not an image-format one: `uv_mode="fit"` wraps the texture
+  // exactly once around, so the longitudinal seam closes. The poles still
+  // pinch — that's inherent to equirectangular mapping.
+  sphere "globe" (
+    radius   = 0.5,
+    rings    = 32,
+    segments = 64,
+    mat      = "emblem",
+    right_of = "sign",
+    gap      = 0.4
+  )
+}
