@@ -22,24 +22,31 @@ pub(super) struct CachedTexture {
 }
 
 impl Renderer {
-    /// Look up a texture in the cache, decoding the PNG and uploading on the
-    /// first miss. `srgb` selects the GPU storage format: albedo and emissive
-    /// maps need sRGB so the GL pipeline linearises them on read; metallic-
-    /// roughness, normal, and AO maps store data, not colour, and must be
-    /// linear. Re-loads when the file's mtime changes so regenerated PNGs
-    /// (e.g. after `Generate Textures`) become visible without restarting.
-    /// Returns `None` for paths that fail to load — the caller falls back to
-    /// the corresponding scalar uniform.
+    /// Look up a texture in the cache, decoding (or, for `.svg`, rasterizing)
+    /// and uploading on the first miss. `srgb` selects the GPU storage
+    /// format: albedo and emissive maps need sRGB so the GL pipeline
+    /// linearises them on read; metallic-roughness, normal, and AO maps
+    /// store data, not colour, and must be linear. Re-loads when the file's
+    /// mtime changes so regenerated PNGs (e.g. after `Generate Textures`)
+    /// become visible without restarting. `svg_size`/`svg_wrap` are the
+    /// source material's `texture_size`/`texture_wrap` and only affect
+    /// `.svg` paths — included in the cache key so the same SVG referenced
+    /// at two resolutions (e.g. two materials sharing one file) doesn't
+    /// serve one material's raster to the other. Returns `None` for paths
+    /// that fail to load — the caller falls back to the corresponding
+    /// scalar uniform.
     pub(super) fn ensure_texture(
         &mut self,
         gl: &glow::Context,
         path: &Path,
         srgb: bool,
+        svg_size: Option<u32>,
+        svg_wrap: bool,
     ) -> Option<glow::Texture> {
         let mtime = std::fs::metadata(path)
             .and_then(|m| m.modified())
             .ok();
-        let key = (path.to_path_buf(), srgb);
+        let key = (path.to_path_buf(), srgb, svg_size, svg_wrap);
 
         if let Some(cached) = self.texture_cache.get(&key) {
             if cached.mtime == mtime {
@@ -51,7 +58,7 @@ impl Renderer {
             }
         }
 
-        let texture = match unsafe { try_load_texture(gl, path, srgb) } {
+        let texture = match unsafe { try_load_texture(gl, path, srgb, svg_size, svg_wrap) } {
             Ok(t) => Some(t),
             Err(e) => {
                 eprintln!("viewer: texture load failed for {}: {e}", path.display());
@@ -81,10 +88,10 @@ impl Renderer {
                 }
             }
         }
-        let stale: Vec<(PathBuf, bool)> = self
+        let stale: Vec<TextureCacheKey> = self
             .texture_cache
             .keys()
-            .filter(|(p, _)| !alive.contains(p))
+            .filter(|(p, ..)| !alive.contains(p))
             .cloned()
             .collect();
         for k in stale {
@@ -97,4 +104,9 @@ impl Renderer {
     }
 }
 
-pub(super) type TextureCache = HashMap<(PathBuf, bool), CachedTexture>;
+/// `(path, srgb, svg_size, svg_wrap)`. The last two are inert for raster
+/// textures but must be part of the key so one `.svg` shared by two
+/// materials at different `texture_size`s gets two cached uploads, not a
+/// clobbered one.
+pub(super) type TextureCacheKey = (PathBuf, bool, Option<u32>, bool);
+pub(super) type TextureCache = HashMap<TextureCacheKey, CachedTexture>;

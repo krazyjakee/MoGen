@@ -50,7 +50,7 @@ use crate::texture::TextureSource;
 /// compression, which is already well past anything a texture slot should be
 /// carrying; beyond it a typo in `texture_size` turns into an OOM rather than
 /// an error message.
-const MAX_SVG_SIZE: u32 = 8192;
+pub const MAX_SVG_SIZE: u32 = 8192;
 
 /// Does this path look like an SVG? Extension-based, matching how the rest of
 /// the exporter dispatches on format (`texture::mime_from_extension`).
@@ -131,7 +131,7 @@ pub fn rasterize_svg_textures(
     let mut images: HashMap<PathBuf, Vec<u8>> = HashMap::new();
 
     for mat in &mut scene.materials {
-        let size = resolve_size(mat)?;
+        let size = resolve_svg_size(mat)?;
         let wrap = mat.texture_wrap;
         for slot in mat.texture_slots_mut() {
             let Some(tex) = slot.as_ref() else { continue };
@@ -168,7 +168,12 @@ fn material_references_svg(mat: &Material) -> bool {
     .any(|t| is_svg(&t.path))
 }
 
-fn resolve_size(mat: &Material) -> Result<u32> {
+/// Resolve a material's `texture_size` to the pixel edge length its `.svg`
+/// slots rasterize to, applying [`DEFAULT_SVG_SIZE`] when unset and rejecting
+/// anything outside `1..=MAX_SVG_SIZE`. Exposed so other consumers of a raw
+/// `Material` — e.g. MoGen Studio's live viewport, which rasterizes textures
+/// outside the export pipeline — resolve the same size the exporter would.
+pub fn resolve_svg_size(mat: &Material) -> Result<u32> {
     let size = mat.texture_size.unwrap_or(DEFAULT_SVG_SIZE);
     if size == 0 || size > MAX_SVG_SIZE {
         bail!(
@@ -193,7 +198,12 @@ fn resolve_size(mat: &Material) -> Result<u32> {
 /// without the author having to hand-split the shapes that straddle the
 /// boundary. This is the one thing a vector source buys that a supplied PNG
 /// cannot: the renderer is ours, so the wrap can be synthesised.
-fn render_svg(svg: &[u8], size: u32, wrap: bool) -> Result<Vec<u8>> {
+///
+/// Public so a consumer that already has SVG bytes and a resolved size/wrap —
+/// e.g. Studio's live viewport, which rasterizes on the fly outside the
+/// export pipeline — can call the same renderer [`rasterize_svg_textures`] uses
+/// rather than re-implementing it.
+pub fn render_svg(svg: &[u8], size: u32, wrap: bool) -> Result<Vec<u8>> {
     // `usvg::Options` default carries no fontdb (the `text` feature is off in
     // Cargo.toml), so this cannot depend on host-installed fonts.
     let opts = usvg::Options::default();
@@ -330,5 +340,41 @@ mod tests {
             "raster path must not carry the source's .svg extension: {}",
             a.display()
         );
+    }
+
+    #[test]
+    fn resolve_svg_size_uses_the_default_when_unset() {
+        let mat = Material::new("m");
+        assert_eq!(resolve_svg_size(&mat).unwrap(), DEFAULT_SVG_SIZE);
+    }
+
+    #[test]
+    fn resolve_svg_size_rejects_zero() {
+        let mut mat = Material::new("m");
+        mat.texture_size = Some(0);
+        let err = resolve_svg_size(&mat).unwrap_err();
+        assert!(format!("{err:#}").contains("texture_size"));
+    }
+
+    #[test]
+    fn resolve_svg_size_rejects_above_the_max() {
+        let mut mat = Material::new("blowup");
+        mat.texture_size = Some(MAX_SVG_SIZE + 1);
+        let err = resolve_svg_size(&mat).unwrap_err();
+        let msg = format!("{err:#}");
+        // Names the offending material so a multi-material scene's error is
+        // actionable, and the bound itself so the fix is obvious.
+        assert!(msg.contains("blowup"), "should name the material: {msg}");
+        assert!(
+            msg.contains(&MAX_SVG_SIZE.to_string()),
+            "should name the bound: {msg}"
+        );
+    }
+
+    #[test]
+    fn resolve_svg_size_accepts_the_max_exactly() {
+        let mut mat = Material::new("m");
+        mat.texture_size = Some(MAX_SVG_SIZE);
+        assert_eq!(resolve_svg_size(&mat).unwrap(), MAX_SVG_SIZE);
     }
 }

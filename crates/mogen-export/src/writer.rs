@@ -149,6 +149,24 @@ fn build_glb_with_options_and_source_inner<F: Fn(&str)>(
         None => (scene, texture_source),
     };
 
+    // The imposter bake (below) reads texture bytes straight off disk via
+    // `mogen_render`'s own GL loader, which has no `TextureSource` hook and
+    // therefore can't see the in-memory bytes the pass above just produced —
+    // it would instead try to open the synthetic `*.rasterNNNw.png` path,
+    // which never touches disk. Fail with a clear, specific message here
+    // rather than let that surface as a confusing "file not found". Only
+    // applies when we're about to bake internally: a caller-supplied
+    // `prebaked_imposter` (Studio's export flow) skips the bake entirely.
+    #[cfg(all(feature = "imposter", feature = "textures-svg"))]
+    if opts.bundle_lods_and_imposter && svg_owned.is_some() && prebaked_imposter.is_none() {
+        anyhow::bail!(
+            "bundle_lods_and_imposter does not yet support `.svg` textures: \
+             the imposter bake reads texture files directly and can't \
+             rasterize SVG. Pre-rasterize the texture to `.png`, or disable \
+             one of the two options."
+        );
+    }
+
     // Two-stage merge. First, the scoped `solid` pass runs whenever the scene
     // carries any `"solid"`-tagged nodes (opt-in from the DSL — no flag
     // needed). Its clone is skipped if no solid groups are present. Then, if

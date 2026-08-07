@@ -1016,6 +1016,12 @@ and `uv_mode="tile"` scales U by world arc length, which lands mid-tile at the
 wrap for most radii. For a seamless sphere, pair a wrap-authored tile with
 `uv_mode="fit"`.
 
+**Not yet compatible with `bundle_lods_and_imposter`.** That export option's
+imposter bake reads texture files straight off disk through its own headless
+GL renderer, independent of the rasterization pass described above, and can't
+decode `.svg` either. Combining the two is a hard error at export time.
+Pre-rasterize the texture to `.png` if you need both.
+
 ---
 
 ## Shaders

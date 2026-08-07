@@ -96,9 +96,12 @@ mogen-dsl  ──parse──►  AST  ──validate_ast──►  lower  ──
   pre-export pass that rasterizes `.svg` texture slots to PNG and rewrites the
   `TextureRef` paths in a cloned graph, layering the rendered bytes over the caller's
   `TextureSource`. It runs *before* the merge stages in both the GLB and FBX entry points,
-  so the exporter, FBX's raw-path emission, Studio's preview, and `mogen-llm`'s derived
-  PBR maps all see raster only and need no SVG branch of their own. Deliberately uncached
-  and font-free — both so identical sources produce identical bytes.
+  so the exporter and FBX's raw-path emission see raster only and need no SVG branch of
+  their own. `render_svg`/`resolve_svg_size` are also exported standalone so a consumer
+  that never touches a full `SceneGraph` — MoGen Studio's live viewport reads texture
+  paths straight off disk, outside the export pipeline — can rasterize one file at a time
+  instead of re-implementing the renderer. Deliberately uncached and font-free — both so
+  identical sources produce identical bytes.
 - **mogen-llm** — Gemini `generateContent` client (`gemini.rs`), system-instruction assembly
   from grammar + stdlib index + examples (`prompt.rs`), and the repair loop (`repair.rs`)
   that re-feeds JSON diagnostics for up to `max_repair_iters` retries. `embed_seed_header` /

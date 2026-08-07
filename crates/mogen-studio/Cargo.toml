@@ -40,7 +40,7 @@ mogen-core = { workspace = true }
 mogen-dsl = { workspace = true, features = ["csg"] }
 mogen-binary = { workspace = true }
 mogen-validate = { workspace = true, features = ["csg"] }
-mogen-export = { workspace = true, features = ["textures", "merge", "lod", "imposter"] }
+mogen-export = { workspace = true, features = ["textures", "textures-svg", "merge", "lod", "imposter"] }
 # Studio runs the headless yaw-grid imposter bake against its own live GL
 # context — eframe owns the only winit `EventLoop` in the process, so the
 # CLI's `with_gl_context` path is unavailable. We call

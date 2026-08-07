@@ -247,6 +247,73 @@ fn raster_only_scenes_are_untouched() {
     let _ = fs::remove_file(&png_path);
 }
 
+/// A `texture_size` past the exporter's cap must fail the build with a
+/// message naming the material and the bound, not silently clamp or OOM
+/// trying to allocate the requested pixmap.
+#[test]
+fn oversized_texture_size_fails_the_build_with_a_useful_message() {
+    let svg_path = unique_tmp("oversized.svg");
+    fs::write(&svg_path, TILE_SVG).expect("writing svg fixture");
+
+    let mut mat = Material::new("blowup");
+    mat.base_color_texture = Some(TextureRef::new(svg_path.clone()));
+    mat.texture_size = Some(mogen_export::MAX_SVG_SIZE + 1);
+
+    let mut scene = SceneGraph::new();
+    let mat_id = scene.add_material(mat);
+    let n = scene.add_root("box", "box", Transform::IDENTITY);
+    scene.set_mesh(n, box_mesh([1.0, 1.0, 1.0], UvMode::default()));
+    scene.set_material(n, mat_id);
+
+    let out = unique_tmp("oversized.glb");
+    let err = mogen_export::write_glb(&scene, &out).expect_err("oversized texture_size must fail");
+    let msg = format!("{err:#}");
+    assert!(msg.contains("blowup"), "error should name the material, got: {msg}");
+    assert!(
+        msg.contains("texture_size"),
+        "error should name the attribute, got: {msg}"
+    );
+
+    let _ = fs::remove_file(&svg_path);
+    let _ = fs::remove_file(&out);
+}
+
+/// `bundle_lods_and_imposter`'s bake reads texture files straight off disk
+/// through a separate GL renderer that never sees the SVG pre-pass's
+/// in-memory raster — combining the two must fail fast with an explanatory
+/// message instead of a confusing "file not found" once the bake reaches the
+/// synthetic raster path. No display required: the guard fires before the GL
+/// bake would even start.
+#[test]
+#[cfg(feature = "imposter")]
+fn svg_with_bundled_imposter_fails_with_a_clear_message() {
+    let svg_path = unique_tmp("imposter.svg");
+    fs::write(&svg_path, TILE_SVG).expect("writing svg fixture");
+
+    let mut mat = Material::new("vector");
+    mat.base_color_texture = Some(TextureRef::new(svg_path.clone()));
+
+    let mut scene = SceneGraph::new();
+    let mat_id = scene.add_material(mat);
+    let n = scene.add_root("box", "box", Transform::IDENTITY);
+    scene.set_mesh(n, box_mesh([1.0, 1.0, 1.0], UvMode::default()));
+    scene.set_material(n, mat_id);
+
+    let opts = mogen_export::ExportOptions {
+        bundle_lods_and_imposter: true,
+        ..Default::default()
+    };
+    let err = mogen_export::build_glb_with_options(&scene, &opts, |_| {})
+        .expect_err("svg + bundle_lods_and_imposter must fail, not silently mis-bake");
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("bundle_lods_and_imposter") && msg.contains("svg"),
+        "error should name both the option and the format, got: {msg}"
+    );
+
+    let _ = fs::remove_file(&svg_path);
+}
+
 /// A broken SVG must fail the build with a message naming the file, not
 /// silently export a material with no texture.
 #[test]

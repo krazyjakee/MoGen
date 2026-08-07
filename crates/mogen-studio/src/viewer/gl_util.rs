@@ -115,19 +115,43 @@ pub(super) unsafe fn max_anisotropy(gl: &glow::Context) -> Option<f32> {
     Some(hw.clamp(1.0, 16.0))
 }
 
-/// Read a PNG from disk, decode to 8-bit RGBA, and upload as a 2D texture.
-/// `srgb` selects the internal format: `SRGB8_ALPHA8` for colour data so the
-/// hardware linearises on sample, `RGBA8` for data maps (normal/MR/AO/etc.)
-/// where the bytes are already linear and any conversion would corrupt them.
-/// Wraps mode is REPEAT (matches the tileable-albedo intent of the textures
-/// pipeline) and mips are generated for trilinear minification.
+/// Read an image (raster or `.svg`) from disk, decode/rasterize to 8-bit
+/// RGBA, and upload as a 2D texture. `srgb` selects the internal format:
+/// `SRGB8_ALPHA8` for colour data so the hardware linearises on sample,
+/// `RGBA8` for data maps (normal/MR/AO/etc.) where the bytes are already
+/// linear and any conversion would corrupt them. Wraps mode is REPEAT
+/// (matches the tileable-albedo intent of the textures pipeline) and mips
+/// are generated for trilinear minification.
+///
+/// `svg_size`/`svg_wrap` mirror the source material's `texture_size` /
+/// `texture_wrap` and are consulted only when `path` is a `.svg` — the real
+/// export pipeline (`mogen_export::rasterize_svg_textures`) is the
+/// authoritative rasterizer; this lets the live viewport match it instead of
+/// failing to decode a vector file as if it were raster.
 pub(super) unsafe fn try_load_texture(
     gl: &glow::Context,
     path: &Path,
     srgb: bool,
+    svg_size: Option<u32>,
+    svg_wrap: bool,
 ) -> anyhow::Result<glow::Texture> {
     let bytes = std::fs::read(path)
         .map_err(|e| anyhow::anyhow!("read {}: {e}", path.display()))?;
+    let bytes = if mogen_export::is_svg(path) {
+        let size = svg_size.unwrap_or(mogen_core::DEFAULT_SVG_SIZE);
+        if size == 0 || size > mogen_export::MAX_SVG_SIZE {
+            anyhow::bail!(
+                "{} sets texture_size = {size}, which is outside the supported \
+                 range 1..={}",
+                path.display(),
+                mogen_export::MAX_SVG_SIZE
+            );
+        }
+        mogen_export::render_svg(&bytes, size, svg_wrap)
+            .map_err(|e| anyhow::anyhow!("rasterizing {}: {e}", path.display()))?
+    } else {
+        bytes
+    };
     let img = image::load_from_memory(&bytes)
         .map_err(|e| anyhow::anyhow!("decode {}: {e}", path.display()))?
         .to_rgba8();
