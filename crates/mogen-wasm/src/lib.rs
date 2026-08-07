@@ -27,15 +27,19 @@
 //! same input — no BSP-vs-Manifold divergence. Build host requires LLVM
 //! 20+ (see workspace README for setup).
 //!
-//! ## Texture support
+//! ## Binary asset support
 //!
-//! `compile_files` takes a second `Map<string, Uint8Array>` of texture
-//! bytes keyed by the path the `.mog` source references (e.g.
-//! `"textures/wood/albedo.png"`). The exporter embeds those bytes as-is —
-//! no `image` / `oxipng` linkage, so the wasm artifact stays small and
-//! avoids C deps that don't cross-compile. Desktop builds re-encode +
-//! oxipng-shrink via the `textures-optimize` feature, but that's gated off
-//! here, so authors should publish PNG/JPEG already sized for the web.
+//! `compile_files` takes a second `Map<string, Uint8Array>` of asset bytes
+//! keyed by the path the `.mog` source references (e.g.
+//! `"textures/wood/albedo.png"`). It backs both `texture = "…"` and
+//! `mesh (src="…")` — the latter through `JsLoader::load_binary`, because
+//! the browser has no filesystem for that method's default impl to read.
+//!
+//! Texture bytes are embedded as-is: no `image` / `oxipng` linkage, so the
+//! wasm artifact stays small and avoids C deps that don't cross-compile.
+//! Desktop builds re-encode + oxipng-shrink via the `textures-optimize`
+//! feature, but that's gated off here, so authors should publish PNG/JPEG
+//! already sized for the web.
 //!
 //! ## Still disabled
 //!
@@ -127,8 +131,12 @@ pub fn compile(source: &str) -> CompileOutcome {
 /// `textures` is a `Map<string, Uint8Array>` of binary assets, keyed by
 /// the path the `.mog` source uses (e.g. `"textures/wood/albedo.png"`).
 /// Pass an empty `Map` (or `null`/`undefined` from JS) when the scene has
-/// no textures. Bytes are embedded into the GLB as-is — `image` and
-/// `oxipng` aren't linked into the wasm artifact.
+/// none. Bytes are embedded into the GLB as-is — `image` and `oxipng`
+/// aren't linked into the wasm artifact.
+///
+/// Despite the name it is every binary asset, not just images: `mesh
+/// (src="model.glb")` resolves out of the same map, under the same
+/// convention that the key is whatever path the source writes.
 ///
 /// Async because `fetch_dep` returns a `Promise`; the implementation walks
 /// the import graph BFS-style and awaits each missing spec before recursing
@@ -163,7 +171,10 @@ fn compile_with_cache(
     cache: HashMap<String, String>,
     textures: HashMap<PathBuf, Vec<u8>>,
 ) -> CompileOutcome {
-    let mut loader = JsLoader { cache: &cache };
+    let mut loader = JsLoader {
+        cache: &cache,
+        assets: &textures,
+    };
 
     // Parse the entry.
     let source = match cache.get(entry) {
@@ -289,6 +300,12 @@ fn fail(entry: &str, stage: &'static str, diags: Vec<Diagnostic>) -> CompileOutc
 /// exactly one source in the cache.
 struct JsLoader<'a> {
     cache: &'a HashMap<String, String>,
+    /// The same `Map<string, Uint8Array>` of binary assets the export step
+    /// reads textures out of. `mesh (src="…")` resolves from here too: in the
+    /// browser there is no filesystem for the default `Loader::load_binary` to
+    /// fall back to, so without this a scene referencing an external mesh
+    /// could not be lowered at all.
+    assets: &'a HashMap<PathBuf, Vec<u8>>,
 }
 
 impl<'a> Loader for JsLoader<'a> {
@@ -336,6 +353,26 @@ impl<'a> Loader for JsLoader<'a> {
                 "use \"{}\" — fetch_dep did not supply source for this \
                  registry reference (wasm prefetch bug)",
                 spec.raw
+            )),
+        }
+    }
+
+    /// Serve `mesh (src="….glb")` out of the binary asset map. The default
+    /// impl resolves against the filesystem, which in a browser means the call
+    /// fails no matter what the host supplied — so overriding here is what
+    /// actually makes the seam worth having on this side.
+    ///
+    /// Keyed by the spec verbatim, matching the convention the export step
+    /// already uses for `texture = "…"`: whatever path the `.mog` source
+    /// writes is the key the host must supply.
+    fn load_binary(&mut self, spec: &str, _base_dir: Option<&Path>) -> Result<Vec<u8>> {
+        match self.assets.get(Path::new(spec)) {
+            Some(bytes) => Ok(bytes.clone()),
+            None => Err(anyhow::anyhow!(
+                "mesh (src=\"{}\") — not present in the binary asset map; the \
+                 browser has no filesystem to fall back to, so the host must \
+                 pass these bytes to compile_files alongside its textures",
+                spec
             )),
         }
     }
@@ -539,7 +576,10 @@ mod tests {
     #[test]
     fn load_registry_returns_cached_source_with_synthetic_canonical_for_pinned_version() {
         let cache = loader_cache(&[("@alice/chair@3", "module chair {}")]);
-        let mut loader = JsLoader { cache: &cache };
+        let mut loader = JsLoader {
+            cache: &cache,
+            assets: &HashMap::new(),
+        };
         let spec = parse_registry_spec("@alice/chair@3").unwrap();
         let loaded = loader.load_registry(&spec).expect("registry hit");
         assert_eq!(loaded.source, "module chair {}");
@@ -549,16 +589,51 @@ mod tests {
     #[test]
     fn load_registry_canonical_for_unpinned_ref_is_latest() {
         let cache = loader_cache(&[("@alice/chair", "module chair {}")]);
-        let mut loader = JsLoader { cache: &cache };
+        let mut loader = JsLoader {
+            cache: &cache,
+            assets: &HashMap::new(),
+        };
         let spec = parse_registry_spec("@alice/chair").unwrap();
         let loaded = loader.load_registry(&spec).expect("registry hit");
         assert_eq!(loaded.canonical, PathBuf::from("registry/alice/chair/latest"));
     }
 
+    /// `mesh (src=…)` must resolve out of the asset map. The trait default
+    /// reads the filesystem, which in a browser cannot succeed — so a fall
+    /// through to it is the bug, not a fallback.
+    #[test]
+    fn load_binary_serves_meshes_from_the_asset_map() {
+        let cache = loader_cache(&[]);
+        let assets: HashMap<PathBuf, Vec<u8>> =
+            [(PathBuf::from("models/rock.glb"), b"glTF-ish".to_vec())]
+                .into_iter()
+                .collect();
+        let mut loader = JsLoader {
+            cache: &cache,
+            assets: &assets,
+        };
+        assert_eq!(
+            loader.load_binary("models/rock.glb", None).unwrap(),
+            b"glTF-ish".to_vec()
+        );
+
+        let err = loader
+            .load_binary("models/missing.glb", None)
+            .expect_err("a miss must not reach the filesystem default");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("binary asset map"),
+            "miss must name the map the host has to populate: {msg}"
+        );
+    }
+
     #[test]
     fn load_registry_errors_when_prefetch_missed_the_spec() {
         let cache = loader_cache(&[]);
-        let mut loader = JsLoader { cache: &cache };
+        let mut loader = JsLoader {
+            cache: &cache,
+            assets: &HashMap::new(),
+        };
         let spec = parse_registry_spec("@alice/chair@3").unwrap();
         let err = loader.load_registry(&spec).expect_err("must miss");
         // Must NOT surface the mogen-dsl default's E0701 message — that

@@ -95,6 +95,11 @@ pub trait Loader {
     /// `spec` is the attribute verbatim; `base_dir` is the directory of the
     /// `.mog` being lowered — the same one `load` receives.
     ///
+    /// That browser is `mogen-wasm`'s `JsLoader`, which overrides this to
+    /// answer from the binary asset map the JS host already passes for
+    /// textures. Nothing else needs to: every other loader in the workspace
+    /// has a filesystem, so the default below is the right answer for it.
+    ///
     /// **The default impl *is* the resolution the primitive already performed**,
     /// by calling the very same function rather than restating its rule. That
     /// matters because the primitive still falls back to that function when a

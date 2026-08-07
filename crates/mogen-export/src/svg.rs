@@ -18,13 +18,23 @@
 //! |---|---|
 //! | GLB embed | `encode_for_slot` |
 //! | FBX export | the **raw path** (`fbx/material.rs`) — a `.svg` would leak into the FBX |
-//! | Studio preview | its own loaders under `viewer/` |
 //! | PBR map derivation | `mogen-llm::pbr_maps`, which hard-codes `ImageFormat::Png` |
 //! | imposter bake | already-baked pixels; unaffected |
 //!
-//! Branching at decode time would need four separate fixes. Rewriting the
+//! Branching at decode time would need three separate fixes. Rewriting the
 //! path *before* export means every one of them only ever sees a PNG, and the
 //! derived-PBR pipeline picks up SVG albedo support for free.
+//!
+//! # The consumer this pass cannot reach
+//!
+//! Studio's live viewport is not downstream of the exporter at all — it
+//! flattens the `SceneGraph` straight out of the compile pipeline and uploads
+//! each material's texture paths to GL itself. The rewritten paths this pass
+//! produces are synthetic and resolve only through [`OverlayTextureSource`],
+//! so handing them to a loader that reads from disk would be worse than
+//! useless. The viewport therefore calls [`render_svg`] and
+//! [`resolve_svg_size`] directly, on the real `.svg` path — same functions,
+//! same pixels, no second implementation of the policy.
 //!
 //! # No cache
 //!
@@ -131,6 +141,14 @@ pub fn rasterize_svg_textures(
     let mut images: HashMap<PathBuf, Vec<u8>> = HashMap::new();
 
     for mat in &mut scene.materials {
+        // `texture_size` is documented as ignored by raster slots, so its range
+        // check belongs *behind* this test rather than in front of it. Ahead of
+        // it, whether an out-of-range value on a texture-less material failed
+        // the build depended on whether some entirely unrelated material in the
+        // same scene happened to reference an SVG.
+        if !material_references_svg(mat) {
+            continue;
+        }
         let size = resolve_svg_size(mat)?;
         let wrap = mat.texture_wrap;
         for slot in mat.texture_slots_mut() {
@@ -198,6 +216,18 @@ pub fn resolve_svg_size(mat: &Material) -> Result<u32> {
 /// without the author having to hand-split the shapes that straddle the
 /// boundary. This is the one thing a vector source buys that a supplied PNG
 /// cannot: the renderer is ours, so the wrap can be synthesised.
+///
+/// The nine draws composite source-over, which makes the result exactly what
+/// painting the art across an infinite plane of adjacent tiles would give.
+/// That is the right model, and it is why the join is continuous — but it does
+/// mean a *translucent* shape wider than the whole tile overlaps itself, and
+/// so reads darker in the overhang band at each edge (measurably: a 50%-opaque
+/// band drawn from -10 to 110 in a 0..100 viewBox comes out 75% opaque in the
+/// outer 10%). The two bands abut across the join, so the tiling stays
+/// seamless in the strict sense; they are still a visible frame. Art that
+/// stays inside the viewBox is unaffected — `wrap_is_a_no_op_for_contained_art`
+/// pins that — and overhang narrower than the tile only ever lands on the
+/// opposite edge, where the centre cell drew nothing.
 ///
 /// Public so a consumer that already has SVG bytes and a resolved size/wrap —
 /// e.g. Studio's live viewport, which rasterizes on the fly outside the
@@ -308,6 +338,55 @@ mod tests {
         let plain = render_svg(HALF, 64, false).unwrap();
         let wrapped = render_svg(HALF, 64, true).unwrap();
         assert_eq!(plain, wrapped);
+    }
+
+    /// The overlap the source-over lattice implies, pinned so it can't drift
+    /// into an asymmetry: a translucent shape wider than the tile darkens by
+    /// the same amount at *both* edges, which is what keeps the join
+    /// continuous even though the band is visible.
+    #[test]
+    fn wrap_overlap_is_symmetric_across_the_join() {
+        const BAND: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+            <rect x="-10" y="0" width="120" height="100" fill="#ff0000" fill-opacity="0.5"/>
+        </svg>"##;
+        let img = decode(&render_svg(BAND, 64, true).unwrap());
+        let alpha = |x| img.get_pixel(x, 32).0[3];
+        assert_eq!(
+            alpha(0),
+            alpha(63),
+            "overhang bands must match across the join or the tile is not seamless"
+        );
+        assert!(
+            alpha(0) > alpha(32),
+            "self-overlap in the overhang band is expected; see render_svg's docs"
+        );
+    }
+
+    /// `texture_size` is documented as ignored by raster slots. It must stay
+    /// ignored even when a *different* material in the same scene pulls the
+    /// SVG pass into play — that coupling is invisible from the source.
+    #[test]
+    fn texture_size_is_unchecked_on_materials_without_an_svg() {
+        let mut scene = SceneGraph::new();
+        let mut raster = Material::new("raster");
+        raster.base_color_texture = Some(TextureRef::new(PathBuf::from("flat.png")));
+        raster.texture_size = Some(MAX_SVG_SIZE + 1);
+        let mut vector = Material::new("vector");
+        vector.base_color_texture = Some(TextureRef::new(PathBuf::from("tile.svg")));
+        scene.materials.push(raster);
+        scene.materials.push(vector);
+
+        let source = crate::texture::MapTextureSource::new(
+            [(PathBuf::from("tile.svg"), HALF.to_vec())].into_iter().collect(),
+        );
+        let out = rasterize_svg_textures(&scene, &source)
+            .expect("raster-only sizes are not checked")
+            .expect("the scene does reference an SVG");
+        assert_eq!(
+            out.scene.materials[0].base_color_texture.as_ref().unwrap().path,
+            PathBuf::from("flat.png"),
+            "the raster slot must be left exactly as it was"
+        );
     }
 
     #[test]

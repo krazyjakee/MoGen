@@ -1007,7 +1007,13 @@ Notes:
   lattice and the centre cell kept, so shapes overhanging the viewBox reappear
   on the opposite edge instead of being clipped. This is the one thing a
   vector source buys that a supplied PNG cannot — the renderer is ours, so the
-  wrap can be manufactured rather than hand-authored.
+  wrap can be manufactured rather than hand-authored. The nine draws composite
+  normally, which makes the result exactly what painting the art across an
+  endless field of adjacent tiles would give. Art contained by the viewBox is
+  untouched, and overhang narrower than the tile only lands where the centre
+  drew nothing — but a *translucent* shape wider than the whole tile overlaps
+  itself, and reads darker in a band at each edge. The bands match across the
+  join, so the tiling stays seamless; split such a shape if the frame shows.
 
 Seamlessness on a **curved** surface is a separate matter, and `.svg` does not
 by itself fix it: it is a property of the UV layout, not the image format. A
