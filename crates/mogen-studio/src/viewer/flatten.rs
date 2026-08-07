@@ -106,6 +106,18 @@ pub struct DrawBatch {
     /// [`Material`]. `None` routes through the regular PBR path; `Some("water")`
     /// (or a user shader name) selects a dedicated program in the renderer.
     pub shader_name: Option<String>,
+    /// Value of `u_material_shader` for this batch: `0` standard PBR, `1` the
+    /// built-in water branch, `>= FIRST_USER_SHADER_ID` an injected user
+    /// shader. Resolved at flatten time against
+    /// [`crate::viewer::user_shaders::ResolvedShaders`] so the draw path is a
+    /// lookup rather than a name comparison. A shader name that failed to load
+    /// stays at `0`, which is what makes an unreadable `.glsl` degrade to plain
+    /// PBR instead of a blank draw.
+    pub shader_id: i32,
+    /// This material's resolved shader parameter values (declared default,
+    /// overridden by `shader_params`). Uploaded to the namespaced
+    /// `u_sh{id}_{name}` uniforms before the draw. Empty for PBR and water.
+    pub shader_params: Vec<(String, mogen_core::ShaderParamValue)>,
     /// Baked render-LOD band `(min_distance, max_distance)` copied off the
     /// node's [`mogen_core::Lod`]. When `Some`, the renderer draws this batch
     /// only while the camera distance to `centroid` falls within the band, so a
@@ -214,6 +226,10 @@ pub struct FlatMesh {
     /// regardless of collider presence. Used by the selection wireframe overlay
     /// to outline all selected nodes (not just collider-bearing ones).
     pub node_index_runs: Vec<(u32, u32, NodeId)>,
+    /// Every user shader this mesh's batches reference, with its assigned id,
+    /// GLSL source and declared params. The renderer assembles these into the
+    /// fragment program; an empty list yields the standard program byte-for-byte.
+    pub user_shaders: super::user_shaders::ResolvedShaders,
     /// Lazily-built ray-pick acceleration structure over the rest-pose
     /// triangle soup (`vertices` + `indices`). Built on the first pick after a
     /// (re)flatten and reused for every click until the mesh changes, so the
@@ -223,13 +239,19 @@ pub struct FlatMesh {
 }
 
 impl FlatMesh {
-    /// True when any visible batch uses an animated per-material shader
-    /// (currently just water). The viewport uses this to keep requesting
-    /// repaints when the scene is otherwise static so the waves keep moving.
+    /// True when any visible batch uses a per-material shader that may vary
+    /// over time. The viewport uses this to keep requesting repaints when the
+    /// scene is otherwise static so the waves keep moving.
+    ///
+    /// Every user shader counts: `u_time` is part of the fragment ABI and we
+    /// can't tell from here whether a snippet reads it, so the conservative
+    /// answer is the only correct one — guessing "static" would freeze an
+    /// animated shader on its first frame.
     pub fn has_animated_shader(&self) -> bool {
-        self.batches
-            .iter()
-            .any(|b| b.shader_name.as_deref() == Some(mogen_core::shader::WATER))
+        self.batches.iter().any(|b| {
+            b.shader_name.as_deref() == Some(mogen_core::shader::WATER)
+                || b.shader_id >= crate::viewer::shaders::user_shader::FIRST_USER_SHADER_ID
+        })
     }
 
     /// The pick BVH for this mesh, built on first use. Rest-pose world-baked
@@ -305,6 +327,9 @@ pub fn flatten_with_worlds(
     worlds: &[Mat4],
     base_dir: Option<&Path>,
 ) -> FlatMesh {
+    // Read and number the scene's user shaders before batching, so each batch
+    // can resolve its own id and parameter values as it is built.
+    let user_shaders = super::user_shaders::resolve(scene, base_dir);
     // One bucket per (skin, material, cast_shadow). Rigid buckets may then be
     // split when their distinct-node count exceeds MAX_JOINTS — the per-batch
     // palette uniform array can't hold more entries than the shader's
@@ -552,6 +577,26 @@ pub fn flatten_with_worlds(
                     None,
                 ),
             };
+            // Route the batch to its fragment branch. Water keeps its
+            // hard-coded id-1 branch; a declared shader takes the id assigned in
+            // `user_shaders::resolve`, and anything unresolved falls back to
+            // standard PBR rather than drawing nothing.
+            let (shader_id, shader_params) = match shader_name.as_deref() {
+                None => (0, Vec::new()),
+                Some(mogen_core::shader::WATER) => (1, Vec::new()),
+                Some(name) => match user_shaders.id_for(name) {
+                    Some(id) => {
+                        let overrides = material
+                            .map(|m| m.shader_params.clone())
+                            .unwrap_or_default();
+                        (
+                            id,
+                            super::user_shaders::resolve_params(&user_shaders, name, &overrides),
+                        )
+                    }
+                    None => (0, Vec::new()),
+                },
+            };
             let (centroid, radius) = if bmin.is_finite() && bmax.is_finite() {
                 let c = (bmin + bmax) * 0.5;
                 let r = (bmax - bmin).length() * 0.5;
@@ -592,6 +637,8 @@ pub fn flatten_with_worlds(
                 material_id: mat_id,
                 cast_shadow,
                 shader_name,
+                shader_id,
+                shader_params,
                 lod,
             });
         }
@@ -618,6 +665,7 @@ pub fn flatten_with_worlds(
         tri_node,
         collider_index_runs,
         node_index_runs,
+        user_shaders,
         bvh: OnceLock::new(),
     }
 }

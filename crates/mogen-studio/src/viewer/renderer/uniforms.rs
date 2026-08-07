@@ -41,25 +41,25 @@ impl Renderer {
             cone[i * 2 + 1] = l.outer_cos;
         }
         unsafe {
-            if let Some(loc) = &self.u_num_lights {
+            if let Some(loc) = &self.u.u_num_lights {
                 gl.uniform_1_i32(Some(loc), self.lights.len() as i32);
             }
-            if let Some(loc) = &self.u_light_kind {
+            if let Some(loc) = &self.u.u_light_kind {
                 gl.uniform_1_i32_slice(Some(loc), &kinds);
             }
-            if let Some(loc) = &self.u_light_pos {
+            if let Some(loc) = &self.u.u_light_pos {
                 gl.uniform_3_f32_slice(Some(loc), &pos);
             }
-            if let Some(loc) = &self.u_light_dir {
+            if let Some(loc) = &self.u.u_light_dir {
                 gl.uniform_3_f32_slice(Some(loc), &dir);
             }
-            if let Some(loc) = &self.u_light_color {
+            if let Some(loc) = &self.u.u_light_color {
                 gl.uniform_3_f32_slice(Some(loc), &color);
             }
-            if let Some(loc) = &self.u_light_range {
+            if let Some(loc) = &self.u.u_light_range {
                 gl.uniform_1_f32_slice(Some(loc), &range);
             }
-            if let Some(loc) = &self.u_light_cone {
+            if let Some(loc) = &self.u.u_light_cone {
                 gl.uniform_2_f32_slice(Some(loc), &cone);
             }
         }
@@ -128,38 +128,38 @@ impl Renderer {
         }
 
         unsafe {
-            if let Some(loc) = &self.u_shadow_2d_viewproj {
+            if let Some(loc) = &self.u.u_shadow_2d_viewproj {
                 gl.uniform_matrix_4_f32_slice(Some(loc), false, &viewproj);
             }
-            if let Some(loc) = &self.u_shadow_cube_pos {
+            if let Some(loc) = &self.u.u_shadow_cube_pos {
                 gl.uniform_3_f32_slice(Some(loc), &cube_pos);
             }
-            if let Some(loc) = &self.u_shadow_cube_far {
+            if let Some(loc) = &self.u.u_shadow_cube_far {
                 gl.uniform_1_f32_slice(Some(loc), &cube_far);
             }
-            if let Some(loc) = &self.u_light_shadow_2d_idx {
+            if let Some(loc) = &self.u.u_light_shadow_2d_idx {
                 gl.uniform_1_i32_slice(Some(loc), &light_idx_2d);
             }
-            if let Some(loc) = &self.u_light_shadow_cube_idx {
+            if let Some(loc) = &self.u.u_light_shadow_cube_idx {
                 gl.uniform_1_i32_slice(Some(loc), &light_idx_cube);
             }
-            if let Some(loc) = &self.u_shadow_fallback_idx {
+            if let Some(loc) = &self.u.u_shadow_fallback_idx {
                 gl.uniform_1_i32(Some(loc), fallback_idx);
             }
-            if let Some(loc) = &self.u_shadow_bias_const {
+            if let Some(loc) = &self.u.u_shadow_bias_const {
                 gl.uniform_1_f32(Some(loc), 0.0008);
             }
-            if let Some(loc) = &self.u_shadow_bias_slope {
+            if let Some(loc) = &self.u.u_shadow_bias_slope {
                 gl.uniform_1_f32(Some(loc), 0.004);
             }
-            if let Some(loc) = &self.u_shadow_strength {
+            if let Some(loc) = &self.u.u_shadow_strength {
                 gl.uniform_1_f32(Some(loc), 0.7);
             }
-            if let Some(loc) = &self.u_shadow_2d_texel {
+            if let Some(loc) = &self.u.u_shadow_2d_texel {
                 let res = self.shadow_quality.resolution().max(1) as f32;
                 gl.uniform_1_f32(Some(loc), 1.0 / res);
             }
-            if let Some(loc) = &self.u_shadow_pcf_taps {
+            if let Some(loc) = &self.u.u_shadow_pcf_taps {
                 gl.uniform_1_i32(Some(loc), self.shadow_quality.pcf_taps());
             }
         }
@@ -175,7 +175,7 @@ impl Renderer {
         let Some(palette) = self.palettes.get(palette_id as usize) else {
             return;
         };
-        let Some(loc) = self.u_joint_mats.clone() else {
+        let Some(loc) = self.u.u_joint_mats.clone() else {
             return;
         };
         let n = palette.joint_matrices.len().min(MAX_JOINTS);

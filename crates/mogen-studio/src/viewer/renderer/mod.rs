@@ -13,6 +13,8 @@ mod draw;
 mod textures;
 mod uniforms;
 
+use std::collections::HashMap;
+
 use glam::Vec3;
 use glow::HasContext;
 
@@ -31,66 +33,171 @@ use super::shadows::{ShadowFrame, ShadowQuality, ShadowSystem};
 
 use textures::TextureCache;
 
+/// Cached uniform locations for the mesh forward program.
+///
+/// Grouped into one struct because the program is recompiled whenever the
+/// scene's user-shader set changes: every location is invalidated by a
+/// relink, so they must be refetched together. Keeping them in one place
+/// means [`Self::fetch`] is the single list to maintain when a uniform is
+/// added, rather than a declaration site and a refetch site that can drift.
+#[derive(Default)]
+pub(super) struct MeshUniforms {
+    pub(super) u_viewproj: Option<glow::UniformLocation>,
+    pub(super) u_camera_pos: Option<glow::UniformLocation>,
+    pub(super) u_key_dir: Option<glow::UniformLocation>,
+    pub(super) u_fill_dir: Option<glow::UniformLocation>,
+    pub(super) u_sky_top: Option<glow::UniformLocation>,
+    pub(super) u_sky_horizon: Option<glow::UniformLocation>,
+    pub(super) u_sky_ground: Option<glow::UniformLocation>,
+    pub(super) u_sun_dir: Option<glow::UniformLocation>,
+    pub(super) u_sun_color: Option<glow::UniformLocation>,
+    pub(super) u_base_color: Option<glow::UniformLocation>,
+    pub(super) u_base_color_alpha: Option<glow::UniformLocation>,
+    pub(super) u_metallic: Option<glow::UniformLocation>,
+    pub(super) u_roughness: Option<glow::UniformLocation>,
+    pub(super) u_emissive: Option<glow::UniformLocation>,
+    pub(super) u_emissive_strength: Option<glow::UniformLocation>,
+    pub(super) u_transmission: Option<glow::UniformLocation>,
+    pub(super) u_alpha_mode: Option<glow::UniformLocation>,
+    pub(super) u_alpha_cutoff: Option<glow::UniformLocation>,
+    pub(super) u_use_base_tex: Option<glow::UniformLocation>,
+    pub(super) u_use_mr_tex: Option<glow::UniformLocation>,
+    pub(super) u_use_normal_tex: Option<glow::UniformLocation>,
+    pub(super) u_use_ao_tex: Option<glow::UniformLocation>,
+    pub(super) u_use_emissive_tex: Option<glow::UniformLocation>,
+    pub(super) u_base_tex: Option<glow::UniformLocation>,
+    pub(super) u_mr_tex: Option<glow::UniformLocation>,
+    pub(super) u_normal_tex: Option<glow::UniformLocation>,
+    pub(super) u_ao_tex: Option<glow::UniformLocation>,
+    pub(super) u_emissive_tex: Option<glow::UniformLocation>,
+    pub(super) u_normal_scale: Option<glow::UniformLocation>,
+    pub(super) u_uv_scale: Option<glow::UniformLocation>,
+    pub(super) u_joint_mats: Option<glow::UniformLocation>,
+    pub(super) u_shader_mode: Option<glow::UniformLocation>,
+    pub(super) u_material_shader: Option<glow::UniformLocation>,
+    pub(super) u_time: Option<glow::UniformLocation>,
+    pub(super) u_num_lights: Option<glow::UniformLocation>,
+    pub(super) u_light_kind: Option<glow::UniformLocation>,
+    pub(super) u_light_pos: Option<glow::UniformLocation>,
+    pub(super) u_light_dir: Option<glow::UniformLocation>,
+    pub(super) u_light_color: Option<glow::UniformLocation>,
+    pub(super) u_light_range: Option<glow::UniformLocation>,
+    pub(super) u_light_cone: Option<glow::UniformLocation>,
+    pub(super) u_shadow_2d: Option<glow::UniformLocation>,
+    pub(super) u_shadow_cube0: Option<glow::UniformLocation>,
+    pub(super) u_shadow_cube1: Option<glow::UniformLocation>,
+    pub(super) u_shadow_2d_viewproj: Option<glow::UniformLocation>,
+    pub(super) u_shadow_cube_pos: Option<glow::UniformLocation>,
+    pub(super) u_shadow_cube_far: Option<glow::UniformLocation>,
+    pub(super) u_light_shadow_2d_idx: Option<glow::UniformLocation>,
+    pub(super) u_light_shadow_cube_idx: Option<glow::UniformLocation>,
+    pub(super) u_shadow_fallback_idx: Option<glow::UniformLocation>,
+    pub(super) u_shadow_bias_const: Option<glow::UniformLocation>,
+    pub(super) u_shadow_bias_slope: Option<glow::UniformLocation>,
+    pub(super) u_shadow_strength: Option<glow::UniformLocation>,
+    pub(super) u_shadow_2d_texel: Option<glow::UniformLocation>,
+    pub(super) u_shadow_pcf_taps: Option<glow::UniformLocation>,
+}
+
+impl MeshUniforms {
+    /// Look up every mesh-program uniform location for `program`.
+    ///
+    /// # Safety
+    /// `program` must be a successfully linked GL program.
+    unsafe fn fetch(gl: &glow::Context, program: glow::Program) -> Self {
+        let u = |n: &str| gl.get_uniform_location(program, n);
+        Self {
+            u_viewproj: u("u_viewproj"),
+            u_camera_pos: u("u_camera_pos"),
+            u_key_dir: u("u_key_dir"),
+            u_fill_dir: u("u_fill_dir"),
+            u_sky_top: u("u_sky_top"),
+            u_sky_horizon: u("u_sky_horizon"),
+            u_sky_ground: u("u_sky_ground"),
+            u_sun_dir: u("u_sun_dir"),
+            u_sun_color: u("u_sun_color"),
+            u_base_color: u("u_base_color"),
+            u_base_color_alpha: u("u_base_color_alpha"),
+            u_metallic: u("u_metallic"),
+            u_roughness: u("u_roughness"),
+            u_emissive: u("u_emissive"),
+            u_emissive_strength: u("u_emissive_strength"),
+            u_transmission: u("u_transmission"),
+            u_alpha_mode: u("u_alpha_mode"),
+            u_alpha_cutoff: u("u_alpha_cutoff"),
+            u_use_base_tex: u("u_use_base_tex"),
+            u_use_mr_tex: u("u_use_mr_tex"),
+            u_use_normal_tex: u("u_use_normal_tex"),
+            u_use_ao_tex: u("u_use_ao_tex"),
+            u_use_emissive_tex: u("u_use_emissive_tex"),
+            u_base_tex: u("u_base_tex"),
+            u_mr_tex: u("u_mr_tex"),
+            u_normal_tex: u("u_normal_tex"),
+            u_ao_tex: u("u_ao_tex"),
+            u_emissive_tex: u("u_emissive_tex"),
+            u_normal_scale: u("u_normal_scale"),
+            u_uv_scale: u("u_uv_scale"),
+            u_joint_mats: u("u_joint_mats[0]"),
+            u_shader_mode: u("u_shader_mode"),
+            u_material_shader: u("u_material_shader"),
+            u_time: u("u_time"),
+            u_num_lights: u("u_num_lights"),
+            u_light_kind: u("u_light_kind[0]"),
+            u_light_pos: u("u_light_pos[0]"),
+            u_light_dir: u("u_light_dir[0]"),
+            u_light_color: u("u_light_color[0]"),
+            u_light_range: u("u_light_range[0]"),
+            u_light_cone: u("u_light_cone[0]"),
+            u_shadow_2d: u("u_shadow_2d"),
+            u_shadow_cube0: u("u_shadow_cube0"),
+            u_shadow_cube1: u("u_shadow_cube1"),
+            u_shadow_2d_viewproj: u("u_shadow_2d_viewproj[0]"),
+            u_shadow_cube_pos: u("u_shadow_cube_pos[0]"),
+            u_shadow_cube_far: u("u_shadow_cube_far[0]"),
+            u_light_shadow_2d_idx: u("u_light_shadow_2d_idx[0]"),
+            u_light_shadow_cube_idx: u("u_light_shadow_cube_idx[0]"),
+            u_shadow_fallback_idx: u("u_shadow_fallback_idx"),
+            u_shadow_bias_const: u("u_shadow_bias_const"),
+            u_shadow_bias_slope: u("u_shadow_bias_slope"),
+            u_shadow_strength: u("u_shadow_strength"),
+            u_shadow_2d_texel: u("u_shadow_2d_texel"),
+            u_shadow_pcf_taps: u("u_shadow_pcf_taps"),
+        }
+    }
+}
+
 pub struct Renderer {
     program: glow::Program,
     vao: glow::VertexArray,
     vbo: glow::Buffer,
     ebo: glow::Buffer,
-    u_viewproj: Option<glow::UniformLocation>,
-    u_camera_pos: Option<glow::UniformLocation>,
-    u_key_dir: Option<glow::UniformLocation>,
-    u_fill_dir: Option<glow::UniformLocation>,
-    u_sky_top: Option<glow::UniformLocation>,
-    u_sky_horizon: Option<glow::UniformLocation>,
-    u_sky_ground: Option<glow::UniformLocation>,
-    u_sun_dir: Option<glow::UniformLocation>,
-    u_sun_color: Option<glow::UniformLocation>,
-    u_base_color: Option<glow::UniformLocation>,
-    u_base_color_alpha: Option<glow::UniformLocation>,
-    u_metallic: Option<glow::UniformLocation>,
-    u_roughness: Option<glow::UniformLocation>,
-    u_emissive: Option<glow::UniformLocation>,
-    u_emissive_strength: Option<glow::UniformLocation>,
-    u_transmission: Option<glow::UniformLocation>,
-    u_alpha_mode: Option<glow::UniformLocation>,
-    u_alpha_cutoff: Option<glow::UniformLocation>,
-    u_use_base_tex: Option<glow::UniformLocation>,
-    u_use_mr_tex: Option<glow::UniformLocation>,
-    u_use_normal_tex: Option<glow::UniformLocation>,
-    u_use_ao_tex: Option<glow::UniformLocation>,
-    u_use_emissive_tex: Option<glow::UniformLocation>,
-    u_base_tex: Option<glow::UniformLocation>,
-    u_mr_tex: Option<glow::UniformLocation>,
-    u_normal_tex: Option<glow::UniformLocation>,
-    u_ao_tex: Option<glow::UniformLocation>,
-    u_emissive_tex: Option<glow::UniformLocation>,
-    u_normal_scale: Option<glow::UniformLocation>,
-    u_uv_scale: Option<glow::UniformLocation>,
-    u_joint_mats: Option<glow::UniformLocation>,
-    u_shader_mode: Option<glow::UniformLocation>,
-    u_material_shader: Option<glow::UniformLocation>,
-    u_time: Option<glow::UniformLocation>,
-    u_num_lights: Option<glow::UniformLocation>,
-    u_light_kind: Option<glow::UniformLocation>,
-    u_light_pos: Option<glow::UniformLocation>,
-    u_light_dir: Option<glow::UniformLocation>,
-    u_light_color: Option<glow::UniformLocation>,
-    u_light_range: Option<glow::UniformLocation>,
-    u_light_cone: Option<glow::UniformLocation>,
-    u_shadow_2d: Option<glow::UniformLocation>,
-    u_shadow_cube0: Option<glow::UniformLocation>,
-    u_shadow_cube1: Option<glow::UniformLocation>,
-    u_shadow_2d_viewproj: Option<glow::UniformLocation>,
-    u_shadow_cube_pos: Option<glow::UniformLocation>,
-    u_shadow_cube_far: Option<glow::UniformLocation>,
-    u_light_shadow_2d_idx: Option<glow::UniformLocation>,
-    u_light_shadow_cube_idx: Option<glow::UniformLocation>,
-    u_shadow_fallback_idx: Option<glow::UniformLocation>,
-    u_shadow_bias_const: Option<glow::UniformLocation>,
-    u_shadow_bias_slope: Option<glow::UniformLocation>,
-    u_shadow_strength: Option<glow::UniformLocation>,
-    u_shadow_2d_texel: Option<glow::UniformLocation>,
-    u_shadow_pcf_taps: Option<glow::UniformLocation>,
+    /// Mesh-program uniform locations. Refetched whenever the program is
+    /// relinked for a new user-shader set.
+    u: MeshUniforms,
+    /// Identity of the user-shader set currently compiled into `program`:
+    /// `(id, source)` per injected shader. Compared against the incoming set
+    /// each frame so the program is relinked only when the GLSL actually
+    /// changes — editing an unrelated part of the `.mog` reflattens the mesh
+    /// but must not trigger a shader recompile every paint.
+    user_shader_key: Vec<(i32, String)>,
+    /// Locations of the namespaced `u_sh{id}_{param}` uniforms, keyed by
+    /// `(shader id, param name)`. Populated on relink alongside [`Self::u`].
+    user_param_locs: HashMap<(i32, String), Option<glow::UniformLocation>>,
+    /// Shader ids the currently-bound program can actually dispatch. The draw
+    /// path clamps anything absent here back to standard PBR.
+    ///
+    /// This is what keeps a failed compile from erasing geometry: `main`
+    /// unconditionally hands `u_material_shader >= 2` to the dispatch, and in a
+    /// program with no injections that stub returns `vec4(0.0)` — fully
+    /// transparent. Batches whose shader didn't make it into *this* program must
+    /// therefore be told to draw as PBR, not merely left pointing at an id the
+    /// program has never heard of.
+    live_shader_ids: std::collections::HashSet<i32>,
+    /// Last user-shader failure, as `(shader name, message)`. Set when the
+    /// GLSL fails to compile or link; cleared on the next successful build.
+    /// Surfaced by the viewport so a shader that silently falls back to PBR
+    /// says why.
+    shader_error: Option<(String, String)>,
     /// Latest resolved punctual lights uploaded to the shader. Refreshed by
     /// [`Self::set_lights`] each paint; empty falls back to the analytic
     /// key/fill rig hard-coded in the fragment shader.
@@ -231,6 +338,87 @@ fn light_eq(a: &ResolvedLight, b: &ResolvedLight) -> bool {
 }
 
 impl Renderer {
+    /// Ensure the mesh program carries exactly `shaders`, relinking if the set
+    /// changed since the last build.
+    ///
+    /// Failure is non-fatal by design: a snippet with a GLSL syntax error leaves
+    /// the previous program bound, drops every user id from
+    /// [`Self::live_shader_ids`] so affected batches draw as standard PBR, and
+    /// records the message. Falling back to PBR rather than to the last-good
+    /// *program* is deliberate — ids are assigned per scene, so id 2 in the
+    /// stale program may belong to a different shader than id 2 in the scene
+    /// being drawn, and rendering the wrong shader is worse than rendering none.
+    ///
+    /// The key is still updated on failure, so a broken shader is compiled once
+    /// rather than retried every frame — the next edit changes the source and
+    /// thus the key, which retries naturally.
+    pub(super) fn ensure_user_shaders(
+        &mut self,
+        gl: &glow::Context,
+        shaders: &super::user_shaders::ResolvedShaders,
+    ) {
+        let key: Vec<(i32, String)> = shaders
+            .shaders
+            .iter()
+            .map(|s| (s.id, s.source.clone()))
+            .collect();
+        if key == self.user_shader_key {
+            return;
+        }
+        self.user_shader_key = key;
+
+        let injected = shaders.injected();
+        let fs = user_shader::assemble_fs(&injected);
+        unsafe {
+            match compile_program(gl, VS_SRC, &fs) {
+                Ok(program) => {
+                    gl.delete_program(self.program);
+                    self.program = program;
+                    self.u = MeshUniforms::fetch(gl, program);
+                    self.user_param_locs.clear();
+                    self.live_shader_ids = shaders.shaders.iter().map(|s| s.id).collect();
+                    for sh in &shaders.shaders {
+                        for p in &sh.params {
+                            let name = user_shader::param_uniform_name(sh.id, &p.name);
+                            self.user_param_locs.insert(
+                                (sh.id, p.name.clone()),
+                                gl.get_uniform_location(program, &name),
+                            );
+                        }
+                    }
+                    // A shader that loaded but wouldn't compile is the only
+                    // error this path can clear; a read failure is reported by
+                    // the resolver below and outlives a successful relink.
+                    self.shader_error = None;
+                }
+                Err(e) => {
+                    // Nothing in this scene's shader set is dispatchable, so
+                    // every batch routes back to PBR rather than to the stub.
+                    self.live_shader_ids.clear();
+                    self.user_param_locs.clear();
+                    let name = shaders
+                        .shaders
+                        .first()
+                        .map(|s| s.name.clone())
+                        .unwrap_or_else(|| "shader".to_string());
+                    self.shader_error = Some((name, e.to_string()));
+                }
+            }
+        }
+        // A source that never loaded can't be compiled; surface that instead of
+        // leaving the author with a silently standard-shaded mesh.
+        if let Some(first) = shaders.errors.first() {
+            self.shader_error = Some((first.name.clone(), first.message.clone()));
+        }
+    }
+
+    /// Latest user-shader failure, for the viewport status line.
+    pub fn shader_error(&self) -> Option<(&str, &str)> {
+        self.shader_error
+            .as_ref()
+            .map(|(n, m)| (n.as_str(), m.as_str()))
+    }
+
     pub fn new(gl: &glow::Context) -> anyhow::Result<Self> {
         unsafe {
             // Compile the standard fragment program via the user-shader
@@ -275,62 +463,7 @@ impl Renderer {
             gl.bind_buffer(glow::ARRAY_BUFFER, None);
             gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, None);
 
-            let u = |n: &str| gl.get_uniform_location(program, n);
-            let u_viewproj = u("u_viewproj");
-            let u_camera_pos = u("u_camera_pos");
-            let u_key_dir = u("u_key_dir");
-            let u_fill_dir = u("u_fill_dir");
-            let u_sky_top = u("u_sky_top");
-            let u_sky_horizon = u("u_sky_horizon");
-            let u_sky_ground = u("u_sky_ground");
-            let u_sun_dir = u("u_sun_dir");
-            let u_sun_color = u("u_sun_color");
-            let u_base_color = u("u_base_color");
-            let u_base_color_alpha = u("u_base_color_alpha");
-            let u_metallic = u("u_metallic");
-            let u_roughness = u("u_roughness");
-            let u_emissive = u("u_emissive");
-            let u_emissive_strength = u("u_emissive_strength");
-            let u_transmission = u("u_transmission");
-            let u_alpha_mode = u("u_alpha_mode");
-            let u_alpha_cutoff = u("u_alpha_cutoff");
-            let u_use_base_tex = u("u_use_base_tex");
-            let u_use_mr_tex = u("u_use_mr_tex");
-            let u_use_normal_tex = u("u_use_normal_tex");
-            let u_use_ao_tex = u("u_use_ao_tex");
-            let u_use_emissive_tex = u("u_use_emissive_tex");
-            let u_base_tex = u("u_base_tex");
-            let u_mr_tex = u("u_mr_tex");
-            let u_normal_tex = u("u_normal_tex");
-            let u_ao_tex = u("u_ao_tex");
-            let u_emissive_tex = u("u_emissive_tex");
-            let u_normal_scale = u("u_normal_scale");
-            let u_uv_scale = u("u_uv_scale");
-            let u_joint_mats = u("u_joint_mats[0]");
-            let u_shader_mode = u("u_shader_mode");
-            let u_material_shader = u("u_material_shader");
-            let u_time = u("u_time");
-            let u_num_lights = u("u_num_lights");
-            let u_light_kind = u("u_light_kind[0]");
-            let u_light_pos = u("u_light_pos[0]");
-            let u_light_dir = u("u_light_dir[0]");
-            let u_light_color = u("u_light_color[0]");
-            let u_light_range = u("u_light_range[0]");
-            let u_light_cone = u("u_light_cone[0]");
-            let u_shadow_2d = u("u_shadow_2d");
-            let u_shadow_cube0 = u("u_shadow_cube0");
-            let u_shadow_cube1 = u("u_shadow_cube1");
-            let u_shadow_2d_viewproj = u("u_shadow_2d_viewproj[0]");
-            let u_shadow_cube_pos = u("u_shadow_cube_pos[0]");
-            let u_shadow_cube_far = u("u_shadow_cube_far[0]");
-            let u_light_shadow_2d_idx = u("u_light_shadow_2d_idx[0]");
-            let u_light_shadow_cube_idx = u("u_light_shadow_cube_idx[0]");
-            let u_shadow_fallback_idx = u("u_shadow_fallback_idx");
-            let u_shadow_bias_const = u("u_shadow_bias_const");
-            let u_shadow_bias_slope = u("u_shadow_bias_slope");
-            let u_shadow_strength = u("u_shadow_strength");
-            let u_shadow_2d_texel = u("u_shadow_2d_texel");
-            let u_shadow_pcf_taps = u("u_shadow_pcf_taps");
+            let u = MeshUniforms::fetch(gl, program);
 
             let gizmo = GizmoGl::new(gl)?;
             let grid = GridGl::new(gl)?;
@@ -349,61 +482,11 @@ impl Renderer {
                 imposter,
                 lights_overlay,
                 colliders_overlay,
-                u_viewproj,
-                u_camera_pos,
-                u_key_dir,
-                u_fill_dir,
-                u_sky_top,
-                u_sky_horizon,
-                u_sky_ground,
-                u_sun_dir,
-                u_sun_color,
-                u_base_color,
-                u_base_color_alpha,
-                u_metallic,
-                u_roughness,
-                u_emissive,
-                u_emissive_strength,
-                u_transmission,
-                u_alpha_mode,
-                u_alpha_cutoff,
-                u_use_base_tex,
-                u_use_mr_tex,
-                u_use_normal_tex,
-                u_use_ao_tex,
-                u_use_emissive_tex,
-                u_base_tex,
-                u_mr_tex,
-                u_normal_tex,
-                u_ao_tex,
-                u_emissive_tex,
-                u_normal_scale,
-                u_uv_scale,
-                u_joint_mats,
-                u_shader_mode,
-                u_material_shader,
-                u_time,
-                u_num_lights,
-                u_light_kind,
-                u_light_pos,
-                u_light_dir,
-                u_light_color,
-                u_light_range,
-                u_light_cone,
-                u_shadow_2d,
-                u_shadow_cube0,
-                u_shadow_cube1,
-                u_shadow_2d_viewproj,
-                u_shadow_cube_pos,
-                u_shadow_cube_far,
-                u_light_shadow_2d_idx,
-                u_light_shadow_cube_idx,
-                u_shadow_fallback_idx,
-                u_shadow_bias_const,
-                u_shadow_bias_slope,
-                u_shadow_strength,
-                u_shadow_2d_texel,
-                u_shadow_pcf_taps,
+                u,
+                user_shader_key: Vec::new(),
+                user_param_locs: HashMap::new(),
+                live_shader_ids: std::collections::HashSet::new(),
+                shader_error: None,
                 shadows,
                 shadow_quality: ShadowQuality::Off,
                 scene_center: Vec3::ZERO,
@@ -532,6 +615,11 @@ impl Renderer {
             // Mesh changed — depth maps may now contain stale silhouettes.
             self.shadows_dirty = true;
         }
+        // Relink the fragment program if this mesh brought a different set of
+        // user shaders. Outside the `unsafe` block above only because it opens
+        // its own; the batches' `shader_id`s were assigned against exactly this
+        // shader set at flatten time, so the two must be installed together.
+        self.ensure_user_shaders(gl, &mesh.user_shaders);
     }
 
     /// Refresh the per-batch matrix palettes without touching the VBO/EBO.

@@ -77,6 +77,11 @@ pub struct ViewerState {
     /// just the palette uniforms when this is set, leaving the VBO/EBO alone
     /// — the whole point of the rest-pose-baked vertex stream.
     pub palettes_dirty: bool,
+    /// Last user-shader failure as `(shader name, message)` — a `.glsl` that
+    /// wouldn't load or wouldn't compile. Written by the paint callback (the
+    /// only place with a GL context) and read by the overlay, so a shader that
+    /// falls back to standard PBR explains itself instead of just looking wrong.
+    pub shader_error: Option<(String, String)>,
     pub scene: Option<Arc<SceneGraph>>,
     /// Directory of the source `.mog` file — used to resolve relative texture
     /// paths declared on materials. `None` for unsaved buffers.
@@ -216,6 +221,7 @@ impl Default for ViewerState {
             mesh: Default::default(),
             mesh_dirty: false,
             palettes_dirty: false,
+            shader_error: None,
             scene: None,
             base_dir: None,
             clip_active: Vec::new(),

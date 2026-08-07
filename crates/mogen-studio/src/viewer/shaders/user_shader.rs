@@ -30,10 +30,9 @@ pub const PLACEHOLDER: &str = "//@MOGEN_USER_SHADER_DISPATCH@";
 
 /// The first material-shader id handed to injected user shaders. `0` is standard
 /// PBR and `1` is the built-in water branch (still hard-coded in `main` for
-/// now), so user shaders start at `2`. Consumed by the flatten→renderer
-/// integration that assigns ids to the scene's declared shaders.
-// TODO(shader-preview): wired once flatten bakes the used-shader list.
-#[allow(dead_code)]
+/// now), so user shaders start at `2`. Consumed by
+/// [`crate::viewer::user_shaders::resolve`], which assigns ids to the scene's
+/// declared shaders in name order.
 pub const FIRST_USER_SHADER_ID: i32 = 2;
 
 /// One shader to inject into the fragment program.

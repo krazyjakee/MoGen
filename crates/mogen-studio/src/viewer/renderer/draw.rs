@@ -5,9 +5,10 @@
 
 use glam::{Mat4, Vec3};
 use glow::HasContext;
-use mogen_core::AlphaMode;
+use mogen_core::{AlphaMode, ShaderParamValue};
 
 use super::super::gl_util::FrustumPlanes;
+use super::super::shaders::user_shader;
 use super::super::shadows::select_casters;
 use super::Renderer;
 
@@ -18,6 +19,56 @@ use super::Renderer;
 /// first in a chain.
 #[derive(Copy, Clone, PartialEq, Eq)]
 struct MaterialKey(Option<u32>);
+
+/// The `u_material_shader` value to actually upload for a batch.
+///
+/// A user-shader id is only valid against the program it was compiled into.
+/// `main` routes anything `>= FIRST_USER_SHADER_ID` to `mogen_user_dispatch`,
+/// and a program that never received that injection answers with a fully
+/// transparent `vec4(0.0)` — so an id the current program doesn't know doesn't
+/// degrade to PBR on its own, it makes the geometry vanish. Clamping here is
+/// what turns a failed shader compile into "draws plainly and says why".
+fn effective_shader_id(batch_id: i32, live: &std::collections::HashSet<i32>) -> i32 {
+    if batch_id >= user_shader::FIRST_USER_SHADER_ID && !live.contains(&batch_id) {
+        0
+    } else {
+        batch_id
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::effective_shader_id;
+    use std::collections::HashSet;
+
+    #[test]
+    fn pbr_and_water_ids_are_never_clamped() {
+        let live = HashSet::new();
+        assert_eq!(effective_shader_id(0, &live), 0);
+        assert_eq!(effective_shader_id(1, &live), 1, "water is built into every program");
+    }
+
+    #[test]
+    fn a_live_user_id_passes_through() {
+        let live = HashSet::from([2, 3]);
+        assert_eq!(effective_shader_id(2, &live), 2);
+        assert_eq!(effective_shader_id(3, &live), 3);
+    }
+
+    #[test]
+    fn a_user_id_absent_from_the_program_falls_back_to_pbr() {
+        // The failed-compile case: ids were assigned at flatten time but no
+        // injection reached the program. Without this the dispatch stub returns
+        // transparent black and the mesh disappears entirely.
+        let live = HashSet::new();
+        assert_eq!(effective_shader_id(2, &live), 0);
+
+        // And the partially-live case — id 2 compiled, id 3 did not.
+        let live = HashSet::from([2]);
+        assert_eq!(effective_shader_id(2, &live), 2);
+        assert_eq!(effective_shader_id(3, &live), 0);
+    }
+}
 
 impl Renderer {
     pub fn draw(&mut self, gl: &glow::Context, viewproj: Mat4, camera_pos: Vec3) {
@@ -89,20 +140,20 @@ impl Renderer {
             }
 
             gl.use_program(Some(self.program));
-            if let Some(loc) = &self.u_shader_mode {
+            if let Some(loc) = &self.u.u_shader_mode {
                 gl.uniform_1_i32(Some(loc), self.shader_mode);
             }
             // Per-frame clock for time-varying per-material shaders. Pushed
             // before the per-batch loop so every batch sees the same `t`
             // value within a paint — the per-material shader uniform itself
             // is set inside the material-change branch below.
-            if let Some(loc) = &self.u_time {
+            if let Some(loc) = &self.u.u_time {
                 gl.uniform_1_f32(Some(loc), self.frame_time);
             }
-            if let Some(loc) = &self.u_viewproj {
+            if let Some(loc) = &self.u.u_viewproj {
                 gl.uniform_matrix_4_f32_slice(Some(loc), false, &viewproj.to_cols_array());
             }
-            if let Some(loc) = &self.u_camera_pos {
+            if let Some(loc) = &self.u.u_camera_pos {
                 gl.uniform_3_f32(Some(loc), camera_pos.x, camera_pos.y, camera_pos.z);
             }
             // Sky probe + analytic key/fill rig come from the active
@@ -115,18 +166,18 @@ impl Renderer {
             // probe — full radiance overstated ambient on flat-colour
             // (untextured) surfaces.
             let env = self.environment;
-            if let Some(loc) = &self.u_key_dir {
+            if let Some(loc) = &self.u.u_key_dir {
                 let d = env.key_dir.normalize_or_zero();
                 gl.uniform_3_f32(Some(loc), d.x, d.y, d.z);
             }
-            if let Some(loc) = &self.u_fill_dir {
+            if let Some(loc) = &self.u.u_fill_dir {
                 let d = env.fill_dir.normalize_or_zero();
                 gl.uniform_3_f32(Some(loc), d.x, d.y, d.z);
             }
-            if let Some(loc) = &self.u_sky_top {
+            if let Some(loc) = &self.u.u_sky_top {
                 gl.uniform_3_f32(Some(loc), env.sky_top.x, env.sky_top.y, env.sky_top.z);
             }
-            if let Some(loc) = &self.u_sky_horizon {
+            if let Some(loc) = &self.u.u_sky_horizon {
                 gl.uniform_3_f32(
                     Some(loc),
                     env.sky_horizon.x,
@@ -134,7 +185,7 @@ impl Renderer {
                     env.sky_horizon.z,
                 );
             }
-            if let Some(loc) = &self.u_sky_ground {
+            if let Some(loc) = &self.u.u_sky_ground {
                 gl.uniform_3_f32(
                     Some(loc),
                     env.sky_ground.x,
@@ -142,11 +193,11 @@ impl Renderer {
                     env.sky_ground.z,
                 );
             }
-            if let Some(loc) = &self.u_sun_dir {
+            if let Some(loc) = &self.u.u_sun_dir {
                 let d = env.sun_dir.normalize_or_zero();
                 gl.uniform_3_f32(Some(loc), d.x, d.y, d.z);
             }
-            if let Some(loc) = &self.u_sun_color {
+            if let Some(loc) = &self.u.u_sun_color {
                 gl.uniform_3_f32(Some(loc), env.sun_color.x, env.sun_color.y, env.sun_color.z);
             }
             // Punctual lights uploaded as parallel arrays. Sized to MAX_LIGHTS
@@ -157,32 +208,32 @@ impl Renderer {
             // `light` nodes yet.
             self.upload_lights(gl);
             // Sampler bindings — texture units stay constant for the whole pass.
-            if let Some(loc) = &self.u_base_tex {
+            if let Some(loc) = &self.u.u_base_tex {
                 gl.uniform_1_i32(Some(loc), 0);
             }
-            if let Some(loc) = &self.u_mr_tex {
+            if let Some(loc) = &self.u.u_mr_tex {
                 gl.uniform_1_i32(Some(loc), 1);
             }
-            if let Some(loc) = &self.u_normal_tex {
+            if let Some(loc) = &self.u.u_normal_tex {
                 gl.uniform_1_i32(Some(loc), 2);
             }
-            if let Some(loc) = &self.u_ao_tex {
+            if let Some(loc) = &self.u.u_ao_tex {
                 gl.uniform_1_i32(Some(loc), 3);
             }
-            if let Some(loc) = &self.u_emissive_tex {
+            if let Some(loc) = &self.u.u_emissive_tex {
                 gl.uniform_1_i32(Some(loc), 4);
             }
             // Shadow sampler bindings. Units 5..=7 are reserved for the
             // shadow atlas + the two cubemap slots; the FS sampler uniforms
             // address those units even when shadows are off so the bind
             // doesn't have to swap when toggling quality at runtime.
-            if let Some(loc) = &self.u_shadow_2d {
+            if let Some(loc) = &self.u.u_shadow_2d {
                 gl.uniform_1_i32(Some(loc), 5);
             }
-            if let Some(loc) = &self.u_shadow_cube0 {
+            if let Some(loc) = &self.u.u_shadow_cube0 {
                 gl.uniform_1_i32(Some(loc), 6);
             }
-            if let Some(loc) = &self.u_shadow_cube1 {
+            if let Some(loc) = &self.u.u_shadow_cube1 {
                 gl.uniform_1_i32(Some(loc), 7);
             }
             // Per-frame shadow uniforms. Pack the caster light-space matrices,
@@ -314,12 +365,18 @@ impl Renderer {
             let emissive = b.emissive;
             let emissive_strength = b.emissive_strength;
             // Preview shader selector for the monolithic program's branch.
-            // Phase 3 replaces this with a per-material program cache; for now
-            // only the built-in water shader has a dedicated branch.
-            let shader_id = if b.shader_name.as_deref() == Some(mogen_core::shader::WATER) {
-                1
+            // Resolved at flatten time: 0 standard PBR, 1 the built-in water
+            // branch, >= 2 an injected user shader.
+            //
+            // Clamped to PBR unless the bound program can actually dispatch it.
+            let shader_id = effective_shader_id(b.shader_id, &self.live_shader_ids);
+            // Cloned because uploading the params needs `&self` while `b` still
+            // borrows `self.batches`. Param lists are a handful of scalars, and
+            // only user-shader batches have any at all.
+            let shader_params = if shader_id >= user_shader::FIRST_USER_SHADER_ID {
+                b.shader_params.clone()
             } else {
-                0
+                Vec::new()
             };
             let index_start = b.index_start;
             let index_count = b.index_count;
@@ -374,13 +431,13 @@ impl Renderer {
             let material_changed = current_material != Some(material_key);
             if material_changed {
                 unsafe {
-                    if let Some(loc) = &self.u_base_color {
+                    if let Some(loc) = &self.u.u_base_color {
                         gl.uniform_3_f32(Some(loc), base_color[0], base_color[1], base_color[2]);
                     }
-                    if let Some(loc) = &self.u_base_color_alpha {
+                    if let Some(loc) = &self.u.u_base_color_alpha {
                         gl.uniform_1_f32(Some(loc), base_color_alpha);
                     }
-                    if let Some(loc) = &self.u_alpha_mode {
+                    if let Some(loc) = &self.u.u_alpha_mode {
                         let mode = match alpha_mode {
                             AlphaMode::Opaque => 0,
                             AlphaMode::Mask => 1,
@@ -388,46 +445,65 @@ impl Renderer {
                         };
                         gl.uniform_1_i32(Some(loc), mode);
                     }
-                    if let Some(loc) = &self.u_alpha_cutoff {
+                    if let Some(loc) = &self.u.u_alpha_cutoff {
                         gl.uniform_1_f32(Some(loc), alpha_cutoff);
                     }
-                    if let Some(loc) = &self.u_metallic {
+                    if let Some(loc) = &self.u.u_metallic {
                         gl.uniform_1_f32(Some(loc), metallic);
                     }
-                    if let Some(loc) = &self.u_roughness {
+                    if let Some(loc) = &self.u.u_roughness {
                         gl.uniform_1_f32(Some(loc), roughness);
                     }
-                    if let Some(loc) = &self.u_emissive {
+                    if let Some(loc) = &self.u.u_emissive {
                         gl.uniform_3_f32(Some(loc), emissive[0], emissive[1], emissive[2]);
                     }
-                    if let Some(loc) = &self.u_emissive_strength {
+                    if let Some(loc) = &self.u.u_emissive_strength {
                         gl.uniform_1_f32(Some(loc), emissive_strength);
                     }
-                    if let Some(loc) = &self.u_transmission {
+                    if let Some(loc) = &self.u.u_transmission {
                         gl.uniform_1_f32(Some(loc), transmission);
                     }
-                    if let Some(loc) = &self.u_material_shader {
+                    if let Some(loc) = &self.u.u_material_shader {
                         gl.uniform_1_i32(Some(loc), shader_id);
                     }
-                    if let Some(loc) = &self.u_use_base_tex {
+                    // User-shader params. Uploaded inside the material-change
+                    // block because the values are per-material: two materials
+                    // sharing one shader legitimately feed it different values,
+                    // and the namespaced uniform is shared between them.
+                    for (name, value) in &shader_params {
+                        let Some(Some(loc)) =
+                            self.user_param_locs.get(&(shader_id, name.clone()))
+                        else {
+                            // Declared but unused by the snippet — GLSL strips
+                            // the uniform, so there is nothing to upload.
+                            continue;
+                        };
+                        match value {
+                            ShaderParamValue::Float(v) => gl.uniform_1_f32(Some(loc), *v),
+                            ShaderParamValue::Vec2(v) => gl.uniform_2_f32_slice(Some(loc), v),
+                            ShaderParamValue::Vec3(v) => gl.uniform_3_f32_slice(Some(loc), v),
+                            ShaderParamValue::Vec4(v) => gl.uniform_4_f32_slice(Some(loc), v),
+                        }
+                    }
+                    if let Some(loc) = &self.u.u_use_base_tex {
                         gl.uniform_1_i32(Some(loc), textures[0].is_some() as i32);
                     }
-                    if let Some(loc) = &self.u_use_mr_tex {
+                    if let Some(loc) = &self.u.u_use_mr_tex {
                         gl.uniform_1_i32(Some(loc), textures[1].is_some() as i32);
                     }
-                    if let Some(loc) = &self.u_use_normal_tex {
+                    if let Some(loc) = &self.u.u_use_normal_tex {
                         gl.uniform_1_i32(Some(loc), textures[2].is_some() as i32);
                     }
-                    if let Some(loc) = &self.u_normal_scale {
+                    if let Some(loc) = &self.u.u_normal_scale {
                         gl.uniform_1_f32(Some(loc), normal_scale);
                     }
-                    if let Some(loc) = &self.u_uv_scale {
+                    if let Some(loc) = &self.u.u_uv_scale {
                         gl.uniform_2_f32(Some(loc), uv_scale[0], uv_scale[1]);
                     }
-                    if let Some(loc) = &self.u_use_ao_tex {
+                    if let Some(loc) = &self.u.u_use_ao_tex {
                         gl.uniform_1_i32(Some(loc), textures[3].is_some() as i32);
                     }
-                    if let Some(loc) = &self.u_use_emissive_tex {
+                    if let Some(loc) = &self.u.u_use_emissive_tex {
                         gl.uniform_1_i32(Some(loc), textures[4].is_some() as i32);
                     }
                     for (unit, tex) in textures.iter().enumerate() {

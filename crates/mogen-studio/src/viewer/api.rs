@@ -125,6 +125,14 @@ impl Viewer {
         self.state.lock().unwrap().scene.is_some()
     }
 
+    /// Last user-shader failure as `(shader name, message)`, if the active
+    /// scene has one. A shader that fails to load or compile falls back to
+    /// standard PBR; this is what lets the UI say so rather than leaving the
+    /// author to guess why their material looks untouched.
+    pub fn shader_error(&self) -> Option<(String, String)> {
+        self.state.lock().unwrap().shader_error.clone()
+    }
+
     /// Replace the selection with a single node (or clear it). Equivalent
     /// to a plain click in the viewport.
     pub fn set_primary_selection(&self, id: Option<NodeId>) {

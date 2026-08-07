@@ -368,7 +368,15 @@ impl MogenStudioApp {
         let cinema_on = self.viewer.is_cinema_active();
         let free_cam_on = self.viewer.camera_mode() == crate::viewer::CameraMode::FreeCam;
         let ctrl_held = ctx.input(|i| i.modifiers.ctrl || i.modifiers.command);
-        let status_text: Option<String> = if cinema_on {
+        // A broken shader outranks every hint below: the viewport is actively
+        // showing something other than what the file asks for, and without this
+        // the only symptom is a material that looks stubbornly untouched.
+        let shader_err = self.viewer.shader_error();
+        let status_text: Option<String> = if let Some((name, msg)) = &shader_err {
+            Some(format!(
+                "shader \"{name}\" failed — drawing standard PBR instead: {msg}"
+            ))
+        } else if cinema_on {
             self.viewer
                 .cinema_shot_label()
                 .map(|name| format!("now: {name}"))

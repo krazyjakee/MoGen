@@ -17,6 +17,7 @@ mod renderer;
 mod shaders;
 pub mod shadows;
 pub(crate) mod state;
+pub(crate) mod user_shaders;
 
 use std::sync::{Arc, Mutex};
 
@@ -466,6 +467,13 @@ impl Viewer {
             let mut rr = renderer_for_paint.lock().unwrap();
             if st.mesh_dirty {
                 rr.upload(gl, &st.mesh);
+                // Shader compilation happens inside `upload`, on this thread,
+                // because it needs the GL context. Copy the outcome into the
+                // shared state so the UI thread can report it without touching
+                // GL itself.
+                st.shader_error = rr
+                    .shader_error()
+                    .map(|(n, m)| (n.to_string(), m.to_string()));
                 st.mesh_dirty = false;
                 // The VBO upload also refreshes the palette cache, so any
                 // pending palette-only update is now redundant.

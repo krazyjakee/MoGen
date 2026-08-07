@@ -348,3 +348,80 @@ fn flatten_propagates_alpha_pipeline_and_centroid() {
         expected
     );
 }
+
+/// End-to-end through `flatten`: a material bound to a declared shader must
+/// come out of batching with a real injection id and its resolved params, not
+/// just a name the renderer has to re-interpret. This is the wiring that was
+/// missing while `assemble_fs` only ever saw an empty slice.
+#[test]
+fn flatten_assigns_user_shader_ids_and_resolves_params() {
+    use mogen_core::{ShaderDecl, ShaderParamDef, ShaderParamType, ShaderParamValue};
+
+    let dir = std::env::temp_dir().join(format!("mogen-flatten-shader-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("r.glsl"), "vec4 fragment() { return vec4(1.0); }").unwrap();
+
+    let mut scene = SceneGraph::new();
+    let mut decl = ShaderDecl::new("ripple", "r.glsl");
+    decl.params = vec![
+        ShaderParamDef {
+            name: "speed".into(),
+            ty: ShaderParamType::Float,
+            default: Some(ShaderParamValue::Float(2.0)),
+        },
+        ShaderParamDef {
+            name: "frequency".into(),
+            ty: ShaderParamType::Float,
+            default: Some(ShaderParamValue::Float(8.0)),
+        },
+    ];
+    scene.add_shader(decl);
+
+    let mut mat = Material::new("pond");
+    mat.shader_name = Some("ripple".into());
+    mat.shader_params
+        .insert("speed".into(), ShaderParamValue::Float(3.0));
+    let mid = scene.add_material(mat);
+
+    let plain = scene.add_material(Material::new("stone"));
+
+    let a = scene.add_root("pond", "primitive", Transform::IDENTITY);
+    scene.set_mesh(a, quad_mesh());
+    scene.set_material(a, mid);
+    let b = scene.add_root("kerb", "primitive", Transform::IDENTITY);
+    scene.set_mesh(b, quad_mesh());
+    scene.set_material(b, plain);
+
+    let mesh = flatten(&scene, Some(&dir));
+
+    let shaded = mesh
+        .batches
+        .iter()
+        .find(|b| b.shader_name.as_deref() == Some("ripple"))
+        .expect("shaded batch");
+    assert_eq!(shaded.shader_id, 2, "first user shader takes id 2");
+    assert_eq!(
+        shaded.shader_params,
+        vec![
+            ("speed".to_string(), ShaderParamValue::Float(3.0)),
+            ("frequency".to_string(), ShaderParamValue::Float(8.0)),
+        ],
+        "override wins for speed; frequency falls back to its declared default"
+    );
+
+    let plain_batch = mesh
+        .batches
+        .iter()
+        .find(|b| b.shader_name.is_none())
+        .expect("plain batch");
+    assert_eq!(plain_batch.shader_id, 0);
+    assert!(plain_batch.shader_params.is_empty());
+
+    // The injection list the renderer will assemble carries exactly the one
+    // used shader, with its source read off disk.
+    assert_eq!(mesh.user_shaders.shaders.len(), 1);
+    assert!(mesh.user_shaders.shaders[0].source.contains("vec4 fragment()"));
+    assert!(mesh.has_animated_shader(), "user shaders may read u_time");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
