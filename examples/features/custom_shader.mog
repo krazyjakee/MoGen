@@ -1,0 +1,50 @@
+// User-authored GLSL shaders: declare a fragment snippet, bind it to a material.
+//
+// A `shader "<name>"` declaration names an on-disk GLSL snippet plus the
+// parameters materials may feed it. mogen itself never compiles or runs the
+// GLSL — the exported `.glb` uses standard PBR scalars, and the shader name and
+// its resolved parameter values ride along as `node.extras.shader` metadata for
+// a downstream engine to act on. MoGen Studio is the component that compiles
+// the snippet for live preview.
+//
+// The built-in `water` preset is the first client of this same mechanism rather
+// than a special case, so declaring `shader "water" { … }` shadows it.
+//
+// See docs/dsl.md § Shaders for the full surface, and shaders/ripple.glsl for
+// the fragment ABI the snippet is written against.
+//
+// Build with: mogen build examples/features/custom_shader.mog --out ripple.glb
+
+// `source` resolves relative to this .mog file, the same way texture paths do.
+// Each `param` becomes a uniform the snippet may use under its bare name.
+shader "ripple" (source="shaders/ripple.glsl") {
+  param "speed"     (type=float, default=2.0)
+  param "frequency" (type=float, default=8.0)
+  param "tint"      (type=color, default=[0.0, 0.55, 0.75])
+}
+
+// A material opts in with `shader=` and overrides individual defaults in a
+// `shader_params` block. Omitted params keep the declared default — `frequency`
+// below stays at 8.0. `color` is not decoration here: the snippet mixes it into
+// the ripple troughs, so it still reads through the custom shading.
+material "pond" (color=[0.05, 0.18, 0.28], roughness=0.35, shader="ripple") {
+  shader_params (speed=3.0, tint=[0.1, 0.7, 0.9])
+}
+
+// A plain PBR material for contrast — the same scene carrying both paths.
+material "stone" (color=[0.55, 0.53, 0.5], roughness=0.85)
+
+scene {
+  // The ripples expand from the world origin, so the slab is centred there.
+  box "pond" (size=[3, 0.1, 3], mat="pond")
+
+  // The same shader on a curved surface. Because the snippet drives the rings
+  // from world position rather than UVs, the bands stay continuous across both
+  // meshes instead of restarting per object — which is the point of having a
+  // second shape here.
+  sphere "buoy" (radius=0.45, rings=32, segments=64, mat="pond", right_of="pond", gap=0.5)
+
+  // Standard PBR alongside it, so the preview shows the custom path and the
+  // built-in path lit by the same scene.
+  box "kerb" (size=[0.5, 0.5, 0.5], mat="stone", right_of="buoy", gap=0.5)
+}
