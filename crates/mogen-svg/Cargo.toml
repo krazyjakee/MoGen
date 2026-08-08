@@ -1,0 +1,16 @@
+[package]
+name = "mogen-svg"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+mogen-core = { workspace = true }
+anyhow = { workspace = true }
+resvg = { workspace = true }
+usvg = { workspace = true }
+
+[dev-dependencies]
+# Only to decode what the tests just rendered. `resvg` encodes PNG but does not
+# read one back, and asserting on pixels is the only way these tests can claim
+# anything about the render.
+image = { workspace = true }

@@ -2763,11 +2763,10 @@ dependencies = [
  "mogen-dsl",
  "mogen-geom",
  "mogen-render",
+ "mogen-svg",
  "oxipng",
- "resvg",
  "serde",
  "serde_json",
- "usvg",
 ]
 
 [[package]]
@@ -2894,6 +2893,17 @@ dependencies = [
  "tiny_http",
  "webbrowser",
  "zip",
+]
+
+[[package]]
+name = "mogen-svg"
+version = "0.1.12"
+dependencies = [
+ "anyhow",
+ "image",
+ "mogen-core",
+ "resvg",
+ "usvg",
 ]
 
 [[package]]
