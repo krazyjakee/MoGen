@@ -143,6 +143,24 @@ fn implicit_curved_primitive_density_tracks_authored_local_size() {
 }
 
 #[test]
+fn implicit_size_aware_radial_counts_preserve_cardinal_extents() {
+    let g = lower_src(
+        r#"scene {
+            sphere "sphere" (radius=0.25)
+            cylinder "cylinder" (radius=0.25, height=1)
+        }"#,
+    );
+    for name in ["sphere", "cylinder"] {
+        let mesh = find_mesh_node(&g, name).mesh.as_ref().unwrap();
+        let min_x = mesh.positions.iter().map(|p| p[0]).fold(f32::INFINITY, f32::min);
+        let max_x = mesh.positions.iter().map(|p| p[0]).fold(f32::NEG_INFINITY, f32::max);
+        let min_z = mesh.positions.iter().map(|p| p[2]).fold(f32::INFINITY, f32::min);
+        let max_z = mesh.positions.iter().map(|p| p[2]).fold(f32::NEG_INFINITY, f32::max);
+        assert_eq!([min_x, max_x, min_z, max_z], [-0.25, 0.25, -0.25, 0.25]);
+    }
+}
+
+#[test]
 fn explicit_segments_override_size_aware_defaults_exactly() {
     let g = lower_src(
         r#"scene {

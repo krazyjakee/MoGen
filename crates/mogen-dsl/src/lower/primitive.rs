@@ -105,6 +105,28 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Prim
         });
         scaled_count(raw, min)
     };
+    // Implicit full-circle tessellation keeps a vertex on each cardinal axis.
+    // Besides producing stable authored bounds, this prevents a size-derived
+    // odd count from making the rendered surface narrower than its analytic
+    // collider. Explicit counts remain exact, including intentionally odd ones.
+    let angular_seg_for_size =
+        |attr: &str, base: u32, min: u32, size: f32, reference: f32| -> u32 {
+            let segments = seg_for_size(attr, base, min, size, reference);
+            if node.attr_number(attr).is_some() {
+                segments
+            } else {
+                ((segments + 2) / 4 * 4).max(4)
+            }
+        };
+    let meridian_seg_for_size =
+        |attr: &str, base: u32, min: u32, size: f32, reference: f32| -> u32 {
+            let segments = seg_for_size(attr, base, min, size, reference);
+            if node.attr_number(attr).is_some() {
+                segments
+            } else {
+                ((segments + 1) / 2 * 2).max(2)
+            }
+        };
     macro_rules! tessellate {
         ($kind:expr, $uv:expr; $($value:expr),* $(,)? => $build:expr) => {{
             let mut identity = GeometryIdentityBuilder::primitive($kind, $uv);
@@ -182,37 +204,37 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Prim
         "cylinder" => {
             let radius = node.attr_number("radius").unwrap_or(0.5);
             let height = node.attr_number("height").unwrap_or(1.0);
-            let segments = seg_for_size("segments", 24, 3, radius, 0.5);
+            let segments = angular_seg_for_size("segments", 24, 3, radius, 0.5);
             tessellate!("cylinder", uv_mode; radius, height, segments =>
                 cylinder_mesh(radius, height, segments, uv_mode))
         }
         "cone" => {
             let radius = node.attr_number("radius").unwrap_or(0.5);
             let height = node.attr_number("height").unwrap_or(1.0);
-            let segments = seg_for_size("segments", 24, 3, radius, 0.5);
+            let segments = angular_seg_for_size("segments", 24, 3, radius, 0.5);
             tessellate!("cone", uv_mode; radius, height, segments =>
                 cone_mesh(radius, height, segments, uv_mode))
         }
         "sphere" => {
             let radius = node.attr_number("radius").unwrap_or(0.5);
-            let rings = seg_for_size("rings", 16, 2, radius, 0.5);
-            let segments = seg_for_size("segments", 24, 3, radius, 0.5);
+            let rings = meridian_seg_for_size("rings", 16, 2, radius, 0.5);
+            let segments = angular_seg_for_size("segments", 24, 3, radius, 0.5);
             tessellate!("sphere", uv_mode; radius, rings, segments =>
                 sphere_mesh(radius, rings, segments, uv_mode))
         }
         "capsule" => {
             let radius = node.attr_number("radius").unwrap_or(0.5);
             let height = node.attr_number("height").unwrap_or(1.0);
-            let rings = seg_for_size("rings", 8, 2, radius, 0.5);
-            let segments = seg_for_size("segments", 24, 3, radius, 0.5);
+            let rings = meridian_seg_for_size("rings", 8, 2, radius, 0.5);
+            let segments = angular_seg_for_size("segments", 24, 3, radius, 0.5);
             tessellate!("capsule", uv_mode; radius, height, rings, segments =>
                 capsule_mesh(radius, height, rings, segments, uv_mode))
         }
         "torus" => {
             let major = node.attr_number("major").unwrap_or(0.5);
             let minor = node.attr_number("minor").unwrap_or(0.15);
-            let major_segments = seg_for_size("major_segments", 24, 3, major, 0.5);
-            let minor_segments = seg_for_size("minor_segments", 12, 3, minor, 0.15);
+            let major_segments = angular_seg_for_size("major_segments", 24, 3, major, 0.5);
+            let minor_segments = angular_seg_for_size("minor_segments", 12, 3, minor, 0.15);
             tessellate!("torus", uv_mode; major, minor, major_segments, minor_segments =>
                 torus_mesh(major, minor, major_segments, minor_segments, uv_mode))
         }
@@ -230,7 +252,7 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Prim
         }
         "disc" => {
             let radius = node.attr_number("radius").unwrap_or(0.5);
-            let segments = seg_for_size("segments", 24, 3, radius, 0.5);
+            let segments = angular_seg_for_size("segments", 24, 3, radius, 0.5);
             tessellate!("disc", uv_mode; radius, segments =>
                 disc_mesh(radius, segments, uv_mode))
         }
@@ -302,21 +324,21 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Prim
             let outer = node.attr_number("outer").unwrap_or(0.5);
             let inner = node.attr_number("inner").unwrap_or(0.3);
             let height = node.attr_number("height").unwrap_or(1.0);
-            let segments = seg_for_size("segments", 24, 3, outer, 0.5);
+            let segments = angular_seg_for_size("segments", 24, 3, outer, 0.5);
             tessellate!("tube", uv_mode; outer, inner, height, segments =>
                 tube_mesh(outer, inner, height, segments, uv_mode))
         }
         "hemisphere" => {
             let radius = node.attr_number("radius").unwrap_or(0.5);
-            let rings = seg_for_size("rings", 8, 2, radius, 0.5);
-            let segments = seg_for_size("segments", 24, 3, radius, 0.5);
+            let rings = meridian_seg_for_size("rings", 8, 2, radius, 0.5);
+            let segments = angular_seg_for_size("segments", 24, 3, radius, 0.5);
             tessellate!("hemisphere", uv_mode; radius, rings, segments =>
                 hemisphere_mesh(radius, rings, segments, uv_mode))
         }
         "half_cylinder" => {
             let radius = node.attr_number("radius").unwrap_or(0.5);
             let height = node.attr_number("height").unwrap_or(1.0);
-            let segments = seg_for_size("segments", 24, 3, radius, 0.5);
+            let segments = angular_seg_for_size("segments", 24, 3, radius, 0.5);
             tessellate!("half_cylinder", uv_mode; radius, height, segments =>
                 half_cylinder_mesh(radius, height, segments, uv_mode))
         }
@@ -324,8 +346,8 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Prim
             let major = node.attr_number("major").unwrap_or(0.5);
             let minor = node.attr_number("minor").unwrap_or(0.15);
             let arc_deg = node.attr_number("arc").unwrap_or(90.0);
-            let major_segments = seg_for_size("major_segments", 24, 3, major, 0.5);
-            let minor_segments = seg_for_size("minor_segments", 12, 3, minor, 0.15);
+            let major_segments = angular_seg_for_size("major_segments", 24, 3, major, 0.5);
+            let minor_segments = angular_seg_for_size("minor_segments", 12, 3, minor, 0.15);
             let arc = arc_deg.to_radians();
             tessellate!("torus_arc", uv_mode;
                 major, minor, arc, major_segments, minor_segments =>
@@ -334,8 +356,8 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Prim
         "ellipsoid" => {
             let s = resolve_size3(node, Vec3::ONE);
             let characteristic = s.x.abs().max(s.y.abs()).max(s.z.abs());
-            let rings = seg_for_size("rings", 16, 2, characteristic, 1.0);
-            let segments = seg_for_size("segments", 24, 3, characteristic, 1.0);
+            let rings = meridian_seg_for_size("rings", 16, 2, characteristic, 1.0);
+            let segments = angular_seg_for_size("segments", 24, 3, characteristic, 1.0);
             tessellate!("ellipsoid", uv_mode; [s.x, s.y, s.z], rings, segments =>
                 ellipsoid_mesh([s.x, s.y, s.z], rings, segments, uv_mode))
         }
@@ -344,8 +366,8 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Prim
             let ew = node.attr_number("ew").unwrap_or(1.0);
             let ns = node.attr_number("ns").unwrap_or(1.0);
             let characteristic = s.x.abs().max(s.y.abs()).max(s.z.abs());
-            let rings = seg_for_size("rings", 16, 2, characteristic, 1.0);
-            let segments = seg_for_size("segments", 24, 3, characteristic, 1.0);
+            let rings = meridian_seg_for_size("rings", 16, 2, characteristic, 1.0);
+            let segments = angular_seg_for_size("segments", 24, 3, characteristic, 1.0);
             tessellate!("superellipsoid", uv_mode;
                 [s.x, s.y, s.z], ew, ns, rings, segments =>
                 superellipsoid_mesh([s.x, s.y, s.z], ew, ns, rings, segments, uv_mode))
