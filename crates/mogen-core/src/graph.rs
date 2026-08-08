@@ -8,8 +8,8 @@ use glam::Mat4;
 use glam::{Quat, Vec3};
 
 use crate::{
-    Aabb, Clip, Connector, Joint, Light, Material, MaterialId, Mesh, Meta, PhysicsBody,
-    PhysicsId, PhysicsMaterial, ShaderDecl, Skin, SkinId, Span, Transform,
+    Aabb, Clip, Connector, Joint, Light, Material, MaterialId, Mesh, Meta, PhysicsBody, PhysicsId,
+    PhysicsMaterial, ShaderDecl, Skin, SkinId, Span, Transform,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -165,6 +165,14 @@ pub struct SceneNode {
     pub name: String,
     pub transform: Transform,
     pub mesh: Option<Mesh>,
+    /// Stable identity of analytic geometry before tessellation. Present only
+    /// when lowering had every resolved input (primitive parameters, UV mode,
+    /// LOD density, deformation, anchor and subdivision) and no later pass
+    /// rewrote the vertex streams. Imported meshes, CSG and other opaque or
+    /// post-mutated geometry deliberately leave this unset so consumers fall
+    /// back to hashing the mesh bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub geometry_identity: Option<[u8; 32]>,
     pub material: Option<MaterialId>,
     /// Resolved physics body for this node — the substance it's made of plus
     /// its computed weight + centre of gravity. Set when the DSL node carries
@@ -215,7 +223,10 @@ pub struct SceneNode {
     /// to the exported `extras.cast_shadow` hint downstream importers read.
     /// Defaults to `true`; set `cast_shadow=0` in the DSL to opt a node out
     /// (decals, ground planes, low-impact filler geometry).
-    #[serde(default = "default_cast_shadow", skip_serializing_if = "is_default_cast_shadow")]
+    #[serde(
+        default = "default_cast_shadow",
+        skip_serializing_if = "is_default_cast_shadow"
+    )]
     pub cast_shadow: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
@@ -240,7 +251,10 @@ pub struct SceneNode {
     /// the `.mog` source via span-based text mutation. `false` for
     /// replicator/CSG-synthesised children; the viewport editor gates its
     /// gizmo + inspector writeback on this flag.
-    #[serde(default = "default_editable", skip_serializing_if = "is_default_editable")]
+    #[serde(
+        default = "default_editable",
+        skip_serializing_if = "is_default_editable"
+    )]
     pub editable: bool,
     /// Set when the node's translation was derived by `apply_relative_placement`
     /// (one of `above`/`below`/`left_of`/`right_of`/`in_front_of`/`behind`).
@@ -311,6 +325,7 @@ impl Default for SceneNode {
             name: String::new(),
             transform: Transform::default(),
             mesh: None,
+            geometry_identity: None,
             material: None,
             physics: None,
             skin: None,
@@ -436,6 +451,9 @@ impl SceneGraph {
 
     pub fn set_mesh(&mut self, id: NodeId, mesh: Mesh) {
         self.nodes[id.0 as usize].mesh = Some(mesh);
+        // A caller replacing geometry must re-establish its identity
+        // explicitly. This makes stale parameter keys fail closed.
+        self.nodes[id.0 as usize].geometry_identity = None;
     }
 
     pub fn set_light(&mut self, id: NodeId, light: Light) {
@@ -469,14 +487,12 @@ impl SceneGraph {
     /// Origin keying treats `None` as a distinct scope ("the file currently
     /// being lowered"), so the user's own materials cluster under one key
     /// and each imported file's materials cluster under their canonical path.
-    pub fn find_material_scoped(
-        &self,
-        name: &str,
-        origin: Option<&Path>,
-    ) -> Option<MaterialId> {
-        if let Some(idx) = self.materials.iter().position(|m| {
-            m.name == name && m.origin.as_deref() == origin
-        }) {
+    pub fn find_material_scoped(&self, name: &str, origin: Option<&Path>) -> Option<MaterialId> {
+        if let Some(idx) = self
+            .materials
+            .iter()
+            .position(|m| m.name == name && m.origin.as_deref() == origin)
+        {
             return Some(MaterialId(idx as u32));
         }
         self.find_material(name)

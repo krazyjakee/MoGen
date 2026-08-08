@@ -45,6 +45,7 @@ pub(super) fn place_deformed_mesh(
         // reparent under target with identity local transform. Any user
         // pos=/rot= on the child is intentionally discarded.
         graph.nodes[child_id.0 as usize].mesh = Some(deformed_target_local);
+        graph.nodes[child_id.0 as usize].geometry_identity = None;
         graph.nodes[child_id.0 as usize].transform = Transform::IDENTITY;
         reparent_pub(graph, child_id, target_id);
     } else {
@@ -54,6 +55,7 @@ pub(super) fn place_deformed_mesh(
         let to_child = world[child_id.0 as usize].inverse() * world[target_id.0 as usize];
         let final_mesh = transform_mesh(&deformed_target_local, to_child);
         graph.nodes[child_id.0 as usize].mesh = Some(final_mesh);
+        graph.nodes[child_id.0 as usize].geometry_identity = None;
     }
 }
 
@@ -61,7 +63,10 @@ pub(super) fn list_connector_names(cs: &[Connector]) -> String {
     if cs.is_empty() {
         return "<none>".to_string();
     }
-    cs.iter().map(|c| c.name.as_str()).collect::<Vec<_>>().join(", ")
+    cs.iter()
+        .map(|c| c.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Bake the user's local rotation and (non-unit) scale from `transform` into

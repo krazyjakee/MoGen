@@ -12,18 +12,26 @@ pub(super) const SUBDIVIDE_CAP: u32 = 3;
 
 /// Apply `subdivide=N` Loop subdivision to `mesh` (clamped via LOD scale; no-op if absent or 0).
 pub(super) fn apply_subdivide(node: &Node, mesh: Mesh) -> Result<Mesh> {
+    let n = resolved_subdivisions(node)?;
+    if n == 0 {
+        return Ok(mesh);
+    }
+    Ok(loop_subdivide(&mesh, n))
+}
+
+/// Effective (validated, LOD-scaled and capped) subdivision count. Shared with
+/// primitive identity construction so an omitted/default-zero spelling keys
+/// exactly like the geometry operation it controls.
+pub(super) fn resolved_subdivisions(node: &Node) -> Result<u32> {
     let n = match node.attr_number("subdivide") {
         Some(n) => n as i32,
-        None => return Ok(mesh),
+        None => return Ok(0),
     };
     if n < 0 {
         bail!("`subdivide` must be a non-negative integer (got {n})");
     }
     let n = scaled_subdivisions(n as u32).min(SUBDIVIDE_CAP);
-    if n == 0 {
-        return Ok(mesh);
-    }
-    Ok(loop_subdivide(&mesh, n))
+    Ok(n)
 }
 
 /// Lexical material inheritance: if `id`'s own material is unset, walk up its
@@ -78,7 +86,12 @@ pub(super) fn resolve_rot(node: &Node) -> Quat {
     let rx = node.attr_number("rx").unwrap_or(base.x);
     let ry = node.attr_number("ry").unwrap_or(base.y);
     let rz = node.attr_number("rz").unwrap_or(base.z);
-    Quat::from_euler(glam::EulerRot::XYZ, rx.to_radians(), ry.to_radians(), rz.to_radians())
+    Quat::from_euler(
+        glam::EulerRot::XYZ,
+        rx.to_radians(),
+        ry.to_radians(),
+        rz.to_radians(),
+    )
 }
 
 /// Resolve a 3D `size=[w,h,d]` with four equivalent author forms:
@@ -184,7 +197,9 @@ fn anchor_point(aabb: &Aabb, anchor: &str) -> Vec3 {
 /// translate default connectors by the same amount (they are authored in the
 /// natural frame and need to move with the mesh).
 pub(super) fn apply_anchor_to_mesh(mesh: &mut Mesh, anchor: Option<&str>) -> Vec3 {
-    let Some(anchor) = anchor else { return Vec3::ZERO };
+    let Some(anchor) = anchor else {
+        return Vec3::ZERO;
+    };
     if mesh.positions.is_empty() {
         return Vec3::ZERO;
     }

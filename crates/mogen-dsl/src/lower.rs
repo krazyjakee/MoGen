@@ -10,19 +10,20 @@ mod csg;
 mod deform;
 mod dungeon;
 mod faced_box;
+mod geometry_identity;
 mod gradient_bake;
 mod helpers;
 mod layout;
 mod light;
 mod lod;
 mod material;
-mod shader;
 mod node;
 mod physics;
 mod poi;
 mod primitive;
 mod procedural;
 mod rng;
+mod shader;
 mod terrain;
 
 #[cfg(test)]
@@ -45,11 +46,12 @@ use crate::module::{
 use crate::skin_lower::{bind_meshes, lower_skeleton};
 
 use anim::{is_anim_decl, lower_animations};
+use geometry_identity::TessellationCacheGuard;
 use lod::{collect_origin_lods, extract_lod_scale, LodByOriginGuard, LodRequestGuard};
 use material::collect_materials;
-use shader::{collect_shaders, ensure_builtin_shaders};
 use node::lower_into;
 use physics::collect_physics;
+use shader::{collect_shaders, ensure_builtin_shaders};
 
 thread_local! {
     // Build-pass-scoped LOD multiplier. Set by `lower()` before walking the
@@ -297,6 +299,7 @@ pub fn lower_with_loader_lod(
     let _lod_req = LodRequestGuard::set(lod_scale);
     let _src = SourceDirGuard::set(base_dir.map(|p| p.to_path_buf()));
     let _coll = ColliderRequestsGuard::fresh();
+    let _tessellations = TessellationCacheGuard::fresh();
     // Top-level `lod_scale (value=N)` multiplies primitive default segment/
     // ring counts. Stash on a thread-local before lowering so `primitive_mesh`
     // can read it without threading an extra arg through every recursive call.
@@ -369,11 +372,11 @@ pub fn lower_with_loader_lod(
     // Pass 2: build scene graph (skip anim declarations — they need nodes first).
     for n in &expanded {
         match n.kind.as_str() {
-            "material" => {} // already handled
-            "physics" => {} // hoisted in Pass 1
-            "shader" => {} // hoisted in Pass 1
-            "lod_scale" => {} // build-time setting, consumed above
-            "meta" => {} // already lifted onto graph.meta
+            "material" => {}           // already handled
+            "physics" => {}            // hoisted in Pass 1
+            "shader" => {}             // hoisted in Pass 1
+            "lod_scale" => {}          // build-time setting, consumed above
+            "meta" => {}               // already lifted onto graph.meta
             k if is_anim_decl(k) => {} // pass 3
             "skeleton" => {
                 lower_skeleton(n, None, &mut graph)?;
@@ -396,7 +399,7 @@ pub fn lower_with_loader_lod(
                     lower_into(c, None, &mut graph)?;
                 }
             }
-            "attach" => {} // pass 2.4
+            "attach" => {}  // pass 2.4
             "conform" => {} // pass 2.45
             _ => {
                 lower_into(n, None, &mut graph)?;
@@ -424,12 +427,10 @@ pub fn lower_with_loader_lod(
     // re-positioned subtree). Nodes whose subtree carries no mesh leave
     // `collider = None` silently — the user wrote the attribute but had
     // nothing to enclose; the studio inspector / glTF extras simply omit it.
-    let pending: Vec<NodeId> =
-        COLLIDER_REQUESTS.with(|r| std::mem::take(&mut *r.borrow_mut()));
+    let pending: Vec<NodeId> = COLLIDER_REQUESTS.with(|r| std::mem::take(&mut *r.borrow_mut()));
     for id in pending {
         if let Some(aabb) = subtree_local_aabb(&graph, id) {
-            graph.nodes[id.0 as usize].collider =
-                Some(mogen_core::ColliderShape::Aabb { aabb });
+            graph.nodes[id.0 as usize].collider = Some(mogen_core::ColliderShape::Aabb { aabb });
         }
     }
 
@@ -471,7 +472,13 @@ pub fn lower_with_loader_lod(
         }
         let mut total = 0.0f32;
         let mut weighted = glam::Vec3::ZERO;
-        collect_subtree_mass(&graph, NodeId(id as u32), &worlds, &mut total, &mut weighted);
+        collect_subtree_mass(
+            &graph,
+            NodeId(id as u32),
+            &worlds,
+            &mut total,
+            &mut weighted,
+        );
         if total > 0.0 {
             let local_com = worlds[id].inverse().transform_point3(weighted / total);
             let b = graph.nodes[id].physics.as_mut().unwrap();

@@ -11,9 +11,10 @@ use super::branch::expand_branch;
 use super::connector::{add_aabb_connectors_if_missing, add_connector, default_connectors};
 use super::csg::lower_csg;
 use super::deform::apply_deform;
+use super::geometry_identity::final_identity;
 use super::helpers::{
     anchor_for, apply_anchor_to_mesh, apply_subdivide, inherit_material_from_ancestor,
-    transform_from_attrs,
+    resolved_subdivisions, transform_from_attrs,
 };
 use super::layout::{apply_relative_placement, expand_grid, expand_replicator, expand_stack};
 use super::light::lower_light;
@@ -76,9 +77,7 @@ pub(super) fn lower_into(
     // otherwise just leave `collider = None`.
     if let Some(s) = node.attr_string("collider") {
         if s != "aabb" {
-            bail!(
-                "collider value must be \"aabb\" (got: \"{s}\")"
-            );
+            bail!("collider value must be \"aabb\" (got: \"{s}\")");
         }
     }
 
@@ -113,8 +112,11 @@ pub(super) fn lower_into(
         graph.nodes[id.0 as usize].role = Some(role.clone());
     }
     if let Some(Value::String(tags)) = node.attr("tags") {
-        graph.nodes[id.0 as usize].tags =
-            tags.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect();
+        graph.nodes[id.0 as usize].tags = tags
+            .split(',')
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty())
+            .collect();
     }
     apply_extras(node, id, graph);
 
@@ -161,7 +163,8 @@ pub(super) fn lower_into(
         // frozen quad-group child per material. See `faced_box`.
         anchor_shift = super::faced_box::lower_faced_box(node, id, graph)?;
     } else if let Some(mesh_res) = primitive_mesh(node, uv_mode) {
-        let mut mesh = mesh_res?;
+        let primitive = mesh_res?;
+        let mut mesh = primitive.mesh;
         // Deformation runs before anchor shift so the anchor reflects the
         // post-deform AABB — the user's `anchor=bottom` still lines up flush
         // with the base of a bent or melted shape rather than its parametric
@@ -170,8 +173,17 @@ pub(super) fn lower_into(
             apply_deform(&mut mesh, node);
         }
         anchor_shift = apply_anchor_to_mesh(&mut mesh, anchor.as_deref());
+        let subdivisions = resolved_subdivisions(node)?;
         let mesh = apply_subdivide(node, mesh)?;
         graph.set_mesh(id, mesh);
+        if let Some(base) = primitive.base_identity {
+            graph.nodes[id.0 as usize].geometry_identity = Some(final_identity(
+                base,
+                node,
+                anchor_shift.to_array(),
+                subdivisions,
+            ));
+        }
     } else {
         match node.kind.as_str() {
             "group" | "scene" => {}
@@ -187,7 +199,9 @@ pub(super) fn lower_into(
                     _ => None,
                 });
                 if matches!(cleanup, Some("coplanar")) {
-                    graph.nodes[id.0 as usize].tags.push("cleanup=coplanar".into());
+                    graph.nodes[id.0 as usize]
+                        .tags
+                        .push("cleanup=coplanar".into());
                 }
             }
             "material" => bail!("`material` must be a top-level or scene-level declaration"),
@@ -201,13 +215,15 @@ pub(super) fn lower_into(
     // primitive's natural frame, so they move with the anchor shift to stay
     // flush with their face.
     for (name, at, dir) in default_connectors(node) {
-        graph.nodes[id.0 as usize].connectors.push(Connector::from_at_dir(
-            name.to_string(),
-            at + anchor_shift,
-            dir,
-            String::new(),
-            None,
-        ));
+        graph.nodes[id.0 as usize]
+            .connectors
+            .push(Connector::from_at_dir(
+                name.to_string(),
+                at + anchor_shift,
+                dir,
+                String::new(),
+                None,
+            ));
     }
 
     for c in &node.children {
@@ -223,8 +239,9 @@ pub(super) fn lower_into(
             // module body — which can carry animations alongside geometry — is
             // expanded inside a `group` or another wrapper. Skipping them
             // keeps the geometry pass focused on geometry.
-            "joint" | "clip" | "track"
-            | "spin" | "open_close" | "wave" | "flap" | "idle" => continue,
+            "joint" | "clip" | "track" | "spin" | "open_close" | "wave" | "flap" | "idle" => {
+                continue
+            }
             // A skeleton nested inside a `group` (e.g. the user wrapped a
             // `use "humanoid_full" ()` in `group "humanoid" { ... }`) lowers
             // here with the group as parent. Scene-level skeletons are
@@ -296,7 +313,9 @@ fn synthesize_decal_material(node: &Node, decal_name: &str) -> Material {
 /// `validate_ast` (Studio's live preview does exactly that mid-edit), and a
 /// half-typed literal shouldn't blank the viewport.
 pub(super) fn apply_extras(node: &Node, id: NodeId, graph: &mut SceneGraph) {
-    let Some(Value::String(raw)) = node.attr("extras") else { return };
+    let Some(Value::String(raw)) = node.attr("extras") else {
+        return;
+    };
     if let Ok(serde_json::Value::Object(map)) = serde_json::from_str(raw) {
         graph.nodes[id.0 as usize].extras = Some(map);
     }
@@ -309,8 +328,11 @@ pub(super) fn apply_metadata(node: &Node, id: NodeId, graph: &mut SceneGraph) ->
         graph.nodes[id.0 as usize].role = Some(role.clone());
     }
     if let Some(Value::String(tags)) = node.attr("tags") {
-        graph.nodes[id.0 as usize].tags =
-            tags.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect();
+        graph.nodes[id.0 as usize].tags = tags
+            .split(',')
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty())
+            .collect();
     }
     apply_extras(node, id, graph);
     if let Some(Value::String(mat_name)) = node.attr("mat") {

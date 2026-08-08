@@ -131,7 +131,7 @@ pub(super) fn lower_csg(
 /// every operand contributes UVs in the same convention.
 fn eval_mesh(node: &Node, bake_transform: bool, uv_mode: UvMode) -> Result<Mesh> {
     let local = if let Some(mesh_res) = primitive_mesh(node, uv_mode) {
-        let mut mesh = mesh_res?;
+        let mut mesh = mesh_res?.mesh;
         // Apply deformation before the operand is fed to the boolean op so
         // "melted, then cut a hole" matches author intuition. Skipping for
         // `mesh` (loaded GLB) operands because their joints/UVs/skinning
@@ -142,41 +142,41 @@ fn eval_mesh(node: &Node, bake_transform: bool, uv_mode: UvMode) -> Result<Mesh>
         mesh
     } else {
         match node.kind.as_str() {
-        "union" | "difference" | "intersect" => {
-            let mut operands: Vec<Mesh> = Vec::new();
-            for c in &node.children {
-                match c.kind.as_str() {
-                    "material" | "connector" => continue,
-                    _ => operands.push(eval_mesh(c, true, uv_mode)?),
+            "union" | "difference" | "intersect" => {
+                let mut operands: Vec<Mesh> = Vec::new();
+                for c in &node.children {
+                    match c.kind.as_str() {
+                        "material" | "connector" => continue,
+                        _ => operands.push(eval_mesh(c, true, uv_mode)?),
+                    }
+                }
+                match node.kind.as_str() {
+                    "union" => {
+                        if operands.is_empty() {
+                            bail!("`union` requires at least one operand");
+                        }
+                        match node.attr_number("smooth") {
+                            Some(k) if k > 0.0 => union_smooth(&operands, k),
+                            _ => union_many(&operands),
+                        }
+                    }
+                    "difference" => {
+                        if operands.is_empty() {
+                            bail!("`difference` requires at least one operand");
+                        }
+                        let (first, rest) = operands.split_first().unwrap();
+                        difference_many(first, rest)
+                    }
+                    "intersect" => {
+                        if operands.len() < 2 {
+                            bail!("`intersect` requires at least two operands");
+                        }
+                        intersect_many(&operands)
+                    }
+                    _ => unreachable!(),
                 }
             }
-            match node.kind.as_str() {
-                "union" => {
-                    if operands.is_empty() {
-                        bail!("`union` requires at least one operand");
-                    }
-                    match node.attr_number("smooth") {
-                        Some(k) if k > 0.0 => union_smooth(&operands, k),
-                        _ => union_many(&operands),
-                    }
-                }
-                "difference" => {
-                    if operands.is_empty() {
-                        bail!("`difference` requires at least one operand");
-                    }
-                    let (first, rest) = operands.split_first().unwrap();
-                    difference_many(first, rest)
-                }
-                "intersect" => {
-                    if operands.len() < 2 {
-                        bail!("`intersect` requires at least two operands");
-                    }
-                    intersect_many(&operands)
-                }
-                _ => unreachable!(),
-            }
-        }
-        other => bail!("`{other}` is not allowed as a CSG operand"),
+            other => bail!("`{other}` is not allowed as a CSG operand"),
         }
     };
 

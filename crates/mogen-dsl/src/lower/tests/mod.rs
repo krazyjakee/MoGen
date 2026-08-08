@@ -6,6 +6,7 @@ mod control_flow;
 mod deform;
 mod extrude_sweep_loft;
 mod faced_box;
+mod geometry_identity;
 mod hull;
 mod layout;
 mod lights;

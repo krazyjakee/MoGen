@@ -22,3 +22,4 @@ pest = { workspace = true }
 pest_derive = { workspace = true }
 glam = { workspace = true }
 serde_json = { workspace = true }
+blake3 = { workspace = true }

@@ -12,6 +12,7 @@ use mogen_core::Mesh;
 use mogen_geom::{bend, droop, jitter, noise, split_for_facets, taper, twist_y, wave};
 use mogen_geom::{recompute_normals, weld_vertices};
 
+use super::geometry_identity::{write_parameter, GeometryIdentityBuilder};
 use crate::ast::{Node, Value};
 
 #[derive(Default, Debug, Clone)]
@@ -112,7 +113,12 @@ pub(super) fn apply_deform(mesh: &mut Mesh, node: &Node) {
         noise(mesh, amount, seed, mods.noise_range);
     }
     if let Some(amount) = mods.jitter {
-        jitter(mesh, amount, seed.wrapping_add(0x9E37_79B9), mods.jitter_range);
+        jitter(
+            mesh,
+            amount,
+            seed.wrapping_add(0x9E37_79B9),
+            mods.jitter_range,
+        );
     }
     if let Some(amount) = mods.wave {
         let frequency = mods.wave_frequency.unwrap_or(1.0);
@@ -135,6 +141,52 @@ pub(super) fn apply_deform(mesh: &mut Mesh, node: &Node) {
     //    discarded in favour of per-triangle face normals.
     if mods.faceted {
         *mesh = split_for_facets(mesh);
+    }
+}
+
+/// Append the *effective* deformation pipeline to a primitive identity. This
+/// mirrors `apply_deform`'s operation order and defaults: unrelated attributes
+/// (for example `seed` without a stochastic modifier) contribute nothing.
+pub(super) fn update_geometry_identity(h: &mut GeometryIdentityBuilder, node: &Node) {
+    let m = collect_modifiers(node);
+    fn range(h: &mut GeometryIdentityBuilder, value: Option<[f32; 2]>) {
+        h.bool(value.is_some());
+        if let Some(value) = value {
+            write_parameter(h, &value);
+        }
+    }
+    macro_rules! op {
+        ($name:literal, $value:expr, $range:expr) => {
+            if let Some(value) = $value {
+                h.str($name);
+                h.f32(value);
+                range(h, $range);
+            }
+        };
+    }
+
+    op!("taper", m.taper.map(|v| v.max(0.0)), m.taper_range);
+    op!("bend_x", m.bend_x.map(f32::to_radians), m.bend_x_range);
+    op!("bend_y", m.bend_y.map(f32::to_radians), m.bend_y_range);
+    op!("bend_z", m.bend_z.map(f32::to_radians), m.bend_z_range);
+    op!("twist_y", m.twist_y.map(f32::to_radians), m.twist_y_range);
+    op!("droop", m.droop, m.droop_range);
+    op!("noise", m.noise, m.noise_range);
+    op!("jitter", m.jitter, m.jitter_range);
+    if m.noise.is_some() || m.jitter.is_some() {
+        h.str("seed");
+        h.u32(m.seed.unwrap_or(1));
+    }
+    if let Some(amplitude) = m.wave {
+        h.str("wave");
+        h.f32(amplitude);
+        h.f32(m.wave_frequency.unwrap_or(1.0));
+        h.usize(m.wave_axis.unwrap_or(0));
+        h.f32(m.wave_phase.unwrap_or(0.0));
+        range(h, m.wave_range);
+    }
+    if m.faceted {
+        h.str("faceted");
     }
 }
 
@@ -182,7 +234,11 @@ fn set_modifier(m: &mut Modifiers, name: &str, value: f32) {
 /// without tripping the kernel's `a >= b` hard-step branch when they
 /// meant a soft ramp), then stash on the matching `*_range` slot.
 fn set_range(m: &mut Modifiers, name: &str, raw: [f32; 2]) {
-    let pair = if raw[0] <= raw[1] { raw } else { [raw[1], raw[0]] };
+    let pair = if raw[0] <= raw[1] {
+        raw
+    } else {
+        [raw[1], raw[0]]
+    };
     match name {
         "bend_x_range" => m.bend_x_range = Some(pair),
         "bend_y_range" => m.bend_y_range = Some(pair),

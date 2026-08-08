@@ -37,8 +37,12 @@ pub(super) fn expand_stack(
 ) -> Result<NodeId> {
     let axis_idx = stack_axis_index(node);
     let gap = node.attr_number("gap").unwrap_or(0.0);
-    let align = string_or_ident(node.attr("align")).unwrap_or("center").to_string();
-    let pack = string_or_ident(node.attr("pack")).unwrap_or("start").to_string();
+    let align = string_or_ident(node.attr("align"))
+        .unwrap_or("center")
+        .to_string();
+    let pack = string_or_ident(node.attr("pack"))
+        .unwrap_or("start")
+        .to_string();
 
     let wrapper_name = node.name.clone().unwrap_or_else(|| node.kind.clone());
     let wrapper_transform = transform_from_attrs(node);
@@ -55,7 +59,9 @@ pub(super) fn expand_stack(
     for c in &node.children {
         match c.kind.as_str() {
             "material" | "attach" | "conform" => continue,
-            "connector" => { add_connector(c, wrapper_id, graph)?; }
+            "connector" => {
+                add_connector(c, wrapper_id, graph)?;
+            }
             _ => {
                 let id = lower_into(c, Some(wrapper_id), graph)?;
                 child_ids.push(id);
@@ -75,7 +81,11 @@ pub(super) fn expand_stack(
         })
         .collect();
 
-    let axis_pick = |v: Vec3, i: usize| match i { 0 => v.x, 1 => v.y, _ => v.z };
+    let axis_pick = |v: Vec3, i: usize| match i {
+        0 => v.x,
+        1 => v.y,
+        _ => v.z,
+    };
     let set_axis = |v: &mut Vec3, i: usize, val: f32| match i {
         0 => v.x = val,
         1 => v.y = val,
@@ -89,11 +99,17 @@ pub(super) fn expand_stack(
         let Some(aabb) = ext else { continue };
         let ax_min = axis_pick(aabb.min, axis_idx);
         let ax_max = axis_pick(aabb.max, axis_idx);
-        if first { first = false; } else { cursor += gap; }
+        if first {
+            first = false;
+        } else {
+            cursor += gap;
+        }
         let mut o = Vec3::ZERO;
         set_axis(&mut o, axis_idx, cursor - ax_min);
         for other in 0..3 {
-            if other == axis_idx { continue; }
+            if other == axis_idx {
+                continue;
+            }
             let o_min = axis_pick(aabb.min, other);
             let o_max = axis_pick(aabb.max, other);
             let shift = match align.as_str() {
@@ -142,14 +158,18 @@ pub(super) fn expand_grid(
     graph: &mut SceneGraph,
 ) -> Result<NodeId> {
     let count = match node.attr("count") {
-        Some(Value::Vec3(v)) => [v[0].max(1.0) as u32, v[1].max(1.0) as u32, v[2].max(1.0) as u32],
+        Some(Value::Vec3(v)) => [
+            v[0].max(1.0) as u32,
+            v[1].max(1.0) as u32,
+            v[2].max(1.0) as u32,
+        ],
         Some(Value::Number(n)) => [n.max(1.0) as u32, 1, 1],
-        Some(Value::List(v)) if v.len() == 3 => {
-            [v[0].max(1.0) as u32, v[1].max(1.0) as u32, v[2].max(1.0) as u32]
-        }
-        Some(Value::List(v)) if v.len() == 2 => {
-            [v[0].max(1.0) as u32, 1, v[1].max(1.0) as u32]
-        }
+        Some(Value::List(v)) if v.len() == 3 => [
+            v[0].max(1.0) as u32,
+            v[1].max(1.0) as u32,
+            v[2].max(1.0) as u32,
+        ],
+        Some(Value::List(v)) if v.len() == 2 => [v[0].max(1.0) as u32, 1, v[1].max(1.0) as u32],
         _ => [1u32, 1, 1],
     };
     let step = match node.attr("step") {
@@ -186,11 +206,8 @@ pub(super) fn expand_grid(
     for k in 0..count[2] {
         for j in 0..count[1] {
             for i in 0..count[0] {
-                let offset = Vec3::new(
-                    i as f32 * step.x,
-                    j as f32 * step.y,
-                    k as f32 * step.z,
-                ) - center_offset;
+                let offset = Vec3::new(i as f32 * step.x, j as f32 * step.y, k as f32 * step.z)
+                    - center_offset;
                 let instance_name = format!("{wrapper_name}_{i}_{j}_{k}");
                 let iid = graph.add_child(
                     wrapper_id,
@@ -209,8 +226,12 @@ pub(super) fn expand_grid(
                 for c in &node.children {
                     match c.kind.as_str() {
                         "material" | "attach" | "conform" => continue,
-                        "connector" => { add_connector(c, iid, graph)?; }
-                        _ => { lower_into(c, Some(iid), graph)?; }
+                        "connector" => {
+                            add_connector(c, iid, graph)?;
+                        }
+                        _ => {
+                            lower_into(c, Some(iid), graph)?;
+                        }
                     }
                 }
                 resolve_attaches_in_scope(&node.children, graph, iid)?;
@@ -281,12 +302,17 @@ pub(super) fn apply_relative_placement(
     // order implicitly.
     let target_id = {
         let parent = &graph.nodes[parent_id.0 as usize];
-        parent.children.iter().copied()
+        parent
+            .children
+            .iter()
+            .copied()
             .find(|c| *c != id && graph.nodes[c.0 as usize].name == target_name)
-            .ok_or_else(|| anyhow!(
+            .ok_or_else(|| {
+                anyhow!(
                 "relative-placement target `{target_name}` not found among prior siblings of `{}`",
                 node.name.as_deref().unwrap_or(&node.kind)
-            ))?
+            )
+            })?
     };
 
     let gap = node.attr_number("gap").unwrap_or(0.0);
@@ -304,8 +330,15 @@ pub(super) fn apply_relative_placement(
     let self_xform = graph.nodes[id.0 as usize].transform.to_mat4();
     let self_box = self_local.transformed(self_xform);
 
-    let pick = |v: Vec3, i: usize| match i { 0 => v.x, 1 => v.y, _ => v.z };
-    let (t_min, t_max) = (pick(target_box.min, axis_idx), pick(target_box.max, axis_idx));
+    let pick = |v: Vec3, i: usize| match i {
+        0 => v.x,
+        1 => v.y,
+        _ => v.z,
+    };
+    let (t_min, t_max) = (
+        pick(target_box.min, axis_idx),
+        pick(target_box.max, axis_idx),
+    );
     let (s_min, s_max) = (pick(self_box.min, axis_idx), pick(self_box.max, axis_idx));
 
     // +1 means "self sits at higher coord than target" → target_max → self_min.
@@ -336,19 +369,31 @@ pub(super) fn apply_relative_placement(
 fn pos_axis_explicit(node: &Node, axis_idx: usize) -> bool {
     if let (Some(a), Some(b)) = (node.attr_vec3("from"), node.attr_vec3("to")) {
         let mid = (a + b) * 0.5;
-        let v = match axis_idx { 0 => mid.x, 1 => mid.y, _ => mid.z };
+        let v = match axis_idx {
+            0 => mid.x,
+            1 => mid.y,
+            _ => mid.z,
+        };
         if v != 0.0 {
             return true;
         }
     }
-    let shortcut = match axis_idx { 0 => "x", 1 => "y", _ => "z" };
+    let shortcut = match axis_idx {
+        0 => "x",
+        1 => "y",
+        _ => "z",
+    };
     if let Some(n) = node.attr_number(shortcut) {
         if n != 0.0 {
             return true;
         }
     }
     if let Some(p) = node.attr_vec3("pos") {
-        let v = match axis_idx { 0 => p.x, 1 => p.y, _ => p.z };
+        let v = match axis_idx {
+            0 => p.x,
+            1 => p.y,
+            _ => p.z,
+        };
         if v != 0.0 {
             return true;
         }
@@ -373,13 +418,13 @@ pub(super) fn expand_replicator(
     let pre_expand_count = graph.nodes.len();
 
     let flip_bind = node.kind == "mirror"
-        && node.attr_number("flip_bind").map(|v| v != 0.0).unwrap_or(false);
+        && node
+            .attr_number("flip_bind")
+            .map(|v| v != 0.0)
+            .unwrap_or(false);
     let instance_transforms: Vec<Transform> = match node.kind.as_str() {
         "mirror" => {
-            let axis = node
-                .attr("axis")
-                .and_then(axis_vec3)
-                .unwrap_or(Vec3::X);
+            let axis = node.attr("axis").and_then(axis_vec3).unwrap_or(Vec3::X);
             let s = Vec3::ONE - 2.0 * axis.normalize_or_zero().abs();
             // Clamp to [-1, 1]: +axis component becomes -1.
             let mirror_scale = Vec3::new(
@@ -388,7 +433,10 @@ pub(super) fn expand_replicator(
                 if axis.z.abs() > 0.5 { -1.0 } else { 1.0 },
             );
             let _ = s; // Reserved for arbitrary-axis mirror in future.
-            vec![Transform::IDENTITY, Transform::from_trs(Vec3::ZERO, Quat::IDENTITY, mirror_scale)]
+            vec![
+                Transform::IDENTITY,
+                Transform::from_trs(Vec3::ZERO, Quat::IDENTITY, mirror_scale),
+            ]
         }
         "array" => {
             let count = node.attr_number("count").unwrap_or(1.0).max(1.0) as u32;
@@ -414,7 +462,9 @@ pub(super) fn expand_replicator(
             match c.kind.as_str() {
                 "material" | "attach" | "conform" => continue,
                 "connector" => add_connector(c, iid, graph)?,
-                _ => { lower_into(c, Some(iid), graph)?; }
+                _ => {
+                    lower_into(c, Some(iid), graph)?;
+                }
             }
         }
         // Resolve attach + conform specs declared inside the replicator body,
@@ -493,6 +543,7 @@ fn bake_mirror_into_subtree(root: NodeId, scale: Vec3, graph: &mut SceneGraph) {
         }
         if let Some(mesh) = &mut n.mesh {
             mirror_mesh_in_place(mesh, scale);
+            n.geometry_identity = None;
         }
         stack.extend(children);
     }

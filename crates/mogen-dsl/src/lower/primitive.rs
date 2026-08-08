@@ -7,18 +7,37 @@ use mogen_geom::{
     cone_mesh, curved_plane_mesh, cylinder_mesh, difference_many, disc_mesh, ellipsoid_mesh,
     extrude_mesh, frustum_mesh, half_cylinder_mesh, heightfield_mesh, hemisphere_mesh, hull_mesh,
     icosphere_mesh, inset_box_mesh, is_degenerate_solid, lathe_mesh, leaf_card_mesh, loft_mesh,
-    mesh_from_glb_bytes,
-    metaball_mesh, plane_mesh, poly_mesh, prism_mesh, pyramid_mesh, quad_mesh, read_glb_bytes,
-    rounded_box_mesh, sphere_mesh, spline_ribbon_mesh, spline_tube_mesh, superellipsoid_mesh,
-    sweep_mesh, torus_arc_mesh, torus_mesh, transform_mesh, tube_mesh, wedge_mesh,
-    CoilHandedness, InsetFace, SweepModulation,
+    mesh_from_glb_bytes, metaball_mesh, plane_mesh, poly_mesh, prism_mesh, pyramid_mesh, quad_mesh,
+    read_glb_bytes, rounded_box_mesh, sphere_mesh, spline_ribbon_mesh, spline_tube_mesh,
+    superellipsoid_mesh, sweep_mesh, torus_arc_mesh, torus_mesh, transform_mesh, tube_mesh,
+    wedge_mesh, CoilHandedness, InsetFace, SweepModulation,
 };
 
 use crate::ast::Node;
 use crate::lower::{mesh_bytes, source_dir};
 
+use super::geometry_identity::{
+    intern_tessellation, intern_tessellation_result, write_parameter, GeometryIdentityBuilder,
+};
 use super::helpers::{resolve_size3, resolve_size_xy, resolve_size_xz};
 use super::lod::{scaled_count, scaled_subdivisions};
+
+/// A lowered primitive plus the pre-tessellation identity of its resolved
+/// kernel inputs. `None` is the fail-closed marker for opaque/imported/CSG
+/// geometry that must continue to use a byte hash downstream.
+pub(super) struct PrimitiveMesh {
+    pub(super) mesh: Mesh,
+    pub(super) base_identity: Option<[u8; 32]>,
+}
+
+impl PrimitiveMesh {
+    fn opaque(mesh: Mesh) -> Self {
+        Self {
+            mesh,
+            base_identity: None,
+        }
+    }
+}
 
 /// Density multiplier for primitive default tessellation when the node
 /// carries a smooth-deformation modifier — `bend_*`, `twist_y`, `noise`,
@@ -53,7 +72,7 @@ fn authored_size_density(size: f32, reference: f32) -> f32 {
 /// callers can handle those separately. The inner `Result` carries failures
 /// from primitives whose construction can fail at lowering time (e.g. `mesh`
 /// loading a `.glb` from disk).
-pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh>> {
+pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<PrimitiveMesh>> {
     // Density multiplier for the *default* tessellation count. 1× when the
     // node has no smooth-deform modifier; 2× when it does, so a bent or
     // melted shape doesn't read as low-poly. Only the default branch
@@ -86,14 +105,36 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
         });
         scaled_count(raw, min)
     };
-    let m: Mesh = match node.kind.as_str() {
+    macro_rules! tessellate {
+        ($kind:expr, $uv:expr; $($value:expr),* $(,)? => $build:expr) => {{
+            let mut identity = GeometryIdentityBuilder::primitive($kind, $uv);
+            $(write_parameter(&mut identity, &$value);)*
+            let identity = identity.finish();
+            let mesh = intern_tessellation(identity, || $build);
+            PrimitiveMesh { mesh, base_identity: Some(identity) }
+        }};
+    }
+    macro_rules! tessellate_result {
+        ($kind:expr, $uv:expr; $($value:expr),* $(,)? => $build:expr) => {{
+            let mut identity = GeometryIdentityBuilder::primitive($kind, $uv);
+            $(write_parameter(&mut identity, &$value);)*
+            let identity = identity.finish();
+            intern_tessellation_result(identity, || $build).map(|mesh| PrimitiveMesh {
+                mesh,
+                base_identity: Some(identity),
+            })
+        }};
+    }
+
+    let m: PrimitiveMesh = match node.kind.as_str() {
         "box" | "slab" | "post" | "panel" => {
             let s = resolve_size3(node, Vec3::ONE);
-            box_mesh([s.x, s.y, s.z], uv_mode)
+            tessellate!("box", uv_mode; [s.x, s.y, s.z] =>
+                box_mesh([s.x, s.y, s.z], uv_mode))
         }
         "plane" => {
             let s = resolve_size_xz(node, [1.0, 1.0]);
-            plane_mesh(s, uv_mode)
+            tessellate!("plane", uv_mode; s => plane_mesh(s, uv_mode))
         }
         "heightfield" => {
             let s = resolve_size_xz(node, [1.0, 1.0]);
@@ -107,102 +148,120 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
             let frequency = node.attr_number("frequency").unwrap_or(1.0);
             let persistence = node.attr_number("persistence").unwrap_or(0.5);
             let seed = node.attr_number("seed").map(|n| n as u32).unwrap_or(1);
-            heightfield_mesh(
+            tessellate!("heightfield", uv_mode;
+                s, segments_u, segments_v, amplitude, octaves, frequency,
+                persistence, seed => heightfield_mesh(
                 s, segments_u, segments_v, amplitude,
                 octaves, frequency, persistence, seed, uv_mode,
-            )
+            ))
         }
         "quad" => {
             let s = resolve_size_xy(node, [1.0, 1.0]);
-            quad_mesh(s, uv_mode)
+            tessellate!("quad", uv_mode; s => quad_mesh(s, uv_mode))
         }
         "decal" => {
             // Decals are always image-as-texture, never tile — overriding the
             // inherited `uv_mode` so a wrapping `Tile` material on the parent
             // can't squash the decal artwork into a repeated micro-pattern.
             let s = resolve_size_xy(node, [0.5, 0.5]);
+            let offset = node.attr_number("offset").unwrap_or(0.001);
+            tessellate!("decal", UvMode::Fit; s, offset => {
             let mut m = quad_mesh(s, UvMode::Fit);
             // Lift the quad slightly along its local +Z so it doesn't z-fight
             // against the surface it's sitting on. Default is small enough to
             // read flush at typical scales; the author can override via
             // `offset=`.
-            let offset = node.attr_number("offset").unwrap_or(0.001);
             if offset != 0.0 {
                 for p in &mut m.positions {
                     p[2] += offset;
                 }
             }
             m
+            })
         }
         "cylinder" => {
             let radius = node.attr_number("radius").unwrap_or(0.5);
             let height = node.attr_number("height").unwrap_or(1.0);
             let segments = seg_for_size("segments", 24, 3, radius, 0.5);
-            cylinder_mesh(radius, height, segments, uv_mode)
+            tessellate!("cylinder", uv_mode; radius, height, segments =>
+                cylinder_mesh(radius, height, segments, uv_mode))
         }
         "cone" => {
             let radius = node.attr_number("radius").unwrap_or(0.5);
             let height = node.attr_number("height").unwrap_or(1.0);
             let segments = seg_for_size("segments", 24, 3, radius, 0.5);
-            cone_mesh(radius, height, segments, uv_mode)
+            tessellate!("cone", uv_mode; radius, height, segments =>
+                cone_mesh(radius, height, segments, uv_mode))
         }
         "sphere" => {
             let radius = node.attr_number("radius").unwrap_or(0.5);
             let rings = seg_for_size("rings", 16, 2, radius, 0.5);
             let segments = seg_for_size("segments", 24, 3, radius, 0.5);
-            sphere_mesh(radius, rings, segments, uv_mode)
+            tessellate!("sphere", uv_mode; radius, rings, segments =>
+                sphere_mesh(radius, rings, segments, uv_mode))
         }
         "capsule" => {
             let radius = node.attr_number("radius").unwrap_or(0.5);
             let height = node.attr_number("height").unwrap_or(1.0);
             let rings = seg_for_size("rings", 8, 2, radius, 0.5);
             let segments = seg_for_size("segments", 24, 3, radius, 0.5);
-            capsule_mesh(radius, height, rings, segments, uv_mode)
+            tessellate!("capsule", uv_mode; radius, height, rings, segments =>
+                capsule_mesh(radius, height, rings, segments, uv_mode))
         }
         "torus" => {
             let major = node.attr_number("major").unwrap_or(0.5);
             let minor = node.attr_number("minor").unwrap_or(0.15);
             let major_segments = seg_for_size("major_segments", 24, 3, major, 0.5);
             let minor_segments = seg_for_size("minor_segments", 12, 3, minor, 0.15);
-            torus_mesh(major, minor, major_segments, minor_segments, uv_mode)
+            tessellate!("torus", uv_mode; major, minor, major_segments, minor_segments =>
+                torus_mesh(major, minor, major_segments, minor_segments, uv_mode))
         }
         "prism" => {
             let s = resolve_size3(node, Vec3::ONE);
-            prism_mesh([s.x, s.y, s.z], uv_mode)
+            tessellate!("prism", uv_mode; [s.x, s.y, s.z] =>
+                prism_mesh([s.x, s.y, s.z], uv_mode))
         }
         "pyramid" => {
             let radius = node.attr_number("radius").unwrap_or(0.5);
             let height = node.attr_number("height").unwrap_or(1.0);
             let sides = node.attr_number("sides").map(|n| n as u32).unwrap_or(4);
-            pyramid_mesh(radius, height, sides, uv_mode)
+            tessellate!("pyramid", uv_mode; radius, height, sides =>
+                pyramid_mesh(radius, height, sides, uv_mode))
         }
         "disc" => {
             let radius = node.attr_number("radius").unwrap_or(0.5);
             let segments = seg_for_size("segments", 24, 3, radius, 0.5);
-            disc_mesh(radius, segments, uv_mode)
+            tessellate!("disc", uv_mode; radius, segments =>
+                disc_mesh(radius, segments, uv_mode))
         }
         "icosphere" => {
             let radius = node.attr_number("radius").unwrap_or(0.5);
             // Default base subdivisions follow `dd` (2 with a deform modifier,
             // 1 otherwise); both default and explicit values then run through
             // `scaled_subdivisions` so LOD steps the count.
-            let raw = node.attr_number("subdivisions").map(|n| n as u32).unwrap_or_else(|| {
-                let size_steps = authored_size_density(radius, 0.5).log2().round() as i32;
-                (1 + dd as i32 + size_steps).max(0) as u32
-            });
+            let raw = node
+                .attr_number("subdivisions")
+                .map(|n| n as u32)
+                .unwrap_or_else(|| {
+                    let size_steps = authored_size_density(radius, 0.5).log2().round() as i32;
+                    (1 + dd as i32 + size_steps).max(0) as u32
+                });
             let subdivisions = scaled_subdivisions(raw);
-            icosphere_mesh(radius, subdivisions, uv_mode)
+            tessellate!("icosphere", uv_mode; radius, subdivisions =>
+                icosphere_mesh(radius, subdivisions, uv_mode))
         }
         "rounded_box" => {
             let s = resolve_size3(node, Vec3::ONE);
             let radius = node.attr_number("radius").unwrap_or(0.1);
             let segments = seg_for_size("segments", 4, 1, radius, 0.1);
-            rounded_box_mesh([s.x, s.y, s.z], radius, segments, uv_mode)
+            tessellate!("rounded_box", uv_mode; [s.x, s.y, s.z], radius, segments =>
+                rounded_box_mesh([s.x, s.y, s.z], radius, segments, uv_mode))
         }
         "chamfered_box" => {
             let s = resolve_size3(node, Vec3::ONE);
             let radius = node.attr_number("radius").unwrap_or(0.1);
-            chamfered_box_mesh([s.x, s.y, s.z], radius, uv_mode)
+            tessellate!("chamfered_box", uv_mode; [s.x, s.y, s.z], radius =>
+                chamfered_box_mesh([s.x, s.y, s.z], radius, uv_mode))
         }
         "inset_box" => {
             let s = resolve_size3(node, Vec3::ONE);
@@ -215,36 +274,51 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
             };
             let amount = node.attr_number("amount").unwrap_or(0.1);
             let depth = node.attr_number("depth").unwrap_or(0.05);
-            inset_box_mesh([s.x, s.y, s.z], face, amount, depth, uv_mode)
+            let face_key: u32 = match face {
+                InsetFace::PosX => 0,
+                InsetFace::NegX => 1,
+                InsetFace::PosY => 2,
+                InsetFace::NegY => 3,
+                InsetFace::PosZ => 4,
+                InsetFace::NegZ => 5,
+            };
+            tessellate!("inset_box", uv_mode;
+                [s.x, s.y, s.z], face_key, amount, depth =>
+                inset_box_mesh([s.x, s.y, s.z], face, amount, depth, uv_mode))
         }
         "wedge" => {
             let s = resolve_size3(node, Vec3::ONE);
-            wedge_mesh([s.x, s.y, s.z], uv_mode)
+            tessellate!("wedge", uv_mode; [s.x, s.y, s.z] =>
+                wedge_mesh([s.x, s.y, s.z], uv_mode))
         }
         "frustum" => {
             let bottom = node.attr_pair("bottom").unwrap_or([1.0, 1.0]);
             let top = node.attr_pair("top").unwrap_or([0.5, 0.5]);
             let height = node.attr_number("height").unwrap_or(1.0);
-            frustum_mesh(bottom, top, height, uv_mode)
+            tessellate!("frustum", uv_mode; bottom, top, height =>
+                frustum_mesh(bottom, top, height, uv_mode))
         }
         "tube" => {
             let outer = node.attr_number("outer").unwrap_or(0.5);
             let inner = node.attr_number("inner").unwrap_or(0.3);
             let height = node.attr_number("height").unwrap_or(1.0);
             let segments = seg_for_size("segments", 24, 3, outer, 0.5);
-            tube_mesh(outer, inner, height, segments, uv_mode)
+            tessellate!("tube", uv_mode; outer, inner, height, segments =>
+                tube_mesh(outer, inner, height, segments, uv_mode))
         }
         "hemisphere" => {
             let radius = node.attr_number("radius").unwrap_or(0.5);
             let rings = seg_for_size("rings", 8, 2, radius, 0.5);
             let segments = seg_for_size("segments", 24, 3, radius, 0.5);
-            hemisphere_mesh(radius, rings, segments, uv_mode)
+            tessellate!("hemisphere", uv_mode; radius, rings, segments =>
+                hemisphere_mesh(radius, rings, segments, uv_mode))
         }
         "half_cylinder" => {
             let radius = node.attr_number("radius").unwrap_or(0.5);
             let height = node.attr_number("height").unwrap_or(1.0);
             let segments = seg_for_size("segments", 24, 3, radius, 0.5);
-            half_cylinder_mesh(radius, height, segments, uv_mode)
+            tessellate!("half_cylinder", uv_mode; radius, height, segments =>
+                half_cylinder_mesh(radius, height, segments, uv_mode))
         }
         "torus_arc" => {
             let major = node.attr_number("major").unwrap_or(0.5);
@@ -252,14 +326,18 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
             let arc_deg = node.attr_number("arc").unwrap_or(90.0);
             let major_segments = seg_for_size("major_segments", 24, 3, major, 0.5);
             let minor_segments = seg_for_size("minor_segments", 12, 3, minor, 0.15);
-            torus_arc_mesh(major, minor, arc_deg.to_radians(), major_segments, minor_segments, uv_mode)
+            let arc = arc_deg.to_radians();
+            tessellate!("torus_arc", uv_mode;
+                major, minor, arc, major_segments, minor_segments =>
+                torus_arc_mesh(major, minor, arc, major_segments, minor_segments, uv_mode))
         }
         "ellipsoid" => {
             let s = resolve_size3(node, Vec3::ONE);
             let characteristic = s.x.abs().max(s.y.abs()).max(s.z.abs());
             let rings = seg_for_size("rings", 16, 2, characteristic, 1.0);
             let segments = seg_for_size("segments", 24, 3, characteristic, 1.0);
-            ellipsoid_mesh([s.x, s.y, s.z], rings, segments, uv_mode)
+            tessellate!("ellipsoid", uv_mode; [s.x, s.y, s.z], rings, segments =>
+                ellipsoid_mesh([s.x, s.y, s.z], rings, segments, uv_mode))
         }
         "superellipsoid" => {
             let s = resolve_size3(node, Vec3::ONE);
@@ -268,7 +346,9 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
             let characteristic = s.x.abs().max(s.y.abs()).max(s.z.abs());
             let rings = seg_for_size("rings", 16, 2, characteristic, 1.0);
             let segments = seg_for_size("segments", 24, 3, characteristic, 1.0);
-            superellipsoid_mesh([s.x, s.y, s.z], ew, ns, rings, segments, uv_mode)
+            tessellate!("superellipsoid", uv_mode;
+                [s.x, s.y, s.z], ew, ns, rings, segments =>
+                superellipsoid_mesh([s.x, s.y, s.z], ew, ns, rings, segments, uv_mode))
         }
         "curved_plane" => {
             let s = resolve_size_xz(node, [1.0, 1.0]);
@@ -276,7 +356,9 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
             let bend_v = node.attr_number("bend_v").unwrap_or(0.0).to_radians();
             let segments_u = seg("segments_u", 12, 1);
             let segments_v = seg("segments_v", 12, 1);
-            curved_plane_mesh(s, bend_u, bend_v, segments_u, segments_v, uv_mode)
+            tessellate!("curved_plane", uv_mode;
+                s, bend_u, bend_v, segments_u, segments_v =>
+                curved_plane_mesh(s, bend_u, bend_v, segments_u, segments_v, uv_mode))
         }
         "bezier_patch" => {
             // Author supplies exactly 16 vec3 control points, row-major.
@@ -289,7 +371,8 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
             }
             let segments_u = seg("segments_u", 12, 1);
             let segments_v = seg("segments_v", 12, 1);
-            bezier_patch_mesh(&points, segments_u, segments_v, uv_mode)
+            tessellate!("bezier_patch", uv_mode; points, segments_u, segments_v =>
+                bezier_patch_mesh(&points, segments_u, segments_v, uv_mode))
         }
         "metaball" => {
             let points = node.attr_list_vec3("points").unwrap_or_default();
@@ -318,7 +401,8 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
             let blend = node.attr_number("blend").unwrap_or(0.0);
             let rings = seg("rings", 12, 2);
             let segments = seg("segments", 16, 3);
-            metaball_mesh(&points, &radii, blend, rings, segments, uv_mode)
+            tessellate!("metaball", uv_mode; points, radii, blend, rings, segments =>
+                metaball_mesh(&points, &radii, blend, rings, segments, uv_mode))
         }
         "hull" => {
             // Convex hull of a point cloud — the lossless sink for arbitrary
@@ -341,7 +425,7 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
                     "`hull` produced no solid geometry — the points bound no volume (all coplanar or collinear)"
                 )));
             }
-            mesh
+            PrimitiveMesh::opaque(mesh)
         }
         "poly" => {
             // Raw triangle mesh with author-supplied per-vertex UVs — the
@@ -358,17 +442,18 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
                 .attr_list("indices")
                 .map(|s| s.iter().map(|&f| f.round() as u32).collect())
                 .unwrap_or_default();
-            return Some(poly_mesh(&points, &uvs, &indices));
+            return Some(poly_mesh(&points, &uvs, &indices).map(PrimitiveMesh::opaque));
         }
         "wall" => {
             // Box cut through along Z by any number of rectangular holes
             // declared as [x, y, w, h] in the wall's local frame.
             let s = resolve_size3(node, Vec3::new(1.0, 1.0, 0.1));
-            let wall_box = box_mesh([s.x, s.y, s.z], uv_mode);
             let holes = node.attr_list_quad("holes").unwrap_or_default();
             if holes.is_empty() {
-                wall_box
+                tessellate!("box", uv_mode; [s.x, s.y, s.z] =>
+                    box_mesh([s.x, s.y, s.z], uv_mode))
             } else {
+                let wall_box = box_mesh([s.x, s.y, s.z], uv_mode);
                 let cutouts: Vec<Mesh> = holes
                     .iter()
                     .map(|&[hx, hy, hw, hh]| {
@@ -376,7 +461,7 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
                         transform_mesh(&c, Mat4::from_translation(Vec3::new(hx, hy, 0.0)))
                     })
                     .collect();
-                clean_csg_output(&difference_many(&wall_box, &cutouts))
+                PrimitiveMesh::opaque(clean_csg_output(&difference_many(&wall_box, &cutouts)))
             }
         }
         "lathe" => {
@@ -384,13 +469,22 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
                 .attr_list_pair("profile")
                 .unwrap_or_else(|| vec![[0.0, -0.5], [0.5, 0.0], [0.0, 0.5]]);
             let segments = seg("segments", 24, 3);
-            let cap_ends = node.attr_number("cap_ends").map(|n| n != 0.0).unwrap_or(true);
-            lathe_mesh(&profile, segments, cap_ends, uv_mode)
+            let cap_ends = node
+                .attr_number("cap_ends")
+                .map(|n| n != 0.0)
+                .unwrap_or(true);
+            tessellate!("lathe", uv_mode; profile, segments, cap_ends =>
+                lathe_mesh(&profile, segments, cap_ends, uv_mode))
         }
         "leaf_card" => {
             let s = resolve_size_xy(node, [0.4, 0.4]);
-            let cards = node.attr_number("cards").map(|n| n as u32).unwrap_or(2).max(1);
-            leaf_card_mesh(s, cards, uv_mode)
+            let cards = node
+                .attr_number("cards")
+                .map(|n| n as u32)
+                .unwrap_or(2)
+                .max(1);
+            tessellate!("leaf_card", uv_mode; s, cards =>
+                leaf_card_mesh(s, cards, uv_mode))
         }
         "spline_tube" => {
             let points = node
@@ -404,8 +498,13 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
             };
             let segments = seg("segments", 12, 3);
             let samples = seg("samples", 8, 2);
-            let cap_ends = node.attr_number("cap_ends").map(|n| n != 0.0).unwrap_or(true);
-            spline_tube_mesh(&points, &radii, segments, samples, cap_ends, uv_mode)
+            let cap_ends = node
+                .attr_number("cap_ends")
+                .map(|n| n != 0.0)
+                .unwrap_or(true);
+            tessellate!("spline_tube", uv_mode;
+                points, radii, segments, samples, cap_ends =>
+                spline_tube_mesh(&points, &radii, segments, samples, cap_ends, uv_mode))
         }
         "coil" => {
             let radius = node.attr_number("radius").unwrap_or(0.5);
@@ -414,11 +513,14 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
             let profile_radius = node.attr_number("profile_radius").unwrap_or(0.05);
             let segments = seg("segments", 12, 3);
             let samples = seg("samples", 16, 4);
-            let cap_ends = node.attr_number("cap_ends").map(|n| n != 0.0).unwrap_or(true);
+            let cap_ends = node
+                .attr_number("cap_ends")
+                .map(|n| n != 0.0)
+                .unwrap_or(true);
             let handedness = match node.attr_string("handedness") {
                 Some(s) => match s.to_ascii_lowercase().as_str() {
                     "right" | "rh" | "ccw" => CoilHandedness::Right,
-                    "left"  | "lh" | "cw"  => CoilHandedness::Left,
+                    "left" | "lh" | "cw" => CoilHandedness::Left,
                     other => {
                         return Some(Err(anyhow!(
                             "coil.handedness: expected \"right\" or \"left\", got \"{other}\""
@@ -427,10 +529,16 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
                 },
                 None => CoilHandedness::Right,
             };
-            coil_mesh(
+            let handedness_key = match handedness {
+                CoilHandedness::Right => 0u32,
+                CoilHandedness::Left => 1u32,
+            };
+            tessellate!("coil", uv_mode;
+                radius, height, turns, profile_radius, segments, samples,
+                cap_ends, handedness_key => coil_mesh(
                 radius, height, turns, profile_radius,
                 segments, samples, cap_ends, handedness, uv_mode,
-            )
+            ))
         }
         "spline_ribbon" => {
             let points = node
@@ -446,12 +554,13 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
             let samples = seg("samples", 8, 2);
             // Author writes degrees (per the prompt), the mesh builder takes radians.
             let twist = node.attr_number("twist").unwrap_or(0.0).to_radians();
-            spline_ribbon_mesh(&points, &widths, samples, twist, uv_mode)
+            tessellate!("spline_ribbon", uv_mode; points, widths, samples, twist =>
+                spline_ribbon_mesh(&points, &widths, samples, twist, uv_mode))
         }
         "extrude" => {
-            let outer = node.attr_list_pair("points").unwrap_or_else(|| {
-                vec![[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]]
-            });
+            let outer = node
+                .attr_list_pair("points")
+                .unwrap_or_else(|| vec![[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]]);
             // Single optional inner contour (CW). Multi-hole support is
             // gated on a future grammar change — three-level nested lists
             // can't be expressed in the parser today, so authoring two or
@@ -467,7 +576,8 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
             let taper = node.attr_number("taper").unwrap_or(1.0);
             let twist = node.attr_number("twist").unwrap_or(0.0).to_radians();
             let caps = node.attr_number("caps").map(|n| n != 0.0).unwrap_or(true);
-            extrude_mesh(&outer, &holes, height, taper, twist, caps, uv_mode)
+            tessellate!("extrude", uv_mode; outer, holes, height, taper, twist, caps =>
+                extrude_mesh(&outer, &holes, height, taper, twist, caps, uv_mode))
         }
         "sweep" => {
             let profile = node.attr_list_pair("profile").unwrap_or_else(|| {
@@ -485,12 +595,16 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
                 .attr_list("roll")
                 .map(|s| s.iter().map(|d| d.to_radians()).collect())
                 .unwrap_or_default();
-            let scale: Vec<f32> = node.attr_list("scale_along")
+            let scale: Vec<f32> = node
+                .attr_list("scale_along")
                 .map(|s| s.to_vec())
                 .unwrap_or_default();
-            let modulation = SweepModulation { roll, scale };
             let caps = node.attr_number("caps").map(|n| n != 0.0).unwrap_or(true);
-            sweep_mesh(&profile, &path, samples, twist, &modulation, caps, uv_mode)
+            tessellate!("sweep", uv_mode;
+                profile, path, samples, twist, roll, scale, caps => {
+                let modulation = SweepModulation { roll, scale };
+                sweep_mesh(&profile, &path, samples, twist, &modulation, caps, uv_mode)
+            })
         }
         "loft" => {
             // Sections are flat-packed into one `points` list, in section
@@ -532,7 +646,9 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
                 .collect();
             let samples = seg("samples", 4, 1);
             let caps = node.attr_number("caps").map(|n| n != 0.0).unwrap_or(true);
-            return Some(loft_mesh(&sections, &heights, samples, caps, uv_mode));
+            return Some(tessellate_result!("loft", uv_mode;
+                sections, heights, samples, caps =>
+                loft_mesh(&sections, &heights, samples, caps, uv_mode)));
         }
         "mesh" => {
             let src = match node.attr_string("src") {
@@ -559,7 +675,7 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
                 };
                 mesh_from_glb_bytes(&bytes).with_context(|| format!("decoding mesh `{src}`"))
             })();
-            return Some(load);
+            return Some(load.map(PrimitiveMesh::opaque));
         }
         _ => return None,
     };
@@ -572,12 +688,12 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
 /// to remember which is which.
 fn parse_inset_face(s: &str) -> Result<InsetFace> {
     match s.to_ascii_lowercase().as_str() {
-        "+x" | "right" | "east"        => Ok(InsetFace::PosX),
-        "-x" | "left"  | "west"        => Ok(InsetFace::NegX),
-        "+y" | "top"   | "up"          => Ok(InsetFace::PosY),
-        "-y" | "bottom"| "down"        => Ok(InsetFace::NegY),
-        "+z" | "front" | "south"       => Ok(InsetFace::PosZ),
-        "-z" | "back"  | "north"       => Ok(InsetFace::NegZ),
+        "+x" | "right" | "east" => Ok(InsetFace::PosX),
+        "-x" | "left" | "west" => Ok(InsetFace::NegX),
+        "+y" | "top" | "up" => Ok(InsetFace::PosY),
+        "-y" | "bottom" | "down" => Ok(InsetFace::NegY),
+        "+z" | "front" | "south" => Ok(InsetFace::PosZ),
+        "-z" | "back" | "north" => Ok(InsetFace::NegZ),
         other => Err(anyhow!(
             "inset_box.face: expected one of \
              \"+x\"/\"-x\"/\"+y\"/\"-y\"/\"+z\"/\"-z\" \

@@ -130,17 +130,16 @@ pub fn bind_meshes(ast: &[Node], graph: &mut SceneGraph) -> Result<()> {
     let worlds = graph.world_transforms();
 
     for (node_name, skin_name, bind_to) in bindings {
-        let skin_id = graph
-            .find_skin(&skin_name)
-            .ok_or_else(|| anyhow!("mesh \"{node_name}\" refers to unknown skin \"{skin_name}\""))?;
+        let skin_id = graph.find_skin(&skin_name).ok_or_else(|| {
+            anyhow!("mesh \"{node_name}\" refers to unknown skin \"{skin_name}\"")
+        })?;
         let node_ids = graph.find_nodes_by_name(&node_name);
         if node_ids.is_empty() {
             bail!("skin binding: unknown scene node \"{node_name}\"");
         }
 
         for node_id in node_ids {
-            let effective_bind: Option<String> = if graph.nodes[node_id.0 as usize]
-                .flip_bind_suffix
+            let effective_bind: Option<String> = if graph.nodes[node_id.0 as usize].flip_bind_suffix
             {
                 bind_to.as_deref().map(flip_lr_suffix)
             } else {
@@ -150,11 +149,8 @@ pub fn bind_meshes(ast: &[Node], graph: &mut SceneGraph) -> Result<()> {
             let mesh_world = worlds[node_id.0 as usize];
             let (joint_worlds, envelopes, bind_index) = {
                 let skin = &graph.skins[skin_id.0 as usize];
-                let joint_worlds: Vec<Mat4> = skin
-                    .joints
-                    .iter()
-                    .map(|j| worlds[j.0 as usize])
-                    .collect();
+                let joint_worlds: Vec<Mat4> =
+                    skin.joints.iter().map(|j| worlds[j.0 as usize]).collect();
                 let envelopes: Vec<f32> = if skin.envelopes.len() == skin.joints.len() {
                     skin.envelopes.clone()
                 } else {
@@ -201,8 +197,7 @@ pub fn bind_meshes(ast: &[Node], graph: &mut SceneGraph) -> Result<()> {
                     .iter()
                     .map(|n| {
                         let v = Vec3::from_array(*n);
-                        let rotated =
-                            normal_mat.transform_vector3(v).normalize_or_zero();
+                        let rotated = normal_mat.transform_vector3(v).normalize_or_zero();
                         [rotated.x, rotated.y, rotated.z]
                     })
                     .collect();
@@ -225,6 +220,7 @@ pub fn bind_meshes(ast: &[Node], graph: &mut SceneGraph) -> Result<()> {
                 m.joints = joints;
                 m.weights = weights;
             }
+            node_mut.geometry_identity = None;
             node_mut.skin = Some(skin_id);
             node_mut.transform = Transform::IDENTITY;
         }
@@ -324,12 +320,7 @@ fn walk_bindings(
         return;
     }
     for c in &node.children {
-        walk_bindings(
-            c,
-            effective_skin.as_deref(),
-            effective_bind.as_deref(),
-            out,
-        );
+        walk_bindings(c, effective_skin.as_deref(), effective_bind.as_deref(), out);
     }
 }
 
