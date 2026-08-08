@@ -343,6 +343,16 @@ when a smooth deformer is present; explicit `segments=`/`rings=`/
 `subdivisions=` always override. Modifiers don't apply to `mesh` (loaded
 glb) primitives. See `examples/nature/asteroid_field.mog`.
 
+Implicit tessellation on curved primitives is also size-aware in authored
+local units. Counts scale with the cube root of radius (or the primitive's
+equivalent local extent), relative to the default-sized primitive: tiny rivets
+and dimples no longer pay the same triangle count as a dome, while large props
+gain detail without triangle count growing linearly with size. Explicit
+`segments=`/`rings=` remains the exact author override. Placement `scale=` is
+not part of this calculation because multiple placements may share one lowered
+mesh; use explicit counts when an unusually scaled placement needs a different
+mesh.
+
 ---
 
 ## Scene structure: `scene`, `group`

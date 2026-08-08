@@ -109,6 +109,87 @@ fn lod_scale_default_keeps_existing_vertex_counts() {
 }
 
 #[test]
+fn implicit_curved_primitive_density_tracks_authored_local_size() {
+    let g = lower_src(
+        r#"scene {
+            sphere "indent" (radius=0.015)
+            sphere "ball" (radius=0.5)
+            sphere "dome" (radius=10)
+            icosphere "ico_indent" (radius=0.015)
+            icosphere "ico_dome" (radius=10)
+        }"#,
+    );
+    let tris = |name: &str| {
+        find_mesh_node(&g, name)
+            .mesh
+            .as_ref()
+            .unwrap()
+            .indices
+            .len()
+            / 3
+    };
+    assert!(
+        tris("indent") < tris("ball"),
+        "a 15 mm indent still pays the unit sphere's tessellation"
+    );
+    assert!(
+        tris("ball") < tris("dome"),
+        "a large dome did not gain detail from authored size"
+    );
+    assert!(
+        tris("ico_indent") < tris("ico_dome"),
+        "icosphere subdivisions remained size-blind"
+    );
+}
+
+#[test]
+fn explicit_segments_override_size_aware_defaults_exactly() {
+    let g = lower_src(
+        r#"scene {
+            sphere "small" (radius=0.015, rings=7, segments=11)
+            sphere "large" (radius=10, rings=7, segments=11)
+        }"#,
+    );
+    let tris = |name: &str| {
+        find_mesh_node(&g, name)
+            .mesh
+            .as_ref()
+            .unwrap()
+            .indices
+            .len()
+            / 3
+    };
+    assert_eq!(
+        tris("small"),
+        tris("large"),
+        "authored rings/segments stopped being exact overrides"
+    );
+}
+
+#[test]
+fn instance_scale_does_not_change_tessellation_identity() {
+    let g = lower_src(
+        r#"scene {
+            sphere "plain" (radius=0.2)
+            sphere "placed" (radius=0.2, scale=[100, 1, 0.5])
+        }"#,
+    );
+    let verts = |name: &str| {
+        find_mesh_node(&g, name)
+            .mesh
+            .as_ref()
+            .unwrap()
+            .positions
+            .len()
+    };
+    assert_eq!(
+        verts("plain"),
+        verts("placed"),
+        "placement scale leaked into authored mesh density"
+    );
+}
+
+#[test]
 fn per_node_lod_doubles_segment_count_on_marked_subtree() {
     // `lod=2.0` on a single primitive doubles its default segment count
     // (matches the behaviour of `lod_scale (value=2)` but scoped to that

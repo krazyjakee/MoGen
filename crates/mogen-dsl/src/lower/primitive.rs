@@ -40,6 +40,14 @@ fn deform_density(node: &Node) -> u32 {
     }
 }
 
+fn authored_size_density(size: f32, reference: f32) -> f32 {
+    if size.is_finite() && size > 0.0 && reference.is_finite() && reference > 0.0 {
+        (size / reference).cbrt()
+    } else {
+        1.0
+    }
+}
+
 /// Dispatch a primitive `Node` to its mesh builder. Returns `None` for non-
 /// primitive kinds (group, scene, material, CSG ops, animation decls, …) so
 /// callers can handle those separately. The inner `Result` carries failures
@@ -62,6 +70,20 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
             .attr_number(attr)
             .map(|n| n as u32)
             .unwrap_or(base * dd);
+        scaled_count(raw, min)
+    };
+    // Size-aware counterpart for curved primitives. An authored count remains
+    // exact (apart from the existing LOD multiplier); only the implicit
+    // primitive default changes with authored local size. Cube-root scaling is
+    // deliberately gentler than a fixed world-space edge target: a tiny rivet
+    // no longer pays for a dome, while a large set-piece cannot explode the
+    // triangle budget linearly with its radius. `reference` is the primitive's
+    // own default size, so the default spelling remains byte-identical.
+    let seg_for_size = |attr: &str, base: u32, min: u32, size: f32, reference: f32| -> u32 {
+        let raw = node.attr_number(attr).map(|n| n as u32).unwrap_or_else(|| {
+            let ratio = authored_size_density(size, reference);
+            ((base * dd) as f32 * ratio).round().max(min as f32) as u32
+        });
         scaled_count(raw, min)
     };
     let m: Mesh = match node.kind.as_str() {
@@ -115,33 +137,33 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
         "cylinder" => {
             let radius = node.attr_number("radius").unwrap_or(0.5);
             let height = node.attr_number("height").unwrap_or(1.0);
-            let segments = seg("segments", 24, 3);
+            let segments = seg_for_size("segments", 24, 3, radius, 0.5);
             cylinder_mesh(radius, height, segments, uv_mode)
         }
         "cone" => {
             let radius = node.attr_number("radius").unwrap_or(0.5);
             let height = node.attr_number("height").unwrap_or(1.0);
-            let segments = seg("segments", 24, 3);
+            let segments = seg_for_size("segments", 24, 3, radius, 0.5);
             cone_mesh(radius, height, segments, uv_mode)
         }
         "sphere" => {
             let radius = node.attr_number("radius").unwrap_or(0.5);
-            let rings = seg("rings", 16, 2);
-            let segments = seg("segments", 24, 3);
+            let rings = seg_for_size("rings", 16, 2, radius, 0.5);
+            let segments = seg_for_size("segments", 24, 3, radius, 0.5);
             sphere_mesh(radius, rings, segments, uv_mode)
         }
         "capsule" => {
             let radius = node.attr_number("radius").unwrap_or(0.5);
             let height = node.attr_number("height").unwrap_or(1.0);
-            let rings = seg("rings", 8, 2);
-            let segments = seg("segments", 24, 3);
+            let rings = seg_for_size("rings", 8, 2, radius, 0.5);
+            let segments = seg_for_size("segments", 24, 3, radius, 0.5);
             capsule_mesh(radius, height, rings, segments, uv_mode)
         }
         "torus" => {
             let major = node.attr_number("major").unwrap_or(0.5);
             let minor = node.attr_number("minor").unwrap_or(0.15);
-            let major_segments = seg("major_segments", 24, 3);
-            let minor_segments = seg("minor_segments", 12, 3);
+            let major_segments = seg_for_size("major_segments", 24, 3, major, 0.5);
+            let minor_segments = seg_for_size("minor_segments", 12, 3, minor, 0.15);
             torus_mesh(major, minor, major_segments, minor_segments, uv_mode)
         }
         "prism" => {
@@ -156,7 +178,7 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
         }
         "disc" => {
             let radius = node.attr_number("radius").unwrap_or(0.5);
-            let segments = seg("segments", 24, 3);
+            let segments = seg_for_size("segments", 24, 3, radius, 0.5);
             disc_mesh(radius, segments, uv_mode)
         }
         "icosphere" => {
@@ -164,17 +186,17 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
             // Default base subdivisions follow `dd` (2 with a deform modifier,
             // 1 otherwise); both default and explicit values then run through
             // `scaled_subdivisions` so LOD steps the count.
-            let raw = node
-                .attr_number("subdivisions")
-                .map(|n| n as u32)
-                .unwrap_or(1 + dd);
+            let raw = node.attr_number("subdivisions").map(|n| n as u32).unwrap_or_else(|| {
+                let size_steps = authored_size_density(radius, 0.5).log2().round() as i32;
+                (1 + dd as i32 + size_steps).max(0) as u32
+            });
             let subdivisions = scaled_subdivisions(raw);
             icosphere_mesh(radius, subdivisions, uv_mode)
         }
         "rounded_box" => {
             let s = resolve_size3(node, Vec3::ONE);
             let radius = node.attr_number("radius").unwrap_or(0.1);
-            let segments = seg("segments", 4, 1);
+            let segments = seg_for_size("segments", 4, 1, radius, 0.1);
             rounded_box_mesh([s.x, s.y, s.z], radius, segments, uv_mode)
         }
         "chamfered_box" => {
@@ -209,41 +231,43 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Mesh
             let outer = node.attr_number("outer").unwrap_or(0.5);
             let inner = node.attr_number("inner").unwrap_or(0.3);
             let height = node.attr_number("height").unwrap_or(1.0);
-            let segments = seg("segments", 24, 3);
+            let segments = seg_for_size("segments", 24, 3, outer, 0.5);
             tube_mesh(outer, inner, height, segments, uv_mode)
         }
         "hemisphere" => {
             let radius = node.attr_number("radius").unwrap_or(0.5);
-            let rings = seg("rings", 8, 2);
-            let segments = seg("segments", 24, 3);
+            let rings = seg_for_size("rings", 8, 2, radius, 0.5);
+            let segments = seg_for_size("segments", 24, 3, radius, 0.5);
             hemisphere_mesh(radius, rings, segments, uv_mode)
         }
         "half_cylinder" => {
             let radius = node.attr_number("radius").unwrap_or(0.5);
             let height = node.attr_number("height").unwrap_or(1.0);
-            let segments = seg("segments", 24, 3);
+            let segments = seg_for_size("segments", 24, 3, radius, 0.5);
             half_cylinder_mesh(radius, height, segments, uv_mode)
         }
         "torus_arc" => {
             let major = node.attr_number("major").unwrap_or(0.5);
             let minor = node.attr_number("minor").unwrap_or(0.15);
             let arc_deg = node.attr_number("arc").unwrap_or(90.0);
-            let major_segments = seg("major_segments", 24, 3);
-            let minor_segments = seg("minor_segments", 12, 3);
+            let major_segments = seg_for_size("major_segments", 24, 3, major, 0.5);
+            let minor_segments = seg_for_size("minor_segments", 12, 3, minor, 0.15);
             torus_arc_mesh(major, minor, arc_deg.to_radians(), major_segments, minor_segments, uv_mode)
         }
         "ellipsoid" => {
             let s = resolve_size3(node, Vec3::ONE);
-            let rings = seg("rings", 16, 2);
-            let segments = seg("segments", 24, 3);
+            let characteristic = s.x.abs().max(s.y.abs()).max(s.z.abs());
+            let rings = seg_for_size("rings", 16, 2, characteristic, 1.0);
+            let segments = seg_for_size("segments", 24, 3, characteristic, 1.0);
             ellipsoid_mesh([s.x, s.y, s.z], rings, segments, uv_mode)
         }
         "superellipsoid" => {
             let s = resolve_size3(node, Vec3::ONE);
             let ew = node.attr_number("ew").unwrap_or(1.0);
             let ns = node.attr_number("ns").unwrap_or(1.0);
-            let rings = seg("rings", 16, 2);
-            let segments = seg("segments", 24, 3);
+            let characteristic = s.x.abs().max(s.y.abs()).max(s.z.abs());
+            let rings = seg_for_size("rings", 16, 2, characteristic, 1.0);
+            let segments = seg_for_size("segments", 24, 3, characteristic, 1.0);
             superellipsoid_mesh([s.x, s.y, s.z], ew, ns, rings, segments, uv_mode)
         }
         "curved_plane" => {
