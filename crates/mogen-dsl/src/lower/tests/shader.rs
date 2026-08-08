@@ -51,6 +51,49 @@ fn builtin_water_shader_is_seeded_without_declaration() {
     assert!(g.find_shader_scoped(mogen_core::shader::WATER, None).is_some());
 }
 
+/// The built-in preset declares `absorption`, so a material can carry *how*
+/// absorbing its water is rather than only that it is water. Resolution goes
+/// through the ordinary `resolve_param` path — no special case for the
+/// built-in.
+#[test]
+fn builtin_water_declares_absorption_and_resolves_an_override() {
+    use mogen_core::shader::{WATER, WATER_ABSORPTION, WATER_ABSORPTION_DEFAULT};
+    use mogen_core::ShaderParamValue;
+
+    let g = lower_src(
+        r#"
+        material "pond" (color=[0.15, 0.4, 0.45], shader="water") {
+          shader_params (absorption=2.5)
+        }
+        material "sea" (color=[0.1, 0.3, 0.4], shader="water")
+        scene { box "b" (size=[1,1,1], mat="pond") }
+        "#,
+    );
+    let decl = g.find_shader_scoped(WATER, None).expect("water shader");
+    assert_eq!(
+        decl.params.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
+        [WATER_ABSORPTION],
+        "the preset declares exactly its one parameter"
+    );
+
+    let pond = &g.materials[g.find_material("pond").expect("pond").0 as usize];
+    assert_eq!(
+        decl.resolve_param(WATER_ABSORPTION, &pond.shader_params),
+        Some(ShaderParamValue::Float(2.5)),
+        "an authored override must win"
+    );
+
+    // The control: a material that says nothing gets the declared default, and
+    // that default is not the disabled value — otherwise `shader=\"water\"`
+    // would be a no-op reporting success.
+    let sea = &g.materials[g.find_material("sea").expect("sea").0 as usize];
+    assert_eq!(
+        decl.resolve_param(WATER_ABSORPTION, &sea.shader_params),
+        Some(ShaderParamValue::Float(WATER_ABSORPTION_DEFAULT))
+    );
+    assert!(WATER_ABSORPTION_DEFAULT > 0.0);
+}
+
 #[test]
 fn user_declared_water_shader_shadows_the_builtin() {
     let g = lower_src(

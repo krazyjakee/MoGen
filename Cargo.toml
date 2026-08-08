@@ -14,6 +14,7 @@ members = [
     "crates/mogen-moghub-client",
     "crates/mogen-registry",
     "crates/mogen-render",
+    "crates/mogen-svg",
     "crates/mogen-studio",
     "crates/mogen-update",
     "crates/mogen-wasm",
@@ -63,6 +64,9 @@ mogen-validate = { path = "crates/mogen-validate", default-features = false }
 mogen-anim = { path = "crates/mogen-anim" }
 mogen-binary = { path = "crates/mogen-binary" }
 mogen-export = { path = "crates/mogen-export", default-features = false }
+# Pure-Rust SVG rasterization. Sits below the exporter so Studio's viewport and
+# downstream engines can resolve the same pixels without linking one.
+mogen-svg = { path = "crates/mogen-svg" }
 mogen-llm = { path = "crates/mogen-llm" }
 mogen-pascal = { path = "crates/mogen-pascal" }
 mogen-moghub-client = { path = "crates/mogen-moghub-client" }

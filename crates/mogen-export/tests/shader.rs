@@ -61,6 +61,44 @@ fn builtin_water_shader_projects_name_with_no_declaration() {
     assert_eq!(sh["name"], "water");
 }
 
+/// The built-in water preset now declares `absorption` (see
+/// `mogen_core::shader::water_params`), and that resolution rides to glTF
+/// extras through the exact same `shader_extras` projection a user-declared
+/// shader's params use — no special case for the built-in. A downstream
+/// engine reading `node.extras.shader.params` needs this to actually contain
+/// the value, not just the shader name.
+#[test]
+fn builtin_water_shader_projects_absorption_default_and_override() {
+    let src = r#"
+        material "sea" (color=[0.0, 0.3, 0.5], shader="water")
+        material "pond" (color=[0.15, 0.4, 0.45], shader="water") {
+          shader_params (absorption=2.5)
+        }
+        scene {
+          box "b1" (size=[1,1,1], mat="sea")
+          box "b2" (size=[1,1,1], mat="pond")
+        }
+    "#;
+    let json = parse_glb_json(&compile(src));
+
+    let sea = &find_node(&json, "b1")["extras"]["shader"];
+    assert_eq!(sea["name"], "water");
+    assert!(
+        (sea["params"]["absorption"].as_f64().unwrap()
+            - mogen_core::shader::WATER_ABSORPTION_DEFAULT as f64)
+            .abs()
+            < 1e-6,
+        "a silent material must get the declared default"
+    );
+
+    let pond = &find_node(&json, "b2")["extras"]["shader"];
+    assert_eq!(pond["name"], "water");
+    assert!(
+        (pond["params"]["absorption"].as_f64().unwrap() - 2.5).abs() < 1e-6,
+        "an authored override must win"
+    );
+}
+
 #[test]
 fn standard_material_has_no_shader_extras() {
     let src = r#"scene { box "plain" (size=[1,1,1]) }"#;

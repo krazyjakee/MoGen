@@ -29,7 +29,7 @@ textures-optimize = ["textures", "dep:image", "dep:oxipng"]
 #                         this one *can* be enabled for wasm too — the wasm
 #                         crate just has to opt in explicitly, since it
 #                         builds with `default-features = false`.
-textures-svg = ["textures", "dep:resvg", "dep:usvg"]
+textures-svg = ["textures", "dep:mogen-svg"]
 # Sibling-mesh merge module. The merge pass calls into `mogen-geom`'s CSG
 # `union_many`; whichever crate enables the `csg` (desktop) or
 # `unstable-wasm-uu` (wasm) flavor of `mogen-geom` is responsible for
@@ -62,8 +62,7 @@ serde_json = { workspace = true }
 glam = { workspace = true }
 image = { workspace = true, optional = true }
 oxipng = { workspace = true, optional = true }
-resvg = { workspace = true, optional = true }
-usvg = { workspace = true, optional = true }
+mogen-svg = { workspace = true, optional = true }
 fbxcel = { version = "0.9", features = ["writer", "tree"], optional = true }
 meshopt = { workspace = true, optional = true }
 mogen-render = { workspace = true, optional = true }

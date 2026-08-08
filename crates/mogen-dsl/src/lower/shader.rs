@@ -99,7 +99,9 @@ pub(super) fn ensure_builtin_shaders(graph: &mut SceneGraph) {
     if !graph.shaders.iter().any(|s| s.name == shader::WATER) {
         // The source is a `stdlib:`-keyed path resolved from bundled bytes by
         // MoGen Studio; export ignores the source entirely.
-        graph.add_shader(ShaderDecl::new(shader::WATER, "stdlib:shaders/water.glsl"));
+        let mut water = ShaderDecl::new(shader::WATER, "stdlib:shaders/water.glsl");
+        water.params = shader::water_params();
+        graph.add_shader(water);
     }
 }
 
