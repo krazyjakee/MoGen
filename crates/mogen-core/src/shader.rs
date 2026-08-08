@@ -28,6 +28,34 @@ pub fn builtin_names() -> &'static [&'static str] {
     &[WATER]
 }
 
+/// Name of the built-in water shader's one parameter: the depth, in world
+/// units, over which transmitted radiance falls to `1/e`.
+pub const WATER_ABSORPTION: &str = "absorption";
+
+/// Default for [`WATER_ABSORPTION`].
+///
+/// Deliberately **not** zero. Zero is the "behaves exactly like clear glass"
+/// case, so defaulting to it would make `shader="water"` a no-op that reports
+/// success. A metre and a half is a plausible pond and is visibly water.
+pub const WATER_ABSORPTION_DEFAULT: f32 = 1.5;
+
+/// The parameters the built-in [`WATER`] preset declares.
+///
+/// The preset carried none until now, which made `shader="water"` a bare
+/// on/off switch: an author had no way to say *how* absorbing the water is,
+/// and a consumer reading the lowered [`crate::Material`] had nothing to read.
+/// Declaring the parameter here means `shader_params (absorption=…)` resolves
+/// through the ordinary [`ShaderDecl::resolve_param`] path, exactly as it
+/// would for a user-declared shader — the built-in stays the first client of
+/// the general system rather than acquiring a special case.
+pub fn water_params() -> Vec<ShaderParamDef> {
+    vec![ShaderParamDef {
+        name: WATER_ABSORPTION.to_string(),
+        ty: ShaderParamType::Float,
+        default: Some(ShaderParamValue::Float(WATER_ABSORPTION_DEFAULT)),
+    }]
+}
+
 /// The declared type of a shader `param`. Determines the GLSL uniform type and
 /// which [`ShaderParamValue`] variant a supplied value must match.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

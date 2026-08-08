@@ -933,7 +933,10 @@ Declared at the top of the file or inside `scene { ... }`. Attributes:
   chop/foam (`0.05` glassy → `1.0` whitecaps), `metallic` lerps toward
   liquid-metal Fresnel, `transmission` + `alpha_mode="blend"` lets the floor
   show through, and `normal_texture`/`base_color_texture` blend into the
-  procedural waves.
+  procedural waves. It also declares one parameter of its own,
+  `absorption` (float, default `1.5`) — the depth in world units over which
+  transmitted radiance falls to `1/e`, set via `shader_params (absorption=…)`
+  like any other. `0` is clear glass, so the default is deliberately not zero.
 - `gradient` — optional ramp baked into per-vertex `COLOR_0` at export
   time. Four surface forms, all colours are vec3 in sRGB `[0..1]`:
   - `linear(from=[…], to=[…], axis=x|y|z)` — interpolates between two
@@ -1038,8 +1041,9 @@ runs the GLSL — it only carries the path + resolved parameter values as
 `node.extras.shader` metadata on the glTF nodes bound to a referencing
 material. MoGen Studio is the one component that actually compiles a
 declared shader, for live preview. The built-in `water` preset (see
-`shader=` above) is just the first client of this system — declaring your
-own `shader "water" { ... }` shadows it.
+`shader=` above) is just the first client of this system — it declares an
+`absorption` param and resolves it through the same path a user shader's
+params take, and declaring your own `shader "water" { ... }` shadows it.
 
 ```
 shader "ripple" (source="shaders/ripple.glsl") {
