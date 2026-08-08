@@ -105,17 +105,19 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Prim
         });
         scaled_count(raw, min)
     };
-    // Implicit full-circle tessellation keeps a vertex on each cardinal axis.
-    // Besides producing stable authored bounds, this prevents a size-derived
-    // odd count from making the rendered surface narrower than its analytic
-    // collider. Explicit counts remain exact, including intentionally odd ones.
+    // A sufficiently detailed implicit full circle keeps a vertex on each
+    // cardinal axis. Besides producing stable authored bounds, this prevents a
+    // size-derived odd count from making the rendered surface narrower than its
+    // analytic collider. Counts below seven are deliberately left alone: those
+    // are coarse LODs, where rounding both 5 and 3 to four would collapse two
+    // distinct levels. Explicit counts also remain exact.
     let angular_seg_for_size =
         |attr: &str, base: u32, min: u32, size: f32, reference: f32| -> u32 {
             let segments = seg_for_size(attr, base, min, size, reference);
-            if node.attr_number(attr).is_some() {
+            if node.attr_number(attr).is_some() || segments < 7 {
                 segments
             } else {
-                ((segments + 2) / 4 * 4).max(4)
+                (segments + 2) / 4 * 4
             }
         };
     let meridian_seg_for_size =
