@@ -1,3 +1,14 @@
+//! Lower expanded DSL nodes into a scene graph.
+//!
+//! Imports and module expansion precede declaration collection and geometry
+//! construction. Attach, conform, and skin binding settle the geometry before
+//! collider bounds and physics masses are computed. Animation lowering and
+//! gradient baking complete the graph.
+//!
+//! File LOD, subtree LOD multipliers, caller density, mesh bytes, tessellation
+//! results, and the module registry are scoped to a lowering call by guards.
+//! Guards restore previous state on return or failure, including nested calls.
+
 mod anim;
 pub mod arch;
 mod blob;
@@ -57,9 +68,9 @@ use physics::collect_physics;
 use shader::{collect_shaders, ensure_builtin_shaders};
 
 thread_local! {
-    // Build-pass-scoped LOD multiplier. Set by `lower()` before walking the
-    // expanded AST and read by `primitive_mesh` so segment/ring defaults can be
-    // scaled without threading an extra arg through every recursive call.
+    // Active file's LOD default. Imported nodes replace this value with their
+    // defining file's setting. `current_lod_scale` combines it with separately
+    // scoped subtree multipliers and the caller's density request.
     pub(super) static LOD_SCALE: Cell<f32> = const { Cell::new(1.0) };
     // Directory of the `.mog` file being lowered. Used by the `mesh`
     // primitive to resolve relative `src` paths. None = no source path
@@ -100,11 +111,11 @@ pub(super) fn mesh_bytes(spec: &str) -> Option<Rc<Vec<u8>>> {
 
 /// Ask `loader` for the bytes behind every `mesh (src=…)` reachable in `ast`.
 ///
-/// **Runs on the expanded AST**, after `expand_modules`, for two reasons that
-/// both bite: a `src=` inside a `module` is `$param`-substituted only by
-/// expansion, and a module nobody `use`s is gone by then — so pre-loading
-/// before expansion would fetch a spec that is not a path yet, and fetch files
-/// for geometry the scene never instantiates.
+/// Runs after module expansion so unused module bodies are not fetched and
+/// repeated module instances share one load per distinct `src` string. String
+/// parameters are not supported; each `mesh` supplies a concrete `src`.
+/// Successful buffers are shared by reference-counted handles for this call;
+/// each instance still decodes its own mesh before applying geometry changes.
 ///
 /// **Failures are dropped, not raised.** A spec the loader cannot serve is
 /// simply absent from the map, and `primitive_mesh` falls back to reading it
@@ -272,28 +283,26 @@ pub fn lower_with_loader(
     lower_with_loader_lod(ast, base_dir, loader, 1.0)
 }
 
-/// [`lower_with_loader`] at a caller-chosen **tessellation density**.
+/// [`lower_with_loader`] at a caller-chosen tessellation density.
 ///
-/// `lod_scale` multiplies every segment / ring / sample count the lowering
-/// produces: `0.5` halves them, `2.0` doubles them, `1.0` is exactly what every
-/// other entry point does. Non-positive and non-finite values fall back to
-/// `1.0`, the rule the `lod_scale (value=N)` directive already follows.
+/// The effective density is the active file's `lod_scale`, multiplied by all
+/// enclosing per-node `lod=` overrides and this request. Imported geometry uses
+/// its defining file's scale (default `1.0`), while subtree overrides and the
+/// request remain active across import boundaries. Non-positive or non-finite
+/// requests use `1.0`.
 ///
-/// **This is a bake-time parameter, not an authoring one.** The DSL already has
-/// three ways for a *file* to state its density — the top-level
-/// `lod_scale (value=N)`, each import's own, and a per-node `lod=N` — and this
-/// changes none of them. It is the knob a **caller** needs to lower the same
-/// AST more than once and get genuinely different geometry each time, which is
-/// what building a LOD chain out of retained analytic parameters requires: a
-/// coarse level here is the same sphere re-tessellated, not a decimated mesh,
-/// so it is exact at every level rather than approximate.
+/// Segment, ring, and sample counts scale linearly, then round and clamp to
+/// primitive-specific minima. Subdivision levels use a logarithmic offset.
+/// Lower densities re-tessellate supported analytic primitives; imported mesh
+/// bytes are unchanged. Minimum counts can make nearby requests produce the
+/// same geometry.
 ///
-/// The request **multiplies** the source's own scales rather than replacing
-/// them, so an authored detail hierarchy survives: a part marked `lod=2` is
-/// still twice its neighbours at every density anyone asks for.
+/// For example, an imported file with `lod_scale=0.5`, inside a `lod=2` group,
+/// lowered with a request of `0.25`, has effective density `0.25`. The importing
+/// file's global scale does not enter that product.
 ///
-/// Existing callers are untouched and produce byte-identical graphs —
-/// `lower_with_loader` passes `1.0`, and a multiply by one changes nothing.
+/// [`lower_with_loader`] passes `1.0`. Each call resets its scoped state and
+/// restores any enclosing call's state on return, including errors.
 pub fn lower_with_loader_lod(
     ast: &[Node],
     base_dir: Option<&Path>,

@@ -4,9 +4,9 @@
 //! Mirrors [`super::material`]. [`collect_physics`] hoists every declaration
 //! into `SceneGraph::physics` (Pass 1, alongside materials). [`bind_physics`]
 //! resolves a geometry node's `phys=` reference into a [`PhysicsBody`] snapshot
-//! and stamps it on the node. The heavy values — `mass` and `center_of_gravity`
-//! — are filled later, once the final mesh exists, by the auto-weigh pass in
-//! [`super::super::lower`] (they need the post-attach/conform geometry).
+//! and stamps it on the node. Mass and centre of gravity are filled later
+//! by [`weigh_bodies`], after attach, conform, and skin binding
+//! settle the geometry. Explicit weights are preserved on meshes and groups.
 
 use anyhow::{anyhow, Result};
 
@@ -73,8 +73,9 @@ type Substance = (String, f32, f32, f32);
 /// ancestor's substance, exactly as `mat=` inherits down the hierarchy (see
 /// [`super::helpers::inherit_material_from_ancestor`]). So `phys=` on a `group`
 /// flows to every child mesh, which then weighs itself. A flat per-node
-/// `weight=<mass>` override is recorded regardless; `mass`/`center_of_gravity`
-/// are otherwise filled by the auto-weigh pass.
+/// `weight=<mass>` override is recorded when a substance resolves; without an
+/// explicit or inherited substance, no body is created. Other mass properties are
+/// filled by [`weigh_bodies`].
 pub(super) fn bind_physics(node: &Node, id: NodeId, graph: &mut SceneGraph) -> Result<()> {
     let substance = if let Some(name) = node.attr_string("phys") {
         let pid = graph
@@ -123,6 +124,9 @@ fn inherited_substance(id: NodeId, graph: &SceneGraph) -> Option<Substance> {
 }
 
 /// Compute masses and local centres of gravity after geometry has settled.
+/// Explicit weights, including zero, are retained. Meshless compounds derive
+/// their centroid from own-mesh descendants; nested group weights do not
+/// contribute to enclosing compounds. Skip this pass when there are no bodies.
 pub(super) fn weigh_bodies(graph: &mut SceneGraph) {
     if !graph.nodes.iter().any(|node| node.physics.is_some()) {
         return;

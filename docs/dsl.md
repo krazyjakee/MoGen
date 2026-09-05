@@ -120,7 +120,10 @@ and compounds with the global setting. Per-primitive minimums still apply
 (`lod=0.1` won't collapse a cylinder below three sides).
 Imported geometry uses its defining file's `lod_scale` (default `1.0`), while
 all enclosing per-node `lod=` multipliers still apply across import boundaries.
-Non-positive or non-finite LOD settings are ignored.
+The first positive, finite top-level `lod_scale` in each file sets that file's
+default; if none is present, it uses `1.0`. Invalid per-node `lod=` values are
+ignored. Nested overrides multiply and do not affect siblings outside their
+subtree.
 
 ```
 scene {
@@ -130,6 +133,36 @@ scene {
   sphere "background_rock" (radius=0.4, lod=0.5)  // halved detail
 }
 ```
+
+For example, save this module as `parts.mog`:
+
+```mog
+lod_scale (value=0.5)
+module "part" {
+  group (lod=2) { sphere "detail" (radius=0.5) }
+  sphere "plain" (radius=0.5)
+}
+```
+
+Then import it from a file in the same directory:
+
+```mog
+import "parts.mog"
+lod_scale (value=0.25)
+scene {
+  group (lod=2) { use "part" }
+  sphere "local" (radius=0.5)
+}
+```
+
+`detail` uses `0.5 × 2 × 2 = 2.0`; `plain` uses `0.5 × 2 = 1.0`.
+`local` uses the importing file's `0.25`. The import's file scale replaces the
+importer's file scale, while the enclosing groups' multipliers remain active.
+
+Library callers can apply another multiplier with `lower_with_loader_lod`.
+A request of `0.5` halves each of those effective scales, including imported
+geometry; invalid requests use `1.0`. Counts still round and clamp to each
+primitive's minimum, and subdivision levels use the logarithmic rule above.
 
 ---
 
@@ -1125,10 +1158,12 @@ mass-weighted centre of gravity of its whole subtree, so an engine can treat the
 assembly as one rigid body. An explicit group `weight=` overrides that group's
 computed mass while retaining the geometry-derived centre of gravity. The
 weight override does not propagate to children; enclosing compounds sum the
-mesh-bearing descendants without double-counting nested groups.
-Weight units carry a dimension — a mass literal
-(`5kg`) is only valid on `weight=`; using one elsewhere (`size=[5kg,1,1]`) is a
-parse error.
+mesh-bearing descendants without double-counting nested groups. See the
+[physics guide](./physics.md#compound-bodies) for a worked example and export
+rules for empty groups.
+
+Weight units carry a dimension — a mass literal (`5kg`) is only valid on
+`weight=`; using one elsewhere (`size=[5kg,1,1]`) is a parse error.
 
 See [`physics.md`](./physics.md) for the full spec: weight units, the `extras`
 shape engines read, validation codes, and current limitations.
@@ -1805,13 +1840,19 @@ Path resolution: relative paths join onto the importing file's directory;
 absolute paths are used verbatim; paths are canonicalised before
 deduplication (so `"lib.mog"` and `"./lib.mog"` load once).
 
-What gets lifted:
+How imported content is handled:
 
 - **`module` declarations** — added to the importer's module registry.
 - **`material` declarations** (top-level or inside the imported scene) —
   added to the material registry. Texture paths are rooted at the
   *defining* file's directory.
 - **Top-level `scene { … }`** — synthesised as `module "<stem>" () { … }`.
+  Top-level animation and skeleton declarations join that module and take
+  effect when it is instantiated; they require a scene in the imported file.
+- **`lod_scale`** — retained as that file's tessellation default. Enclosing
+  `lod=` overrides still apply; see [Per-node LOD](#per-node-lod-overrides).
+- **`meta`** — stays with its source file and does not replace the importer's
+  scene metadata.
 
 Rules:
 
@@ -1820,10 +1861,11 @@ Rules:
 - Module shadowing: **stdlib < imports < user declarations**.
 - Synthesised scene-as-module name collisions across imports are a hard
   error — rename one with `(as=chair_a)`.
-- Material name collisions across imports are a hard error — re-declare
-  the material in the importer to shadow.
-- Imported files may contain only `import`, `module`, `material`, and one
-  top-level `scene { … }`. Joints, clips, skeletons aren't composable yet.
+- Materials with the same name in different files remain distinct. Geometry
+  first resolves materials in its defining file, then falls back to a name
+  lookup when that file has no matching declaration.
+- Imported files support `import`, `module`, `material`, `lod_scale`, `meta`,
+  at most one top-level `scene`, and animation/skeleton declarations as above.
 
 ---
 

@@ -21,21 +21,9 @@ thread_local! {
     static LOD_BY_ORIGIN: RefCell<HashMap<PathBuf, f32>> =
         RefCell::new(HashMap::new());
 
-    /// The **caller's** tessellation density for this lowering, set by
-    /// [`crate::lower::lower_with_loader_lod`]. 1.0 = exactly what the source
-    /// asked for, which is what every other entry point passes.
-    ///
-    /// Deliberately a *second* thread-local rather than a different starting
-    /// value for `LOD_SCALE`, and that is the load-bearing part. `LOD_SCALE` is
-    /// **replaced** — not multiplied — by [`LodOriginScaleGuard`] on entry to
-    /// every imported subtree, precisely so one file's `lod_scale` cannot leak
-    /// across an `import`. A caller's request folded into `LOD_SCALE` would be
-    /// erased by that replacement, so asking for a coarse bake would coarsen the
-    /// root file and silently leave every imported subtree at full density.
-    ///
-    /// Kept separate it multiplies through *all* of it — the file's own
-    /// `lod_scale`, each import's, and every per-node `lod=` — which is what
-    /// "give me this whole scene at a quarter density" has to mean.
+    /// Caller density for the current lowering. Stored separately from the
+    /// file scale and subtree multiplier so origin changes cannot erase it.
+    /// `current_lod_scale` multiplies all three factors; 1.0 is the default.
     static LOD_REQUEST: Cell<f32> = const { Cell::new(1.0) };
 }
 
@@ -62,9 +50,8 @@ impl Drop for LodRequestGuard {
     }
 }
 
-/// Find a top-level `lod_scale (value=N)` declaration and return its multiplier.
-/// Defaults to 1.0 when absent. Non-finite values and values <= 0 are ignored so a malformed
-/// setting can't silently destroy every mesh.
+/// Return the first positive, finite top-level `lod_scale (value=N)`.
+/// Invalid declarations are skipped; defaults to 1.0 if none is valid.
 pub(super) fn extract_lod_scale(ast: &[Node]) -> f32 {
     for n in ast {
         if n.kind == "lod_scale" {
@@ -142,9 +129,9 @@ impl Drop for LodByOriginGuard {
 /// importing file's scale. Mirrors the `meta` block isolation already
 /// in place — a file's top-level directives don't leak across imports.
 ///
-/// Nodes with no origin (the user's own file, stdlib expansions) leave
-/// `LOD_SCALE` alone so the user's top-level `lod_scale` continues to
-/// apply.
+/// Nodes with no origin (local or stdlib expansions) retain the active file
+/// scale. Subtree multipliers and caller density are stored separately and
+/// survive every origin change.
 pub(super) enum LodOriginScaleGuard {
     /// LOD_SCALE was swapped; the previous value is restored on drop.
     Active(f32),
@@ -181,13 +168,13 @@ impl Drop for LodOriginScaleGuard {
 /// The multiplier compounds with the active scale — a `lod=2.0` on a
 /// subtree inside a file with a top-level `lod_scale (value=0.5)` ends up
 /// at an effective scale of `1.0`, matching what an author would expect
-/// from a "double the detail of this part" override. Non-finite and non-positive values
-/// are ignored (treated as no-op) so a malformed override can't silently
-/// destroy every mesh in the subtree.
+/// from a "double the detail of this part" override. The accumulated multiplier
+/// is independent of the active file's scale and survives imported children.
+/// Non-finite and non-positive values are ignored.
 pub(super) enum LodMultiplierGuard {
     /// Active multiplier applied; the previous subtree multiplier is restored on drop.
     Active(f32),
-    /// Either no `lod` attr present or its value was non-positive — no swap.
+    /// No `lod` attribute, or a non-positive/non-finite value; no swap.
     Inert,
 }
 
