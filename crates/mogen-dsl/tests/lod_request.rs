@@ -145,3 +145,79 @@ fn an_import_honours_the_request_too() {
     assert!(coarse < base, "an imported subtree ignored a coarse request: {coarse} vs {base}");
     assert!(fine > base, "an imported subtree ignored a fine request: {fine} vs {base}");
 }
+
+#[test]
+fn imported_lod_preserves_subtree_multipliers_and_restores_siblings() {
+    struct Parts;
+    impl Loader for Parts {
+        fn load(&mut self, spec: &str, _base: Option<&Path>) -> Result<LoadedFile> {
+            let source = match spec {
+                "parts.mog" => {
+                    r#"
+                    lod_scale (value=0.5)
+                    module "part" {
+                        group (lod=2) {
+                            sphere "nested" (radius=1, lod=0.5)
+                            use "other"
+                        }
+                        sphere "import_sibling" (radius=1)
+                    }
+                "#
+                }
+                "other.mog" => {
+                    r#"
+                    lod_scale (value=0.25)
+                    module "other" { sphere "other" (radius=1) }
+                "#
+                }
+                _ => anyhow::bail!("unexpected import: {spec}"),
+            };
+            Ok(LoadedFile {
+                canonical: spec.into(),
+                source: source.into(),
+            })
+        }
+    }
+    let ast = parse(
+        r#"
+        import "parts.mog"
+        import "other.mog"
+        lod_scale (value=2)
+        scene {
+            group (lod=2) { use "part" }
+            sphere "local_sibling" (radius=1)
+        }
+    "#,
+    )
+    .unwrap();
+    let vertices = |graph: &mogen_core::SceneGraph, name: &str| {
+        graph
+            .nodes
+            .iter()
+            .find(|n| n.name == name)
+            .unwrap()
+            .mesh
+            .as_ref()
+            .unwrap()
+            .positions
+            .len()
+    };
+    for request in [0.5, 1.0, 2.0] {
+        let graph = lower_with_loader_lod(&ast, None, &mut Parts, request).unwrap();
+        // Imported file scales replace the caller file's scale; all enclosing
+        // per-node multipliers survive, including across another import.
+        for (name, scale) in [
+            ("nested", 0.5 * 2.0 * 2.0 * 0.5),
+            ("other", 0.25 * 2.0 * 2.0),
+            ("import_sibling", 0.5 * 2.0),
+            ("local_sibling", 2.0),
+        ] {
+            let expected = lower_at(SPHERE, scale * request).unwrap();
+            assert_eq!(
+                vertices(&graph, name),
+                vertices(&expected, "ball"),
+                "{name}, request={request}"
+            );
+        }
+    }
+}

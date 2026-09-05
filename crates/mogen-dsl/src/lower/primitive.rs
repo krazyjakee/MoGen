@@ -695,7 +695,7 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Prim
                 // every loader written before that method behaving identically.
                 let bytes = match mesh_bytes(src) {
                     Some(b) => b,
-                    None => read_glb_bytes(src, base.as_deref())?,
+                    None => std::rc::Rc::new(read_glb_bytes(src, base.as_deref())?),
                 };
                 mesh_from_glb_bytes(&bytes).with_context(|| format!("decoding mesh `{src}`"))
             })();

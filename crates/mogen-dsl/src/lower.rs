@@ -33,6 +33,7 @@ use anyhow::Result;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use mogen_core::{subtree_local_aabb, NodeId, SceneGraph};
 
@@ -47,7 +48,9 @@ use crate::skin_lower::{bind_meshes, lower_skeleton};
 
 use anim::{is_anim_decl, lower_animations};
 use geometry_identity::TessellationCacheGuard;
-use lod::{collect_origin_lods, extract_lod_scale, LodByOriginGuard, LodRequestGuard};
+use lod::{
+    collect_origin_lods, extract_lod_scale, LodByOriginGuard, LodMultiplierGuard, LodRequestGuard,
+};
 use material::collect_materials;
 use node::lower_into;
 use physics::collect_physics;
@@ -76,7 +79,7 @@ thread_local! {
     // in this lowering, keyed by the `src` attribute verbatim. Filled by
     // `collect_mesh_binaries` over the *expanded* AST; read by `primitive_mesh`,
     // which reads the file itself when a spec is absent.
-    pub(super) static MESH_BYTES: RefCell<HashMap<String, Vec<u8>>> =
+    pub(super) static MESH_BYTES: RefCell<HashMap<String, Rc<Vec<u8>>>> =
         RefCell::new(HashMap::new());
 }
 
@@ -85,12 +88,13 @@ pub(super) fn source_dir() -> Option<PathBuf> {
     SOURCE_DIR.with(|s| s.borrow().clone())
 }
 
-/// The bytes the caller's [`Loader`] supplied for `mesh (src=spec)`, if any.
+/// Shared bytes the caller's [`Loader`] supplied for `mesh (src=spec)`, if any.
+/// Cloning the handle avoids copying the entire GLB for each mesh instance.
 ///
 /// `None` means "nobody supplied these", **not** "this mesh has no bytes" —
 /// the primitive then resolves the file itself, which is what every loader
 /// written before [`Loader::load_binary`] existed relies on.
-pub(super) fn mesh_bytes(spec: &str) -> Option<Vec<u8>> {
+pub(super) fn mesh_bytes(spec: &str) -> Option<Rc<Vec<u8>>> {
     MESH_BYTES.with(|m| m.borrow().get(spec).cloned())
 }
 
@@ -113,7 +117,7 @@ fn collect_mesh_binaries(
     ast: &[Node],
     base_dir: Option<&Path>,
     loader: &mut dyn Loader,
-) -> HashMap<String, Vec<u8>> {
+) -> HashMap<String, Rc<Vec<u8>>> {
     fn walk(nodes: &[Node], out: &mut Vec<String>) {
         for n in nodes {
             if n.kind == "mesh" {
@@ -132,7 +136,7 @@ fn collect_mesh_binaries(
     let mut map = HashMap::new();
     for spec in specs {
         if let Ok(bytes) = loader.load_binary(&spec, base_dir) {
-            map.insert(spec, bytes);
+            map.insert(spec, Rc::new(bytes));
         }
     }
     map
@@ -142,11 +146,11 @@ fn collect_mesh_binaries(
 /// (possibly failed) lowering's bytes cannot leak into this one — the reason
 /// [`ColliderRequestsGuard`] exists, one map along.
 struct MeshBytesGuard {
-    prev: HashMap<String, Vec<u8>>,
+    prev: HashMap<String, Rc<Vec<u8>>>,
 }
 
 impl MeshBytesGuard {
-    fn set(map: HashMap<String, Vec<u8>>) -> Self {
+    fn set(map: HashMap<String, Rc<Vec<u8>>>) -> Self {
         let prev = MESH_BYTES.with(|m| std::mem::replace(&mut *m.borrow_mut(), map));
         Self { prev }
     }
@@ -297,13 +301,14 @@ pub fn lower_with_loader_lod(
     lod_scale: f32,
 ) -> Result<SceneGraph> {
     let _lod_req = LodRequestGuard::set(lod_scale);
+    let _lod_mul = LodMultiplierGuard::fresh();
     let _src = SourceDirGuard::set(base_dir.map(|p| p.to_path_buf()));
     let _coll = ColliderRequestsGuard::fresh();
     let _tessellations = TessellationCacheGuard::fresh();
     // Top-level `lod_scale (value=N)` multiplies primitive default segment/
     // ring counts. Stash on a thread-local before lowering so `primitive_mesh`
     // can read it without threading an extra arg through every recursive call.
-    // Explicit per-primitive `segments=`/`rings=` still win.
+    // Explicit per-primitive segment/ring counts are scaled too.
     let _lod = LodScaleGuard::set(extract_lod_scale(ast));
     // Per-origin LOD overrides: imported files carry their own
     // `lod_scale` directives that need to apply to that file's geometry,
@@ -332,12 +337,10 @@ pub fn lower_with_loader_lod(
     reg.extend_overlay(imported_reg);
     let user = collect_modules(ast)?;
     reg.extend_overlay(user);
-    // Publish the combined registry for the rest of the lowering pass.
-    // `expand_building` reads it to instantiate door/window/skylight modules.
-    // Clone is unavoidable — `expand_modules` borrows `reg` for the duration
-    // of the call below, and the guard needs an owned value.
-    let _reg_guard = ModuleRegistryGuard::set(reg.clone());
     let (expanded, use_parents) = expand_modules(ast, &reg)?;
+    // Expansion no longer borrows the registry, so move it into the guard.
+    // `expand_building` reads it to instantiate door/window/skylight modules.
+    let _reg_guard = ModuleRegistryGuard::set(reg);
 
     // Give the caller's loader a chance to serve every external mesh, now that
     // module expansion has turned `src=$param` into a real spec and dropped the
@@ -434,58 +437,8 @@ pub fn lower_with_loader_lod(
         }
     }
 
-    // Pass 2.65: auto-weigh physics bodies from the final geometry. Runs after
-    // collider (so it sees the same post attach/conform/skin mesh).
-    let worlds = graph.world_transforms();
-    // (a) Leaves — nodes with their own mesh. Weight = substance density × world
-    // volume (the world-transform determinant folds in this node's + ancestors'
-    // scale, so `scale=2` weighs 8×); centre of gravity = the mesh's volume
-    // centroid, in local space. An explicit `weight=` keeps its overridden mass
-    // but still gets a real centre of gravity.
-    for id in 0..graph.nodes.len() {
-        let node = &graph.nodes[id];
-        let Some(body) = &node.physics else { continue };
-        let Some(mesh) = &node.mesh else { continue };
-        let mass = if body.mass.is_some() {
-            body.mass
-        } else {
-            // Group as `density × (volume × det)` — the same association the
-            // golden GLBs were baked with; regrouping shifts the last f32 ULP.
-            let world_volume = mesh.solid_volume() * worlds[id].determinant().abs();
-            Some(body.weight_per_m3 * world_volume)
-        };
-        let cog = mesh.solid_centroid();
-        let b = graph.nodes[id].physics.as_mut().unwrap();
-        b.mass = mass;
-        b.center_of_gravity = cog;
-    }
-    // (b) Compound bodies — a node that carries a physics body but has no mesh
-    // of its own (a `group phys=…`, possibly inherited) reports the *combined*
-    // mass and mass-weighted centre of gravity of every mesh-bearing descendant,
-    // expressed in its own local frame. An engine can then treat the whole
-    // assembly as one rigid body. Only own-mesh descendants contribute, so a
-    // compound group nested above another never double-counts the shared
-    // leaves. Runs after (a) so leaf masses already exist.
-    for id in 0..graph.nodes.len() {
-        if graph.nodes[id].physics.is_none() || graph.nodes[id].mesh.is_some() {
-            continue;
-        }
-        let mut total = 0.0f32;
-        let mut weighted = glam::Vec3::ZERO;
-        collect_subtree_mass(
-            &graph,
-            NodeId(id as u32),
-            &worlds,
-            &mut total,
-            &mut weighted,
-        );
-        if total > 0.0 {
-            let local_com = worlds[id].inverse().transform_point3(weighted / total);
-            let b = graph.nodes[id].physics.as_mut().unwrap();
-            b.mass = Some(total);
-            b.center_of_gravity = Some([local_com.x, local_com.y, local_com.z]);
-        }
-    }
+    // Pass 2.65: weigh bodies from the final post-attach/conform/skin geometry.
+    physics::weigh_bodies(&mut graph);
 
     // Pass 2.7: propagate `cast_shadow=false` down the subtree so a `group`
     // (or wrapping `use`) can opt out an entire subassembly with one flag.
@@ -494,9 +447,9 @@ pub fn lower_with_loader_lod(
     // landed on `false` during lowering, so no information is lost. The flag
     // is monotone — false stays false — which keeps the propagation order
     // insensitive to sibling traversal.
-    let roots: Vec<NodeId> = graph.roots.clone();
-    for r in roots {
-        propagate_cast_shadow(&mut graph, r, true);
+    for i in 0..graph.roots.len() {
+        let root = graph.roots[i];
+        propagate_cast_shadow(&mut graph, root, true);
     }
 
     // Pass 3: joints first (clips may reference joint names), then clips,
@@ -515,44 +468,14 @@ pub fn lower_with_loader_lod(
     Ok(graph)
 }
 
-/// Accumulate the mass and mass-weighted *world-space* centre of gravity of
-/// every mesh-bearing physics body strictly below `id`. Only own-mesh nodes
-/// contribute, so a compound group above another compound group can't
-/// double-count the leaves they share.
-fn collect_subtree_mass(
-    graph: &SceneGraph,
-    id: NodeId,
-    worlds: &[glam::Mat4],
-    total: &mut f32,
-    weighted: &mut glam::Vec3,
-) {
-    let children = graph.nodes[id.0 as usize].children.clone();
-    for c in children {
-        let node = &graph.nodes[c.0 as usize];
-        if node.mesh.is_some() {
-            if let Some(m) = node.physics.as_ref().and_then(|b| b.mass) {
-                let cog = node
-                    .physics
-                    .as_ref()
-                    .and_then(|b| b.center_of_gravity)
-                    .unwrap_or([0.0, 0.0, 0.0]);
-                let world_pt = worlds[c.0 as usize].transform_point3(glam::Vec3::from_array(cog));
-                *total += m;
-                *weighted += m * world_pt;
-            }
-        }
-        collect_subtree_mass(graph, c, worlds, total, weighted);
-    }
-}
-
 /// Walk the subtree rooted at `id` and clear `cast_shadow` on every node
 /// whose ancestor chain contains a node already opted out. `inherited` is the
 /// effective flag from the parent (`true` for root calls).
 fn propagate_cast_shadow(graph: &mut SceneGraph, id: NodeId, inherited: bool) {
     let effective = inherited && graph.nodes[id.0 as usize].cast_shadow;
     graph.nodes[id.0 as usize].cast_shadow = effective;
-    let children = graph.nodes[id.0 as usize].children.clone();
-    for c in children {
-        propagate_cast_shadow(graph, c, effective);
+    for i in 0..graph.nodes[id.0 as usize].children.len() {
+        let child = graph.nodes[id.0 as usize].children[i];
+        propagate_cast_shadow(graph, child, effective);
     }
 }

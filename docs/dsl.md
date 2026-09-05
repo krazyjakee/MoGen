@@ -118,6 +118,9 @@ Any geometry/group node accepts `lod=N`, which **multiplies** the active
 LOD scale for that node's subtree. RAII-scoped (doesn't leak into siblings)
 and compounds with the global setting. Per-primitive minimums still apply
 (`lod=0.1` won't collapse a cylinder below three sides).
+Imported geometry uses its defining file's `lod_scale` (default `1.0`), while
+all enclosing per-node `lod=` multipliers still apply across import boundaries.
+Non-positive or non-finite LOD settings are ignored.
 
 ```
 scene {
@@ -1119,7 +1122,11 @@ for props whose weight shouldn't follow from their size.
 every child without its own `phys=` inherits it and weighs itself. A group that
 carries a substance but no mesh of its own reports the **compound** weight and
 mass-weighted centre of gravity of its whole subtree, so an engine can treat the
-assembly as one rigid body. Weight units carry a dimension — a mass literal
+assembly as one rigid body. An explicit group `weight=` overrides that group's
+computed mass while retaining the geometry-derived centre of gravity. The
+weight override does not propagate to children; enclosing compounds sum the
+mesh-bearing descendants without double-counting nested groups.
+Weight units carry a dimension — a mass literal
 (`5kg`) is only valid on `weight=`; using one elsewhere (`size=[5kg,1,1]`) is a
 parse error.
 
