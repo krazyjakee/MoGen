@@ -134,7 +134,7 @@ The inspector binds the currently selected node to its attributes:
 - **Per-attribute fields** — drag-numeric inputs, vec3 spinners, colour pickers for material colours, dropdowns for enum-like attrs (`anchor`, `axis`, `alpha_mode`).
 - **Material editor** — every authored material gets a collapsing section. Edit base color, roughness, metallic, alpha mode, transmission, emissive, etc.; changes flow back to the source `material "…"` declaration via the same span-preserving edit machinery.
 - **Texture roster** — each material's texture slots show ✓ / ✗ markers based on whether the referenced PNG actually exists at the resolved path. Missing textures are visible *before* you try to build.
-- **LOD scale slider** — edits the top-level `lod_scale (value=N)` directive in place. Drag down to iterate quickly on big scenes; drag back to `1.0` and Studio removes the directive entirely so saved files stay clean.
+- **LOD scale slider** — edits the top-level `lod_scale (value=N)` directive in place. Drag down to iterate quickly on big scenes; drag back to `1.0` and Studio removes the directive entirely so saved files stay clean. Imported geometry uses its defining file's own setting; use an enclosing group's `lod=` to scale an imported subtree (see [LOD overrides](./dsl.md#per-node-lod-overrides)).
 - **Per-file export options** — `include_animations`, `include_textures`, `merge_sibling_meshes` (sticky per file).
 
 Edits made in the inspector and via gizmos are persisted into the

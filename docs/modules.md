@@ -1,7 +1,7 @@
 # MoGen module catalog
 
 Modules are parametric sub-graphs: reusable snippets of DSL that take scalar
-parameters, expand to a tree of primitives, and can expose connectors for
+or vec3 parameters, expand to a tree of primitives, and can expose connectors for
 downstream composition. The full language is documented in
 [`dsl.md`](./dsl.md); this page is a catalog of the modules shipped in the
 **stdlib** and a recipe for adding more.
@@ -28,16 +28,19 @@ Given a call `use "leg" (height=0.5)`:
    list. Unknown argument names are a hard error (catches typos).
 3. Fill declared defaults for any parameter the caller omitted.
 4. Expand the module body, substituting every `$name` with its bound
-   numeric value. `vec3`, `list`, string, or ident defaults are not
-   accepted — every parameter is scalar.
-5. Recurse: module bodies may themselves call `use`, up to a recursion-
-   depth check that prevents accidental loops.
+   scalar or vec3 value. Defaults may be scalar numbers/expressions or
+   constant vec3 values; list, string, and ident defaults are rejected.
+5. Expand nested `use` calls. Direct and indirect recursive module calls
+   are rejected.
 
 Expansion happens **before** the scene graph is built — by the time
 lowering runs, every `$name` has been replaced and every `use` node has
 been replaced with its expanded body. See
 [`dsl.md` §Modules](./dsl.md#modules-module-and-use) and
 [§Imports](./dsl.md#imports-import) for the full resolution rules.
+Imported module geometry uses its defining file's `lod_scale`, while enclosing
+`lod=` attributes still multiply through the expanded body. See the
+[LOD example](./dsl.md#per-node-lod-overrides) for nested groups and imports.
 
 ---
 
@@ -45,10 +48,10 @@ been replaced with its expanded body. See
 
 Three rules cover almost everything:
 
-1. **All parameters are scalars.** Numeric defaults are required
-   (`height=0.5`, `count=4`); `vec3` / list / string / ident defaults are
-   rejected. If you want a positioned pose, pass the three components as
-   separate scalars.
+1. **Parameters are scalars or vec3s.** Use numeric defaults
+   (`height=0.5`, `count=4`) or constant vectors (`color=[0.3,0.5,0.7]`).
+   Vec3 defaults cannot reference other parameters. List, string, and ident
+   defaults are rejected.
 
 2. **Reference parameters as `$name`** inside the body. They compose into
    expressions in any numeric attribute position — `pos=[0, $h * 0.5, 0]`,

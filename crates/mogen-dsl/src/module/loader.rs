@@ -93,7 +93,13 @@ pub trait Loader {
     /// scene using one could not be lowered there at all.
     ///
     /// `spec` is the attribute verbatim; `base_dir` is the directory of the
-    /// `.mog` being lowered — the same one `load` receives.
+    /// root `.mog` being lowered (the lowering entry point's `base_dir`).
+    ///
+    /// Lowering asks once per distinct `src` in the expanded AST, so unused
+    /// modules do not trigger loads. Successful buffers are shared for that
+    /// lowering call; each mesh instance still owns its decoded geometry.
+    /// A loader error leaves the primitive falling back to `read_glb_bytes`.
+    /// Cached bytes are discarded when the call ends, including on failure.
     ///
     /// That browser is `mogen-wasm`'s `JsLoader`, which overrides this to
     /// answer from the binary asset map the JS host already passes for

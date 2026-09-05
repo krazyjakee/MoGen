@@ -88,6 +88,28 @@ and back toward the heavy backrest). An engine can treat the group as a single
 `RigidBody3D` and the children as its collision shapes. Nested groups each sum
 their own subtree without double-counting the shared leaves.
 
+An explicit group `weight=` overrides its computed total, including when the
+override is zero. Its centre of gravity still comes from its descendants'
+masses and positions. For example:
+
+```mog
+physics "oak" (weight=700kg/m3)
+scene {
+  group "assembly" (phys="oak", weight=5kg, pos=[10,20,30], rot=[0,0,90], scale=2) {
+    group "parts" {
+      box "light" (size=[4,1,1], x=-1, weight=1kg)
+      box "heavy" (size=[4,1,1], x=3, weight=3kg)
+    }
+  }
+}
+```
+
+`assembly` weighs exactly 5 kg and has local centre of gravity `[2, 0, 0]`:
+`(-1 × 1 + 3 × 3) / (1 + 3) = 2` on X. Its placement, rotation, and scale do
+not change that local point. The inner `parts` group still weighs 4 kg. Weight
+overrides do not propagate to children, and an enclosing compound sums the
+mesh-bearing descendants rather than a nested group's overridden weight.
+
 ## Weight units
 
 Weights work exactly like [lengths](./dsl.md#length-units): append a suffix, and
@@ -124,9 +146,14 @@ node's real mesh, mogen computes:
 - **centre of gravity** = the mesh's volume centroid (centre of mass for a
   uniform-density solid), in the node's local space.
 
-Both are deterministic functions of the geometry: same source ⇒ same numbers.
-A node with `phys=` but no mesh (e.g. on a bare `group`) still exports the
-substance's feel; it just carries no computed weight or centre of gravity.
+These calculations run after attach, conform, and skin binding, using the
+final geometry and transforms. An explicit weight replaces the calculated mass;
+the centre of gravity remains geometry-derived.
+
+A node without its own mesh uses the [compound-body rules](#compound-bodies).
+If it has no contributing descendants with a positive total mass, it has no
+computed mass or centre of gravity. It still exports its substance properties
+and any explicit weight override.
 
 ## What ends up in the glTF
 
@@ -146,7 +173,10 @@ sitting alongside the existing `role` / `tags` / `collider` metadata:
 }
 ```
 
-`weight` and `center_of_gravity` are omitted when the node has no mesh to weigh.
+`weight` is emitted whenever a computed mass or an explicit override exists;
+`center_of_gravity` is emitted whenever a centroid was computed. This includes
+meshless compound groups. An empty group with `phys="oak", weight=5kg` exports
+its substance and `weight: 5`, but no `center_of_gravity`.
 A downstream importer (the companion **godot-mog**) reads this block to build a
 `RigidBody3D` + `PhysicsMaterial` with the mass and centre of mass already set —
 no hand-authoring. mogen itself stays a plain-glTF producer; the reconstruction
@@ -164,9 +194,9 @@ mass properties.
   `bounce` outside `[0, 1]`.
 - **W0102** — an unknown attribute on a `physics` block. In particular
   `density=` is *not* accepted — it's the jargon `weight=` replaces.
-- **W0215** — a node's flat `weight=` override with no `phys=` attribute on the
-  same node. Without a substance to override, the mass is never computed and
-  the number is silently dropped.
+- **W0215** — a node's flat `weight=` override with no own or inherited
+  `phys=`. Without a substance, no physics body is created and the override
+  has no effect.
 
 ## Mesh-merge
 
@@ -181,8 +211,8 @@ one uniform body), physics drops — the same way UVs drop on a mixed-UV merge.
 ## Limitations and follow-ups
 
 - **Compound bodies read own-mesh descendants.** A group's aggregate sums its
-  mesh-bearing descendants. A standalone `weight=` override on a bodiless,
-  childless node isn't counted into an ancestor's aggregate.
+  mesh-bearing descendants. Overrides on meshless groups are retained on
+  those groups but do not contribute to an ancestor's aggregate.
 - **Inertia tensor is not emitted.** Weight and centre of gravity are computed;
   a full inertia tensor for angular dynamics is a natural next step.
 - **Collision shape is separate.** Physics carries mass properties; the
