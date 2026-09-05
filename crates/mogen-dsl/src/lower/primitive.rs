@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use glam::{Mat4, Vec3};
+use std::rc::Rc;
 
 use mogen_core::{Mesh, UvMode};
 use mogen_geom::{
@@ -695,7 +696,7 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Prim
                 // every loader written before that method behaving identically.
                 let bytes = match mesh_bytes(src) {
                     Some(b) => b,
-                    None => std::rc::Rc::new(read_glb_bytes(src, base.as_deref())?),
+                    None => Rc::new(read_glb_bytes(src, base.as_deref())?),
                 };
                 mesh_from_glb_bytes(&bytes).with_context(|| format!("decoding mesh `{src}`"))
             })();
