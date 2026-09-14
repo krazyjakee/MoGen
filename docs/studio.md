@@ -38,10 +38,21 @@ open "/Applications/MoGen Studio.app"        # macOS .dmg
 # On Windows: launch from the Start menu after running the .msi installer.
 ```
 
-On first launch, Studio shows an onboarding dialog asking for a Gemini
-API key. You can skip it — every non-LLM feature still works without one
-— or paste a key in. The key is stored in the settings file and is the
-same value `GEMINI_API_KEY` would supply to the CLI.
+New Studio profiles default to OpenAI GPT-6 Astra for 3D generation.
+The welcome dialog offers **Use Codex subscription** or an OpenAI API key; you can also configure either in
+Preferences. You can skip setup and use the editor, viewer, and build without
+a key. The key is stored in the settings file and is the same value `OPENAI_API_KEY` would supply to the CLI. Gemini API-key and
+Google OAuth slots remain available in the provider dropdown, and existing
+provider selections and custom models are preserved. Texture generation uses
+its separate image-provider setting.
+
+For subscription access, install a current Codex CLI with `--ignore-user-config`
+support and run `codex login` to sign in with ChatGPT. Choose **OpenAI Codex
+(subscription)** under **Edit → Preferences → LLM**. Set the optional binary
+path if Codex is outside PATH. Both model tiers default to `gpt-6-astra` and
+can be overridden with a model available to your plan. Reference images work
+with this provider. Login and token refresh are handled by Codex; requests use
+your plan limits and have zero per-call API cost in MoGen's spending meter.
 
 ---
 
@@ -206,8 +217,8 @@ Behaviour matches the CLI:
   Options → Models. Per-modal overrides live next to the prompt field
   for one-off tuning.
 
-If `gemini_api_key` is empty in the settings, every LLM action prompts
-for a key first (the same onboarding dialog as on first launch).
+LLM actions require credentials for the selected provider, supplied in
+Preferences or through its environment variable (for example `OPENAI_API_KEY`).
 
 ---
 
@@ -250,7 +261,14 @@ path. It's safe to edit by hand — Studio reloads on next launch.
 
 | key | meaning |
 |---|---|
-| `gemini_api_key` | API key used by every LLM action. |
+| `provider_slot` | Selected provider. Empty → OpenAI. Gemini API-key and OAuth slots remain available. |
+| `codex_path` | Codex executable path. Empty → `codex` on PATH. Requires a ChatGPT login via `codex login`. |
+| `codex_model` | Codex heavy model. Empty → `gpt-6-astra`. |
+| `codex_fast_model` | Codex fast model. Empty → `gpt-6-astra`. |
+| `openai_api_key` | OpenAI API key. Falls back to `OPENAI_API_KEY`. |
+| `openai_model` | Heavy model id. Empty → `gpt-6-astra`. |
+| `openai_fast_model` | Fast model for Prompt Enhancer / Ask. Empty → `gpt-5-mini`. |
+| `gemini_api_key` | Gemini API key for the Gemini API-key slot and image generation. |
 | `gemini_model` | Heavy model id. Empty → `gemini-pro-latest`. |
 | `gemini_fast_model` | Fast model id used for low-stakes rewrites (Prompt Enhancer). Empty → `gemini-flash-latest`. |
 | `gemini_temperature` | Sampling temperature. `null` → library default (`0.3`). |
@@ -304,7 +322,7 @@ globally; egui consumes them before the menu or editor see the key.
 | shortcut | action |
 |---|---|
 | <kbd>⌘N</kbd> | New untitled tab |
-| <kbd>⌘⇧N</kbd> | New from prompt (Gemini generate) |
+| <kbd>⌘⇧N</kbd> | New from prompt (AI generate) |
 | <kbd>⌘O</kbd> | Open file… |
 | <kbd>⌘S</kbd> | Save active tab |
 | <kbd>⌘⇧S</kbd> | Save As… |

@@ -11,7 +11,7 @@ use super::{
 
 impl Settings {
     /// Resolve the persisted slot key to a [`ProviderSlot`], falling back to
-    /// [`ProviderSlot::default`] (GeminiApiKey) when the field is empty or
+    /// [`ProviderSlot::default`] (OpenAI) when the field is empty or
     /// unknown. Migration from the legacy `provider` field happens in
     /// [`Self::load`].
     pub fn provider_slot(&self) -> ProviderSlot {
@@ -37,7 +37,7 @@ impl Settings {
             ProviderSlot::OpenAI => self.openai_api_key.as_str(),
             ProviderSlot::Anthropic => self.anthropic_api_key.as_str(),
             ProviderSlot::Ollama => self.ollama_api_key.as_str(),
-            ProviderSlot::ClaudeCode => "",
+            ProviderSlot::ClaudeCode | ProviderSlot::Codex => "",
             ProviderSlot::Fireworks => self.fireworks_api_key.as_str(),
             ProviderSlot::Zai => self.zai_api_key.as_str(),
             ProviderSlot::OpenAiCompat => self.openai_compat_api_key.as_str(),
@@ -123,6 +123,7 @@ impl Settings {
         match provider {
             Provider::Gemini => &self.gemini_model,
             Provider::OpenAI => &self.openai_model,
+            Provider::Codex => &self.codex_model,
             Provider::Anthropic => &self.anthropic_model,
             Provider::Ollama => &self.ollama_model,
             Provider::Fireworks => &self.fireworks_model,
@@ -137,6 +138,7 @@ impl Settings {
         match provider {
             Provider::Gemini => &self.gemini_fast_model,
             Provider::OpenAI => &self.openai_fast_model,
+            Provider::Codex => &self.codex_fast_model,
             Provider::Anthropic => &self.anthropic_fast_model,
             Provider::Ollama => &self.ollama_fast_model,
             Provider::Fireworks => &self.fireworks_fast_model,
@@ -152,6 +154,7 @@ impl Settings {
         match provider {
             Provider::Gemini => Some(&mut self.gemini_model),
             Provider::OpenAI => Some(&mut self.openai_model),
+            Provider::Codex => Some(&mut self.codex_model),
             Provider::Anthropic => Some(&mut self.anthropic_model),
             Provider::Ollama => Some(&mut self.ollama_model),
             Provider::Fireworks => Some(&mut self.fireworks_model),
@@ -166,6 +169,7 @@ impl Settings {
         match provider {
             Provider::Gemini => Some(&mut self.gemini_fast_model),
             Provider::OpenAI => Some(&mut self.openai_fast_model),
+            Provider::Codex => Some(&mut self.codex_fast_model),
             Provider::Anthropic => Some(&mut self.anthropic_fast_model),
             Provider::Ollama => Some(&mut self.ollama_fast_model),
             Provider::Fireworks => Some(&mut self.fireworks_fast_model),
@@ -194,6 +198,26 @@ impl Settings {
     pub fn set_image_provider(&mut self, p: ImageProvider) {
         self.image_provider = p.key().to_string();
     }
+
+    /// True when any provider's API key field is non-empty, regardless of
+    /// which slot is currently selected. Used to recognise a returning user
+    /// on first launch of a new default (e.g. a pre-existing Gemini setup
+    /// from before OpenAI became the default provider) — checking only
+    /// [`Self::provider_api_key`] would miss credentials saved under a slot
+    /// that isn't the active one.
+    pub fn has_any_saved_api_key(&self) -> bool {
+        [
+            self.gemini_api_key.as_str(),
+            self.openai_api_key.as_str(),
+            self.anthropic_api_key.as_str(),
+            self.ollama_api_key.as_str(),
+            self.fireworks_api_key.as_str(),
+            self.zai_api_key.as_str(),
+            self.openai_compat_api_key.as_str(),
+        ]
+        .iter()
+        .any(|k| !k.trim().is_empty())
+    }
 }
 
 /// Bleeding-edge thinking-model id for a provider, or `None` when the
@@ -216,5 +240,78 @@ pub fn preview_fast_model(provider: Provider) -> Option<&'static str> {
     match provider {
         Provider::Gemini => Some("gemini-3-flash-preview"),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn codex_settings_round_trip_without_reusing_api_credentials() {
+        let mut settings: Settings = serde_json::from_str(r#"{"provider_slot":"codex","openai_api_key":"api-key","codex_path":"/custom/codex","codex_model":"custom-codex","codex_fast_model":"fast-codex"}"#).unwrap();
+        assert_eq!(settings.provider(), Provider::Codex);
+        assert!(settings.provider_api_key().is_none());
+        assert_eq!(settings.provider_model(), "custom-codex");
+        assert_eq!(settings.provider_fast_model(), "fast-codex");
+        *settings.thinking_model_field_mut(Provider::Codex).unwrap() = "updated".into();
+        let restored: Settings =
+            serde_json::from_str(&serde_json::to_string(&settings).unwrap()).unwrap();
+        assert_eq!(restored.provider_model(), "updated");
+        assert_eq!(restored.codex_path, "/custom/codex");
+        assert_eq!(restored.openai_api_key, "api-key");
+    }
+
+    #[test]
+    fn new_and_unconfigured_settings_use_openai_astra() {
+        for settings in [
+            Settings::default(),
+            serde_json::from_str("{}").unwrap(),
+            serde_json::from_str(
+                r#"{"provider_slot":"unknown","gemini_api_key":"saved-gemini-key"}"#,
+            )
+            .unwrap(),
+        ] {
+            assert_eq!(settings.provider_slot(), ProviderSlot::OpenAI);
+            assert_eq!(settings.provider_model(), "gpt-6-astra");
+            assert_eq!(settings.provider_fast_model(), "gpt-5-mini");
+        }
+    }
+
+    #[test]
+    fn saved_gemini_slots_and_custom_models_remain_available() {
+        for slot in ["gemini", "gemini-apikey", "gemini-oauth"] {
+            let mut settings: Settings = serde_json::from_value(
+                serde_json::json!({"provider_slot": slot, "gemini_api_key": "saved-key"}),
+            )
+            .unwrap();
+            assert_eq!(settings.provider(), Provider::Gemini);
+            if slot == "gemini-oauth" {
+                assert_eq!(settings.provider_model(), DEFAULT_OAUTH_GEMINI_MODEL);
+                assert!(settings.provider_api_key().is_none());
+            } else {
+                assert_eq!(settings.provider_model(), mogen_llm::gemini::DEFAULT_MODEL);
+                assert_eq!(settings.provider_api_key(), Some("saved-key"));
+            }
+            settings.gemini_model = "custom-gemini".into();
+            assert_eq!(settings.provider_model(), "custom-gemini");
+        }
+        let settings: Settings =
+            serde_json::from_str(r#"{"provider_slot":"openai","openai_model":"gpt-5.5"}"#).unwrap();
+        assert_eq!(settings.provider_model(), "gpt-5.5");
+    }
+
+    #[test]
+    fn has_any_saved_api_key_checks_every_provider_field() {
+        assert!(!Settings::default().has_any_saved_api_key());
+
+        let mut s = Settings::default();
+        s.anthropic_api_key = "sk-ant-...".into();
+        assert!(s.has_any_saved_api_key());
+
+        // Whitespace-only fields don't count as configured.
+        let mut s = Settings::default();
+        s.fireworks_api_key = "   ".into();
+        assert!(!s.has_any_saved_api_key());
     }
 }

@@ -79,7 +79,7 @@ impl From<StyleArg> for Style {
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub(crate) enum ProviderArg {
     /// Auto-detect Gemini credentials: flag → env → settings → gemini-cli
-    /// OAuth → Antigravity OAuth. Default. Recommended for most users.
+    /// OAuth → Antigravity OAuth. Retains the Gemini auto-auth path.
     Auto,
     /// Gemini via API key only (`GEMINI_API_KEY` env or settings.json).
     /// Skips OAuth entirely; errors if no key is available.
@@ -91,12 +91,15 @@ pub(crate) enum ProviderArg {
     /// `mogen auth login --antigravity`. Required for image generation;
     /// also valid for text gen and survives gemini-cli 403s.
     Antigravity,
+    /// OpenAI GPT-6 Astra (default). Uses `OPENAI_API_KEY` or settings.json.
     Openai,
     Anthropic,
     Ollama,
     /// Local `claude` CLI (Claude Code subscription). Auth is handled by
     /// the user's `claude /login`; no API key flag is required.
     ClaudeCode,
+    /// OpenAI Codex subscription. Run `codex login` first; no API key required.
+    Codex,
     /// Fireworks AI's OpenAI-compatible Chat Completions surface. Default
     /// model is the Fire Pass `kimi-k2p6` router; set `FIREWORKS_API_KEY`.
     Fireworks,
@@ -117,6 +120,7 @@ impl From<ProviderArg> for Provider {
             ProviderArg::Openai => Provider::OpenAI,
             ProviderArg::Anthropic => Provider::Anthropic,
             ProviderArg::Ollama => Provider::Ollama,
+            ProviderArg::Codex => Provider::Codex,
             ProviderArg::ClaudeCode => Provider::ClaudeCode,
             ProviderArg::Fireworks => Provider::Fireworks,
             ProviderArg::Zai => Provider::Zai,
@@ -137,6 +141,7 @@ impl From<ProviderArg> for crate::common::GeminiAuthMode {
             ProviderArg::Openai
             | ProviderArg::Anthropic
             | ProviderArg::Ollama
+            | ProviderArg::Codex
             | ProviderArg::ClaudeCode
             | ProviderArg::Fireworks
             | ProviderArg::Zai => GeminiAuthMode::Auto,

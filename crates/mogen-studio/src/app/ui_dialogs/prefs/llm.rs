@@ -16,7 +16,7 @@ use crate::settings::{
 use super::model_presets;
 
 /// Single grid row of the Pricing breakdown table. `tier_long = true` reads
-/// the >200k tier rates; `false` reads the headline rates. Caller is
+/// the model’s long-context tier rates; `false` reads the headline rates. Caller is
 /// responsible for `ui.end_row()`.
 fn price_grid_row(
     ui: &mut egui::Ui,
@@ -185,7 +185,19 @@ impl MogenStudioApp {
         // ── Section 3: Auth (provider-conditional) ──
         let active_slot = self.settings.provider_slot();
         let active_provider = active_slot.to_provider();
-        if matches!(active_provider, Provider::ClaudeCode) {
+        if active_provider == Provider::Codex {
+            style::framed_section(
+                ui,
+                "Codex subscription",
+                Some("Install the Codex CLI and run `codex login` in a terminal to sign in with ChatGPT. Uses your Codex plan limits; no OpenAI API key is needed. Textures use the separate image provider."),
+                |ui| {
+                    ui.label("Codex binary path (optional)");
+                    ui.add(egui::TextEdit::singleline(&mut self.settings.codex_path)
+                        .hint_text(style::placeholder("codex"))
+                        .desired_width(f32::INFINITY));
+                },
+            );
+        } else if matches!(active_provider, Provider::ClaudeCode) {
             style::framed_section(
                 ui,
                 "Claude Code binary",
@@ -262,7 +274,7 @@ impl MogenStudioApp {
                      keyless local servers. Text generation only — image \
                      generation (Textures) always uses a cloud provider.",
                 ),
-                Provider::ClaudeCode => unreachable!(),
+                Provider::ClaudeCode | Provider::Codex => unreachable!(),
             };
             style::framed_section(ui, heading, Some(hint), |ui| {
                 let key_id = egui::Id::new(("opts_api_key", active_provider.key()));
@@ -274,7 +286,7 @@ impl MogenStudioApp {
                     Provider::Fireworks => &mut self.settings.fireworks_api_key,
                     Provider::Zai => &mut self.settings.zai_api_key,
                     Provider::OpenAiCompat => &mut self.settings.openai_compat_api_key,
-                    Provider::ClaudeCode => unreachable!(),
+                    Provider::ClaudeCode | Provider::Codex => unreachable!(),
                 };
                 crate::app::text_menu::text_edit_with_menu(
                     ui,
@@ -497,7 +509,9 @@ impl MogenStudioApp {
                 let has_pricing = thinking_price.input_per_million_usd > 0.0
                     || fast_price.input_per_million_usd > 0.0;
 
-                if has_pricing {
+                if active_provider == Provider::Codex {
+                    ui.label(egui::RichText::new("Uses Codex subscription limits; no per-call API cost. Textures are billed separately.").weak());
+                } else if has_pricing {
                     // Always-visible typical cost so users see the headline
                     // figure without expanding the breakdown.
                     let typical_in = 5_000.0_f64;
@@ -559,7 +573,10 @@ impl MogenStudioApp {
                                     if thinking_price.is_tiered() {
                                         price_grid_row(
                                             ui,
-                                            "  >200k",
+                                            &format!(
+                                                "  >{}k",
+                                                thinking_price.long_context_threshold / 1000
+                                            ),
                                             &thinking_model,
                                             thinking_price,
                                             true,
@@ -576,7 +593,10 @@ impl MogenStudioApp {
                                         if fast_price.is_tiered() {
                                             price_grid_row(
                                                 ui,
-                                                "  >200k",
+                                                &format!(
+                                                    "  >{}k",
+                                                    fast_price.long_context_threshold / 1000
+                                                ),
                                                 &fast_model,
                                                 fast_price,
                                                 true,

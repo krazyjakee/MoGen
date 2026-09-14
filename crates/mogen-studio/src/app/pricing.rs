@@ -1,7 +1,7 @@
-//! Public Gemini pricing applied client-side so the studio can show a
+//! Public model pricing applied client-side so the studio can show a
 //! running cost estimate. Rates are the published US list prices for the
 //! model family and are approximate — the authoritative source is the
-//! user's Google Cloud invoice.
+//! user's provider invoice.
 //!
 //! Rates are per million tokens. Input/output counts come from the API's
 //! `usageMetadata`; `cached` is billed at a reduced rate when a
@@ -21,15 +21,16 @@ pub(super) struct TextPricing {
     pub input_per_million_usd: f64,
     pub output_per_million_usd: f64,
     pub cached_input_per_million_usd: f64,
-    /// Long-context (>200k prompt) input rate. Equal to the short-context
+    /// Long-context input rate. Equal to the short-context
     /// rate for models without a tier split.
     pub input_per_million_usd_long: f64,
     pub output_per_million_usd_long: f64,
     pub cached_input_per_million_usd_long: f64,
+    pub long_context_threshold: u32,
 }
 
 impl TextPricing {
-    /// True when the model has a separate >200k prompt tier.
+    /// True when the model has a separate long-context prompt tier.
     pub(super) fn is_tiered(&self) -> bool {
         (self.input_per_million_usd - self.input_per_million_usd_long).abs() > f64::EPSILON
     }
@@ -42,6 +43,7 @@ impl TextPricing {
             input_per_million_usd_long: input,
             output_per_million_usd_long: output,
             cached_input_per_million_usd_long: cached,
+            long_context_threshold: 0,
         }
     }
 
@@ -53,6 +55,7 @@ impl TextPricing {
             input_per_million_usd_long: long.0,
             output_per_million_usd_long: long.1,
             cached_input_per_million_usd_long: long.2,
+            long_context_threshold: LONG_CONTEXT_THRESHOLD,
         }
     }
 }
@@ -68,6 +71,19 @@ pub(super) struct ImagePricing {
 /// matchers run first so 2.5 prefix matches don't shadow them.
 pub(super) fn text_pricing(model: &str) -> TextPricing {
     let m = model.to_ascii_lowercase();
+
+    if m.starts_with("gpt-6-astra") {
+        let price = mogen_llm::spend::pricing::ASTRA_PRICING;
+        return TextPricing {
+            input_per_million_usd: price.input_per_mtok,
+            output_per_million_usd: price.output_per_mtok,
+            cached_input_per_million_usd: price.cached_input_per_mtok,
+            input_per_million_usd_long: price.input_per_mtok_long,
+            output_per_million_usd_long: price.output_per_mtok_long,
+            cached_input_per_million_usd_long: price.cached_input_per_mtok_long,
+            long_context_threshold: price.long_context_threshold,
+        };
+    }
 
     // --- Gemini 3.x (preview) — checked before 2.5 because the prefix
     // `gemini-3-…` does not match the 2.5 matchers below, but we want the
@@ -128,10 +144,11 @@ pub(super) fn image_pricing(model: &str) -> ImagePricing {
 }
 
 /// Convert usage to an estimated USD cost under the given model's prices.
-/// Once the prompt crosses [`LONG_CONTEXT_THRESHOLD`] the entire request
-/// is billed at the long-context rate, matching Google's tier behaviour.
+/// Once the prompt crosses the model’s threshold, the entire request
+/// is billed at the long-context rate.
 pub(super) fn cost_text(usage: &Usage, price: TextPricing) -> f64 {
-    let long = usage.prompt_tokens > LONG_CONTEXT_THRESHOLD;
+    let long =
+        price.long_context_threshold > 0 && usage.prompt_tokens > price.long_context_threshold;
     let (in_rate, out_rate, cache_rate) = if long {
         (
             price.input_per_million_usd_long,
@@ -185,6 +202,23 @@ pub(super) fn format_per_million(rate: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn astra_session_estimate_matches_spend_tracker() {
+        for prompt_tokens in [200_001, 272_000, 272_001] {
+            let usage = Usage {
+                prompt_tokens,
+                response_tokens: 1_000,
+                cached_tokens: 2_000,
+                ..Usage::default()
+            };
+            let expected = mogen_llm::spend::pricing::compute_cost(
+                &usage,
+                mogen_llm::spend::pricing::ASTRA_PRICING,
+            );
+            assert!((cost_text(&usage, text_pricing("gpt-6-astra")) - expected).abs() < 1e-9);
+        }
+    }
 
     #[test]
     fn pro_pricing_matches_published_rates() {
