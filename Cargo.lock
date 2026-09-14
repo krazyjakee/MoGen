@@ -2712,7 +2712,7 @@ dependencies = [
 
 [[package]]
 name = "mogen"
-version = "0.1.12"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2739,7 +2739,7 @@ dependencies = [
 
 [[package]]
 name = "mogen-anim"
-version = "0.1.12"
+version = "0.2.0"
 dependencies = [
  "glam 0.30.10",
  "mogen-core",
@@ -2747,7 +2747,7 @@ dependencies = [
 
 [[package]]
 name = "mogen-binary"
-version = "0.1.12"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "miniz_oxide",
@@ -2757,7 +2757,7 @@ dependencies = [
 
 [[package]]
 name = "mogen-core"
-version = "0.1.12"
+version = "0.2.0"
 dependencies = [
  "glam 0.30.10",
  "serde",
@@ -2766,7 +2766,7 @@ dependencies = [
 
 [[package]]
 name = "mogen-dsl"
-version = "0.1.12"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "blake3",
@@ -2782,7 +2782,7 @@ dependencies = [
 
 [[package]]
 name = "mogen-export"
-version = "0.1.12"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "fbxcel",
@@ -2801,7 +2801,7 @@ dependencies = [
 
 [[package]]
 name = "mogen-geom"
-version = "0.1.12"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "earcutr",
@@ -2814,7 +2814,7 @@ dependencies = [
 
 [[package]]
 name = "mogen-llm"
-version = "0.1.12"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2837,7 +2837,7 @@ dependencies = [
 
 [[package]]
 name = "mogen-moghub-client"
-version = "0.1.12"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "mogen-registry",
@@ -2852,7 +2852,7 @@ dependencies = [
 
 [[package]]
 name = "mogen-pascal"
-version = "0.1.12"
+version = "0.2.0"
 dependencies = [
  "mogen-core",
  "mogen-dsl",
@@ -2864,7 +2864,7 @@ dependencies = [
 
 [[package]]
 name = "mogen-registry"
-version = "0.1.12"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "mogen-core",
@@ -2876,7 +2876,7 @@ dependencies = [
 
 [[package]]
 name = "mogen-render"
-version = "0.1.12"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "glam 0.30.10",
@@ -2893,7 +2893,7 @@ dependencies = [
 
 [[package]]
 name = "mogen-studio"
-version = "0.1.12"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "arboard",
@@ -2927,7 +2927,7 @@ dependencies = [
 
 [[package]]
 name = "mogen-svg"
-version = "0.1.12"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "image",
@@ -2938,7 +2938,7 @@ dependencies = [
 
 [[package]]
 name = "mogen-update"
-version = "0.1.12"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "flate2",
@@ -2953,7 +2953,7 @@ dependencies = [
 
 [[package]]
 name = "mogen-validate"
-version = "0.1.12"
+version = "0.2.0"
 dependencies = [
  "codespan-reporting 0.12.0",
  "mogen-core",
@@ -2964,7 +2964,7 @@ dependencies = [
 
 [[package]]
 name = "mogen-wasm"
-version = "0.1.12"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "console_error_panic_hook",
