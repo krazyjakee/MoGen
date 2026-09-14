@@ -128,6 +128,7 @@ impl ClaudeCodeClient {
 
         cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
 
+        crate::session::configure_child(&mut cmd);
         let mut child = cmd.spawn().map_err(|e| ClaudeCodeError::SpawnFailed {
             path: self.path.clone(),
             source: e,

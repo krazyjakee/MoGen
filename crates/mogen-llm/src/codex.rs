@@ -96,6 +96,7 @@ impl CodexClient {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        crate::session::configure_child(&mut cmd);
         let mut child = cmd.spawn().map_err(|e| ProviderError::Transport(format!(
             "could not start Codex ({:?}): {e}. Install the Codex CLI and run `codex login` with ChatGPT.", self.path
         )))?;

@@ -216,7 +216,7 @@ pub fn revision(source: &str, dependencies: &BTreeMap<PathBuf, Vec<u8>>) -> Stri
     }
     identity(&bytes)
 }
-/// Capture only dependencies referenced by the source; imports stay inside the project.
+/// Capture referenced source, textures and binary meshes inside the project.
 /// Files are read-only during AI sessions, so restoring a source never rewrites another asset.
 pub fn dependencies(source: &str, base: Option<&Path>) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
     fn visit(
@@ -233,8 +233,10 @@ pub fn dependencies(source: &str, base: Option<&Path>) -> Result<BTreeMap<PathBu
                     }
                 }
                 for (key, value) in &n.attrs {
-                    if key.contains("texture") {
-                        if let mogen_dsl::ast::Value::String(p) = value {
+                    if key.contains("texture") || (n.kind == "mesh" && key == "src") {
+                        if let mogen_dsl::ast::Value::String(p)
+                        | mogen_dsl::ast::Value::Ident(p) = value
+                        {
                             paths.push((p.clone(), false));
                         }
                     }
@@ -307,8 +309,16 @@ impl Candidate {
             }
             std::fs::write(target, bytes)?;
         }
-        std::fs::write(temp.path().join("restored.mog"), &self.source)?;
+        // Imported assets may already use the conventional entry-point name.
+        // Preserve them and choose an unused root-level source filename.
+        let mut entry = PathBuf::from("restored.mog");
+        let mut suffix = 1;
+        while temp.path().join(&entry).exists() {
+            entry = PathBuf::from(format!("restored-{suffix}.mog"));
+            suffix += 1;
+        }
+        std::fs::write(temp.path().join(&entry), &self.source)?;
         std::fs::rename(temp.path(), destination)?;
-        Ok(destination.join("restored.mog"))
+        Ok(destination.join(entry))
     }
 }

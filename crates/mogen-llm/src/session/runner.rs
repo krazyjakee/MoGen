@@ -29,7 +29,7 @@ struct Review {
 }
 fn captures(
     renderer: &mut dyn SessionRenderer,
-    source: &str,
+    workspace: &ModelingWorkspace,
     revision: &str,
     cfg: &GenerateConfig,
 ) -> Result<Vec<RenderedView>> {
@@ -38,10 +38,13 @@ fn captures(
         if let Some(c) = &cfg.session_control {
             c.check().map_err(anyhow::Error::msg)?;
         }
+        workspace.check_revision(revision)?;
+        let image = renderer.render(&workspace.source, revision, view)?;
+        workspace.check_revision(revision)?;
         views.push(RenderedView {
             label: view.label().into(),
             revision: revision.into(),
-            image: renderer.render(source, revision, view)?,
+            image,
         });
     }
     Ok(views)
@@ -62,7 +65,8 @@ pub fn tool_session(
     ));
     cfg.history.clear();
     cfg.user_prompt = format!(
-        "{instruction}\nCurrent revision: {}\nSource:\n{}",
+        "Modeling request and original target context:\n{}\n\nCurrent correction (use the source below):\n{instruction}\nCurrent revision: {}\nSource:\n{}",
+        base.user_prompt,
         workspace.revision()?,
         workspace.source
     );
@@ -102,6 +106,7 @@ pub fn tool_session(
                     } else {
                         renderer.render(&workspace.source, &revision, view)?
                     };
+                    workspace.check_revision(&revision)?;
                     // Replace previous tool render, retaining original references.
                     cfg.user_images = base.user_images.clone();
                     cfg.user_images.push(image);
@@ -172,8 +177,10 @@ pub fn refine_session(
             if let Some(c) = &cfg.session_control {
                 c.check().map_err(anyhow::Error::msg)?;
             }
-            let rev = workspace.revision()?;
-            let views = captures(renderer, &workspace.source, &rev, cfg)?;
+            // The saved candidate owns the revision. Rehashing live files here
+            // could silently label changed dependencies as the saved snapshot.
+            let rev = project.candidates[candidate].revision.clone();
+            let views = captures(renderer, &workspace, &rev, cfg)?;
             project.candidates[candidate].views = views.clone();
             let mut review_cfg = cfg.clone();
             review_cfg.cached_content = None;
@@ -194,6 +201,7 @@ pub fn refine_session(
                 );
             }
             let response = call(&review_cfg)?;
+            workspace.check_revision(&rev)?;
             let review: Review =
                 serde_json::from_str(&crate::repair::strip_markdown_fences(&response.text))?;
             project.candidates[candidate].findings = review.findings.clone();

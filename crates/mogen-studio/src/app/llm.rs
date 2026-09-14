@@ -208,6 +208,10 @@ impl MogenStudioApp {
         if let Some(control) = &f.modeling_control {
             control.cancel();
         }
+        // The dropped receiver can no longer consume these guards. Keeping
+        // them would apply the cancelled run's checks to a later texture job.
+        f.modeling_baseline = None;
+        f.modeling_dependency_revision = None;
         f.llm_rx = None;
         f.llm_in_flight = None;
         f.llm_progress = None;

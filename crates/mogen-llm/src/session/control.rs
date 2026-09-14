@@ -179,8 +179,39 @@ impl SessionControl {
     }
 }
 
+/// Isolate CLI launchers and their descendants so cancellation can stop the
+/// actual provider process, even when the executable is a wrapper script.
+pub fn configure_child(command: &mut std::process::Command) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    #[cfg(not(unix))]
+    let _ = command;
+}
+
+fn terminate_child(child: &mut std::process::Child) {
+    #[cfg(unix)]
+    // configure_child creates a fresh group whose ID is the launcher's PID.
+    // A negative PID targets only that group, including inherited pipe owners.
+    unsafe {
+        libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL);
+    }
+    #[cfg(windows)]
+    {
+        let _ = std::process::Command::new("taskkill")
+            .args(["/PID", &child.id().to_string(), "/T", "/F"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+    let _ = child.kill();
+}
+
 /// Drain both pipes while observing cancellation/deadline, then reap the child.
 /// The provider adapter remains responsible for decoding any reported usage.
+/// Call `configure_child` before spawning to enable process-tree cancellation.
 pub fn wait_for_child(
     mut child: std::process::Child,
     control: Option<&SessionControl>,
@@ -204,7 +235,7 @@ pub fn wait_for_child(
     });
     let status = loop {
         if control.is_some_and(|c| c.check().is_err()) {
-            let _ = child.kill();
+            terminate_child(&mut child);
             break child.wait()?;
         }
         if let Some(status) = child.try_wait()? {
@@ -212,6 +243,14 @@ pub fn wait_for_child(
         }
         std::thread::sleep(Duration::from_millis(50));
     };
+    // A launcher may exit before the provider. Continue observing the control
+    // while descendants hold stdout/stderr open instead of blocking in join.
+    while !out.is_finished() || !err.is_finished() {
+        if control.is_some_and(|c| c.check().is_err()) {
+            terminate_child(&mut child);
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
     Ok(std::process::Output {
         status,
         stdout: out

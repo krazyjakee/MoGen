@@ -44,7 +44,8 @@ later candidate does not automatically replace an earlier one. **Compare** shows
 matching views and **Restore / Keep** integrates with undo/redo. If dependencies
 have changed externally, **Restore as copy** writes a complete snapshot to a new
 `.modeling-revisions` directory, preserving existing project assets; open the
-reported `restored.mog` path to continue from it.
+reported source path to continue from it (`restored.mog`, or a numbered filename
+when that name is already used by a dependency).
 
 Saved files keep a versioned `<file>.mog.modeling.json` sidecar. Unsaved sessions
 checkpoint under `~/.mogen/modeling-recovery/`; open the recovered `.mog` to

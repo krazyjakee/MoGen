@@ -181,22 +181,106 @@ fn scripted_tool_sequence_inspects_edits_compiles_renders_and_corrects_again() {
         json!({"tool":"finish","revision":rev(&last),"findings":"arm thickness corrected"}),
     ];
     let mut calls = sequence.into_iter();
-    let mut model = |_: &GenerateConfig| Ok(response(calls.next().unwrap().to_string()));
+    let mut model = |cfg: &GenerateConfig| {
+        let initial_prompt = cfg.history.first().map_or(&cfg.user_prompt, |t| &t.text);
+        assert!(initial_prompt.contains("Original target: carved chair"));
+        assert!(initial_prompt.contains("Dimensions/units: one metre wide"));
+        assert!(initial_prompt.contains("thicken arm"));
+        assert_eq!(cfg.user_images[0].data, vec![1, 2, 3]);
+        Ok(response(calls.next().unwrap().to_string()))
+    };
     let mut w = ModelingWorkspace::new(ORIGINAL.into(), None, vec![], None).unwrap();
     let mut renderer = Renderer {
         seen: vec![],
         fail: false,
     };
-    tool_session(
-        &mut w,
-        &GenerateConfig::new("chair"),
-        "thicken arm",
-        &mut model,
-        &mut renderer,
-    )
-    .unwrap();
+    let mut cfg = GenerateConfig::new("chair");
+    let mut brief = ModelingBrief {
+        prompt: "carved chair".into(),
+        dimensions: "one metre wide".into(),
+        ..Default::default()
+    };
+    brief.add_reference(
+        "target".into(),
+        ImageInput {
+            mime_type: "image/png".into(),
+            data: vec![1, 2, 3],
+        },
+    );
+    brief.attach(&mut cfg).unwrap();
+    tool_session(&mut w, &cfg, "thicken arm", &mut model, &mut renderer).unwrap();
     assert_eq!(w.source, last);
     assert_eq!(renderer.seen, vec![(rev(&next), View::Back)]);
+}
+
+#[test]
+fn refinement_rejects_dependency_changes_during_capture_or_review() {
+    struct ChangingRenderer {
+        path: std::path::PathBuf,
+        change_during_render: bool,
+        renders: usize,
+    }
+    impl SessionRenderer for ChangingRenderer {
+        fn render(&mut self, _: &str, _: &str, _: View) -> anyhow::Result<ImageInput> {
+            self.renders += 1;
+            if self.change_during_render && self.renders == 3 {
+                std::fs::write(
+                    &self.path,
+                    "module \"chair\" () { sphere \"seat\" (radius=1) }",
+                )?;
+            }
+            Ok(ImageInput {
+                mime_type: "image/png".into(),
+                data: vec![1],
+            })
+        }
+    }
+    for during_render in [true, false] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("chair.mog");
+        let module = "module \"chair\" () { box \"seat\" (size=[1,1,1]) }";
+        std::fs::write(&path, module).unwrap();
+        let source = "import \"chair.mog\"\nscene { use \"chair\" () }";
+        let mut project = ModelingProject::default();
+        let mut reviews = 0;
+        let mut model = |_: &GenerateConfig| {
+            reviews += 1;
+            std::fs::write(&path, "module \"chair\" () { sphere \"seat\" (radius=1) }")?;
+            Ok(response(
+                json!({"findings":"complete","complete":true,"improved":true,"correction":""})
+                    .to_string(),
+            ))
+        };
+        let result = refine_session(
+            &mut project,
+            source,
+            Some(dir.path()),
+            &GenerateConfig::new("chair"),
+            "fixture",
+            &mut model,
+            &mut ChangingRenderer {
+                path: path.clone(),
+                change_during_render: during_render,
+                renders: 0,
+            },
+            &mut |_| {},
+        )
+        .unwrap();
+        assert_eq!(result, source);
+        assert_eq!(reviews, if during_render { 0 } else { 1 });
+        assert!(project
+            .stop_reason
+            .contains("Stale source/dependency revision"));
+        let candidate = &project.candidates[0];
+        assert_eq!(
+            candidate.dependencies[std::path::Path::new("chair.mog")],
+            module.as_bytes()
+        );
+        assert_eq!(candidate.views.len(), if during_render { 0 } else { 5 });
+        assert!(candidate.findings.contains("awaiting visual review"));
+        project.save(&dir.path().join("scene.mog")).unwrap();
+        ModelingProject::load(&dir.path().join("scene.mog")).unwrap();
+    }
 }
 #[test]
 fn tool_errors_return_to_model_without_mutating_source() {
@@ -385,6 +469,90 @@ fn recover_dependency_snapshot_without_overwriting_current_project() {
         module
     );
 }
+
+#[test]
+fn recovery_preserves_dependencies_named_like_the_entry_point() {
+    let dir = tempfile::tempdir().unwrap();
+    let module = "module \"chair\" () { box \"seat\" (size=[1,1,1]) }";
+    std::fs::write(dir.path().join("restored.mog"), module).unwrap();
+    std::fs::create_dir(dir.path().join("restored-1.mog")).unwrap();
+    std::fs::write(
+        dir.path().join("restored-1.mog/other.mog"),
+        "module \"other\" () {}",
+    )
+    .unwrap();
+    let source =
+        "import \"restored.mog\"\nimport \"restored-1.mog/other.mog\"\nscene { use \"chair\" () }";
+    let mut project = ModelingProject::default();
+    let i = project
+        .record(
+            source.into(),
+            Some(dir.path()),
+            &GenerateConfig::new("chair"),
+            "fixture",
+            "valid".into(),
+            vec![],
+        )
+        .unwrap();
+    let destination = dir.path().join("copy");
+    let entry = project.candidates[i].restore_copy(&destination).unwrap();
+    assert_eq!(entry, destination.join("restored-2.mog"));
+    assert_eq!(
+        std::fs::read_to_string(destination.join("restored.mog")).unwrap(),
+        module
+    );
+    let recovered = std::fs::read_to_string(entry).unwrap();
+    assert_eq!(
+        dependencies(&recovered, Some(&destination)).unwrap(),
+        project.candidates[i].dependencies
+    );
+    compile(&recovered, Some(&destination)).unwrap();
+}
+
+#[test]
+fn binary_mesh_dependencies_are_scoped_snapshotted_and_revision_checked() {
+    let dir = tempfile::tempdir().unwrap();
+    let project_dir = dir.path().join("project");
+    std::fs::create_dir(&project_dir).unwrap();
+    std::fs::write(project_dir.join("part.glb"), b"original mesh bytes").unwrap();
+    std::fs::write(project_dir.join("albedo"), b"texture bytes").unwrap();
+    let source = "material \"surface\" (base_color_texture=albedo)\nscene { mesh \"part\" (src=\"part.glb\") }";
+    let workspace =
+        ModelingWorkspace::new(source.into(), Some(project_dir.clone()), vec![], None).unwrap();
+    let expected = workspace.revision().unwrap();
+    let mut project = ModelingProject::default();
+    let i = project
+        .record(
+            source.into(),
+            Some(&project_dir),
+            &GenerateConfig::new("part"),
+            "fixture",
+            "snapshot".into(),
+            vec![],
+        )
+        .unwrap();
+    let candidate = &project.candidates[i];
+    assert_eq!(candidate.dependencies.len(), 2);
+    assert_eq!(
+        candidate.dependencies[std::path::Path::new("part.glb")],
+        b"original mesh bytes"
+    );
+    std::fs::write(project_dir.join("part.glb"), b"external edit").unwrap();
+    assert!(workspace.check_revision(&expected).is_err());
+    let destination = dir.path().join("recovered");
+    candidate.restore_copy(&destination).unwrap();
+    assert_eq!(
+        std::fs::read(destination.join("part.glb")).unwrap(),
+        b"original mesh bytes"
+    );
+    std::fs::write(dir.path().join("outside.glb"), b"outside project").unwrap();
+    let error = compile(
+        "scene { mesh \"part\" (src=\"../outside.glb\") }",
+        Some(&project_dir),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("outside the modeling project"));
+}
 #[test]
 fn six_quality_targets_compile_and_techniques_are_retrievable() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../benches/quality");
@@ -449,6 +617,34 @@ fn cancellation_during_request_records_usage_and_prevents_repairs() {
     thread.join().unwrap();
     assert_eq!(c.meter().calls, 1);
     assert_eq!(c.meter().usage.total_tokens, 30);
+}
+
+#[cfg(unix)]
+#[test]
+fn cancellation_stops_cli_descendants_even_after_launcher_exits() {
+    use std::process::{Command, Stdio};
+    for script in ["sleep 3 & wait", "sleep 3 &"] {
+        let mut command = Command::new("sh");
+        command
+            .args(["-c", script])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        configure_child(&mut command);
+        let child = command.spawn().unwrap();
+        let control = SessionControl::new(Default::default());
+        let cancel = control.clone();
+        let started = std::time::Instant::now();
+        let worker = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(150));
+            cancel.cancel();
+        });
+        wait_for_child(child, Some(&control)).unwrap();
+        worker.join().unwrap();
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "CLI descendant kept its output pipes open after cancellation"
+        );
+    }
 }
 
 #[test]
