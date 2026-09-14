@@ -2057,3 +2057,27 @@ right inspector exposes the toggle under **Shadow**.
 - `mogen inspect <file>.glb` reads back a GLB and prints its top-level structure.
 
 See [`ROADMAP.md`](./ROADMAP.md) §8 for the full diagnostic catalog.
+
+
+## Scalar arrays and coordinate lists
+
+`radii`, `widths`, sweep `roll`/`scale_along`, and loft `heights` accept numeric
+arrays of any legitimate length, including exactly three values. Three-number
+literals retain their vector parser representation; the attribute's semantic
+type decides whether they are a vector or a scalar array. `pos`, `rot`, `size`
+and nested coordinate/profile lists retain their dimensional rules.
+
+For radii, widths, roll and scale, supply one constant value or exactly one
+value per control point. Values interpolate linearly between control points
+along the existing spline parameter (not physical arc length). Loft heights
+supply at least two finite section heights; section points are flat-packed
+in the same order. Radii, widths and scale must be finite and nonnegative;
+zero permits an intentional tapered endpoint. Roll is in degrees and can be
+negative. Empty/mismatched arrays report expected and actual counts (E0112);
+invalid values report E0113; malformed coordinate dimensions report E0114.
+Previous files relying on silently truncated/repeated mismatched values must
+supply an explicit constant or matching array.
+
+Scalar expressions and module parameters inside arrays are resolved before
+lowering applies the same checks. See
+[three_value_arrays.mog](../examples/features/three_value_arrays.mog).

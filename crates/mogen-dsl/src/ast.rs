@@ -200,9 +200,12 @@ impl Node {
         }
     }
 
+    /// Resolved scalar array, including the parser's three-number Vec3 form.
+    /// Coordinate/profile consumers must use the dimensional accessors below.
     pub fn attr_list(&self, key: &str) -> Option<&[f32]> {
         match self.attr(key)? {
             Value::List(v) => Some(v.as_slice()),
+            Value::Vec3(v) => Some(v.as_slice()),
             _ => None,
         }
     }

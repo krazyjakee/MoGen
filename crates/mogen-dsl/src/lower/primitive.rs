@@ -78,6 +78,10 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Prim
     // melted shape doesn't read as low-poly. Only the default branch
     // multiplies by `dd` — an author-supplied `segments=` is taken at face
     // value (they already chose the density they want).
+    let diagnostics = crate::numeric_arrays::validate(node);
+    if !diagnostics.is_empty() {
+        return Some(Err(anyhow!("{}", serde_json::to_string(&diagnostics).unwrap())));
+    }
     let dd = deform_density(node);
     // Resolve a tessellation count: explicit author value if present,
     // otherwise the default × `dd`. Either way, the active LOD scale
@@ -408,18 +412,11 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Prim
             // `radii` (per-point list) takes precedence; else fall back to
             // scalar `radius`. One of the two is required so the author
             // can't accidentally request a metaball with no radii.
-            // The grammar parses 3-element lists as `Vec3`, so accept that
-            // shape too — same fallback `loft.heights` uses.
-            let radii: Vec<f32> = match node.attr("radii") {
-                Some(crate::ast::Value::List(v)) => v.to_vec(),
-                Some(crate::ast::Value::Vec3(v)) => v.to_vec(),
-                _ => match node.attr_number("radius") {
+            let radii = match node.attr_list("radii") {
+                Some(values) => values.to_vec(),
+                None => match node.attr_number("radius") {
                     Some(r) => vec![r],
-                    None => {
-                        return Some(Err(anyhow!(
-                            "`metaball` requires either a scalar `radius=` or a per-point `radii=[…]`",
-                        )));
-                    }
+                    None => return Some(Err(anyhow!("`metaball` requires radius= or radii=[…]"))),
                 },
             };
             let blend = node.attr_number("blend").unwrap_or(0.0);
@@ -636,14 +633,7 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Prim
             // points must be a multiple of `heights.len()` and the per-
             // section vertex count must be ≥ 3.
             let all_points = node.attr_list_pair("points").unwrap_or_default();
-            let heights: Vec<f32> = match node.attr("heights") {
-                Some(crate::ast::Value::List(v)) => v.to_vec(),
-                // 3-element heights parse as Vec3 (grammar prefers vec3
-                // over list when arity matches), so honour that shape too.
-                Some(crate::ast::Value::Vec3(v)) => v.to_vec(),
-                Some(crate::ast::Value::Number(n)) => vec![*n],
-                _ => Vec::new(),
-            };
+            let heights = node.attr_list("heights").unwrap_or_default().to_vec();
             if heights.len() < 2 {
                 return Some(Err(anyhow!(
                     "`loft` requires at least 2 entries in `heights=`, got {}",
