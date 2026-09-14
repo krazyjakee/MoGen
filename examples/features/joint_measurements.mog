@@ -1,0 +1,12 @@
+// Requested pair measurements; independent demonstrations intentionally float.
+scene (tags="floating") {
+  box "foot" (size=[0.2,0.04,0.2],pos=[0,0.02,0])
+  box "leg" (size=[0.06,0.4,0.06],pos=[0,0.25,0])
+  box "touch_a" (size=[0.2,0.2,0.2],pos=[0.5,0.1,0])
+  box "touch_b" (size=[0.2,0.2,0.2],pos=[0.5,0.3,0])
+  box "rail" (size=[0.3,0.1,0.2],pos=[1,0.5,0])
+  box "tenon" (size=[0.08,0.3,0.08],pos=[1,0.2,0])
+  sphere "curved_a" (radius=0.5,pos=[2,0.5,0])
+  sphere "curved_b" (radius=0.5,pos=[2.8,1.3,0])
+}
+relate (child="tenon",target="rail",mode="align",plug="top",socket="bottom",insertion=0.02)

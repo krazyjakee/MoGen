@@ -42,3 +42,6 @@ pub use shader::{ShaderDecl, ShaderParamDef, ShaderParamType, ShaderParamValue};
 pub use skin::{Skin, SkinId};
 pub use transform::Transform;
 pub use views::{asset_front_yaw, AssetView, CAMERA_CONVENTION_VERSION};
+
+pub mod measurement;
+pub use measurement::{world_part_measurements, relationship_measurements, PartMeasurement, RelationshipMeasurement, SurfaceDistance};

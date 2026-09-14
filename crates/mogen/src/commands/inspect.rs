@@ -70,6 +70,20 @@ pub(crate) fn dump_scene(input: PathBuf, as_json: bool) -> Result<()> {
 }
 
 pub(crate) fn inspect(input: PathBuf) -> Result<()> {
+    if input.extension().is_some_and(|e| e == "mog") {
+        let input = input.canonicalize()?;
+        let workspace = mogen_llm::session::ModelingWorkspace::new(
+            fs::read_to_string(&input)?,
+            input.parent().map(|p| p.to_owned()),
+            Vec::new(),
+            None,
+        )?;
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&workspace.inspect(None)?)?
+        );
+        return Ok(());
+    }
     let data = fs::read(&input).with_context(|| format!("reading {}", input.display()))?;
     if data.len() < 12 || u32::from_le_bytes(data[0..4].try_into().unwrap()) != 0x46546C67 {
         return Err(anyhow!("not a GLB file: {}", input.display()));
@@ -98,5 +112,26 @@ pub(crate) fn inspect(input: PathBuf) -> Result<()> {
         }
         off += chunk_len;
     }
+    Ok(())
+}
+
+pub(crate) fn measure(
+    input: PathBuf,
+    first: String,
+    second: String,
+    tolerance: f64,
+    max_work: usize,
+) -> Result<()> {
+    let input = input.canonicalize()?;
+    let source = fs::read_to_string(&input)?;
+    let workspace = mogen_llm::session::ModelingWorkspace::new(
+        source,
+        input.parent().map(|p| p.to_owned()),
+        Vec::new(),
+        None,
+    )?;
+    let revision = workspace.revision()?;
+    let result = workspace.measure(&revision, &first, &second, Some(tolerance), Some(max_work))?;
+    println!("{}", serde_json::to_string_pretty(&result)?);
     Ok(())
 }

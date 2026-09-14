@@ -676,3 +676,65 @@ fn guided_details_respect_dependent_geometry_locks() {
     let locks = vec![PartLock { name: "welt".into(), kind: LockKind::Geometry }];
     assert!(enforce_locks(source, &changed, &locks, None).unwrap_err().to_string().contains("locked"));
 }
+
+#[test]
+fn measurements_report_broken_joints_and_serialize_revision() {
+    let source = "scene { box \"foot\" (size=[0.2,0.04,0.2],pos=[0,0.02,0]) box \"leg\" (size=[0.06,0.4,0.06],pos=[0,0.25,0]) }";
+    let mut w=ModelingWorkspace::new(source.into(),None,vec![],None).unwrap();
+    let r=w.revision().unwrap();
+    let m=w.measure(&r,"foot","leg",Some(0.002),None).unwrap();
+    assert_eq!(m["units"],"m");
+    assert_eq!(m["surface"]["status"],"separated");
+    assert!((m["surface"]["distance"].as_f64().unwrap()-0.01).abs()<1e-6);
+    let restored:serde_json::Value=serde_json::from_str(&serde_json::to_string(&m).unwrap()).unwrap();
+    assert_eq!(restored["revision"],r);
+    assert!(w.inspect(None).unwrap()["diagnostics"].as_array().unwrap().iter().any(|d|d["code"]=="E1101"));
+    w.source=source.replace("pos=[0,0.25,0]","pos=[0,0.24,0]");
+    assert!(w.measure(&r,"foot","leg",None,None).is_err());
+    let m=w.measure(&w.revision().unwrap(),"foot","leg",None,None).unwrap();
+    assert_eq!(m["surface"]["status"],"within_tolerance");
+}
+
+#[test]
+fn measurements_recheck_module_relationships_and_world_transforms() {
+    let source = "module \"joint\" () { box \"rail\" (size=[0.3,0.1,0.2],pos=[0,0.5,0]) box \"tenon\" (size=[0.08,0.3,0.08]) relate (child=\"tenon\",target=\"rail\",mode=\"align\",plug=\"top\",socket=\"bottom\",insertion=0.02) } scene { use \"joint\" (pos=[2,0,0],rot=[0,30,0]) }";
+    for input in [source.to_owned(),source.replace("pos=[0,0.5,0]","pos=[0,0.8,0]")] {
+        let w=ModelingWorkspace::new(input.clone(),None,vec![],None).unwrap();
+        let m=w.measure(&w.revision().unwrap(),"tenon","rail",None,None).unwrap();
+        assert_eq!(m["relationship_checks"][0]["intent"],"intentional_insertion");
+        assert_eq!(m["relationship_checks"][0]["satisfied"],true);
+        let mut scene=compile(&input,None).unwrap();
+        let child=scene.relationships[0].child;
+        scene.nodes[child.0 as usize].transform.translation.y+=0.1;
+        assert!(!mogen_core::relationship_measurements(&scene)[0].satisfied);
+    }
+}
+
+#[test]
+fn fit_fixture_covers_curved_separation_and_grounding_edits() {
+    let source=include_str!("../../../../examples/features/joint_measurements.mog");
+    let w=ModelingWorkspace::new(source.into(),None,vec![],None).unwrap();
+    let m=w.measure(&w.revision().unwrap(),"curved_a","curved_b",None,None).unwrap();
+    assert_eq!(m["surface"]["status"],"separated");
+    let source=include_str!("../../../../examples/furniture/relational_chair.mog");
+    let mut scene=compile(source,None).unwrap();
+    let r=scene.relationships.iter().find(|r|r.mode=="ground").unwrap().clone();
+    assert!(mogen_core::relationship_measurements(&scene).iter().filter(|r|r.mode=="ground").all(|r|r.satisfied));
+    scene.nodes[r.child.0 as usize].transform.translation.y+=0.01;
+    let child_name=scene.get(r.child).name.clone();
+    assert!(mogen_core::relationship_measurements(&scene).iter().any(|r|r.child==child_name && !r.satisfied));
+}
+
+#[test]
+fn measurements_reject_changed_imports() {
+    let dir=tempfile::tempdir().unwrap();
+    let module="module \"joint\" () { box \"a\" () box \"b\" (pos=[0,1,0]) }";
+    std::fs::write(dir.path().join("joint.mog"),module).unwrap();
+    let source="import \"joint.mog\"\nscene { use \"joint\" () }";
+    let w=ModelingWorkspace::new(source.into(),Some(dir.path().into()),vec![],None).unwrap();
+    let old=w.revision().unwrap();
+    let result=w.measure(&old,"a","b",None,None).unwrap();
+    assert_eq!(result["revision"],old);
+    std::fs::write(dir.path().join("joint.mog"),module.replace("0,1,0","0,2,0")).unwrap();
+    assert!(w.measure(&old,"a","b",None,None).is_err());
+}

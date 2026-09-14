@@ -216,6 +216,17 @@ struct InputOnly {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct MeasureArgs {
+    input: PathBuf,
+    first: String,
+    second: String,
+    /// Contact tolerance in metres, default 0.002.
+    tolerance: Option<f64>,
+    /// Maximum tree visits plus triangle tests, default 100000.
+    max_work: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct CheckArgs {
     /// Path to the `.mog` source.
     input: PathBuf,
@@ -606,13 +617,21 @@ impl MogenMcp {
         run_mogen(args).await
     }
 
-    #[tool(description = "Read a .glb file and print its structure (chunks, accessors, meshes, \
+    #[tool(description = "Inspect .mog world bounds, dimensions, grounding and authored relationships, or read .glb structure (chunks, accessors, meshes, \
         materials, animations, skins).")]
     async fn inspect(
         &self,
         Parameters(p): Parameters<InputOnly>,
     ) -> Result<CallToolResult, McpError> {
         run_mogen(vec!["inspect".to_string(), p.input.to_string_lossy().into_owned()]).await
+    }
+
+    #[tool(description = "Measure world triangle-surface distance between named .mog parts. Returns revision, metres, closest points, tolerance, evidence and budget limits. AABB overlap is not proof of contact.")]
+    async fn measure(&self, Parameters(p): Parameters<MeasureArgs>) -> Result<CallToolResult, McpError> {
+        let mut args = vec!["measure".into(), p.input.to_string_lossy().into_owned(), "--first".into(), p.first, "--second".into(), p.second];
+        if let Some(t) = p.tolerance { args.extend(["--tolerance".into(), t.to_string()]); }
+        if let Some(w) = p.max_work { args.extend(["--max-work".into(), w.to_string()]); }
+        run_mogen(args).await
     }
 
     #[tool(description = "Render a PNG preview of a .mog via the headless GL pipeline. Suitable \

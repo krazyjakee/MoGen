@@ -48,6 +48,9 @@ struct Task {
     prompt: String,
     required: Vec<String>,
     max_extent: [f32; 3],
+    /// Optional, bounded surface measurements; no aesthetic pass/fail threshold.
+    #[serde(default)]
+    measure_pairs: Vec<[String; 2]>,
 }
 struct Renderer {
     base: PathBuf,
@@ -148,6 +151,8 @@ fn render_png(
 }
 
 fn asset_checks(source: &str, base: &Path, task: &Task) -> Result<serde_json::Value> {
+    let snapshot = dependencies(source, Some(base))?;
+    let source_revision = revision(source, &snapshot);
     let scene = match compile(source, Some(base)) {
         Ok(scene) => scene,
         Err(error) => {
@@ -185,9 +190,24 @@ fn asset_checks(source: &str, base: &Path, task: &Task) -> Result<serde_json::Va
     let extent = [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
     let finite = extent.iter().all(|v| v.is_finite());
     let dimensions_ok = finite && extent.iter().zip(task.max_extent).all(|(a, b)| *a <= b);
+    let relationship_checks = mogen_core::relationship_measurements(&scene);
+    let constraints_ok = relationship_checks.iter().all(|r|r.satisfied);
+    let mut surface_measurements = Vec::new();
+    if task.measure_pairs.len() > 16 { bail!("quality task permits at most 16 requested measurement pairs"); }
+    for [first, second] in &task.measure_pairs {
+        let find = |name: &str| -> Result<mogen_core::NodeId> {
+            let matches: Vec<_> = scene.nodes.iter().enumerate().filter(|(_,n)|n.name==name).collect();
+            if matches.len()!=1 { bail!("Measurement part {name:?} is missing or ambiguous"); }
+            Ok(mogen_core::NodeId(matches[0].0 as u32))
+        };
+        let result = mogen_geom::measure::measure_surfaces(&scene, find(first)?, find(second)?, Default::default())?;
+        surface_measurements.push(json!({"first":first,"second":second,"surface":result}));
+    }
+    if dependencies(source, Some(base))? != snapshot { bail!("Dependencies changed during measurement; retry evaluation"); }
     Ok(
         json!({"compiles":true,"mesh_contract":{"pass":true,"diagnostics":contract},"finite":finite,"missing_parts":missing,"extent":extent,"dimensions_ok":dimensions_ok,
-        "asset_pass":missing.is_empty()&&dimensions_ok,"framing_radius":mesh.radius,"visual_quality":"requires blinded human review"}),
+        "asset_pass":missing.is_empty()&&dimensions_ok&&constraints_ok,
+        "measurements":{"revision":source_revision,"units":"m","space":"world","ground_plane":"Y=0","parts":mogen_core::world_part_measurements(&scene),"relationships":relationship_checks,"constraints_ok":constraints_ok,"surface_pairs":surface_measurements,"evidence":"static tessellated geometry; unsigned distance does not infer penetration or aesthetic fit"},"framing_radius":mesh.radius,"visual_quality":"requires blinded human review"}),
     )
 }
 fn main() -> Result<()> {
@@ -410,6 +430,7 @@ fn main() -> Result<()> {
         prompt: String::new(),
         required: vec!["seat".into(), "back".into()],
         max_extent: [1.0; 3],
+        measure_pairs: Vec::new(),
     };
     let negative_check = asset_checks(negative, &root, &negative_task)?;
     if negative_check["asset_pass"] != false {

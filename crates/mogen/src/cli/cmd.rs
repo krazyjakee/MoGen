@@ -79,8 +79,20 @@ pub(crate) enum Cmd {
         #[arg(long)]
         json: bool,
     },
-    /// Read a GLB and print its structure.
+    /// Inspect .mog world measurements or print a GLB container summary.
     Inspect { input: PathBuf },
+    /// Measure current world-space triangle surfaces of two named DSL parts.
+    Measure {
+        input: PathBuf,
+        #[arg(long)]
+        first: String,
+        #[arg(long)]
+        second: String,
+        #[arg(long, default_value_t = 0.002)]
+        tolerance: f64,
+        #[arg(long, default_value_t = 100_000)]
+        max_work: usize,
+    },
     /// Encode a `.mog` source into the experimental MOGB binary container.
     ///
     /// MOGB is a schema-aware serialization of the parsed AST: node kinds and

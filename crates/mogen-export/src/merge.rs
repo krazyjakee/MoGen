@@ -84,6 +84,8 @@ where
         skins: scene.skins.clone(),
         use_parents: scene.use_parents.clone(),
         meta: scene.meta.clone(),
+        relationships: scene.relationships.clone(),
+        guides: scene.guides.clone(),
     };
     let mut remap: HashMap<NodeId, NodeId> = HashMap::new();
 
@@ -98,6 +100,16 @@ where
         &policy,
     );
     out.roots = new_roots;
+    // Keep semantic references valid when sibling merging renumbers nodes.
+    // Their owning nodes are protected so local anchor coordinates stay valid.
+    for r in &mut out.relationships {
+        r.child = remap[&r.child];
+        r.target = remap[&r.target];
+    }
+    for guide in &mut out.guides {
+        guide.target = remap[&guide.target];
+    }
+
 
     // Skin / clip NodeIds referenced pre-merge may have shifted — every
     // "protected" node was copied so has a remap entry; rewrite those so the
@@ -130,6 +142,8 @@ where
 /// never candidates for merging.
 fn collect_protected(scene: &SceneGraph) -> HashSet<NodeId> {
     let mut set = HashSet::new();
+    for r in &scene.relationships { set.insert(r.child); set.insert(r.target); }
+    for guide in &scene.guides { set.insert(guide.target); }
     for skin in &scene.skins {
         for j in &skin.joints {
             set.insert(*j);
