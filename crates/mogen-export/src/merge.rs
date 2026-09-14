@@ -85,6 +85,7 @@ where
         use_parents: scene.use_parents.clone(),
         meta: scene.meta.clone(),
         relationships: scene.relationships.clone(),
+        guides: scene.guides.clone(),
     };
     let mut remap: HashMap<NodeId, NodeId> = HashMap::new();
 
@@ -104,6 +105,9 @@ where
     for r in &mut out.relationships {
         r.child = remap[&r.child];
         r.target = remap[&r.target];
+    }
+    for guide in &mut out.guides {
+        guide.target = remap[&guide.target];
     }
 
 
@@ -139,6 +143,7 @@ where
 fn collect_protected(scene: &SceneGraph) -> HashSet<NodeId> {
     let mut set = HashSet::new();
     for r in &scene.relationships { set.insert(r.child); set.insert(r.target); }
+    for guide in &scene.guides { set.insert(guide.target); }
     for skin in &scene.skins {
         for j in &skin.joints {
             set.insert(*j);
