@@ -15,10 +15,10 @@ same pipeline, see [`studio.md`](./studio.md).
 - [`check`](#check) — validate a DSL file
 - [`dump-scene`](#dump-scene) — print the lowered scene graph
 - [`inspect`](#inspect) — summarise a GLB
-- [`generate`](#generate) — Gemini-driven scene generation
-- [`modify`](#modify) — Gemini-driven edit of an existing `.mog`
-- [`animate`](#animate) — Gemini edit limited to animation declarations
-- [`repair`](#repair) — auto-fix validation errors with Gemini
+- [`generate`](#generate) — AI-driven scene generation
+- [`modify`](#modify) — AI-driven edit of an existing `.mog`
+- [`animate`](#animate) — AI edit limited to animation declarations
+- [`repair`](#repair) — auto-fix validation errors with AI
 - [`textures`](#textures) — generate PBR textures with Gemini Flash Image
 - [`bench`](#bench) — run a prompt suite and report success rate
 - [`moghub`](#moghub) — browse, download, and publish to the MoGHub community
@@ -34,10 +34,11 @@ A few flag patterns repeat across every LLM-driven subcommand
 
 | flag | meaning |
 |---|---|
-| `--api-key <KEY>` | Override `GEMINI_API_KEY` for this invocation. |
-| `--model <NAME>` | Gemini model id. Default `gemini-pro-latest` for text. For `textures`, the default depends on credentials: `gemini-3-pro-image-preview` when authenticated via OAuth (paid plan), otherwise `gemini-2.5-flash-image`. Pass `gemini-3.1-flash-image-preview` (or any other image model) to override. |
-| `--temperature <N>` | Sampling temperature. Library default is `0.3` when omitted. |
-| `--thinking <low\|medium\|high\|xhigh>` | Cap server-side reasoning. `low` = 512 tokens, `medium` = 2048, `high` = 8192 (default), `xhigh` = 24576 (slowest, most careful). |
+| `--api-key <KEY>` | Override the selected provider’s API key for this invocation (`OPENAI_API_KEY` by default). |
+| `--provider <NAME>` | Text commands default to `openai` (GPT-6 Astra). Gemini remains available as `gemini` (API key), `auto` (automatic Gemini credentials), `gemini-oauth`, or `antigravity`. Image generation has separate provider options. |
+| `--model <NAME>` | Provider model id. Default `gpt-6-astra` for OpenAI text generation. For `textures`, the default depends on credentials: `gemini-3-pro-image-preview` when authenticated via OAuth (paid plan), otherwise `gemini-2.5-flash-image`. Pass `gemini-3.1-flash-image-preview` (or any other image model) to override. |
+| `--temperature <N>` | Sampling temperature. Library default is `0.3` when omitted; omitted from OpenAI reasoning-model requests, including Astra. |
+| `--thinking <low\|medium\|high\|xhigh>` | Select server-side reasoning effort for OpenAI. For Gemini, `low` = 512 tokens, `medium` = 2048, `high` = 8192 (default), `xhigh` = 24576 (slowest, most careful). |
 | `--style <ps1\|n64\|low-poly\|high-detail\|arcade\|voxel\|cel-shaded\|stylized-fantasy\|cyberpunk\|pixel-art>` | Visual-style hint. Prepends a "## Style" guidance block to the prompt and stamps `meta(style="…")` into the saved DSL. Sticky across `modify` / `animate` / `repair` runs — once stamped, those subcommands inherit the style from the file unless `--style` is passed again to override. Omit to send the prompt unchanged. |
 | `--budget_tokens <N>` | Abort if total prompt + response token count exceeds this limit. |
 | `--max-repair-iters <N>` | Repair attempts after the first try. Default `2`. |
@@ -302,7 +303,7 @@ for verifying what actually landed in a release artifact.
 
 ## `generate`
 
-Generate a `.mog` from a natural-language prompt via Gemini, validate it,
+Generate a `.mog` from a natural-language prompt via the selected provider (OpenAI GPT-6 Astra by default), validate it,
 repair JSON diagnostics in a loop, then compile it to a GLB.
 
 ```sh
@@ -314,12 +315,12 @@ mogen generate "<prompt>" [--out <out.glb>] [--dsl-out <out.mog>] [common LLM fl
 | `--out`, `-o` | Output GLB path. Ignored with `--dry-run`. |
 | `--dsl-out` | Where to stash the generated DSL. Defaults to the sibling of `--out` with a `.mog` extension. Required with `--dry-run` if you want to keep the DSL on disk. |
 | `--seed` | Embedded seed; randomised if omitted. |
-| `--model` | Gemini model id. Default `gemini-pro-latest`. |
+| `--model` | Provider model id. Default `gpt-6-astra` for OpenAI. |
 | `--dry-run` | Print the generated DSL but skip compilation and GLB output. |
 | Plus all common LLM flags above. |
 
 **Repair loop.** If the generated DSL fails validation, `generate`
-re-feeds the JSON diagnostics back to Gemini up to `--max-repair-iters`
+re-feeds the JSON diagnostics back to the selected provider up to `--max-repair-iters`
 times. On the final failure it prints the unfixed diagnostics and exits
 non-zero, leaving the broken `.mog` on disk for inspection.
 
@@ -385,7 +386,7 @@ not tempted to reshape the scene.
 
 ## `repair`
 
-Run the validator against an existing `.mog` and ask Gemini to fix every
+Run the validator against an existing `.mog` and ask the selected provider to fix every
 diagnostic — with the source excerpt, caret, and fix hint passed in. If
 the file already validates, `repair` is a no-op success.
 
@@ -433,7 +434,7 @@ mogen textures <input.mog> [--style "<hint>"] [--texture-size <N>]
 | `--no-pbr` | Skip every derived PBR map (normal / MR / AO). Albedo is still generated. |
 | `--no-normal` / `--no-metallic-roughness` / `--no-occlusion` | Skip a specific derived map. |
 | `--texture-size <N>` | Cap (in pixels) on the longer side of every generated albedo. Derived PBR maps inherit this size — the single lever for embedded-texture footprint. `0` keeps the model's native resolution (typically 1024²). |
-| `--api-key` | Override `GEMINI_API_KEY`. |
+| `--api-key` | Override the selected provider’s API key. |
 
 **Idempotency.** Per slot, materials that already declare a given
 `*_texture` attr — or whose target PNG already exists at the planned
@@ -461,10 +462,10 @@ mogen bench [--prompts <file>] [common LLM flags]
 | flag | meaning |
 |---|---|
 | `--prompts` | File with one prompt per line. `#` starts a comment. Defaults to `benches/prompts.txt`. |
-| `--model` | Gemini model id. Default `gemini-pro-latest`. |
+| `--model` | Provider model id. Default `gpt-6-astra` for OpenAI. |
 | `--max-repair-iters` | Default `2`. |
 | `--budget-tokens` | Per-prompt token cap. |
-| `--api-key` | Override `GEMINI_API_KEY`. |
+| `--api-key` | Override the selected provider’s API key. |
 | `--no-cache` | Disable the system-instruction cache. |
 | `--thinking` | Default `high`. |
 

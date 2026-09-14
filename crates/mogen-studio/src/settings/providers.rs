@@ -11,7 +11,7 @@ use super::{
 
 impl Settings {
     /// Resolve the persisted slot key to a [`ProviderSlot`], falling back to
-    /// [`ProviderSlot::default`] (GeminiApiKey) when the field is empty or
+    /// [`ProviderSlot::default`] (OpenAI) when the field is empty or
     /// unknown. Migration from the legacy `provider` field happens in
     /// [`Self::load`].
     pub fn provider_slot(&self) -> ProviderSlot {
@@ -216,5 +216,49 @@ pub fn preview_fast_model(provider: Provider) -> Option<&'static str> {
     match provider {
         Provider::Gemini => Some("gemini-3-flash-preview"),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_and_unconfigured_settings_use_openai_astra() {
+        for settings in [
+            Settings::default(),
+            serde_json::from_str("{}").unwrap(),
+            serde_json::from_str(
+                r#"{"provider_slot":"unknown","gemini_api_key":"saved-gemini-key"}"#,
+            )
+            .unwrap(),
+        ] {
+            assert_eq!(settings.provider_slot(), ProviderSlot::OpenAI);
+            assert_eq!(settings.provider_model(), "gpt-6-astra");
+            assert_eq!(settings.provider_fast_model(), "gpt-5-mini");
+        }
+    }
+
+    #[test]
+    fn saved_gemini_slots_and_custom_models_remain_available() {
+        for slot in ["gemini", "gemini-apikey", "gemini-oauth"] {
+            let mut settings: Settings = serde_json::from_value(
+                serde_json::json!({"provider_slot": slot, "gemini_api_key": "saved-key"}),
+            )
+            .unwrap();
+            assert_eq!(settings.provider(), Provider::Gemini);
+            if slot == "gemini-oauth" {
+                assert_eq!(settings.provider_model(), DEFAULT_OAUTH_GEMINI_MODEL);
+                assert!(settings.provider_api_key().is_none());
+            } else {
+                assert_eq!(settings.provider_model(), mogen_llm::gemini::DEFAULT_MODEL);
+                assert_eq!(settings.provider_api_key(), Some("saved-key"));
+            }
+            settings.gemini_model = "custom-gemini".into();
+            assert_eq!(settings.provider_model(), "custom-gemini");
+        }
+        let settings: Settings =
+            serde_json::from_str(r#"{"provider_slot":"openai","openai_model":"gpt-5.5"}"#).unwrap();
+        assert_eq!(settings.provider_model(), "gpt-5.5");
     }
 }

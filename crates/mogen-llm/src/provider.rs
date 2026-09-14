@@ -76,7 +76,7 @@ pub enum Provider {
 pub const OPENAI_COMPAT_DEFAULT_MODEL: &str = "local-model";
 
 impl Provider {
-    /// Round-trip key. `gemini` is preserved as the legacy/default value so
+    /// Round-trip key. `gemini` is preserved as the legacy value so
     /// old settings files keep working when the field is absent.
     pub fn key(self) -> &'static str {
         match self {
@@ -204,7 +204,7 @@ impl Provider {
     /// will read it. Drives the Studio's image-to-3D Generate flow and
     /// gates the auto-refine button (which feeds rendered scene PNGs
     /// back to the model). Today: Gemini, OpenAI (all current `gpt-4o`/
-    /// `gpt-4.1`/`gpt-5`/`gpt-5.5` models are multimodal), Z.ai
+    /// `gpt-4.1`/`gpt-5`/`gpt-6-astra` models are multimodal), Z.ai
     /// (`glm-5v-turbo`), Fireworks (Kimi K2.5/K2.6 are native multimodal),
     /// and Claude Code (`claude --print` resolves filesystem-path image
     /// references via the model's built-in `Read` tool).
@@ -231,7 +231,7 @@ impl Provider {
 
 impl Default for Provider {
     fn default() -> Self {
-        Provider::Gemini
+        Provider::OpenAI
     }
 }
 
@@ -679,6 +679,23 @@ fn resolved_model(client: &LlmClient, cfg: &GenerateConfig) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_provider_uses_astra_and_preserves_gemini_models() {
+        let provider = Provider::default();
+        assert_eq!(provider, Provider::OpenAI);
+        assert_eq!(provider.default_model(), "gpt-6-astra");
+        assert_eq!(provider.env_var(), "OPENAI_API_KEY");
+        assert_eq!(provider.default_fast_model(), "gpt-5-mini");
+        assert_eq!(
+            Provider::Gemini.default_model(),
+            crate::gemini::DEFAULT_MODEL
+        );
+        assert_eq!(
+            Provider::Gemini.default_fast_model(),
+            crate::gemini::DEFAULT_FAST_MODEL
+        );
+    }
 
     #[test]
     fn provider_keys_round_trip() {

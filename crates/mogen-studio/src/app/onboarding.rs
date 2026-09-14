@@ -2,19 +2,17 @@ use eframe::egui;
 
 use super::MogenStudioApp;
 
-/// Where Google AI Studio surfaces the user's API key. Linked from the
-/// onboarding modal so a brand-new user can mint a key without having to
-/// figure out the Gemini console layout themselves.
-const GEMINI_API_KEY_URL: &str = "https://aistudio.google.com/apikey";
+/// OpenAI API-key management, linked from the first-launch welcome flow.
+const OPENAI_API_KEY_URL: &str = "https://platform.openai.com/api-keys";
 
 impl MogenStudioApp {
     /// First-launch welcome flow. Shown once per install (gated on
     /// `Settings::onboarded`) after the splash drains. Explains what the
-    /// Gemini key is used for, links out to AI Studio, and accepts a paste
+    /// OpenAI key is used for, links to API-key management, and accepts a paste
     /// inline so a returning user doesn't have to hunt through Preferences.
     ///
     /// Both buttons (Get Started, Skip) latch `onboarded = true` so the
-    /// modal never reappears — the inline "no Gemini API key" hints in the
+    /// modal never reappears — the inline "missing credentials" hints in the
     /// LLM panels and New from Prompt dialog still nudge the user later if
     /// they skipped without pasting one.
     pub(super) fn ui_onboarding(&mut self, ctx: &egui::Context) {
@@ -45,21 +43,19 @@ impl MogenStudioApp {
                 );
                 ui.add_space(8.0);
                 ui.label(
-                    "Generate, Modify, Animate, and Textures need an LLM. MoGen \
-                     supports Gemini, OpenAI, Anthropic, Ollama, and Claude Code — \
-                     pick whichever you have a key for in Edit → Preferences. \
-                     Gemini is a good starting point because it's also the backend \
-                     used for texture image generation, so you can paste a Google \
-                     AI Studio key below to get going quickly. The rest of the app \
-                     — editor, viewer, build — works without any key.",
+                    "Generate, Modify, and Animate use OpenAI GPT-6 Astra by default. \
+                     Paste an OpenAI API key below to get started. Gemini, Anthropic, \
+                     Ollama, and other providers remain available in Edit → Preferences. \
+                     Textures use a separate image provider, such as Gemini. The editor, \
+                     viewer, and build features work without any key.",
                 );
 
                 ui.add_space(12.0);
-                ui.heading("1. Get a Gemini key (optional)");
+                ui.heading("1. Get an OpenAI key (optional)");
                 ui.horizontal(|ui| {
                     ui.label("Open");
-                    ui.hyperlink_to("Google AI Studio", GEMINI_API_KEY_URL);
-                    ui.label("and click \"Create API key\".");
+                    ui.hyperlink_to("OpenAI API keys", OPENAI_API_KEY_URL);
+                    ui.label("and click \"Create new secret key\".");
                 });
 
                 ui.add_space(10.0);
@@ -88,14 +84,14 @@ impl MogenStudioApp {
                     .weak(),
                 );
 
-                if std::env::var("GEMINI_API_KEY")
+                if std::env::var("OPENAI_API_KEY")
                     .map(|v| !v.trim().is_empty())
                     .unwrap_or(false)
                 {
                     ui.add_space(6.0);
                     ui.colored_label(
                         egui::Color32::from_rgb(150, 180, 230),
-                        "GEMINI_API_KEY is already set in your environment — leave \
+                        "OPENAI_API_KEY is already set in your environment — leave \
                          this blank to use that, or paste a key to override it.",
                     );
                 }
@@ -136,16 +132,17 @@ impl MogenStudioApp {
 
         if do_save {
             let trimmed = self.onboarding_api_key_draft.trim().to_string();
-            self.settings.gemini_api_key = trimmed.clone();
-            // Keep the Preferences dialog's draft in sync so opening it next
-            // doesn't show a stale (empty) field next to a saved key.
-            self.options_api_key_draft = trimmed;
+            if !trimmed.is_empty() {
+                self.settings.openai_api_key = trimmed;
+                self.settings
+                    .set_provider_slot(crate::settings::ProviderSlot::OpenAI);
+            }
         }
 
         self.settings.onboarded = true;
         if let Err(e) = self.settings.save() {
             self.active_mut().status = format!("onboarding: save failed: {e}");
-        } else if do_save && !self.settings.gemini_api_key.is_empty() {
+        } else if do_save && !self.onboarding_api_key_draft.trim().is_empty() {
             self.active_mut().status = "onboarding: API key saved".into();
         }
 

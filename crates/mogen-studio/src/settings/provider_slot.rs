@@ -110,18 +110,16 @@ impl ProviderSlot {
 
 impl Default for ProviderSlot {
     fn default() -> Self {
-        ProviderSlot::GeminiApiKey
+        ProviderSlot::OpenAI
     }
 }
 
-/// Order in which provider slots appear in the Options dropdown. Both
-/// Gemini auth modes are listed up front because Gemini is the historical
-/// default and the only image-capable backend; the OAuth slot is the path
-/// users with paid Antigravity plans will reach for.
+/// Order in which provider slots appear in the Options dropdown, with the
+/// default OpenAI provider first and both Gemini auth modes available.
 pub const PROVIDER_SLOTS: [ProviderSlot; 9] = [
+    ProviderSlot::OpenAI,
     ProviderSlot::GeminiApiKey,
     ProviderSlot::GeminiOAuth,
-    ProviderSlot::OpenAI,
     ProviderSlot::Anthropic,
     ProviderSlot::Ollama,
     ProviderSlot::OpenAiCompat,

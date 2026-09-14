@@ -21,7 +21,7 @@ impl MogenStudioApp {
         {
             self.session_usage = Default::default();
         }
-        let tooltip = session_tooltip(&u, &self.settings.gemini_model());
+        let tooltip = session_tooltip(&u, &self.settings.provider_model());
         ui.label(format!(
             "· {} ({} tok, {})",
             calls_label(&u),

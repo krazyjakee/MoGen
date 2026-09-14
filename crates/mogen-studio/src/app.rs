@@ -579,7 +579,7 @@ impl MogenStudioApp {
         // upgrading from a settings file that predates the `onboarded` field
         // but already has a saved key — they've clearly walked through
         // Preferences themselves and don't need the orientation pass.
-        if !settings.onboarded && !settings.gemini_api_key.trim().is_empty() {
+        if !settings.onboarded && settings.provider_api_key().is_some() {
             settings.onboarded = true;
             let _ = settings.save();
         }

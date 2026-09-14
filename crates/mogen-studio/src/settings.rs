@@ -479,18 +479,6 @@ impl Settings {
                 s.provider_slot = slot.key().to_string();
             }
         }
-        // First-time onboarding: when no slot has ever been picked, prefer the
-        // OAuth slot if a Google token bundle already exists on disk. Users
-        // who ran `mogen auth login` shouldn't have to also manually flip the
-        // provider dropdown — picking the OAuth slot makes both the text-LLM
-        // and image-gen paths route through their paid Antigravity plan.
-        if s.provider_slot.trim().is_empty() {
-            if let Some(path) = mogen_llm::token_store_path() {
-                if matches!(mogen_llm::load_bundle(&path), Ok(Some(_))) {
-                    s.provider_slot = ProviderSlot::GeminiOAuth.key().to_string();
-                }
-            }
-        }
         s
     }
 

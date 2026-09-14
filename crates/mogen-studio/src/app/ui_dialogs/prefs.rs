@@ -63,6 +63,7 @@ pub(super) fn model_presets(slot: ProviderSlot) -> &'static [&'static str] {
             "gemini-2.5-flash",
         ],
         ProviderSlot::OpenAI => &[
+            "gpt-6-astra",
             "gpt-5.5",
             "gpt-5.5-pro",
             "gpt-5.4",

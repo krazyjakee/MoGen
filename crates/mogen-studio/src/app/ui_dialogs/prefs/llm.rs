@@ -16,7 +16,7 @@ use crate::settings::{
 use super::model_presets;
 
 /// Single grid row of the Pricing breakdown table. `tier_long = true` reads
-/// the >200k tier rates; `false` reads the headline rates. Caller is
+/// the model’s long-context tier rates; `false` reads the headline rates. Caller is
 /// responsible for `ui.end_row()`.
 fn price_grid_row(
     ui: &mut egui::Ui,
@@ -559,7 +559,10 @@ impl MogenStudioApp {
                                     if thinking_price.is_tiered() {
                                         price_grid_row(
                                             ui,
-                                            "  >200k",
+                                            &format!(
+                                                "  >{}k",
+                                                thinking_price.long_context_threshold / 1000
+                                            ),
                                             &thinking_model,
                                             thinking_price,
                                             true,
@@ -576,7 +579,10 @@ impl MogenStudioApp {
                                         if fast_price.is_tiered() {
                                             price_grid_row(
                                                 ui,
-                                                "  >200k",
+                                                &format!(
+                                                    "  >{}k",
+                                                    fast_price.long_context_threshold / 1000
+                                                ),
                                                 &fast_model,
                                                 fast_price,
                                                 true,

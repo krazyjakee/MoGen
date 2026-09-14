@@ -79,7 +79,7 @@ impl From<StyleArg> for Style {
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub(crate) enum ProviderArg {
     /// Auto-detect Gemini credentials: flag → env → settings → gemini-cli
-    /// OAuth → Antigravity OAuth. Default. Recommended for most users.
+    /// OAuth → Antigravity OAuth. Retains the Gemini auto-auth path.
     Auto,
     /// Gemini via API key only (`GEMINI_API_KEY` env or settings.json).
     /// Skips OAuth entirely; errors if no key is available.
@@ -91,6 +91,7 @@ pub(crate) enum ProviderArg {
     /// `mogen auth login --antigravity`. Required for image generation;
     /// also valid for text gen and survives gemini-cli 403s.
     Antigravity,
+    /// OpenAI GPT-6 Astra (default). Uses `OPENAI_API_KEY` or settings.json.
     Openai,
     Anthropic,
     Ollama,
