@@ -163,8 +163,7 @@ pub fn sweep_mesh(
         cap_at(&mut mesh, profile, &frames[last], roll_at(last), scale_at(last), false, mode);
     }
 
-    recompute_normals(&mut mesh);
-    mesh
+    recompute_normals(&mesh)
 }
 
 /// Per-sample frame: tangent, parallel-transported normal, and binormal.
