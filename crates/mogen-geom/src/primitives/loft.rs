@@ -173,8 +173,7 @@ pub fn loft_mesh(
         push_cap(&mut mesh, &rings[last].1, rings[last].0, true, mode);
     }
 
-    recompute_normals(&mut mesh);
-    Ok(mesh)
+    Ok(recompute_normals(&mesh))
 }
 
 fn push_cap(mesh: &mut Mesh, section: &[[f32; 2]], y: f32, flip_winding: bool, mode: UvMode) {

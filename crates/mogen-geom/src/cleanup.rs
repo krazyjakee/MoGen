@@ -324,7 +324,10 @@ pub fn cull_degenerate(mesh: &Mesh) -> Mesh {
 }
 
 /// Recompute per-vertex normals by averaging face normals of adjacent
-/// triangles. Callers should typically weld first so seams are smoothed.
+/// triangles, returning a new mesh without mutating the input. Existing vertex
+/// splits (including cap boundaries and UV seams) are retained. Weld beforehand
+/// only when smoothing across those splits is intended.
+#[must_use = "normal recomputation returns a new mesh; retain the result"]
 pub fn recompute_normals(mesh: &Mesh) -> Mesh {
     let mut acc = vec![Vec3::ZERO; mesh.positions.len()];
     for tri in mesh.indices.chunks_exact(3) {
