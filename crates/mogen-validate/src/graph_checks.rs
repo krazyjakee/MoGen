@@ -17,7 +17,11 @@ const WEIGHT_SUM_TOLERANCE: f32 = 1e-3;
 const CONNECTIVITY_SLOP: f32 = 0.002;
 
 pub fn validate_graph(graph: &SceneGraph) -> Vec<Diagnostic> {
-    let mut diags = Vec::new();
+    let mut diags = mogen_core::validate_renderable_scene(graph);
+    // Unsafe mesh/hierarchy data must not reach bounds or skeleton traversal.
+    if mogen_core::has_errors(&diags) {
+        return diags;
+    }
     diags.extend(check_connectivity(graph));
 
     for skin in &graph.skins {
@@ -439,5 +443,27 @@ mod connectivity_tests {
         "#,
         );
         assert!(d.is_empty(), "unexpected diagnostics: {d:?}");
+    }
+}
+
+#[cfg(test)]
+mod mesh_contract_tests {
+    use super::*;
+
+    #[test]
+    fn mesh_contract_matches_core_and_short_circuits_unsafe_graph_checks() {
+        let mut scene = mogen_dsl::lower(&mogen_dsl::parse("scene { box \"arm\" (size=[1,1,1]) }").unwrap()).unwrap();
+        let mesh = scene.nodes.iter_mut().find_map(|n| n.mesh.as_mut()).unwrap();
+        mesh.normals.fill([0.0; 3]);
+        mesh.indices[0] = u32::MAX;
+        assert_eq!(serde_json::to_value(validate_graph(&scene)).unwrap(),
+            serde_json::to_value(mogen_core::validate_renderable_scene(&scene)).unwrap());
+    }
+
+    #[test]
+    fn mesh_contract_accepts_repaired_profiles() {
+        let source = include_str!("../../../examples/features/profile_normals.mog");
+        let scene = mogen_dsl::lower(&mogen_dsl::parse(source).unwrap()).unwrap();
+        assert!(!mogen_core::has_errors(&validate_graph(&scene)));
     }
 }

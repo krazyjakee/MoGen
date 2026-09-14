@@ -101,6 +101,7 @@ pub fn render_thumbnail_framed(
     opts: &ThumbnailOptions,
     framing: Option<([f32; 3], f32)>,
 ) -> anyhow::Result<Vec<u8>> {
+    mogen_core::ensure_renderable_scene(scene)?;
     let mesh = flatten(scene, opts.base_dir.as_deref());
     let center = framing
         .map(|(c, _)| Vec3::from_array(c))

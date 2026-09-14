@@ -41,8 +41,8 @@ pub(super) fn emit_geometries(
 
     for (i, n) in scene.nodes.iter().enumerate() {
         let mesh = match &n.mesh {
-            Some(m) => m,
-            None => continue,
+            Some(m) if !m.indices.is_empty() => m,
+            _ => continue,
         };
         let model_id = model_ids[i];
         let geom_id = ids.alloc();

@@ -21,6 +21,12 @@ use crate::preview_shader::PreviewShader;
 
 impl Viewer {
     pub fn set_scene(&self, scene: Arc<SceneGraph>, base_dir: Option<&Path>, fit_camera: bool) {
+        // Also guard derived LOD scenes and direct callers before flatten/upload.
+        if let Err(error) = mogen_core::ensure_renderable_scene(&scene) {
+            eprintln!("Preview rejected: {error}");
+            self.clear();
+            return;
+        }
         let mut st = self.state.lock().unwrap();
         let viewer_was_empty = st.scene.is_none();
         st.base_dir = base_dir.map(|p| p.to_path_buf());

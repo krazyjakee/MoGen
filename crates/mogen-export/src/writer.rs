@@ -126,6 +126,7 @@ fn build_glb_with_options_and_source_inner<F: Fn(&str)>(
     #[cfg(feature = "imposter")] prebaked_imposter: Option<ImposterAtlas>,
     progress: F,
 ) -> Result<Vec<u8>> {
+    mogen_core::ensure_renderable_scene(scene)?;
     // SVG textures rasterize to PNG up front, before the merge stages or the
     // exporter look at any material, so nothing downstream ever sees a vector
     // path. See `crate::svg` for why this is a pre-pass rather than a branch
@@ -208,6 +209,9 @@ fn build_glb_with_options_and_source_inner<F: Fn(&str)>(
     #[cfg(not(feature = "merge"))]
     let scene: &SceneGraph = scene_after_solid;
 
+    // Merges can produce new meshes; validate their output as well.
+    mogen_core::ensure_renderable_scene(scene)?;
+
     let mut bin: Vec<u8> = Vec::new();
     let mut buffer_views: Vec<BufferView> = Vec::new();
     let mut accessors: Vec<Accessor> = Vec::new();
@@ -243,6 +247,7 @@ fn build_glb_with_options_and_source_inner<F: Fn(&str)>(
     let mut lod_cache: HashMap<MeshKey, Vec<usize>> = HashMap::new();
     for (i, n) in scene.nodes.iter().enumerate() {
         if let Some(mesh) = &n.mesh {
+            if mesh.indices.is_empty() { continue; }
             let skinned = mesh.is_skinned() && mesh.joints.len() == mesh.positions.len();
 
             if !skinned {
@@ -311,6 +316,16 @@ fn build_glb_with_options_and_source_inner<F: Fn(&str)>(
                     let lod_meshes = lod::build_lod_meshes(mesh);
                     let mut lod_indices = Vec::with_capacity(lod_meshes.len());
                     for (lod_idx, lod_mesh) in lod_meshes.iter().enumerate() {
+                        let diagnostics: Vec<_> = mogen_core::validate_renderable_mesh(lod_mesh)
+                            .into_iter().map(|mut d| {
+                                d.message = format!("part {:?} LOD {}: {}", n.name, lod_idx + 1, d.message);
+                                d.span = n.source_span;
+                                d.file = n.origin.as_ref().map(|p| p.display().to_string());
+                                d
+                            }).collect();
+                        if mogen_core::has_errors(&diagnostics) {
+                            return Err(mogen_core::MeshContractError { diagnostics }.into());
+                        }
                         let lod_idx_acc = push_indices(
                             &mut bin,
                             &mut buffer_views,

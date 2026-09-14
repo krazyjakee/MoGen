@@ -119,6 +119,9 @@ pub fn compile(src: &str, source_dir: Option<&Path>) -> CompileResult {
 
     diags.extend(mogen_validate::validate_graph(&scene));
     if has_errors(&diags) {
+        if mogen_core::has_mesh_contract_errors(&diags) {
+            return CompileResult::new(None, diags, Stage::ValidateGraph);
+        }
         return CompileResult::new(Some(scene), diags, Stage::ValidateGraph);
     }
 
@@ -268,5 +271,18 @@ mod tests {
         // error rather than silently write a corrupt container.
         let err = encode_source(Path::new("broken.mogb"), "box (size=[").unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    }
+}
+
+#[cfg(test)]
+mod mesh_contract_tests {
+    use super::*;
+
+    #[test]
+    fn mesh_contract_failure_does_not_retain_an_uploadable_scene() {
+        let result = compile("scene { box \"collapsed\" (size=[1,1,1],scale=[0,1,1]) }", None);
+        assert_eq!(result.stage, Stage::ValidateGraph);
+        assert!(result.scene.is_none());
+        assert!(result.diagnostics.iter().any(|d| d.code == "E1201"));
     }
 }

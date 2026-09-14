@@ -80,6 +80,7 @@ pub fn build_fbx_with_options_and_source<F: Fn(&str)>(
     texture_source: &dyn TextureSource,
     progress: F,
 ) -> Result<Vec<u8>> {
+    mogen_core::ensure_renderable_scene(scene)?;
     // Mirror the GLB pipeline's SVG pre-pass. This matters more here than it
     // does for GLB: FBX emits texture *paths* rather than embedding bytes, so
     // without this a `.svg` would be written into the FBX verbatim and no DCC
@@ -134,6 +135,9 @@ pub fn build_fbx_with_options_and_source<F: Fn(&str)>(
     let scene: &SceneGraph = merged_owned.as_ref().unwrap_or(scene_after_solid);
     #[cfg(not(feature = "merge"))]
     let scene: &SceneGraph = scene_after_solid;
+
+    // Merges can produce new meshes; validate their output as well.
+    mogen_core::ensure_renderable_scene(scene)?;
 
     // Build the FBX node tree in memory, then ask `fbxcel` to serialize it.
     progress("building fbx tree");
