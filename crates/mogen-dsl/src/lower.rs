@@ -23,6 +23,7 @@ mod poi;
 mod primitive;
 mod procedural;
 mod rng;
+mod relationships;
 mod shader;
 mod terrain;
 
@@ -388,6 +389,7 @@ pub fn lower_with_loader_lod(
                         || c.kind == "shader"
                         || c.kind == "attach"
                         || c.kind == "conform"
+                        || c.kind == "relate"
                         || is_anim_decl(&c.kind)
                     {
                         continue;
@@ -401,6 +403,7 @@ pub fn lower_with_loader_lod(
             }
             "attach" => {}  // pass 2.4
             "conform" => {} // pass 2.45
+            "relate" => {} // pass 2.46
             _ => {
                 lower_into(n, None, &mut graph)?;
             }
@@ -415,6 +418,9 @@ pub fn lower_with_loader_lod(
     // child can also be conformed; runs before skin binding so bind-pose
     // world matrices reflect the deformed geometry.
     resolve_conforms(&expanded, &mut graph)?;
+
+    // Resolve explicit relationships against final attached/conformed targets.
+    relationships::resolve(&expanded, &mut graph)?;
 
     // Pass 2.5: bind mesh nodes carrying `skin="<name>"` to their skeleton.
     // Runs after every mesh exists and before animations so weights are

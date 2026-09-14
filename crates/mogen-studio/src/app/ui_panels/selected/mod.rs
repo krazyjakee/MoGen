@@ -123,6 +123,15 @@ impl MogenStudioApp {
             });
         }
 
+        let relationships: Vec<_> = scene.relationships.iter().filter(|r| r.child == sel || r.target == sel).collect();
+        if !relationships.is_empty() {
+            ui.collapsing("Resolved relationships", |ui| {
+                for r in relationships {
+                    ui.label(format!("{} → {} · {}",scene.get(r.child).name,scene.get(r.target).name,r.mode));
+                    ui.label(format!("Insertion {} · clearance {} · tolerance {}",r.insertion,r.clearance,r.tolerance));
+                }
+            });
+        }
         if let Some(frame) = &node.path_frame {
             ui.collapsing("Sweep construction frame", |ui| {
                 ui.label("Axes are local, before deformation and anchoring; positive roll turns width toward height.");

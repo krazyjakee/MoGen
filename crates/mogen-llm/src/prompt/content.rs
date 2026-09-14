@@ -490,6 +490,7 @@ pub(super) const KINDS_REFERENCE: &str = "\
 | `panel` | `size=[x,y,z]` | `box` alias; default `anchor=back` (wall-hung panel, flush to +Z face) |
 | `wall` | `size=[x,y,z]` | `holes=[[cx, cy, w, h], …]`; rectangular CSG cutouts through Z — one watertight mesh, use for walls with doors/windows instead of nested `difference` |
 | `connector` | name, `at=[...]` | `dir=[...]`, `tag=<ident>`, `radius` |
+| `relate` | `child`, `target`, `mode=align\\|ground\\|endpoint` | Existing connectors: socket/plug, endpoint=start\\|end, target-local offset, world-unit insertion/clearance. Endpoint retessellates a plain spline/sweep path; ground translates to the connector plane; align translates connectors without rotation. Compiled locks still apply. |
 | `attach` | `parent`, `child` | `socket`, `plug` (default `top`/`bottom`), `offset`, `twist` |
 | `conform` | `target`, `child` + (`from`, `to`) **or** `at` | path mode: `along=x\\|y\\|z`, `lift`, `samples` (64), `twist`, `reparent` — zips, labels, hoses, trim along a curve. Patch mode: `at=\"<connector>\", up=x\\|y\\|z, lift, reparent` — round pockets, brand patches at one anchor. For transparent-image stickers on curved surfaces, prefer the **`decal` shortcut** (`on=`/`at=` on the decal itself) instead of authoring `decal` + `conform` separately. |
 | `mirror` | `axis=x|y|z` | children |

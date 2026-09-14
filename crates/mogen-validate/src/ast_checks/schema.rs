@@ -6,7 +6,7 @@
 use mogen_dsl::ast::Value;
 
 pub const KNOWN_KINDS: &[&str] = &[
-    "scene", "group", "solid", "material", "physics", "shader", "param", "shader_params", "connector", "attach", "conform", "mirror", "array",
+    "scene", "group", "solid", "material", "physics", "shader", "param", "shader_params", "connector", "attach", "conform", "relate", "mirror", "array",
     "stack", "grid",
     "meta",
     "box", "plane", "quad", "cylinder", "cone", "sphere", "capsule", "torus",
@@ -148,6 +148,7 @@ pub fn common_attrs_for_kind(kind: &str) -> &'static [&'static str] {
 
 pub fn attrs_for_kind(kind: &str) -> &'static [&'static str] {
     match kind {
+        "relate" => &["child","target","mode","socket","plug","endpoint","offset","insertion","clearance","tolerance"],
         "meta" => &[
             "name", "version", "mogen_version", "description", "tags",
             "seed", "thinking", "prompt", "style", "front", "front_node",
@@ -728,6 +729,10 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         | ("flap", "easing")
         | ("idle", "easing") => "string",
         ("bone", "envelope") => "number",
+        ("relate", "child") | ("relate", "target") | ("relate", "mode")
+        | ("relate", "socket") | ("relate", "plug") | ("relate", "endpoint") => "string",
+        ("relate", "offset") => "vec3",
+        ("relate", "insertion") | ("relate", "clearance") | ("relate", "tolerance") => "number",
         ("attach", "parent") | ("attach", "child")
         | ("attach", "socket") | ("attach", "plug") => "string",
         ("attach", "offset") | ("attach", "twist") => "number",

@@ -230,7 +230,7 @@ impl ModelingWorkspace {
             "material":n.material.map(|id|&scene.materials[id.0 as usize]),"path_frame":n.path_frame
         })).collect();
         Ok(
-            json!({"revision":self.revision()?,"parts":parts,"locks":self.locks,"selected":self.selected}),
+            json!({"revision":self.revision()?,"parts":parts,"relationships":scene.relationships,"locks":self.locks,"selected":self.selected}),
         )
     }
 }

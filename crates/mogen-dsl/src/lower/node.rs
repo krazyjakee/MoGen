@@ -247,7 +247,7 @@ pub(super) fn lower_into(
             // nesting. Skipping it here matters when an imported scene-as-
             // module body (e.g. `sports_bag.mog`) carrying conform directives
             // is expanded inside a `group` wrapper.
-            "material" | "attach" | "conform" => continue,
+            "material" | "attach" | "conform" | "relate" => continue,
             // Animation and clip-track decls are processed by their own pass
             // (see lower_animations). They get here when an imported scene-as-
             // module body — which can carry animations alongside geometry — is
