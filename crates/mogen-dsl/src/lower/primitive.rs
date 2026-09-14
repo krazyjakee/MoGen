@@ -621,6 +621,24 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Prim
                 .map(|s| s.to_vec())
                 .unwrap_or_default();
             let caps = node.attr_number("caps").map(|n| n != 0.0).unwrap_or(true);
+            let closed = node.attr_number("closed").unwrap_or(0.0);
+            if closed != 0.0 && closed != 1.0 {
+                return Some(Err(anyhow!("E0130: sweep.closed must be 0 or 1")));
+            }
+            if node.attr("frame_up").is_some() {
+                let Some(up) = node.attr_vec3("frame_up").map(|v| v.to_array()) else {
+                    return Some(Err(anyhow!("E0130: frame_up requires a local-space vector")));
+                };
+                let closed = closed != 0.0;
+                return Some(tessellate_result!("sweep-frame-v1", uv_mode;
+                    profile, path, samples, twist, roll, scale, caps, up, closed => {
+                        let modulation = SweepModulation { roll, scale };
+                        mogen_geom::sweep_mesh_oriented(&profile, &path, samples, twist, &modulation, caps, uv_mode, up, closed)
+                    }));
+            }
+            if closed != 0.0 {
+                return Some(Err(anyhow!("E0130: closed sweeps require explicit frame_up; legacy sweeps retain their old frame convention")));
+            }
             tessellate!("sweep", uv_mode;
                 profile, path, samples, twist, roll, scale, caps => {
                 let modulation = SweepModulation { roll, scale };

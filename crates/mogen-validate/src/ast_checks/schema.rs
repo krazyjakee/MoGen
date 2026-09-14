@@ -207,7 +207,7 @@ pub fn attrs_for_kind(kind: &str) -> &'static [&'static str] {
         "leaf_card" => &["size", "cards"],
         "extrude" => &["points", "hole", "height", "taper", "twist", "caps"],
         "sweep" => &[
-            "profile", "path", "samples", "twist", "roll", "scale_along", "caps",
+            "profile", "path", "samples", "twist", "roll", "scale_along", "caps", "frame_up", "closed",
         ],
         "loft" => &["points", "heights", "samples", "caps"],
         "hull" => &["points"],
@@ -431,6 +431,8 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         ("extrude", "hole") => "list",
         ("extrude", "height") | ("extrude", "twist") => "number",
         ("extrude", "caps") => "number",
+        ("sweep", "frame_up") => "vec3",
+        ("sweep", "closed") => "number",
         ("sweep", "profile") => "list",
         ("sweep", "path") => "list",
         ("sweep", "samples") | ("sweep", "twist") | ("sweep", "caps") => "number",

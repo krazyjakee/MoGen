@@ -61,6 +61,12 @@ pub fn sweep_mesh(
         return Mesh::default();
     }
 
+    let frames = build_path_frames(&samples);
+    sweep_samples(profile, &samples, &frames, twist_radians, modulation, caps, mode)
+}
+
+fn sweep_samples(profile: &[[f32; 2]], samples: &[Vec3], frames: &[Frame],
+    twist_radians: f32, modulation: &SweepModulation, caps: bool, mode: UvMode) -> Mesh {
     // Per-sample arc length along the centreline drives V in tile mode.
     let mut sample_arc: Vec<f32> = Vec::with_capacity(samples.len());
     sample_arc.push(0.0);
@@ -68,9 +74,6 @@ pub fn sweep_mesh(
         let last = *sample_arc.last().unwrap();
         sample_arc.push(last + (w[1] - w[0]).length());
     }
-
-    // Tangent and parallel-transported frame at each sample.
-    let frames = build_path_frames(&samples);
 
     // Per-sample roll/scale modulation. Linear interp from a per-control-
     // point list, then add the global twist contribution.
@@ -164,6 +167,67 @@ pub fn sweep_mesh(
     }
 
     recompute_normals(&mesh)
+}
+
+/// Explicit, local-space sweep frame. `up` is profile height, projected
+/// perpendicular to the tangent; profile width = height × tangent.
+pub fn sweep_mesh_oriented(
+    profile: &[[f32; 2]], points: &[[f32; 3]], samples_per_segment: u32,
+    twist_radians: f32, modulation: &SweepModulation, caps: bool,
+    mode: UvMode, up: [f32; 3], closed: bool,
+) -> anyhow::Result<Mesh> {
+    if profile.len() < 3 { anyhow::bail!("E0130: sweep profile needs at least three points"); }
+    let (samples, path_frames) = sweep_path_frames(points, samples_per_segment, up, closed)?;
+    if closed {
+        let first_roll = modulation.roll.first().copied().unwrap_or(0.0);
+        let last_roll = modulation.roll.last().copied().unwrap_or(0.0);
+        let turns = (twist_radians + last_roll - first_roll) / TAU;
+        if (turns - turns.round()).abs() > 1e-5
+            || modulation.scale.first() != modulation.scale.last() {
+            anyhow::bail!("E0130: closed sweep roll/twist and scale must match at the seam; use equal endpoint scales and a whole-turn total roll");
+        }
+    }
+    let frames: Vec<_> = path_frames.iter().map(|f| Frame {
+        center: f.center, tangent: f.tangent, normal: -f.binormal, binormal: f.normal,
+    }).collect();
+    let mut mesh = sweep_samples(profile, &samples, &frames, twist_radians, modulation, caps && !closed, mode);
+    if closed {
+        // Shared lighting at the duplicated path seam without welding UVs.
+        let row = profile.len() + 1;
+        let end = (samples.len() - 1) * row;
+        for j in 0..row {
+            let n = (Vec3::from_array(mesh.normals[j]) + Vec3::from_array(mesh.normals[end + j])).normalize_or_zero().to_array();
+            mesh.normals[j] = n;
+            mesh.normals[end + j] = n;
+        }
+    }
+    Ok(mesh)
+}
+
+/// Expose local frame samples for inspection and derived guide geometry.
+pub fn sweep_path_frames(points: &[[f32; 3]], samples_per_segment: u32, up: [f32; 3], closed: bool)
+    -> anyhow::Result<(Vec<Vec3>, Vec<crate::PathFrame>)> {
+    if points.len() < 2 || points.iter().flatten().any(|v| !v.is_finite())
+        || points.windows(2).any(|p| p[0] == p[1]) {
+        anyhow::bail!("E0130: sweep needs finite, distinct adjacent path points");
+    }
+    let samples = if closed {
+        let mut ring = points.to_vec();
+        if ring.first() == ring.last() { ring.pop(); }
+        if ring.len() < 3 { anyhow::bail!("E0130: closed sweep needs three unique control points"); }
+        let n = ring.len();
+        let mut periodic = vec![ring[n - 1]];
+        periodic.extend_from_slice(&ring);
+        periodic.extend([ring[0], ring[1]]);
+        let steps = samples_per_segment.max(1) as usize;
+        let sampled = sample_catmull_rom(&periodic, steps as u32);
+        let mut samples = sampled[steps..=steps * (n + 1)].to_vec();
+        let first = samples[0];
+        *samples.last_mut().unwrap() = first;
+        samples
+    } else { sample_catmull_rom(points, samples_per_segment) };
+    let frames = crate::transport_path_frames(&samples, Vec3::from_array(up), closed)?;
+    Ok((samples, frames))
 }
 
 /// Per-sample frame: tangent, parallel-transported normal, and binormal.

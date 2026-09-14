@@ -123,6 +123,13 @@ impl MogenStudioApp {
             });
         }
 
+        if let Some(frame) = &node.path_frame {
+            ui.collapsing("Sweep construction frame", |ui| {
+                ui.label("Axes are local, before deformation and anchoring; positive roll turns width toward height.");
+                ui.monospace(serde_json::to_string_pretty(frame).unwrap_or_default());
+            });
+        }
+
         // Read-only relationship navigator. Placed before the editability
         // gates so it works for array/CSG/imported nodes too — navigating
         // *away* from a non-editable node to its parent is exactly what the
