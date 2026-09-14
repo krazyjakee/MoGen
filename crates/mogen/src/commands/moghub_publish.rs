@@ -264,6 +264,7 @@ fn render_publish_thumbnail(source: &str, entry_dir: &Path) -> Result<Vec<u8>> {
     scene.resolve_texture_paths(entry_dir);
 
     let opts = ThumbnailOptions {
+        yaw: mogen_core::AssetView::Presentation.camera_for(&scene).map_err(anyhow::Error::msg)?.0,
         base_dir: Some(entry_dir.to_path_buf()),
         ..ThumbnailOptions::default()
     };

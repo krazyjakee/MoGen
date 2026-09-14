@@ -52,8 +52,18 @@ struct Task {
 struct Renderer {
     base: PathBuf,
     framing: Option<([f32; 3], f32)>,
+    front_yaw: Option<f32>,
+    last_capture: Option<mogen_core::views::CaptureInfo>,
+    fit_image: Option<ImageInput>,
+    capture_part: Option<String>,
 }
 impl SessionRenderer for Renderer {
+    fn capture_info(&self) -> Option<mogen_core::views::CaptureInfo> {
+        self.last_capture.clone()
+    }
+    fn diagnostic_fit(&self) -> Option<ImageInput> {
+        self.fit_image.clone()
+    }
     fn render_part(
         &mut self,
         source: &str,
@@ -64,39 +74,79 @@ impl SessionRenderer for Renderer {
         let scene = compile(source, Some(&self.base))?;
         let framing = part_framing(&scene, name)?;
         let old = self.framing.replace(framing);
+        let old_front = self.front_yaw;
+        let old_part = self.capture_part.replace(name.into());
         let result = self.render(source, revision, view);
         self.framing = old;
+        self.front_yaw = old_front;
+        self.capture_part = old_part;
         result
     }
-    fn render(&mut self, source: &str, _revision: &str, view: View) -> Result<ImageInput> {
+    fn render(&mut self, source: &str, revision: &str, view: View) -> Result<ImageInput> {
+        if capture_revision(source, &self.base)? != revision {
+            bail!("Stale capture revision");
+        }
         let scene = inspection_scene(compile(source, Some(&self.base))?, view);
         let mesh = mogen_render::flatten(&scene, Some(&self.base));
         let framing = *self
             .framing
             .get_or_insert((mesh.center.to_array(), mesh.radius));
-        let (yaw, pitch) = view.camera();
+        let front = mogen_core::asset_front_yaw(&scene).map_err(anyhow::Error::msg)?;
+        let (yaw, pitch) = view.camera_from_front(*self.front_yaw.get_or_insert(front));
         let opts = mogen_render::headless::ThumbnailOptions {
             yaw,
             pitch,
             base_dir: Some(self.base.clone()),
             ..Default::default()
         };
-        let pixels = mogen_render::headless::render_thumbnail_framed(&scene, &opts, Some(framing))?;
-        let mut png = std::io::Cursor::new(vec![]);
-        image::write_buffer_with_format(
-            &mut png,
-            &pixels,
-            opts.size,
-            opts.size,
-            image::ExtendedColorType::Rgba8,
-            image::ImageFormat::Png,
-        )?;
-        Ok(ImageInput {
-            mime_type: "image/png".into(),
-            data: png.into_inner(),
-        })
+        let camera = mogen_render::OrbitCamera {
+            yaw,
+            pitch,
+            target: framing.0.into(),
+            fit_distance: framing.1.max(0.001) * 2.8,
+            zoom: 1.0,
+        };
+        let info = mogen_render::capture_info(
+            &scene,
+            &camera,
+            revision,
+            view.label(),
+            self.capture_part.as_deref(),
+        );
+        let image = render_png(&scene, &opts, Some(framing))?;
+        self.fit_image = if info.out_of_frame_vertices != 0 {
+            Some(render_png(&scene, &opts, None)?)
+        } else {
+            None
+        };
+        if capture_revision(source, &self.base)? != revision {
+            bail!("Dependencies changed during capture");
+        }
+        self.last_capture = Some(info);
+        Ok(image)
     }
 }
+fn render_png(
+    scene: &mogen_core::SceneGraph,
+    opts: &mogen_render::headless::ThumbnailOptions,
+    framing: Option<([f32; 3], f32)>,
+) -> Result<ImageInput> {
+    let pixels = mogen_render::headless::render_thumbnail_framed(scene, opts, framing)?;
+    let mut png = std::io::Cursor::new(vec![]);
+    image::write_buffer_with_format(
+        &mut png,
+        &pixels,
+        opts.size,
+        opts.size,
+        image::ExtendedColorType::Rgba8,
+        image::ImageFormat::Png,
+    )?;
+    Ok(ImageInput {
+        mime_type: "image/png".into(),
+        data: png.into_inner(),
+    })
+}
+
 fn asset_checks(source: &str, base: &Path, task: &Task) -> Result<serde_json::Value> {
     let scene = match compile(source, Some(base)) {
         Ok(scene) => scene,
@@ -196,6 +246,10 @@ fn main() -> Result<()> {
             let mut renderer = Renderer {
                 base: base.clone(),
                 framing: None,
+                front_yaw: None,
+                last_capture: None,
+                fit_image: None,
+                capture_part: None,
             };
             let mut project = ModelingProject::default();
             project.brief.prompt = task.prompt.clone();
@@ -209,10 +263,14 @@ fn main() -> Result<()> {
             let mut reference_views = vec![];
             if !args.no_render {
                 for view in View::ALL {
-                    let img = renderer.render(&source, &rev(&source), view)?;
+                    let img = renderer.render(&source, &capture_revision(&source, &base)?, view)?;
                     std::fs::write(
                         dir.join(format!("reference-{}.png", view.label())),
                         &img.data,
+                    )?;
+                    std::fs::write(
+                        dir.join(format!("reference-{}.camera.json", view.label())),
+                        serde_json::to_vec_pretty(&renderer.last_capture)?,
                     )?;
                     reference_views.push(img);
                 }
@@ -299,11 +357,28 @@ fn main() -> Result<()> {
                         }
                         if !args.no_render {
                             for view in View::ALL {
-                                let image = renderer.render(&candidate, &rev(&candidate), view)?;
+                                let image = renderer.render(
+                                    &candidate,
+                                    &capture_revision(&candidate, &base)?,
+                                    view,
+                                )?;
                                 std::fs::write(
                                     dir.join(format!("candidate-{}.png", view.label())),
                                     &image.data,
                                 )?;
+                                std::fs::write(
+                                    dir.join(format!("candidate-{}.camera.json", view.label())),
+                                    serde_json::to_vec_pretty(&renderer.last_capture)?,
+                                )?;
+                                if let Some(fit) = &renderer.fit_image {
+                                    std::fs::write(
+                                        dir.join(format!(
+                                            "candidate-{}-diagnostic-fit.png",
+                                            view.label()
+                                        )),
+                                        &fit.data,
+                                    )?;
+                                }
                             }
                         }
                     }
@@ -352,7 +427,7 @@ fn main() -> Result<()> {
     std::fs::write(
         args.out.join("report.json"),
         serde_json::to_vec_pretty(
-            &json!({"version":1,"provenance":manifest.provenance,"runs":rows,"mesh_contract_controls":contract_controls,"human_review_status":"pending","renderer_caveats":["#105 UV seams","#107 water shader"]}),
+            &json!({"version":1,"provenance":manifest.provenance,"runs":rows,"mesh_contract_controls":contract_controls,"camera_convention_version":mogen_core::CAMERA_CONVENTION_VERSION,"human_review_status":"pending","renderer_caveats":["#105 UV seams","#107 water shader"]}),
         )?,
     )?;
     std::fs::write(args.out.join("review.html"), html)?;
@@ -408,4 +483,8 @@ fn mesh_contract_controls() -> Result<serde_json::Value> {
         );
     }
     Ok(json!(rows))
+}
+
+fn capture_revision(source: &str, base: &Path) -> Result<String> {
+    Ok(revision(source, &dependencies(source, Some(base))?))
 }

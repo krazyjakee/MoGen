@@ -15,6 +15,10 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Meta {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub front: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub front_node: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,

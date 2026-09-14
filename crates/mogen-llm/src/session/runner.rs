@@ -8,6 +8,8 @@ use std::path::Path;
 /// Frontends render immutable snapshots using their own GL scheduling. A render
 /// response is paired with the requested revision before reaching the model.
 pub trait SessionRenderer {
+    fn capture_info(&self) -> Option<mogen_core::views::CaptureInfo> { None }
+    fn diagnostic_fit(&self) -> Option<ImageInput> { None }
     fn render_part(
         &mut self,
         _source: &str,
@@ -45,6 +47,8 @@ fn captures(
             label: view.label().into(),
             revision: revision.into(),
             image,
+            camera: renderer.capture_info(),
+            diagnostic_fit: renderer.diagnostic_fit(),
         });
     }
     Ok(views)
@@ -110,8 +114,11 @@ pub fn tool_session(
                     // Replace previous tool render, retaining original references.
                     cfg.user_images = base.user_images.clone();
                     cfg.user_images.push(image);
+                    if let Some(fit) = renderer.diagnostic_fit() { cfg.user_images.push(fit); }
                     Ok(
-                        json!({"revision":revision,"view":view.label(),"image_roles":"original target references first; current render last"}),
+                        json!({"revision":revision,"view":view.label(),"camera":renderer.capture_info(),
+                            "diagnostic_fit":renderer.diagnostic_fit().is_some(),
+                            "image_roles":"original target references first, then fixed comparison render; optional last image is diagnostic_fit, not a matched comparison"}),
                     )
                 }
                 ModelingTool::Finish { revision, findings } => {
@@ -199,6 +206,14 @@ pub fn refine_session(
                         .iter()
                         .map(|v| v.image.clone()),
                 );
+            }
+            let camera_info: Vec<_> = views.iter().map(|v| &v.camera).collect();
+            review_cfg.user_prompt.push_str(&format!("\nCamera metadata: {}. Out-of-frame counts identify cropped geometry; do not infer that those parts are missing. Separately labeled diagnostic_fit images follow all matched views, in the order listed below.\n", serde_json::to_string(&camera_info)?));
+            for view in &views {
+                if let Some(fit) = &view.diagnostic_fit {
+                    review_cfg.user_prompt.push_str(&format!("diagnostic_fit: {} revision {} (independent framing)\n",view.label,view.revision));
+                    review_cfg.user_images.push(fit.clone());
+                }
             }
             let response = call(&review_cfg)?;
             workspace.check_revision(&rev)?;

@@ -13,6 +13,7 @@ pub mod renderable;
 pub mod shader;
 pub mod skin;
 pub mod transform;
+pub mod views;
 
 pub use aabb::{node_world_aabb, subtree_local_aabb, Aabb};
 pub use anim::{Clip, Easing, Interpolation, Joint, JointKind, Track, TrackProperty};
@@ -36,3 +37,4 @@ pub use physics::{PhysicsBody, PhysicsId, PhysicsMaterial};
 pub use shader::{ShaderDecl, ShaderParamDef, ShaderParamType, ShaderParamValue};
 pub use skin::{Skin, SkinId};
 pub use transform::Transform;
+pub use views::{asset_front_yaw, AssetView, CAMERA_CONVENTION_VERSION};

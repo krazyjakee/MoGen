@@ -29,6 +29,11 @@ impl Viewer {
         }
         let mut st = self.state.lock().unwrap();
         let viewer_was_empty = st.scene.is_none();
+        if fit_camera {
+            if let Ok((yaw, pitch)) = mogen_core::AssetView::Presentation.camera_for(&scene) {
+                st.camera.yaw = yaw; st.camera.pitch = pitch;
+            }
+        }
         st.base_dir = base_dir.map(|p| p.to_path_buf());
         // Re-resolve every saved path against the new scene; drop any that
         // no longer resolve (a node deleted by the latest edit just falls
@@ -408,7 +413,8 @@ impl Viewer {
         st.camera.target = center;
         st.camera.fit_distance = radius * 2.8;
         st.camera.zoom = 1.0;
-        st.camera.yaw = std::f32::consts::FRAC_PI_4;
+        st.camera.yaw = st.scene.as_ref().and_then(|s| mogen_core::AssetView::Presentation.camera_for(s).ok())
+            .map(|c| c.0).unwrap_or(3.0 * std::f32::consts::FRAC_PI_4);
         st.camera.pitch = 0.5;
     }
 

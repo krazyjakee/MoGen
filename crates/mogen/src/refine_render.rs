@@ -31,6 +31,7 @@ pub(crate) fn render_dsl_to_png(dsl: &str, dsl_out: Option<&Path>) -> Result<Vec
         // the working directory by accident.
         .filter(|p| !p.as_os_str().is_empty());
     let opts = ThumbnailOptions {
+        yaw: mogen_core::AssetView::Presentation.camera_for(&scene).map_err(anyhow::Error::msg)?.0,
         base_dir,
         ..ThumbnailOptions::default()
     };

@@ -22,6 +22,9 @@ pub fn validate_graph(graph: &SceneGraph) -> Vec<Diagnostic> {
     if mogen_core::has_errors(&diags) {
         return diags;
     }
+    if let Err(message) = mogen_core::asset_front_yaw(graph) {
+        diags.push(Diagnostic::error("E0140", message));
+    }
     diags.extend(check_connectivity(graph));
 
     for skin in &graph.skins {

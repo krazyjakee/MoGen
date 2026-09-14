@@ -333,8 +333,8 @@ impl ThumbnailManager {
                     // pose for animated scenes (deterministic, doesn't
                     // depend on how long the picker has been open).
                     frames: vec![CaptureFrame {
-                        yaw: 0.55,
-                        pitch: 0.45,
+                        yaw: mogen_core::AssetView::Presentation.camera_for(&job.scene).map(|c| c.0).unwrap_or(3.0 * std::f32::consts::FRAC_PI_4),
+                        pitch: 0.5,
                         time: 0.0,
                         path: job.png_path.clone(),
                     }],

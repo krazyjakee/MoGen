@@ -727,6 +727,7 @@ pub(in crate::app) fn run_llm(
                     control: run_cfg.control.clone(),
                     base_dir: run_cfg.base_dir.clone(),
                     framing: None,
+                    front_yaw: None, last_capture: None, fit_image: None, capture_part: None,
                 };
                 let mut call = |cfg: &GenerateConfig| {
                     send_progress(LlmProgress::Status(format!(

@@ -5,41 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum View {
-    Front,
-    Side,
-    Back,
-    ThreeQuarter,
-    Presentation,
-}
-impl View {
-    pub const ALL: [Self; 5] = [
-        Self::Front,
-        Self::Side,
-        Self::Back,
-        Self::ThreeQuarter,
-        Self::Presentation,
-    ];
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Front => "front",
-            Self::Side => "side",
-            Self::Back => "back",
-            Self::ThreeQuarter => "three_quarter",
-            Self::Presentation => "presentation",
-        }
-    }
-    pub fn camera(self) -> (f32, f32) {
-        match self {
-            Self::Front => (std::f32::consts::PI, 0.0),
-            Self::Side => (std::f32::consts::FRAC_PI_2, 0.0),
-            Self::Back => (0.0, 0.0),
-            Self::ThreeQuarter | Self::Presentation => (std::f32::consts::FRAC_PI_4, 0.5),
-        }
-    }
-}
+pub use mogen_core::AssetView as View;
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "tool", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ModelingTool {
@@ -74,7 +40,7 @@ pub const TOOL_INSTRUCTIONS: &str = r#"Modeling operations: return exactly one J
 {"tool":"documentation","topic":"loft"} returns relevant DSL documentation.
 {"tool":"apply","revision":"current revision","edits":"SEARCH/REPLACE blocks or full DSL"} stages an atomic edit.
 {"tool":"compile","revision":"current revision"} returns diagnostics.
-{"tool":"render","revision":"current revision","view":"front|side|back|three_quarter|presentation","name":null} returns the current render; set name to a uniquely named part for a close-up.
+{"tool":"render","revision":"current revision","view":"front|side|back|three_quarter|rear_three_quarter|presentation","name":null} returns the current render; set name to a uniquely named part for a close-up.
 {"tool":"finish","revision":"current revision","findings":"concrete defects corrected or limitations"} finishes the candidate.
 Inspect before editing. Use the returned revision for every subsequent operation.
 Errors are recoverable: inspect the tool result and correct arguments. Preserve approved locks and unrelated source.

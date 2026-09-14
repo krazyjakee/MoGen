@@ -63,7 +63,7 @@ pub struct ThumbnailOptions {
     /// opaque — the imposter baker uses its own `bake_yaw_atlas` path
     /// instead so it can keep alpha = 0 for transparent backgrounds.
     pub bg: [u8; 3],
-    /// Camera yaw in radians. Default is `π/4` — same 3/4 angle the Studio
+    /// Camera yaw in radians. Default is `3π/4` (front three-quarter) — same 3/4 angle the Studio
     /// uses for its thumbnail.
     pub yaw: f32,
     /// Camera pitch in radians. Default is `0.5` rad (~28°) — slight downward
@@ -80,7 +80,7 @@ impl Default for ThumbnailOptions {
             size: 512,
             // Slate grey — the Studio default viewer background.
             bg: [0x2a, 0x2d, 0x33],
-            yaw: std::f32::consts::FRAC_PI_4,
+            yaw: 3.0 * std::f32::consts::FRAC_PI_4,
             pitch: 0.5,
             base_dir: None,
         }

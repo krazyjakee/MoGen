@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use anyhow::{anyhow, Result};
 use mogen_dsl::module::FsLoader;
-use mogen_render::headless::{save_thumbnail_png, ThumbnailOptions};
+use mogen_render::headless::{render_thumbnail, ThumbnailOptions};
 
 pub(crate) struct ThumbnailArgs {
     pub input: PathBuf,
@@ -27,6 +27,8 @@ pub(crate) fn thumbnail(args: ThumbnailArgs) -> Result<()> {
     let src = std::fs::read_to_string(&args.input)
         .map_err(|e| anyhow!("reading {}: {e}", args.input.display()))?;
 
+    let dependencies = mogen_llm::session::dependencies(&src, args.input.parent())?;
+    let revision = mogen_llm::session::revision(&src, &dependencies);
     let ast = mogen_dsl::parse(&src)?;
 
     let ast_diags = mogen_validate::validate_ast_with_source(&ast, args.input.parent());
@@ -55,6 +57,10 @@ pub(crate) fn thumbnail(args: ThumbnailArgs) -> Result<()> {
         ..Default::default()
     };
     opts.size = args.size;
+    opts.yaw = mogen_core::AssetView::Presentation
+        .camera_for(&scene)
+        .map_err(anyhow::Error::msg)?
+        .0;
     if let Some(y) = args.yaw {
         opts.yaw = y;
     }
@@ -65,8 +71,44 @@ pub(crate) fn thumbnail(args: ThumbnailArgs) -> Result<()> {
         opts.bg = parse_hex_rgb(hex)?;
     }
 
-    save_thumbnail_png(&scene, &opts, &out)?;
-    eprintln!("Wrote thumbnail {} ({}×{})", out.display(), opts.size, opts.size);
+    let pixels = render_thumbnail(&scene, &opts)?;
+    if std::fs::read_to_string(&args.input)? != src
+        || mogen_llm::session::dependencies(&src, args.input.parent())? != dependencies
+    {
+        return Err(anyhow!(
+            "Source/dependencies changed during capture; retry the thumbnail"
+        ));
+    }
+    let mesh = mogen_render::flatten(&scene, opts.base_dir.as_deref());
+    let camera = mogen_render::OrbitCamera {
+        yaw: opts.yaw,
+        pitch: opts.pitch,
+        target: mesh.center,
+        fit_distance: mesh.radius.max(0.001) * 2.8,
+        zoom: 1.0,
+    };
+    let info = mogen_render::capture_info(
+        &scene,
+        &camera,
+        &revision,
+        if args.yaw.is_some() || args.pitch.is_some() {
+            "custom"
+        } else {
+            "presentation"
+        },
+        None,
+    );
+    image::save_buffer(&out, &pixels, opts.size, opts.size, image::ColorType::Rgba8)?;
+    std::fs::write(
+        out.with_extension("camera.json"),
+        serde_json::to_vec_pretty(&info)?,
+    )?;
+    eprintln!(
+        "Wrote thumbnail {} ({}×{})",
+        out.display(),
+        opts.size,
+        opts.size
+    );
     Ok(())
 }
 
