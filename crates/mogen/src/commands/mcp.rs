@@ -134,7 +134,7 @@ fn push_path_opt(args: &mut Vec<String>, name: &str, value: Option<PathBuf>) {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 struct LlmCommon {
     /// LLM provider. One of `auto`, `gemini`, `gemini-oauth`,
-    /// `antigravity`, `openai`, `anthropic`, `ollama`, `claude-code`,
+    /// `antigravity`, `openai`, `codex`, `anthropic`, `ollama`, `claude-code`,
     /// `fireworks`, `zai`. Defaults to `auto`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     provider: Option<String>,

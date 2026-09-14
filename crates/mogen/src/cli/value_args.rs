@@ -98,6 +98,8 @@ pub(crate) enum ProviderArg {
     /// Local `claude` CLI (Claude Code subscription). Auth is handled by
     /// the user's `claude /login`; no API key flag is required.
     ClaudeCode,
+    /// OpenAI Codex subscription. Run `codex login` first; no API key required.
+    Codex,
     /// Fireworks AI's OpenAI-compatible Chat Completions surface. Default
     /// model is the Fire Pass `kimi-k2p6` router; set `FIREWORKS_API_KEY`.
     Fireworks,
@@ -118,6 +120,7 @@ impl From<ProviderArg> for Provider {
             ProviderArg::Openai => Provider::OpenAI,
             ProviderArg::Anthropic => Provider::Anthropic,
             ProviderArg::Ollama => Provider::Ollama,
+            ProviderArg::Codex => Provider::Codex,
             ProviderArg::ClaudeCode => Provider::ClaudeCode,
             ProviderArg::Fireworks => Provider::Fireworks,
             ProviderArg::Zai => Provider::Zai,
@@ -138,6 +141,7 @@ impl From<ProviderArg> for crate::common::GeminiAuthMode {
             ProviderArg::Openai
             | ProviderArg::Anthropic
             | ProviderArg::Ollama
+            | ProviderArg::Codex
             | ProviderArg::ClaudeCode
             | ProviderArg::Fireworks
             | ProviderArg::Zai => GeminiAuthMode::Auto,

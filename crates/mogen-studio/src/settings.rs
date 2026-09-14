@@ -252,6 +252,14 @@ pub struct Settings {
     #[serde(default)]
     pub claude_code_path: String,
 
+    /// Codex executable override. Blank uses `codex` on PATH.
+    #[serde(default)]
+    pub codex_path: String,
+    #[serde(default)]
+    pub codex_model: String,
+    #[serde(default)]
+    pub codex_fast_model: String,
+
     /// API key for Fireworks AI. Stored as a plain string so switching to
     /// Fireworks in the provider dropdown doesn't require re-pasting the
     /// `fw_…` token. Empty → fall back to the `FIREWORKS_API_KEY` env var.

@@ -91,11 +91,8 @@ pub(super) fn model_presets(slot: ProviderSlot) -> &'static [&'static str] {
             "phi4",
             "gemma3",
         ],
-        ProviderSlot::ClaudeCode => &[
-            "sonnet",
-            "haiku",
-            "opus",
-        ],
+        ProviderSlot::Codex => &[mogen_llm::codex::DEFAULT_MODEL],
+        ProviderSlot::ClaudeCode => &["sonnet", "haiku", "opus"],
         ProviderSlot::Fireworks => &[
             "accounts/fireworks/routers/kimi-k2p6",
             "accounts/fireworks/routers/kimi-k2p6-turbo",

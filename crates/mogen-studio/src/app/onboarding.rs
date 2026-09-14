@@ -44,12 +44,18 @@ impl MogenStudioApp {
                 ui.add_space(8.0);
                 ui.label(
                     "Generate, Modify, and Animate use OpenAI GPT-6 Astra by default. \
-                     Paste an OpenAI API key below to get started. Gemini, Anthropic, \
+                     Use a Codex subscription or paste an OpenAI API key below. Gemini, Anthropic, \
                      Ollama, and other providers remain available in Edit → Preferences. \
                      Textures use a separate image provider, such as Gemini. The editor, \
                      viewer, and build features work without any key.",
                 );
 
+                ui.add_space(12.0);
+                ui.label("Have a ChatGPT subscription? Install the Codex CLI and run `codex login` to sign in with ChatGPT.");
+                if ui.button("Use Codex subscription").clicked() {
+                    self.settings.set_provider_slot(crate::settings::ProviderSlot::Codex);
+                    do_skip = true;
+                }
                 ui.add_space(12.0);
                 ui.heading("1. Get an OpenAI key (optional)");
                 ui.horizontal(|ui| {

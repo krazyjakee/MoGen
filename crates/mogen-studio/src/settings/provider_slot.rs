@@ -18,6 +18,7 @@ pub enum ProviderSlot {
     Anthropic,
     Ollama,
     ClaudeCode,
+    Codex,
     /// Fireworks AI's OpenAI-compatible Chat Completions surface. Default
     /// model is the Fire Pass `kimi-k2p6` router; users supply their
     /// `fw_…` API key from `https://fireworks.ai/account/api-keys`.
@@ -43,6 +44,7 @@ impl ProviderSlot {
             ProviderSlot::Anthropic => "anthropic",
             ProviderSlot::Ollama => "ollama",
             ProviderSlot::ClaudeCode => "claude-code",
+            ProviderSlot::Codex => "codex",
             ProviderSlot::Fireworks => "fireworks",
             ProviderSlot::Zai => "zai",
             ProviderSlot::OpenAiCompat => "openai-compat",
@@ -57,6 +59,7 @@ impl ProviderSlot {
             ProviderSlot::Anthropic => "Anthropic",
             ProviderSlot::Ollama => "Ollama (local)",
             ProviderSlot::ClaudeCode => "Claude Code (subscription)",
+            ProviderSlot::Codex => "OpenAI Codex (subscription)",
             ProviderSlot::Fireworks => "Fireworks AI Firepass",
             ProviderSlot::Zai => "Z.ai (GLM)",
             ProviderSlot::OpenAiCompat => "OpenAI-compatible (local)",
@@ -74,6 +77,7 @@ impl ProviderSlot {
             "openai" | "gpt" | "chatgpt" => Some(Self::OpenAI),
             "anthropic" | "claude" => Some(Self::Anthropic),
             "ollama" | "local" => Some(Self::Ollama),
+            "codex" | "openai-codex" => Some(Self::Codex),
             "claude-code" | "claude_code" | "claudecode" | "cc" => Some(Self::ClaudeCode),
             "fireworks" | "fireworks-ai" | "firepass" | "kimi" => Some(Self::Fireworks),
             "zai" | "z-ai" | "z.ai" | "zhipu" | "glm" => Some(Self::Zai),
@@ -95,6 +99,7 @@ impl ProviderSlot {
             ProviderSlot::Anthropic => Provider::Anthropic,
             ProviderSlot::Ollama => Provider::Ollama,
             ProviderSlot::ClaudeCode => Provider::ClaudeCode,
+            ProviderSlot::Codex => Provider::Codex,
             ProviderSlot::Fireworks => Provider::Fireworks,
             ProviderSlot::Zai => Provider::Zai,
             ProviderSlot::OpenAiCompat => Provider::OpenAiCompat,
@@ -116,8 +121,9 @@ impl Default for ProviderSlot {
 
 /// Order in which provider slots appear in the Options dropdown, with the
 /// default OpenAI provider first and both Gemini auth modes available.
-pub const PROVIDER_SLOTS: [ProviderSlot; 9] = [
+pub const PROVIDER_SLOTS: [ProviderSlot; 10] = [
     ProviderSlot::OpenAI,
+    ProviderSlot::Codex,
     ProviderSlot::GeminiApiKey,
     ProviderSlot::GeminiOAuth,
     ProviderSlot::Anthropic,

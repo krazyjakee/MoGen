@@ -34,7 +34,14 @@ mod tests {
                 .into_iter()
                 .map(|value| value.get_name().to_string())
                 .collect();
-            for choice in ["openai", "gemini", "auto", "gemini-oauth", "antigravity"] {
+            for choice in [
+                "openai",
+                "codex",
+                "gemini",
+                "auto",
+                "gemini-oauth",
+                "antigravity",
+            ] {
                 assert!(
                     choices.iter().any(|value| value == choice),
                     "{name}: missing {choice}"

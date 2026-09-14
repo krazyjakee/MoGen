@@ -15,6 +15,9 @@ use crate::spend::CallRecord;
 /// so a model the user hasn't priced yet still gets a best-effort number
 /// instead of silently being free.
 pub(super) fn cost_for_record(conn: &Connection, record: &CallRecord) -> rusqlite::Result<f64> {
+    if record.provider == "codex" && record.image_count == 0 {
+        return Ok(0.0);
+    }
     let row = lookup_pricing(conn, &record.provider, &record.model, record.ts)?;
     if record.image_count > 0 {
         let per_image = row.map(|r| r.image_per_unit_usd).unwrap_or_else(|| {

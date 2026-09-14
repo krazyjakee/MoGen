@@ -107,8 +107,9 @@ mogen auth status --verbose                         # show every target with ful
 mogen auth gemini-cli logout                        # scope sign-out per target
 ```
 
-`mogen generate` / `modify` / `animate` / `repair` automatically use the
-gemini-cli OAuth bundle whenever `GEMINI_API_KEY` is unset; `mogen
+`mogen generate` / `modify` / `animate` / `repair` default to OpenAI. Select
+`--provider gemini-oauth` to use the saved gemini-cli OAuth bundle, or
+`--provider auto` for automatic Gemini credential resolution; `mogen
 textures` prefers the antigravity bundle when present (set
 `MOGEN_IMAGE_PROVIDER=antigravity` to force it). The MoGHub session
 file is shared with Studio, so signing in once via the CLI surfaces the
@@ -660,3 +661,19 @@ mogen moghub publish examples/furniture/chair.mog --new --visibility unlisted  #
 
 `check --json` and the LLM repair loop emit machine-readable diagnostics;
 everything else uses human-readable formatting via `codespan-reporting`.
+
+### Codex subscription
+
+Install a current Codex CLI with `--ignore-user-config` support and run
+`codex login` to sign in with ChatGPT. Select `--provider codex` on Generate,
+Modify, Animate, Repair, or Bench. No API key is needed. For example:
+
+```sh
+mogen generate "a wooden stool" --provider codex --out stool.glb
+```
+
+The default model is `gpt-6-astra`; `--model` selects another model available
+to your plan. Reasoning levels and reference-image input are supported.
+Authentication and refresh are managed by Codex. Requests consume Codex plan
+limits, and MoGen records tokens with zero per-call API cost. Textures retain
+their separate image provider. Use `codex login status` to troubleshoot login.

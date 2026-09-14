@@ -420,6 +420,12 @@ pub const SEED: &[PricingSeed] = &[
         text: Some(TextPricing::flat(0.0, 0.0, 0.0)),
         image: None,
     },
+    PricingSeed {
+        provider: "codex",
+        model: crate::codex::DEFAULT_MODEL,
+        text: Some(TextPricing::flat(0.0, 0.0, 0.0)),
+        image: None,
+    },
     // --- Claude Code (user's subscription pays — no per-call billing).
     PricingSeed {
         provider: "claude-code",

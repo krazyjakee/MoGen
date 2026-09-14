@@ -11,6 +11,7 @@ use std::fmt;
 
 use crate::anthropic::{AnthropicClient, AnthropicError};
 use crate::claude_code::{ClaudeCodeClient, ClaudeCodeError};
+use crate::codex::CodexClient;
 use crate::fireworks::{FireworksClient, FireworksError};
 use crate::gemini::{GeminiClient, GeminiError};
 use crate::google_oauth::OAuthBundle;
@@ -52,6 +53,8 @@ pub enum Provider {
     /// installed Claude Code login (Pro/Max subscription or API key managed
     /// by `claude`), so no API key is collected here.
     ClaudeCode,
+    /// Local Codex CLI using the saved ChatGPT subscription login.
+    Codex,
     /// Fireworks AI's OpenAI-compatible Chat Completions surface. Default
     /// model is the Fire Pass `kimi-k2p6` router which bills the Kimi K2
     /// family at zero per-token cost for personal agentic-coding use.
@@ -85,6 +88,7 @@ impl Provider {
             Provider::Anthropic => "anthropic",
             Provider::Ollama => "ollama",
             Provider::ClaudeCode => "claude-code",
+            Provider::Codex => "codex",
             Provider::Fireworks => "fireworks",
             Provider::Zai => "zai",
             Provider::OpenAiCompat => "openai-compat",
@@ -99,6 +103,7 @@ impl Provider {
             Provider::Anthropic => "Anthropic",
             Provider::Ollama => "Ollama (local)",
             Provider::ClaudeCode => "Claude Code (subscription)",
+            Provider::Codex => "OpenAI Codex (subscription)",
             Provider::Fireworks => "Fireworks AI Firepass",
             Provider::Zai => "Z.ai (GLM)",
             Provider::OpenAiCompat => "OpenAI-compatible (local)",
@@ -115,6 +120,7 @@ impl Provider {
             Provider::Anthropic => "Anthropic",
             Provider::Ollama => "Ollama",
             Provider::ClaudeCode => "Claude Code",
+            Provider::Codex => "Codex",
             Provider::Fireworks => "Fireworks AI Firepass",
             Provider::Zai => "Z.ai",
             Provider::OpenAiCompat => "OpenAI-compatible",
@@ -130,6 +136,7 @@ impl Provider {
             "openai" | "gpt" | "chatgpt" => Some(Self::OpenAI),
             "anthropic" | "claude" => Some(Self::Anthropic),
             "ollama" | "local" => Some(Self::Ollama),
+            "codex" | "openai-codex" => Some(Self::Codex),
             "claude-code" | "claude_code" | "claudecode" | "cc" => Some(Self::ClaudeCode),
             "fireworks" | "fireworks-ai" | "firepass" | "kimi" => Some(Self::Fireworks),
             "zai" | "z-ai" | "z.ai" | "zhipu" | "glm" => Some(Self::Zai),
@@ -153,6 +160,7 @@ impl Provider {
             Provider::Anthropic => "ANTHROPIC_API_KEY",
             Provider::Ollama => "OLLAMA_API_KEY",
             Provider::ClaudeCode => "",
+            Provider::Codex => "",
             Provider::Fireworks => "FIREWORKS_API_KEY",
             Provider::Zai => "ZAI_API_KEY",
             Provider::OpenAiCompat => "OPENAI_COMPAT_API_KEY",
@@ -168,6 +176,7 @@ impl Provider {
             Provider::Anthropic => crate::anthropic::DEFAULT_MODEL,
             Provider::Ollama => crate::ollama::DEFAULT_MODEL,
             Provider::ClaudeCode => crate::claude_code::DEFAULT_MODEL,
+            Provider::Codex => crate::codex::DEFAULT_MODEL,
             Provider::Fireworks => crate::fireworks::DEFAULT_MODEL,
             Provider::Zai => crate::zai_chat::DEFAULT_MODEL,
             Provider::OpenAiCompat => OPENAI_COMPAT_DEFAULT_MODEL,
@@ -183,6 +192,7 @@ impl Provider {
             Provider::Anthropic => crate::anthropic::DEFAULT_FAST_MODEL,
             Provider::Ollama => crate::ollama::DEFAULT_MODEL,
             Provider::ClaudeCode => crate::claude_code::DEFAULT_FAST_MODEL,
+            Provider::Codex => crate::codex::DEFAULT_MODEL,
             Provider::Fireworks => crate::fireworks::DEFAULT_FAST_MODEL,
             Provider::Zai => crate::zai_chat::DEFAULT_FAST_MODEL,
             Provider::OpenAiCompat => OPENAI_COMPAT_DEFAULT_MODEL,
@@ -195,7 +205,7 @@ impl Provider {
     pub fn is_keyless(self) -> bool {
         matches!(
             self,
-            Provider::Ollama | Provider::ClaudeCode | Provider::OpenAiCompat
+            Provider::Ollama | Provider::Codex | Provider::ClaudeCode | Provider::OpenAiCompat
         )
     }
 
@@ -218,6 +228,7 @@ impl Provider {
                 | Provider::OpenAI
                 | Provider::Zai
                 | Provider::Fireworks
+                | Provider::Codex
                 | Provider::ClaudeCode
         )
     }
@@ -467,6 +478,7 @@ pub enum LlmClient {
     Anthropic(AnthropicClient),
     Ollama(OllamaClient),
     ClaudeCode(ClaudeCodeClient),
+    Codex(CodexClient),
     Fireworks(FireworksClient),
     Zai(ZaiChatClient),
     /// Generic OpenAI-compatible local server. Same wire client as
@@ -488,6 +500,7 @@ impl LlmClient {
             Provider::Anthropic => LlmClient::Anthropic(AnthropicClient::new(api_key)),
             Provider::Ollama => LlmClient::Ollama(OllamaClient::new(api_key)),
             Provider::ClaudeCode => LlmClient::ClaudeCode(ClaudeCodeClient::new()),
+            Provider::Codex => LlmClient::Codex(CodexClient::new()),
             Provider::Fireworks => LlmClient::Fireworks(FireworksClient::new(api_key)),
             Provider::Zai => LlmClient::Zai(ZaiChatClient::new(api_key)),
             Provider::OpenAiCompat => LlmClient::OpenAiCompat(OpenAIClient::new(api_key)),
@@ -548,6 +561,7 @@ impl LlmClient {
             }
             Provider::Ollama => LlmClient::Ollama(OllamaClient::with_base_url(api_key, base_url)),
             Provider::ClaudeCode => LlmClient::ClaudeCode(ClaudeCodeClient::with_path(base_url)),
+            Provider::Codex => LlmClient::Codex(CodexClient::with_path(base_url)),
             Provider::Fireworks => {
                 LlmClient::Fireworks(FireworksClient::with_base_url(api_key, base_url))
             }
@@ -566,6 +580,7 @@ impl LlmClient {
             LlmClient::Anthropic(_) => Provider::Anthropic,
             LlmClient::Ollama(_) => Provider::Ollama,
             LlmClient::ClaudeCode(_) => Provider::ClaudeCode,
+            LlmClient::Codex(_) => Provider::Codex,
             LlmClient::Fireworks(_) => Provider::Fireworks,
             LlmClient::Zai(_) => Provider::Zai,
             LlmClient::OpenAiCompat(_) => Provider::OpenAiCompat,
@@ -610,6 +625,7 @@ impl LlmClient {
             LlmClient::Anthropic(c) => c.generate(cfg).map_err(Into::into),
             LlmClient::Ollama(c) => c.generate(cfg).map_err(Into::into),
             LlmClient::ClaudeCode(c) => c.generate(cfg).map_err(Into::into),
+            LlmClient::Codex(c) => c.generate(cfg),
             LlmClient::Fireworks(c) => c.generate(cfg).map_err(Into::into),
             LlmClient::Zai(c) => c.generate(cfg).map_err(Into::into),
             LlmClient::OpenAiCompat(c) => c.generate(cfg).map_err(Into::into),
@@ -679,6 +695,21 @@ fn resolved_model(client: &LlmClient, cfg: &GenerateConfig) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn codex_is_keyless_and_supports_images() {
+        assert!(Provider::Codex.is_keyless());
+        assert!(Provider::Codex.supports_images());
+        assert_eq!(Provider::parse("openai-codex"), Some(Provider::Codex));
+        assert_eq!(
+            Provider::parse(Provider::Codex.key()),
+            Some(Provider::Codex)
+        );
+        assert_eq!(
+            LlmClient::from_env(Provider::Codex).unwrap().provider(),
+            Provider::Codex
+        );
+    }
 
     #[test]
     fn default_provider_uses_astra_and_preserves_gemini_models() {

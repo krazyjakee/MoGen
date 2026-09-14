@@ -39,12 +39,20 @@ open "/Applications/MoGen Studio.app"        # macOS .dmg
 ```
 
 New Studio profiles default to OpenAI GPT-6 Astra for 3D generation.
-The welcome dialog accepts an OpenAI API key; you can also add one in
+The welcome dialog offers **Use Codex subscription** or an OpenAI API key; you can also configure either in
 Preferences. You can skip setup and use the editor, viewer, and build without
 a key. The key is stored in the settings file and is the same value `OPENAI_API_KEY` would supply to the CLI. Gemini API-key and
 Google OAuth slots remain available in the provider dropdown, and existing
 provider selections and custom models are preserved. Texture generation uses
 its separate image-provider setting.
+
+For subscription access, install a current Codex CLI with `--ignore-user-config`
+support and run `codex login` to sign in with ChatGPT. Choose **OpenAI Codex
+(subscription)** under **Edit → Preferences → LLM**. Set the optional binary
+path if Codex is outside PATH. Both model tiers default to `gpt-6-astra` and
+can be overridden with a model available to your plan. Reference images work
+with this provider. Login and token refresh are handled by Codex; requests use
+your plan limits and have zero per-call API cost in MoGen's spending meter.
 
 ---
 
@@ -254,6 +262,9 @@ path. It's safe to edit by hand — Studio reloads on next launch.
 | key | meaning |
 |---|---|
 | `provider_slot` | Selected provider. Empty → OpenAI. Gemini API-key and OAuth slots remain available. |
+| `codex_path` | Codex executable path. Empty → `codex` on PATH. Requires a ChatGPT login via `codex login`. |
+| `codex_model` | Codex heavy model. Empty → `gpt-6-astra`. |
+| `codex_fast_model` | Codex fast model. Empty → `gpt-6-astra`. |
 | `openai_api_key` | OpenAI API key. Falls back to `OPENAI_API_KEY`. |
 | `openai_model` | Heavy model id. Empty → `gpt-6-astra`. |
 | `openai_fast_model` | Fast model for Prompt Enhancer / Ask. Empty → `gpt-5-mini`. |

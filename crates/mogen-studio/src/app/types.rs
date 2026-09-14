@@ -119,6 +119,8 @@ pub(super) fn viewer_bg_color(settings: &crate::settings::Settings) -> egui::Col
 /// Result from a background LLM call. Always includes the DSL we tried to
 /// compile so the UI can drop it into the editor even when validation failed.
 pub(super) struct LlmOutcome {
+    /// Text calls on a subscription consume plan limits rather than API dollars.
+    pub(super) subscription: bool,
     pub(super) dsl: String,
     pub(super) diagnostics: Vec<Diagnostic>,
     /// Raw API usage — `prompt_tokens + response_tokens + cached_tokens` across

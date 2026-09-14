@@ -25,7 +25,7 @@ connectors, skeletons + skinning + animation templates, full PBR materials with 
 textures, validation diagnostics, and LLM-driven generate/modify/animate are all
 working. OpenAI GPT-6 Astra is the default for 3D generation. Other supported
 backends include Gemini (API key or Google OAuth), Anthropic, Ollama (local),
-Claude Code (subscription),
+Codex and Claude Code (subscription),
 Fireworks AI Firepass (Kimi K2 routers), and Z.ai (GLM family, default `glm-5.1`). See
 [`docs/dsl.md`](docs/dsl.md) for the full feature surface.
 
@@ -207,7 +207,7 @@ CLI reads only the API-key fields. Keys entered in Studio therefore satisfy
 `mogen generate` etc. on the same machine without also having to export an env
 var.
 
-Resolution precedence for every provider is the same: `--api-key` flag → env
+For API-key providers, resolution precedence is: `--api-key` flag → env
 var → `~/.mogen/settings.json` → (Gemini only) on-disk OAuth bundle → error.
 Set `MOGEN_SETTINGS=/path/to/file.json` to override the path entirely or
 `MOGEN_CACHE_DIR=/path/to/dir` to override just the parent directory. Older
@@ -234,6 +234,7 @@ The file is plain JSON. A minimal example:
 | Gemini       | `gemini`           | `gemini-pro-latest`                        | `GEMINI_API_KEY`      |
 | Anthropic    | `anthropic`        | `claude-sonnet-4-5`                        | `ANTHROPIC_API_KEY`   |
 | Ollama       | `ollama`           | `llama3.1`                                 | `OLLAMA_API_KEY` \*   |
+| OpenAI Codex | `codex` | `gpt-6-astra` (via Codex CLI) | — (subscription) |
 | Claude Code  | `claude-code`      | `sonnet` (delegates to `claude` CLI)       | — (subscription)      |
 | Fireworks AI Firepass | `fireworks` | `accounts/fireworks/routers/kimi-k2p6`     | `FIREWORKS_API_KEY`   |
 | Z.ai (GLM)   | `zai`              | `glm-5.1`                                  | `ZAI_API_KEY`         |
@@ -259,6 +260,28 @@ Notes:
 - **Claude Code** is keyless — it shells out to the `claude` CLI, so auth
   is whatever `claude login` already set up.
 
+### Use an OpenAI Codex subscription
+
+Install a current [Codex CLI](https://learn.chatgpt.com/docs/cli) with
+`--ignore-user-config` support, then sign in with ChatGPT:
+
+```sh
+codex login
+codex login status
+mogen generate "a wooden stool" --provider codex --out stool.glb
+mogen modify stool.mog "make the legs taller" --provider codex
+```
+
+In Studio, choose **Use Codex subscription** on the welcome screen, or select
+**OpenAI Codex (subscription)** in **Edit → Preferences → LLM**. If Codex is
+outside PATH, set its binary path there. Both model tiers default to
+`gpt-6-astra`; select a model available to your plan with `--model` or the
+Studio model fields. Codex handles login and token refresh; MoGen does not
+store subscription tokens. This provider requires ChatGPT login and uses
+Codex plan limits; it does not fall back to an API key. Token usage is tracked
+with zero per-call API cost. Reference images are supported; texture generation
+uses the separate image provider.
+
 ### Sign in with a paid Gemini account
 
 Free-tier `GEMINI_API_KEY`s are locked out of `gemini-3-pro-preview` and other
@@ -271,7 +294,7 @@ mogen auth antigravity login        # signs in with the Antigravity client — r
 mogen auth status                   # one-line status across every target (gemini-cli, antigravity, moghub)
 mogen auth gemini-cli status        # email + project + token expiry for one target
 mogen auth gemini-cli logout        # delete the gemini-cli token (use `antigravity` / `moghub` to scope)
-mogen generate "a chair"            # uses OAuth automatically when GEMINI_API_KEY is unset
+mogen generate "a chair" --provider auto  # resolves Gemini credentials, including saved OAuth
 ```
 
 Every credential `mogen` knows how to persist lives under `~/.mogen/`. The

@@ -37,7 +37,7 @@ impl Settings {
             ProviderSlot::OpenAI => self.openai_api_key.as_str(),
             ProviderSlot::Anthropic => self.anthropic_api_key.as_str(),
             ProviderSlot::Ollama => self.ollama_api_key.as_str(),
-            ProviderSlot::ClaudeCode => "",
+            ProviderSlot::ClaudeCode | ProviderSlot::Codex => "",
             ProviderSlot::Fireworks => self.fireworks_api_key.as_str(),
             ProviderSlot::Zai => self.zai_api_key.as_str(),
             ProviderSlot::OpenAiCompat => self.openai_compat_api_key.as_str(),
@@ -123,6 +123,7 @@ impl Settings {
         match provider {
             Provider::Gemini => &self.gemini_model,
             Provider::OpenAI => &self.openai_model,
+            Provider::Codex => &self.codex_model,
             Provider::Anthropic => &self.anthropic_model,
             Provider::Ollama => &self.ollama_model,
             Provider::Fireworks => &self.fireworks_model,
@@ -137,6 +138,7 @@ impl Settings {
         match provider {
             Provider::Gemini => &self.gemini_fast_model,
             Provider::OpenAI => &self.openai_fast_model,
+            Provider::Codex => &self.codex_fast_model,
             Provider::Anthropic => &self.anthropic_fast_model,
             Provider::Ollama => &self.ollama_fast_model,
             Provider::Fireworks => &self.fireworks_fast_model,
@@ -152,6 +154,7 @@ impl Settings {
         match provider {
             Provider::Gemini => Some(&mut self.gemini_model),
             Provider::OpenAI => Some(&mut self.openai_model),
+            Provider::Codex => Some(&mut self.codex_model),
             Provider::Anthropic => Some(&mut self.anthropic_model),
             Provider::Ollama => Some(&mut self.ollama_model),
             Provider::Fireworks => Some(&mut self.fireworks_model),
@@ -166,6 +169,7 @@ impl Settings {
         match provider {
             Provider::Gemini => Some(&mut self.gemini_fast_model),
             Provider::OpenAI => Some(&mut self.openai_fast_model),
+            Provider::Codex => Some(&mut self.codex_fast_model),
             Provider::Anthropic => Some(&mut self.anthropic_fast_model),
             Provider::Ollama => Some(&mut self.ollama_fast_model),
             Provider::Fireworks => Some(&mut self.fireworks_fast_model),
@@ -242,6 +246,21 @@ pub fn preview_fast_model(provider: Provider) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn codex_settings_round_trip_without_reusing_api_credentials() {
+        let mut settings: Settings = serde_json::from_str(r#"{"provider_slot":"codex","openai_api_key":"api-key","codex_path":"/custom/codex","codex_model":"custom-codex","codex_fast_model":"fast-codex"}"#).unwrap();
+        assert_eq!(settings.provider(), Provider::Codex);
+        assert!(settings.provider_api_key().is_none());
+        assert_eq!(settings.provider_model(), "custom-codex");
+        assert_eq!(settings.provider_fast_model(), "fast-codex");
+        *settings.thinking_model_field_mut(Provider::Codex).unwrap() = "updated".into();
+        let restored: Settings =
+            serde_json::from_str(&serde_json::to_string(&settings).unwrap()).unwrap();
+        assert_eq!(restored.provider_model(), "updated");
+        assert_eq!(restored.codex_path, "/custom/codex");
+        assert_eq!(restored.openai_api_key, "api-key");
+    }
 
     #[test]
     fn new_and_unconfigured_settings_use_openai_astra() {
