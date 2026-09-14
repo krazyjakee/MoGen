@@ -194,6 +194,26 @@ impl Settings {
     pub fn set_image_provider(&mut self, p: ImageProvider) {
         self.image_provider = p.key().to_string();
     }
+
+    /// True when any provider's API key field is non-empty, regardless of
+    /// which slot is currently selected. Used to recognise a returning user
+    /// on first launch of a new default (e.g. a pre-existing Gemini setup
+    /// from before OpenAI became the default provider) — checking only
+    /// [`Self::provider_api_key`] would miss credentials saved under a slot
+    /// that isn't the active one.
+    pub fn has_any_saved_api_key(&self) -> bool {
+        [
+            self.gemini_api_key.as_str(),
+            self.openai_api_key.as_str(),
+            self.anthropic_api_key.as_str(),
+            self.ollama_api_key.as_str(),
+            self.fireworks_api_key.as_str(),
+            self.zai_api_key.as_str(),
+            self.openai_compat_api_key.as_str(),
+        ]
+        .iter()
+        .any(|k| !k.trim().is_empty())
+    }
 }
 
 /// Bleeding-edge thinking-model id for a provider, or `None` when the
@@ -260,5 +280,19 @@ mod tests {
         let settings: Settings =
             serde_json::from_str(r#"{"provider_slot":"openai","openai_model":"gpt-5.5"}"#).unwrap();
         assert_eq!(settings.provider_model(), "gpt-5.5");
+    }
+
+    #[test]
+    fn has_any_saved_api_key_checks_every_provider_field() {
+        assert!(!Settings::default().has_any_saved_api_key());
+
+        let mut s = Settings::default();
+        s.anthropic_api_key = "sk-ant-...".into();
+        assert!(s.has_any_saved_api_key());
+
+        // Whitespace-only fields don't count as configured.
+        let mut s = Settings::default();
+        s.fireworks_api_key = "   ".into();
+        assert!(!s.has_any_saved_api_key());
     }
 }
