@@ -78,6 +78,9 @@ pub(super) fn primitive_mesh(node: &Node, uv_mode: UvMode) -> Option<Result<Prim
     // melted shape doesn't read as low-poly. Only the default branch
     // multiplies by `dd` — an author-supplied `segments=` is taken at face
     // value (they already chose the density they want).
+    if node.kind == "sweep" && node.attr("guide").is_some() {
+        return Some(Ok(PrimitiveMesh::opaque(Mesh::default())));
+    }
     let diagnostics = crate::numeric_arrays::validate(node);
     if !diagnostics.is_empty() {
         return Some(Err(anyhow!("{}", serde_json::to_string(&diagnostics).unwrap())));

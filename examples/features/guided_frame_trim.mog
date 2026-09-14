@@ -1,0 +1,9 @@
+material "frame_material" (color=[0.22,0.10,0.04])
+material "trim_material" (color=[0.7,0.5,0.15],metallic=0.7,roughness=0.3)
+scene {
+  sweep "frame" (profile=[[-0.08,-0.025],[0.08,-0.025],[0.08,0.025],[-0.08,0.025]],
+    path=[[0,0,0],[0,0.1,0.5],[0,0,1]],frame_up=[0,1,0],mat="frame_material")
+  guide "top_trim" (target="frame",section="profile_edge",edge=2,tolerance=0.001)
+  sweep "trim" (guide="top_trim",lift=0.003,
+    profile=[[-0.008,-0.002],[0.008,-0.002],[0.008,0.002],[-0.008,0.002]],mat="trim_material")
+}

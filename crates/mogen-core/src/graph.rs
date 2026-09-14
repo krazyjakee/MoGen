@@ -361,6 +361,8 @@ impl Default for SceneNode {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SceneGraph {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub guides: Vec<crate::GuideCurve>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub relationships: Vec<crate::Relationship>,
     pub nodes: Vec<SceneNode>,
     pub roots: Vec<NodeId>,

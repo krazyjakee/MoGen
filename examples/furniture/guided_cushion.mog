@@ -1,0 +1,10 @@
+material "upholstery" (color=[0.18,0.35,0.3],roughness=0.9)
+material "piping" (color=[0.07,0.12,0.1],roughness=0.8)
+module "cushion" (w=0.8,h=0.2,d=0.65,boxiness=3) {
+  superellipsoid "cushion_surface" (size=[$w,$h,$d],ew=$boxiness,ns=3,
+    rings=32,segments=64,mat="upholstery")
+  guide "welt_curve" (target="cushion_surface",section="latitude",level=0.0,tolerance=0.001)
+  sweep "welt" (guide="welt_curve",lift=0.002,
+    profile=[[-0.003,-0.003],[0.003,-0.003],[0.003,0.003],[-0.003,0.003]],mat="piping")
+}
+scene { use "cushion" () }
