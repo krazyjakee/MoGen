@@ -1,0 +1,465 @@
+use super::*;
+use crate::{GenerateConfig, GenerateResponse, ImageInput, Usage};
+use serde_json::json;
+use std::time::Duration;
+const ORIGINAL:&str="material \"wood\" (color=[0.5,0.3,0.1])\nscene { box \"seat\" (size=[1,0.2,1],mat=\"wood\") box \"arm\" (size=[0.1,0.1,1],pos=[0.45,0.1,0],mat=\"wood\") }";
+fn rev(source: &str) -> String {
+    revision(source, &Default::default())
+}
+fn response(text: impl Into<String>) -> GenerateResponse {
+    GenerateResponse {
+        text: text.into(),
+        usage: Usage {
+            prompt_tokens: 10,
+            response_tokens: 10,
+            total_tokens: 20,
+            cached_tokens: 0,
+        },
+    }
+}
+struct Renderer {
+    seen: Vec<(String, View)>,
+    fail: bool,
+}
+impl SessionRenderer for Renderer {
+    fn render(&mut self, _source: &str, revision: &str, view: View) -> anyhow::Result<ImageInput> {
+        if self.fail {
+            anyhow::bail!("fixture render failure");
+        }
+        self.seen.push((revision.into(), view));
+        Ok(ImageInput {
+            mime_type: "image/png".into(),
+            data: format!("{revision}-{}", view.label()).into_bytes(),
+        })
+    }
+}
+#[test]
+fn limits_cancel_deadline_calls_and_unknown_spend() {
+    let cfg = GenerateConfig::new("chair");
+    let c = SessionControl::new(SessionLimits {
+        calls: 1,
+        ..Default::default()
+    });
+    c.before_call(&cfg, None).unwrap();
+    assert!(c.before_call(&cfg, None).is_err());
+    assert_eq!(c.meter().calls, 1);
+    let c = SessionControl::new(Default::default());
+    c.cancel();
+    assert!(c.before_call(&cfg, None).is_err());
+    assert_eq!(c.meter().calls, 0);
+    let c = SessionControl::new(SessionLimits {
+        seconds: 5,
+        ..Default::default()
+    });
+    assert!(c.check_at(Duration::from_secs(5)).is_err());
+    assert!(c.before_call(&cfg, None).is_err());
+    let c = SessionControl::new(SessionLimits {
+        spend_usd: Some(0.01),
+        ..Default::default()
+    });
+    assert!(c.before_call(&cfg, None).is_err());
+    assert_eq!(c.meter().calls, 0);
+    let c = SessionControl::new(SessionLimits {
+        spend_usd: Some(0.01),
+        ..Default::default()
+    });
+    assert!(c
+        .before_call(
+            &cfg,
+            Some(crate::spend::pricing::TextPricing::flat(
+                100.0, 100.0, 100.0
+            ))
+        )
+        .is_err());
+}
+#[test]
+fn atomic_edits_preserve_locks_and_unrelated_text() {
+    let lock = PartLock {
+        name: "seat".into(),
+        kind: LockKind::Subtree,
+    };
+    let mut w =
+        ModelingWorkspace::new(ORIGINAL.into(), None, vec![lock], Some("arm".into())).unwrap();
+    let old = w.revision().unwrap();
+    let next = ORIGINAL.replace("size=[0.1,0.1,1]", "size=[0.2,0.1,1]");
+    assert!(w.apply("stale", &next).is_err());
+    assert_eq!(w.source, ORIGINAL);
+    assert!(w
+        .apply(&old, &ORIGINAL.replace("size=[1,0.2,1]", "size=[2,0.2,1]"))
+        .is_err());
+    assert!(w
+        .apply(
+            &old,
+            &ORIGINAL.replace("color=[0.5,0.3,0.1]", "color=[1,0,0]")
+        )
+        .is_err());
+    assert!(w
+        .apply(
+            &old,
+            "<<<<<<< SEARCH\nnot present\n=======\nx\n>>>>>>> REPLACE"
+        )
+        .is_err());
+    assert_eq!(w.source, ORIGINAL);
+    w.apply(&old, &next).unwrap();
+    assert_eq!(w.source, next);
+    assert!(w.apply(&old, ORIGINAL).is_err());
+}
+#[test]
+fn shared_material_and_parent_transform_cannot_bypass_locks() {
+    let locks = vec![PartLock {
+        name: "seat".into(),
+        kind: LockKind::Subtree,
+    }];
+    assert!(enforce_locks(
+        ORIGINAL,
+        &ORIGINAL.replace("color=[0.5,0.3,0.1]", "color=[1,0,0]"),
+        &locks,
+        None
+    )
+    .is_err());
+    let src = "scene { group \"frame\" { box \"seat\" (size=[1,1,1]) } }";
+    assert!(enforce_locks(
+        src,
+        &src.replace("group \"frame\"", "group \"frame\" (pos=[0,1,0])"),
+        &locks,
+        None
+    )
+    .is_err());
+}
+#[test]
+fn imported_dependencies_are_captured_and_stale_changes_rejected() {
+    let dir = tempfile::tempdir().unwrap();
+    let module = "module \"chair\" () { box \"seat\" (size=[1,1,1]) }";
+    std::fs::write(dir.path().join("chair.mog"), module).unwrap();
+    let source = "import \"chair.mog\"\nscene { use \"chair\" () }";
+    let w = ModelingWorkspace::new(source.into(), Some(dir.path().into()), vec![], None).unwrap();
+    let old = w.revision().unwrap();
+    assert_eq!(dependencies(source, Some(dir.path())).unwrap().len(), 1);
+    std::fs::write(
+        dir.path().join("chair.mog"),
+        module.replace("1,1,1", "2,1,1"),
+    )
+    .unwrap();
+    assert!(w.check_revision(&old).is_err());
+    assert!(dependencies("import \"missing.mog\"\nscene {}", Some(dir.path())).is_err());
+}
+#[test]
+fn project_roundtrip_preserves_reference_bytes_and_brief() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("chair.mog");
+    let mut p = ModelingProject::default();
+    p.brief.prompt = "carved chair".into();
+    p.brief.dimensions = "0.9m tall".into();
+    p.brief.corrections.push("thicker arms".into());
+    p.brief.add_reference(
+        "front target".into(),
+        ImageInput {
+            mime_type: "image/png".into(),
+            data: vec![1, 2, 3],
+        },
+    );
+    p.save(&path).unwrap();
+    let q = ModelingProject::load(&path).unwrap();
+    assert_eq!(q.brief.references[0].image.data, vec![1, 2, 3]);
+    assert_eq!(q.brief.corrections, p.brief.corrections);
+    assert_eq!(q.brief.dimensions, p.brief.dimensions);
+    let mut cfg = GenerateConfig::new("modify");
+    q.brief.attach(&mut cfg).unwrap();
+    assert!(cfg.user_prompt.contains("carved chair"));
+    assert_eq!(cfg.user_images[0].data, vec![1, 2, 3]);
+}
+#[test]
+fn scripted_tool_sequence_inspects_edits_compiles_renders_and_corrects_again() {
+    let next = ORIGINAL.replace("size=[0.1,0.1,1]", "size=[0.2,0.1,1]");
+    let last = next.replace("size=[0.2,0.1,1]", "size=[0.3,0.1,1]");
+    let sequence = vec![
+        json!({"tool":"inspect","revision":rev(ORIGINAL),"name":"arm"}),
+        json!({"tool":"apply","revision":rev(ORIGINAL),"edits":next}),
+        json!({"tool":"compile","revision":rev(&next)}),
+        json!({"tool":"render","revision":rev(&next),"view":"back"}),
+        json!({"tool":"apply","revision":rev(&next),"edits":last}),
+        json!({"tool":"finish","revision":rev(&last),"findings":"arm thickness corrected"}),
+    ];
+    let mut calls = sequence.into_iter();
+    let mut model = |_: &GenerateConfig| Ok(response(calls.next().unwrap().to_string()));
+    let mut w = ModelingWorkspace::new(ORIGINAL.into(), None, vec![], None).unwrap();
+    let mut renderer = Renderer {
+        seen: vec![],
+        fail: false,
+    };
+    tool_session(
+        &mut w,
+        &GenerateConfig::new("chair"),
+        "thicken arm",
+        &mut model,
+        &mut renderer,
+    )
+    .unwrap();
+    assert_eq!(w.source, last);
+    assert_eq!(renderer.seen, vec![(rev(&next), View::Back)]);
+}
+#[test]
+fn tool_errors_return_to_model_without_mutating_source() {
+    let mut count = 0;
+    let mut model = |cfg: &GenerateConfig| {
+        count += 1;
+        Ok(response(if count == 1 {
+            "{\"tool\":\"apply\",\"revision\":\"stale\",\"edits\":\"invalid\"}".into()
+        } else {
+            assert!(cfg.user_prompt.contains("Stale"));
+            json!({"tool":"finish","revision":rev(ORIGINAL),"findings":"could not improve"})
+                .to_string()
+        }))
+    };
+    let mut w = ModelingWorkspace::new(ORIGINAL.into(), None, vec![], None).unwrap();
+    tool_session(
+        &mut w,
+        &GenerateConfig::new("x"),
+        "x",
+        &mut model,
+        &mut Renderer {
+            seen: vec![],
+            fail: false,
+        },
+    )
+    .unwrap();
+    assert_eq!(w.source, ORIGINAL);
+}
+#[test]
+fn refinement_rejects_regression_and_keeps_multiview_candidates() {
+    let next = ORIGINAL.replace("size=[0.1,0.1,1]", "size=[0.2,0.1,1]");
+    let mut p = ModelingProject::default();
+    p.limits.iterations = 1;
+    let mut count = 0;
+    let mut model = |cfg: &GenerateConfig| {
+        count += 1;
+        let text = match count {
+            1 => {
+                assert_eq!(cfg.user_images.len(), 5);
+                assert!(String::from_utf8_lossy(&cfg.user_images[2].data).contains("back"));
+                json!({"findings":"back arm too thin","complete":false,"improved":false,"correction":"thicken arm"})
+            }
+            2 => json!({"tool":"apply","revision":rev(ORIGINAL),"edits":next}),
+            3 => json!({"tool":"finish","revision":rev(&next),"findings":"thicker"}),
+            4 => {
+                assert_eq!(cfg.user_images.len(), 10);
+                json!({"findings":"arm now too thick","complete":false,"improved":false,"correction":"revert"})
+            }
+            _ => panic!("unexpected call"),
+        };
+        Ok(response(text.to_string()))
+    };
+    let mut renderer = Renderer {
+        seen: vec![],
+        fail: false,
+    };
+    let result = refine_session(
+        &mut p,
+        ORIGINAL,
+        None,
+        &GenerateConfig::new("chair"),
+        "fixture",
+        &mut model,
+        &mut renderer,
+        &mut |_| {},
+    )
+    .unwrap();
+    assert_eq!(result, ORIGINAL);
+    assert_eq!(p.candidates.len(), 2);
+    assert_eq!(p.candidates[1].views.len(), 5);
+    assert!(p.stop_reason.contains("No useful"));
+}
+#[test]
+fn render_failure_and_iteration_exhaustion_keep_valid_work() {
+    for fail in [true, false] {
+        let mut p = ModelingProject::default();
+        p.limits.iterations = 0;
+        let mut model = |_: &GenerateConfig| {
+            Ok(response(json!({"findings":"missing detail","complete":false,"improved":false,"correction":"add detail"}).to_string()))
+        };
+        let result = refine_session(
+            &mut p,
+            ORIGINAL,
+            None,
+            &GenerateConfig::new("chair"),
+            "fixture",
+            &mut model,
+            &mut Renderer { seen: vec![], fail },
+            &mut |_| {},
+        )
+        .unwrap();
+        assert_eq!(result, ORIGINAL);
+        assert_eq!(p.candidates.len(), 1);
+        assert!(p.stop_reason.contains(if fail {
+            "render failure"
+        } else {
+            "Iteration limit"
+        }));
+    }
+}
+#[test]
+fn planner_coder_and_reviewer_requests_retain_labeled_reference_bytes() {
+    let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+    let address = format!("http://{}", server.server_addr());
+    let (tx, rx) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        for text in ["A chair with an arm", ORIGINAL, ORIGINAL] {
+            let mut request = server
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap()
+                .expect("mock request within 5 seconds");
+            let mut body = String::new();
+            request.as_reader().read_to_string(&mut body).unwrap();
+            tx.send(body).unwrap();
+            request.respond(tiny_http::Response::from_string(json!({"choices":[{"message":{"content":text}}],"usage":{"prompt_tokens":2,"completion_tokens":3,"total_tokens":5}}).to_string()).with_header(tiny_http::Header::from_bytes("Content-Type","application/json").unwrap())).unwrap();
+        }
+    });
+    let client = crate::LlmClient::with_base_url(crate::Provider::OpenAI, "fixture", &address);
+    let mut cfg = GenerateConfig::new("");
+    cfg.model = "gpt-4.1".into();
+    cfg.user_images.push(ImageInput {
+        mime_type: "image/png".into(),
+        data: vec![1, 2, 3],
+    });
+    cfg.spend_context =
+        crate::CallContext::new(crate::Operation::Generate).with_session("fixture-session");
+    let plan = crate::generate_plan(&client, &cfg, "").unwrap();
+    cfg.user_prompt = crate::compose_coder_prompt("", &plan.plan);
+    client.generate(&cfg).unwrap();
+    crate::visual_refine(
+        &client,
+        &cfg,
+        &crate::RepairConfig::default(),
+        mogen_dsl::stdlib_registry(),
+        "chair",
+        ORIGINAL,
+        ImageInput {
+            mime_type: "image/png".into(),
+            data: vec![4, 5, 6],
+        },
+    )
+    .unwrap();
+    worker.join().unwrap();
+    let bodies: Vec<_> = rx.try_iter().collect();
+    assert_eq!(bodies.len(), 3);
+    for body in &bodies {
+        assert!(body.contains("AQID"));
+    }
+    assert!(bodies[0].contains("original target references"));
+    assert!(bodies[2].contains("BAUG"));
+    assert!(bodies[2].contains("Image roles"));
+}
+
+#[test]
+fn recover_dependency_snapshot_without_overwriting_current_project() {
+    let dir = tempfile::tempdir().unwrap();
+    let module = "module \"chair\" () { box \"seat\" (size=[1,1,1]) }";
+    std::fs::write(dir.path().join("chair.mog"), module).unwrap();
+    let source = "import \"chair.mog\"\nscene { use \"chair\" () }";
+    let mut p = ModelingProject::default();
+    let i = p
+        .record(
+            source.into(),
+            Some(dir.path()),
+            &GenerateConfig::new("chair"),
+            "fixture",
+            "valid".into(),
+            vec![],
+        )
+        .unwrap();
+    std::fs::write(dir.path().join("chair.mog"), "new external edit").unwrap();
+    let restored = p.candidates[i]
+        .restore_copy(&dir.path().join("copy"))
+        .unwrap();
+    compile(
+        &std::fs::read_to_string(restored).unwrap(),
+        Some(&dir.path().join("copy")),
+    )
+    .unwrap();
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("chair.mog")).unwrap(),
+        "new external edit"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("copy/chair.mog")).unwrap(),
+        module
+    );
+}
+#[test]
+fn six_quality_targets_compile_and_techniques_are_retrievable() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../benches/quality");
+    let manifest: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(root.join("tasks.json")).unwrap()).unwrap();
+    assert_eq!(manifest["tasks"].as_array().unwrap().len(), 6);
+    for task in manifest["tasks"].as_array().unwrap() {
+        let path = root.join(task["source"].as_str().unwrap());
+        compile(&std::fs::read_to_string(&path).unwrap(), path.parent())
+            .unwrap_or_else(|e| panic!("{}: {e:#}", path.display()));
+    }
+    for topic in [
+        "upholstery",
+        "hollow vessel",
+        "organic",
+        "curved frame",
+        "shaped surface",
+    ] {
+        assert!(documentation(topic).unwrap().contains("scene {"));
+    }
+}
+#[test]
+fn unsupported_images_fail_before_call_admission() {
+    let client = crate::LlmClient::new(crate::Provider::Ollama, "");
+    let mut cfg = GenerateConfig::new("");
+    cfg.user_images.push(ImageInput {
+        mime_type: "image/png".into(),
+        data: vec![1],
+    });
+    let c = SessionControl::new(Default::default());
+    cfg.session_control = Some(c.clone());
+    assert!(matches!(
+        client.generate(&cfg),
+        Err(crate::ProviderError::Unsupported { .. })
+    ));
+    assert_eq!(c.meter().calls, 0);
+}
+#[test]
+fn cancellation_during_request_records_usage_and_prevents_repairs() {
+    let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+    let address = format!("http://{}", server.server_addr());
+    let c = SessionControl::new(Default::default());
+    let cancel = c.clone();
+    let thread = std::thread::spawn(move || {
+        let mut request = server
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .unwrap();
+        let mut body = String::new();
+        request.as_reader().read_to_string(&mut body).unwrap();
+        let body: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(body["max_completion_tokens"], 512);
+        cancel.cancel();
+        request.respond(tiny_http::Response::from_string(json!({"choices":[{"message":{"content":"invalid DSL"}}],"usage":{"prompt_tokens":10,"completion_tokens":20,"total_tokens":30}}).to_string())).unwrap();
+    });
+    let client = crate::LlmClient::with_base_url(crate::Provider::OpenAI, "fixture", &address);
+    let mut cfg = GenerateConfig::new("chair");
+    cfg.model = "gpt-4.1".into();
+    cfg.session_control = Some(c.clone());
+    cfg.max_output_tokens = Some(512);
+    assert!(crate::generate_with_repair(&client, cfg, &Default::default()).is_err());
+    thread.join().unwrap();
+    assert_eq!(c.meter().calls, 1);
+    assert_eq!(c.meter().usage.total_tokens, 30);
+}
+
+#[test]
+fn closeup_framing_uses_parent_world_transform_and_selected_subtree() {
+    let scene = compile(
+        "scene { group \"frame\" (pos=[3,0,0]) { box \"part\" (size=[0.2,0.2,0.2]) } }",
+        None,
+    )
+    .unwrap();
+    let (center, radius) = part_framing(&scene, "part").unwrap();
+    assert!((center[0] - 3.0).abs() < 1e-5);
+    assert!(radius < 0.2);
+    assert!(part_framing(&scene, "missing").is_err());
+}

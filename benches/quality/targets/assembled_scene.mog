@@ -1,0 +1,10 @@
+// Original procedural test target, CC0-1.0, MoGen contributors, 2026.
+material "oak" (color=[0.5,0.3,0.15])
+material "clay" (color=[0.7,0.25,0.14])
+scene {
+  box "floor" (size=[2,0.05,2],pos=[0,-0.025,0],mat="oak")
+  box "table_top" (size=[0.8,0.08,0.6],pos=[0,0.65,0],mat="oak")
+  box "pedestal" (size=[0.18,0.65,0.18],pos=[0,0.325,0],mat="oak")
+  cylinder "pot" (radius=0.12,height=0.20,pos=[0.2,0.79,0],mat="clay")
+  box "book" (size=[0.2,0.03,0.25],pos=[-0.2,0.705,0],mat="clay")
+}

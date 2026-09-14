@@ -1,0 +1,8 @@
+// Original procedural test target, CC0-1.0, MoGen contributors, 2026.
+material "steel" (color=[0.3,0.35,0.38],metallic=0.8,roughness=0.3)
+scene {
+  box "base" (size=[1,0.15,0.5],pos=[0,0.075,0],mat="steel")
+  box "support" (size=[0.18,0.5,0.2],pos=[0,0.4,0],mat="steel")
+  cylinder "shaft" (radius=0.055,height=0.75,pos=[0,0.6,0],rot=[0,0,90],mat="steel")
+  torus "wheel" (major=0.22,minor=0.035,pos=[-0.33,0.6,0],rot=[0,0,90],mat="steel",tags="floating")
+}

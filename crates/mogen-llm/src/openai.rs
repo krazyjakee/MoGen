@@ -196,6 +196,9 @@ fn build_request(cfg: &GenerateConfig) -> serde_json::Value {
             req["reasoning_effort"] = serde_json::json!(level.openai_effort());
         }
     }
+    if let Some(cap) = cfg.max_output_tokens {
+        req["max_completion_tokens"] = serde_json::json!(cap);
+    }
     req
 }
 

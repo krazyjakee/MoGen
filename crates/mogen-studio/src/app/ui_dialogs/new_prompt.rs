@@ -402,6 +402,12 @@ impl MogenStudioApp {
                     );
                 }
 
+                let key = egui::Id::new("new_modeling_options");
+                let mut project = ctx
+                    .data_mut(|d| d.get_temp::<mogen_llm::session::ModelingProject>(key))
+                    .unwrap_or_default();
+                crate::app::modeling::quality_controls(ui, &mut project);
+                ctx.data_mut(|d| d.insert_temp(key, project));
                 // --- Plan-first toggle ---
                 ui.add_space(4.0);
                 let mut plan_draft = self.settings.plan_first();
@@ -485,6 +491,14 @@ impl MogenStudioApp {
                 img.thumbnail = None;
             }
             self.new_untitled();
+            let project = ctx
+                .data_mut(|d| {
+                    d.get_temp::<mogen_llm::session::ModelingProject>(egui::Id::new(
+                        "new_modeling_options",
+                    ))
+                })
+                .unwrap_or_default();
+            *self.active().modeling.lock().unwrap() = project;
             self.active_mut().gen_prompt = prompt;
             self.active_mut().gen_image = staged;
             // Capture the style at submit time so Retry / follow-up edits

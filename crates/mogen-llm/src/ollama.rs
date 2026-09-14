@@ -140,6 +140,9 @@ fn build_request(cfg: &GenerateConfig) -> serde_json::Value {
         // body; the synchronous client only handles a single response.
         "stream": false,
     });
+    if let Some(cap) = cfg.max_output_tokens {
+        options.insert("num_predict".into(), serde_json::json!(cap));
+    }
     if !options.is_empty() {
         req["options"] = serde_json::Value::Object(options);
     }

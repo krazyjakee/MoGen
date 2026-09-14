@@ -223,6 +223,9 @@ fn build_request(cfg: &GenerateConfig) -> serde_json::Value {
     // along in the DSL `meta(seed=...)` header for cross-provider
     // reproducibility; we just don't put it on the wire here.
     let _ = cfg.seed;
+    if let Some(cap) = cfg.max_output_tokens {
+        req["max_tokens"] = serde_json::json!(cap);
+    }
     req
 }
 

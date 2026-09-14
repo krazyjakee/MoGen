@@ -1,0 +1,17 @@
+{
+  "asset_pass": false,
+  "compiles": true,
+  "dimensions_ok": true,
+  "extent": [
+    0.10000000149011612,
+    0.10000000149011612,
+    0.10000000149011612
+  ],
+  "finite": true,
+  "framing_radius": 0.25,
+  "missing_parts": [
+    "seat",
+    "back"
+  ],
+  "visual_quality": "requires blinded human review"
+}

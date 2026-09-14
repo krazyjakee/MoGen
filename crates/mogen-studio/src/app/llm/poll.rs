@@ -27,6 +27,7 @@ impl MogenStudioApp {
                 while let Ok(msg) = rx.try_recv() {
                     match msg {
                         LlmMessage::Progress(p) => progress_updates.push(p),
+                        LlmMessage::Render(job) => crate::app::modeling::schedule_render(ctx, job),
                         LlmMessage::Done(o) => {
                             done = Some(o);
                             // Drop any remaining progress after Done — it's
@@ -105,7 +106,46 @@ impl MogenStudioApp {
                 .add_text(&outcome.usage, outcome.calls, text_cost);
         }
         if outcome.image_calls > 0 {
-            self.session_usage.add_image(outcome.image_calls, image_cost);
+            self.session_usage
+                .add_image(outcome.image_calls, image_cost);
+        }
+
+        if let Some(baseline) = f.modeling_baseline.take() {
+            let dependencies_changed =
+                f.modeling_dependency_revision
+                    .take()
+                    .is_some_and(|expected| {
+                        mogen_llm::session::dependencies(
+                            &pre_source,
+                            f.path.as_ref().and_then(|p| p.parent()),
+                        )
+                        .map(|d| mogen_llm::session::revision(&pre_source, &d) != expected)
+                        .unwrap_or(true)
+                    });
+            if dependencies_changed
+                || baseline != pre_source
+                || f.modeling_control
+                    .as_ref()
+                    .is_some_and(|c| c.is_cancelled())
+            {
+                f.status = "AI result not applied: source/dependencies changed or the session was cancelled".into();
+                return;
+            }
+            let project = f.modeling.lock().unwrap();
+            let base = f.path.as_ref().and_then(|p| p.parent());
+            if let Err(e) =
+                mogen_llm::session::enforce_locks(&pre_source, &outcome.dsl, &project.locks, base)
+                    .and_then(|_| {
+                        mogen_llm::session::enforce_scope(
+                            &pre_source,
+                            &outcome.dsl,
+                            project.selected_part.as_deref(),
+                        )
+                    })
+            {
+                f.status = format!("AI result rejected: {e}");
+                return;
+            }
         }
 
         // Textures partial-success: the run finished but some materials
@@ -234,7 +274,12 @@ impl MogenStudioApp {
                 format_usd(text_cost),
             )
         };
-        self.files[i].status = status;
+        let stop = self.files[i].modeling.lock().unwrap().stop_reason.clone();
+        self.files[i].status = if stop.is_empty() {
+            status
+        } else {
+            format!("{status} · {stop}")
+        };
 
         // Surface the partial-failure banner *after* the DSL has been written
         // and the file recompiled, so the user sees the spliced PNGs in the
@@ -310,7 +355,7 @@ fn event_for_progress(p: &LlmProgress) -> (String, LlmEventTone) {
 /// redo stack from any prior in-editor undos is cleared, and post-LLM lands
 /// as the new tip — egui's undoer does this automatically only while the
 /// widget owns focus, which it does not during an LLM call.
-fn push_llm_change_to_editor_history(
+pub(in crate::app) fn push_llm_change_to_editor_history(
     ctx: &egui::Context,
     editor_id: egui::Id,
     pre: String,

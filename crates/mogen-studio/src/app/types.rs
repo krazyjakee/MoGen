@@ -147,6 +147,7 @@ pub(super) struct LlmOutcome {
 /// channel so the UI can update the status line while a call is in progress
 /// and still swap in the outcome atomically when it arrives.
 pub(super) enum LlmMessage {
+    Render(crate::app::modeling::RenderJob),
     Progress(LlmProgress),
     Done(LlmOutcome),
 }
@@ -744,6 +745,14 @@ pub(super) struct DocsState {
 /// does not clobber the other file — you can generate on several models at
 /// once.
 pub(super) struct FileState {
+    pub(super) modeling: std::sync::Arc<std::sync::Mutex<mogen_llm::session::ModelingProject>>,
+    pub(super) modeling_control: Option<mogen_llm::session::SessionControl>,
+    pub(super) modeling_baseline: Option<String>,
+    pub(super) modeling_compare: Option<usize>,
+    pub(super) modeling_saved_hash: String,
+    pub(super) modeling_load_error: Option<String>,
+    pub(super) modeling_dependency_revision: Option<String>,
+
     /// Stable per-tab identifier minted from the app's monotonic counter.
     /// Used as the salt for the editor's `egui::Id` so each tab's TextEdit
     /// owns its own cursor / undo history — without this, egui memory keyed
@@ -886,6 +895,13 @@ impl FileState {
             disk_mtime: None,
             last_watch_check: None,
             gen_prompt: String::new(),
+            modeling: Default::default(),
+            modeling_control: None,
+            modeling_baseline: None,
+            modeling_compare: None,
+            modeling_saved_hash: String::new(),
+            modeling_load_error: None,
+            modeling_dependency_revision: None,
             gen_image: None,
             gen_style: None,
             mod_prompt: String::new(),
@@ -920,7 +936,16 @@ impl FileState {
         source: String,
         disk_mtime: Option<SystemTime>,
     ) -> Self {
-        let status = format!("opened {}", path.display());
+        let (modeling, load_error) = match mogen_llm::session::ModelingProject::load(&path) {
+            Ok(project) => (project, None),
+            Err(e) => (
+                Default::default(),
+                Some(format!("Modeling session could not load: {e}")),
+            ),
+        };
+        let status = load_error
+            .clone()
+            .unwrap_or_else(|| format!("opened {}", path.display()));
         let thinking_override = mogen_llm::parse_thinking_header(&source);
         let gen_style = mogen_llm::parse_style_header(&source);
         Self {
@@ -933,6 +958,13 @@ impl FileState {
             disk_mtime,
             last_watch_check: None,
             gen_prompt: String::new(),
+            modeling: std::sync::Arc::new(std::sync::Mutex::new(modeling)),
+            modeling_control: None,
+            modeling_baseline: None,
+            modeling_compare: None,
+            modeling_saved_hash: String::new(),
+            modeling_load_error: load_error,
+            modeling_dependency_revision: None,
             gen_image: None,
             gen_style,
             mod_prompt: String::new(),

@@ -103,7 +103,8 @@ impl CodexClient {
         let prompt = build_prompt(cfg);
         // Drain output while writing large prompts to avoid pipe-buffer deadlocks.
         let writer = std::thread::spawn(move || stdin.write_all(prompt.as_bytes()));
-        let output = child.wait_with_output().map_err(io_error)?;
+        let output = crate::session::wait_for_child(child, cfg.session_control.as_ref())
+            .map_err(io_error)?;
         let written = writer
             .join()
             .map_err(|_| ProviderError::Transport("Codex stdin writer failed".into()))?;

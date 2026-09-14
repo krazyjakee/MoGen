@@ -617,6 +617,53 @@ impl LlmClient {
     /// recorder installed the call is a no-op — `mogen build` runs that
     /// don't care about persistent tracking pay nothing.
     pub fn generate(&self, cfg: &GenerateConfig) -> Result<GenerateResponse, ProviderError> {
+        let mut effective;
+        let cfg = if let Some(control) = &cfg.session_control {
+            effective = cfg.clone();
+            effective.max_output_tokens = Some(
+                cfg.max_output_tokens
+                    .unwrap_or(control.limits().output_tokens)
+                    .min(control.limits().output_tokens),
+            );
+            &effective
+        } else {
+            cfg
+        };
+        if !cfg.user_images.is_empty() && !self.provider().supports_images() {
+            return Err(ProviderError::Unsupported {
+                provider: self.provider(),
+                feature: "reference images; choose a vision-capable provider/model",
+            });
+        }
+        if !cfg.user_images.is_empty()
+            && self.provider() == Provider::Zai
+            && !cfg.model.contains("5v")
+        {
+            return Err(ProviderError::Unsupported {
+                provider: self.provider(),
+                feature: "images on this selected model; select glm-5v-turbo explicitly",
+            });
+        }
+        let price = crate::spend::global()
+            .and_then(|r| r.text_price(self.provider().key(), &resolved_model(self, cfg)))
+            .or_else(|| {
+                crate::spend::pricing::SEED
+                    .iter()
+                    .find(|p| {
+                        p.provider == self.provider().key() && p.model == resolved_model(self, cfg)
+                    })
+                    .and_then(|p| p.text)
+            });
+        let price = if matches!(self.provider(), Provider::Codex | Provider::ClaudeCode) {
+            None
+        } else {
+            price
+        };
+        if let Some(control) = &cfg.session_control {
+            control
+                .before_call(cfg, price)
+                .map_err(ProviderError::InvalidResponse)?;
+        }
         let provider_key = self.provider().key();
         let model_used = resolved_model(self, cfg);
         let result: Result<GenerateResponse, ProviderError> = match self {
@@ -677,6 +724,11 @@ impl LlmClient {
             }
         }
 
+        if let Some(control) = &cfg.session_control {
+            control.after_call(result.as_ref().ok().map(|r| &r.usage), price);
+            // Usage is recorded even if cancellation/deadline arrived in flight.
+            control.check().map_err(ProviderError::InvalidResponse)?;
+        }
         result
     }
 }

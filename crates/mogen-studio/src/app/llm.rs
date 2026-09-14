@@ -15,7 +15,7 @@ mod credentials;
 mod enhance;
 mod meta_generate;
 pub(in crate::app) mod modify_screenshot;
-mod poll;
+pub(in crate::app) mod poll;
 mod spawn;
 mod textures;
 
@@ -65,7 +65,11 @@ impl MogenStudioApp {
         // provider or breaking the file doesn't hide the Modify
         // button.
         let provider_supports_images = self.settings.provider().supports_images();
-        if want_screenshot && provider_supports_images && scene_renderable {
+        if want_screenshot
+            && provider_supports_images
+            && scene_renderable
+            && self.active().modeling.lock().unwrap().mode == mogen_llm::session::QualityMode::Draft
+        {
             self.submit_modify_screenshot_capture(&ctx, prompt, existing);
             return;
         }
@@ -200,6 +204,9 @@ impl MogenStudioApp {
         let f = self.active_mut();
         if f.llm_in_flight.is_none() {
             return;
+        }
+        if let Some(control) = &f.modeling_control {
+            control.cancel();
         }
         f.llm_rx = None;
         f.llm_in_flight = None;

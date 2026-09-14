@@ -26,6 +26,7 @@ mod generate;
 mod indent;
 mod line_ops;
 mod llm;
+mod modeling;
 mod moghub;
 mod moghub_open;
 mod multi_caret;
@@ -1215,6 +1216,16 @@ impl eframe::App for MogenStudioApp {
     }
 
     fn on_exit(&mut self, gl: Option<&glow::Context>) {
+        for file in &self.files {
+            if let Some(control) = &file.modeling_control {
+                control.cancel();
+            }
+            if file.modeling_load_error.is_none() {
+                if let Some(path) = &file.path {
+                    let _ = file.modeling.lock().unwrap().save(path);
+                }
+            }
+        }
         if let Some(gl) = gl {
             self.viewer.destroy(gl);
         }

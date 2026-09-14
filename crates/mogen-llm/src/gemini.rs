@@ -681,6 +681,9 @@ fn build_request(cfg: &GenerateConfig) -> serde_json::Value {
             serde_json::json!({ "thinkingBudget": level.budget() }),
         );
     }
+    if let Some(cap) = cfg.max_output_tokens {
+        gen_cfg.insert("maxOutputTokens".into(), serde_json::json!(cap));
+    }
     if !gen_cfg.is_empty() {
         req["generationConfig"] = serde_json::Value::Object(gen_cfg);
     }

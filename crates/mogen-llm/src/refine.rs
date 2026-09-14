@@ -49,13 +49,13 @@ pub fn visual_refine(
     current_dsl: &str,
     image: ImageInput,
 ) -> Result<GenerateOutcome, ProviderError> {
-    let mut cfg = GenerateConfig::new(build_reviewer_message(original_prompt, current_dsl));
-    cfg.model = base.model.clone();
-    cfg.temperature = base.temperature;
-    cfg.budget_tokens = base.budget_tokens;
-    cfg.seed = base.seed;
-    cfg.thinking_level = base.thinking_level;
-    cfg.user_images = vec![image];
+    let mut cfg = base.clone();
+    cfg.user_prompt = build_reviewer_message(original_prompt, current_dsl);
+    cfg.user_prompt.push_str(&format!("\nImage roles: first {} images are original target references; the last attached PNG is the current render.", base.user_images.len()));
+    cfg.user_images.push(image);
+    cfg.history.clear();
+    cfg.cached_content = None;
+    cfg.spend_context.operation = "review".into();
 
     // Rebuild the system instruction so the Reviewer preamble is in front
     // of the standard grammar reference. `cached_content` stays unset (the

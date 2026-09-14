@@ -1,0 +1,5 @@
+// Original procedural test target, CC0-1.0, MoGen contributors, 2026.
+material "ceramic" (color=[0.12,0.45,0.48],roughness=0.25)
+scene {
+  lathe "vessel" (profile=[[0,0],[0.18,0],[0.22,0.1],[0.19,0.35],[0.14,0.5],[0.12,0.5],[0.17,0.35],[0.20,0.1],[0.16,0.03],[0,0.03]],segments=48,cap_ends=1,mat="ceramic")
+}

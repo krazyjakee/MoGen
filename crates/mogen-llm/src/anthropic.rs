@@ -196,6 +196,17 @@ fn build_request(cfg: &GenerateConfig) -> serde_json::Value {
             "cache_control": { "type": "ephemeral" },
         }]);
     }
+    if let Some(cap) = cfg.max_output_tokens {
+        req["max_tokens"] = serde_json::json!(cap);
+        if cfg.thinking_level.is_some() {
+            if cap > 1024 {
+                req["thinking"]["budget_tokens"] =
+                    serde_json::json!(cfg.thinking_level.unwrap().budget().min(cap - 1));
+            } else {
+                req.as_object_mut().unwrap().remove("thinking");
+            }
+        }
+    }
     req
 }
 

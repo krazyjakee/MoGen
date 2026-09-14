@@ -1,0 +1,12 @@
+// Original procedural test target, CC0-1.0, MoGen contributors, 2026.
+material "walnut" (color=[0.25,0.10,0.04],roughness=0.45)
+scene {
+  box "seat" (size=[0.6,0.08,0.55],pos=[0,0.45,0],mat="walnut")
+  box "back" (size=[0.6,0.5,0.06],pos=[0,0.73,0.245],mat="walnut")
+  box "leg_fl" (size=[0.05,0.45,0.05],pos=[-0.25,0.225,-0.22],mat="walnut")
+  box "leg_fr" (size=[0.05,0.45,0.05],pos=[0.25,0.225,-0.22],mat="walnut")
+  box "leg_bl" (size=[0.05,0.45,0.05],pos=[-0.25,0.225,0.22],mat="walnut")
+  box "leg_br" (size=[0.05,0.45,0.05],pos=[0.25,0.225,0.22],mat="walnut")
+  sphere "finial_l" (radius=0.04,pos=[-0.25,1,0.245],mat="walnut")
+  sphere "finial_r" (radius=0.04,pos=[0.25,1,0.245],mat="walnut")
+}

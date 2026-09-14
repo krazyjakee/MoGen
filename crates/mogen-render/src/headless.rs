@@ -92,12 +92,23 @@ impl Default for ThumbnailOptions {
 /// `opts.size × opts.size`, top-left origin, ready to feed to
 /// [`save_thumbnail_png`] or any image encoder.
 pub fn render_thumbnail(scene: &SceneGraph, opts: &ThumbnailOptions) -> anyhow::Result<Vec<u8>> {
+    render_thumbnail_framed(scene, opts, None)
+}
+
+/// Render with a fixed world-space center/radius shared across comparisons.
+pub fn render_thumbnail_framed(
+    scene: &SceneGraph,
+    opts: &ThumbnailOptions,
+    framing: Option<([f32; 3], f32)>,
+) -> anyhow::Result<Vec<u8>> {
     let mesh = flatten(scene, opts.base_dir.as_deref());
-    let center = mesh.center;
+    let center = framing
+        .map(|(c, _)| Vec3::from_array(c))
+        .unwrap_or(mesh.center);
     // Floor on the framing radius so a one-vertex / empty scene still picks
     // a sane orbit distance — without this, `radius * 2.8` collapses to 0
     // and the camera ends up inside the model.
-    let radius = mesh.radius.max(0.001);
+    let radius = framing.map(|(_, r)| r).unwrap_or(mesh.radius).max(0.001);
     let cam = OrbitCamera {
         yaw: opts.yaw,
         pitch: opts.pitch,

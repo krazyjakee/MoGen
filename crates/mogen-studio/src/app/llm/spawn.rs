@@ -25,7 +25,20 @@ impl MogenStudioApp {
     /// thread-bound struct the worker consumes. Kept here (and not in
     /// Settings) so defaulting logic lives next to the worker.
     pub(in crate::app) fn build_run_config(&self) -> LlmRunConfig {
+        let modeling_options = self.active().modeling.lock().unwrap().clone();
         LlmRunConfig {
+            brief_revision: modeling_options.brief.revision,
+            recovery_path: dirs::home_dir().map(|p| {
+                p.join(".mogen/modeling-recovery").join(format!(
+                    "{}-{}.mog",
+                    self.spend_session_id,
+                    self.active().tab_id
+                ))
+            }),
+            modeling: self.active().modeling.clone(),
+            control: mogen_llm::session::SessionControl::new(
+                modeling_options.limits,
+            ),
             model: self.settings.provider_model(),
             thinking: self.settings.thinking_level(),
             temperature: self.settings.temperature(),
@@ -85,6 +98,50 @@ impl MogenStudioApp {
             }
         };
 
+        if self.active().llm_in_flight.is_some() {
+            return;
+        }
+        if let Some(error) = self.active().modeling_load_error.clone() {
+            self.active_mut().status = error;
+            return;
+        }
+        {
+            let mut project = self.active().modeling.lock().unwrap();
+            if project.mode == mogen_llm::session::QualityMode::Refined
+                && !provider.supports_images()
+            {
+                drop(project);
+                self.active_mut().status="Refined mode requires a vision-capable provider/model; select one in Preferences".into();
+                return;
+            }
+            if project.brief.prompt.is_empty() {
+                project.brief.prompt = existing
+                    .as_deref()
+                    .and_then(mogen_llm::parse_prompt_header)
+                    .unwrap_or_else(|| prompt.clone());
+            }
+            if kind != LlmKind::Generate {
+                project.brief.corrections.push(prompt.clone());
+            }
+            project.brief.revision += 1;
+            project.brief.style = self
+                .active()
+                .gen_style
+                .map(|s| s.key().into())
+                .unwrap_or_else(|| project.brief.style.clone());
+            if kind == LlmKind::Generate {
+                if let Some(img) = &image {
+                    project.brief.add_reference(
+                        img.path.display().to_string(),
+                        mogen_llm::ImageInput {
+                            mime_type: img.mime_type.clone(),
+                            data: img.data.clone(),
+                        },
+                    );
+                }
+            }
+            project.stop_reason.clear();
+        }
         let mut run_cfg = self.build_run_config();
         // Per-file thinking override wins over the global default. Persisted
         // into the `.mog` header so switching files reads back the last pick.
@@ -124,6 +181,12 @@ impl MogenStudioApp {
         let provider_label = provider.label();
         let (tx, rx) = std::sync::mpsc::channel();
         let f = self.active_mut();
+        f.modeling_control = Some(run_cfg.control.clone());
+        f.modeling_dependency_revision =
+            mogen_llm::session::dependencies(&f.source, run_cfg.base_dir.as_deref())
+                .ok()
+                .map(|d| mogen_llm::session::revision(&f.source, &d));
+        f.modeling_baseline = Some(f.source.clone());
         f.llm_rx = Some(rx);
         f.llm_in_flight = Some(kind);
         f.llm_progress = Some(LlmProgress::Status(match kind {
@@ -170,17 +233,12 @@ impl MogenStudioApp {
             data: img.data,
         });
         std::thread::spawn(move || {
+            let control = run_cfg.control.clone();
             let outcome = run_llm(
-                kind,
-                prompt,
-                existing,
-                provider,
-                llm_image,
-                credential,
-                run_cfg,
-                sys_instr,
+                kind, prompt, existing, provider, llm_image, credential, run_cfg, sys_instr,
                 worker_tx,
             );
+            control.finish();
             let _ = tx.send(LlmMessage::Done(outcome));
             ctx.request_repaint();
         });

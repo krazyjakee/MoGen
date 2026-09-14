@@ -393,3 +393,5 @@ Every contribution helps maintain and improve this project. And encourage me to 
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+Studio’s [Generate and Refine workflow](docs/generate-and-refine.md) adds persistent visual targets, bounded multi-view refinement, revision comparison and enforced part locks.

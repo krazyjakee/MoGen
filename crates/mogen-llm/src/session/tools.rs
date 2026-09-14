@@ -1,0 +1,361 @@
+use super::{dependencies, revision, LockKind, PartLock};
+use anyhow::{bail, Context, Result};
+use mogen_core::{NodeId, SceneGraph};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use std::path::{Path, PathBuf};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum View {
+    Front,
+    Side,
+    Back,
+    ThreeQuarter,
+    Presentation,
+}
+impl View {
+    pub const ALL: [Self; 5] = [
+        Self::Front,
+        Self::Side,
+        Self::Back,
+        Self::ThreeQuarter,
+        Self::Presentation,
+    ];
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Front => "front",
+            Self::Side => "side",
+            Self::Back => "back",
+            Self::ThreeQuarter => "three_quarter",
+            Self::Presentation => "presentation",
+        }
+    }
+    pub fn camera(self) -> (f32, f32) {
+        match self {
+            Self::Front => (std::f32::consts::PI, 0.0),
+            Self::Side => (std::f32::consts::FRAC_PI_2, 0.0),
+            Self::Back => (0.0, 0.0),
+            Self::ThreeQuarter | Self::Presentation => (std::f32::consts::FRAC_PI_4, 0.5),
+        }
+    }
+}
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(tag = "tool", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ModelingTool {
+    Inspect {
+        revision: String,
+        name: Option<String>,
+    },
+    Documentation {
+        topic: String,
+    },
+    Apply {
+        revision: String,
+        edits: String,
+    },
+    Compile {
+        revision: String,
+    },
+    Render {
+        revision: String,
+        view: View,
+        name: Option<String>,
+    },
+    Finish {
+        revision: String,
+        findings: String,
+    },
+}
+/// Application-driven protocol works on every text backend; providers do not
+/// receive filesystem or shell tools. Each response contains exactly one call.
+pub const TOOL_INSTRUCTIONS: &str = r#"Modeling operations: return exactly one JSON object per turn.
+{"tool":"inspect","revision":"current revision","name":null} returns hierarchy, transforms, bounds and materials.
+{"tool":"documentation","topic":"loft"} returns relevant DSL documentation.
+{"tool":"apply","revision":"current revision","edits":"SEARCH/REPLACE blocks or full DSL"} stages an atomic edit.
+{"tool":"compile","revision":"current revision"} returns diagnostics.
+{"tool":"render","revision":"current revision","view":"front|side|back|three_quarter|presentation","name":null} returns the current render; set name to a uniquely named part for a close-up.
+{"tool":"finish","revision":"current revision","findings":"concrete defects corrected or limitations"} finishes the candidate.
+Inspect before editing. Use the returned revision for every subsequent operation.
+Errors are recoverable: inspect the tool result and correct arguments. Preserve approved locks and unrelated source.
+Do not claim quality based on compilation alone. Inspect silhouette, dimensions, required parts, joints, negative space, then surfaces and materials.
+"#;
+
+pub fn compile(source: &str, base: Option<&Path>) -> Result<SceneGraph> {
+    // Check dependency scope before the compiler opens imports or textures.
+    dependencies(source, base)?;
+    let preview = mogen_dsl::synthesise_standalone_module_use(source);
+    let ast = mogen_dsl::parse(preview.as_deref().unwrap_or(source))?;
+    let diagnostics = mogen_validate::validate_ast_with_source(&ast, base);
+    if mogen_core::has_errors(&diagnostics) {
+        bail!(
+            "{}",
+            mogen_validate::render_json("session.mog", &diagnostics)
+        );
+    }
+    let scene = mogen_dsl::lower_with_source(&ast, base)?;
+    let diagnostics = mogen_validate::validate_graph(&scene);
+    if mogen_core::has_errors(&diagnostics) {
+        bail!(
+            "{}",
+            mogen_validate::render_json("session.mog", &diagnostics)
+        );
+    }
+    if scene
+        .nodes
+        .iter()
+        .filter_map(|n| n.mesh.as_ref())
+        .any(|m| m.positions.iter().flatten().any(|x| !x.is_finite()))
+    {
+        bail!("Non-finite geometry");
+    }
+    Ok(scene)
+}
+fn unique_node(scene: &SceneGraph, name: &str) -> Result<NodeId> {
+    let ids: Vec<_> = scene
+        .nodes
+        .iter()
+        .enumerate()
+        .filter(|(_, n)| n.name == name)
+        .map(|(i, _)| NodeId(i as u32))
+        .collect();
+    if ids.len() != 1 {
+        bail!("Part '{name}' is missing or ambiguous; select a uniquely named part");
+    }
+    Ok(ids[0])
+}
+fn fingerprint(scene: &SceneGraph, id: NodeId, kind: LockKind) -> Value {
+    let node = scene.get(id);
+    let world = scene.world_transforms()[id.0 as usize];
+    let material = node.material.map(|id| {
+        let mut v = serde_json::to_value(&scene.materials[id.0 as usize]).unwrap();
+        if let Some(o) = v.as_object_mut() {
+            o.remove("source_span");
+            o.remove("origin");
+        }
+        v
+    });
+    let children: Vec<_> = node
+        .children
+        .iter()
+        .map(|id| fingerprint(scene, *id, kind))
+        .collect();
+    match kind {
+        LockKind::Geometry => {
+            json!({"name":node.name,"geometry":node.mesh.as_ref().map(|m|json!({"positions":m.positions,"normals":m.normals,"indices":m.indices})),"children":children})
+        }
+        LockKind::Transform => json!({"name":node.name,"world":world,"children":children}),
+        LockKind::Material => json!({"name":node.name,"material":material,"children":children}),
+        LockKind::Subtree => {
+            json!({"name":node.name,"mesh":node.mesh,"world":world,"material":material,"children":children})
+        }
+    }
+}
+pub fn enforce_locks(
+    before: &str,
+    after: &str,
+    locks: &[PartLock],
+    base: Option<&Path>,
+) -> Result<()> {
+    if locks.is_empty() {
+        return Ok(());
+    }
+    let a = compile(before, base)?;
+    let b = compile(after, base)?;
+    for lock in locks {
+        let ai = unique_node(&a, &lock.name)?;
+        let bi = unique_node(&b, &lock.name)?;
+        if fingerprint(&a, ai, lock.kind) != fingerprint(&b, bi, lock.kind) {
+            bail!("Edit changes locked {:?} on '{}', possibly through a shared material or dependency", lock.kind, lock.name);
+        }
+    }
+    Ok(())
+}
+pub fn enforce_scope(before: &str, after: &str, selected: Option<&str>) -> Result<()> {
+    let Some(name) = selected else {
+        return Ok(());
+    };
+    fn span(src: &str, name: &str) -> Result<mogen_core::Span> {
+        fn walk(ns: &[mogen_dsl::ast::Node], name: &str, found: &mut Vec<mogen_core::Span>) {
+            for n in ns {
+                if n.name.as_deref() == Some(name) {
+                    found.push(n.span);
+                }
+                walk(&n.children, name, found);
+            }
+        }
+        let mut found = vec![];
+        walk(&mogen_dsl::parse(src)?, name, &mut found);
+        if found.len() != 1 {
+            bail!("Focused edit requires one authored part named '{name}'");
+        }
+        Ok(found[0])
+    }
+    let a = span(before, name)?;
+    let b = span(after, name)?;
+    if before[..a.start] != after[..b.start] || before[a.end..] != after[b.end..] {
+        bail!("Focused edit changes source outside '{name}'; shared dependencies must be edited separately");
+    }
+    Ok(())
+}
+pub struct ModelingWorkspace {
+    pub source: String,
+    pub base: Option<PathBuf>,
+    pub locks: Vec<PartLock>,
+    pub selected: Option<String>,
+    initial_dependencies: std::collections::BTreeMap<PathBuf, Vec<u8>>,
+}
+impl ModelingWorkspace {
+    pub fn new(
+        source: String,
+        base: Option<PathBuf>,
+        locks: Vec<PartLock>,
+        selected: Option<String>,
+    ) -> Result<Self> {
+        let initial_dependencies = dependencies(&source, base.as_deref())?;
+        Ok(Self {
+            source,
+            base,
+            locks,
+            selected,
+            initial_dependencies,
+        })
+    }
+    pub fn revision(&self) -> Result<String> {
+        Ok(revision(
+            &self.source,
+            &dependencies(&self.source, self.base.as_deref())?,
+        ))
+    }
+    pub fn check_revision(&self, expected: &str) -> Result<()> {
+        if self.revision()? != expected {
+            bail!("Stale source/dependency revision; inspect again");
+        }
+        for (path, bytes) in &self.initial_dependencies {
+            if std::fs::read(self.base.as_deref().unwrap_or(Path::new(".")).join(path))? != *bytes {
+                bail!("Dependency changed during session: {}", path.display());
+            }
+        }
+        Ok(())
+    }
+    pub fn apply(&mut self, expected: &str, response: &str) -> Result<Value> {
+        self.check_revision(expected)?;
+        let next = if response.contains("<<<<<<< SEARCH") {
+            crate::repair::apply_edit_blocks(
+                &self.source,
+                &crate::repair::parse_edit_blocks(response)
+                    .map_err(|e| anyhow::anyhow!("{e:?}"))?,
+            )
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?
+        } else {
+            crate::repair::strip_markdown_fences(response)
+        };
+        enforce_scope(&self.source, &next, self.selected.as_deref())?;
+        enforce_locks(&self.source, &next, &self.locks, self.base.as_deref())?;
+        compile(&next, self.base.as_deref()).context("Candidate rejected; source unchanged")?;
+        self.source = next;
+        Ok(json!({"revision":self.revision()?,"applied":true}))
+    }
+    pub fn inspect(&self, name: Option<&str>) -> Result<Value> {
+        let scene = compile(&self.source, self.base.as_deref())?;
+        if let Some(n) = name {
+            unique_node(&scene, n)?;
+        }
+        let world = scene.world_transforms();
+        let parts:Vec<_>=scene.nodes.iter().enumerate().filter(|(_,n)|name.is_none_or(|s|s==n.name)).map(|(i,n)|json!({
+            "name":n.name,"kind":n.kind,"parent":n.parent.map(|id|scene.get(id).name.clone()),
+            "children":n.children.iter().map(|id|scene.get(*id).name.clone()).collect::<Vec<_>>(),
+            "transform":n.transform,"world":world[i],"bounds":n.mesh.as_ref().map(mogen_core::Aabb::from_mesh),
+            "material":n.material.map(|id|&scene.materials[id.0 as usize])
+        })).collect();
+        Ok(
+            json!({"revision":self.revision()?,"parts":parts,"locks":self.locks,"selected":self.selected}),
+        )
+    }
+}
+pub fn documentation(topic: &str) -> Result<String> {
+    let topic = topic.trim().to_lowercase();
+    if topic.len() < 3 || topic.len() > 80 {
+        bail!("Use a specific DSL operation or technique (3–80 characters)");
+    }
+    let recipe = match topic.as_str() {
+        "upholstery" | "cushion" => Some(include_str!(
+            "../../../../benches/quality/targets/upholstery.mog"
+        )),
+        "hollow vessel" | "vessel" => Some(include_str!(
+            "../../../../benches/quality/targets/hollow_vessel.mog"
+        )),
+        "organic" => Some(include_str!(
+            "../../../../benches/quality/targets/organic.mog"
+        )),
+        "curved frame" | "sweep" => Some(include_str!(
+            "../../../../examples/features/curved_moulding.mog"
+        )),
+        "shaped surface" | "loft" => {
+            Some(include_str!("../../../../examples/vehicles/boat_hull.mog"))
+        }
+        _ => None,
+    };
+    let docs = include_str!("../../../../docs/dsl.md");
+    let lines: Vec<_> = docs.lines().collect();
+    let mut out = recipe
+        .map(|s| format!("Technique example (validate fit against the target):\n{s}\n"))
+        .unwrap_or_default();
+    for (i, line) in lines.iter().enumerate() {
+        if line.to_lowercase().contains(&topic) {
+            out.push_str(&lines[i.saturating_sub(2)..(i + 18).min(lines.len())].join("\n"));
+            out.push('\n');
+            if out.len() > 12000 {
+                break;
+            }
+        }
+    }
+    if out.is_empty() {
+        bail!("No documentation for {topic}");
+    }
+    Ok(out)
+}
+
+/// Shape inspection uses neutral opaque surfaces under the same fixed lighting.
+/// The presentation view retains authored materials and texture scale.
+pub fn inspection_scene(mut scene: SceneGraph, view: View) -> SceneGraph {
+    if view != View::Presentation {
+        for node in &mut scene.nodes {
+            if let Some(mesh) = &mut node.mesh {
+                mesh.colors.clear();
+            }
+        }
+        for material in &mut scene.materials {
+            material.base_color = [0.65, 0.65, 0.65, 1.0];
+            material.metallic = 0.0;
+            material.roughness = 0.8;
+            material.transmission = 0.0;
+            material.emissive = [0.0; 3];
+            material.emissive_strength = 0.0;
+            material.alpha_mode = mogen_core::AlphaMode::Opaque;
+            material.shader_name = None;
+            material.gradient = None;
+            material.shader_params.clear();
+            for slot in material.texture_slots_mut() {
+                *slot = None;
+            }
+        }
+    }
+    scene
+}
+
+/// World-space framing for an authored part and its descendants.
+pub fn part_framing(scene: &SceneGraph, name: &str) -> Result<([f32; 3], f32)> {
+    let id = unique_node(scene, name)?;
+    let local =
+        mogen_core::subtree_local_aabb(scene, id).context("Selected part has no geometry")?;
+    let world = scene.world_transforms()[id.0 as usize];
+    let mut bounds = mogen_core::Aabb::empty();
+    for corner in local.corners() {
+        bounds.expand(world.transform_point3(corner));
+    }
+    Ok((
+        bounds.center().to_array(),
+        (bounds.max - bounds.min).length().max(0.002) * 0.5,
+    ))
+}

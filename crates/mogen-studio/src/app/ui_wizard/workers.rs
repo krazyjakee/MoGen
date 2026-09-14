@@ -418,14 +418,11 @@ impl MogenStudioApp {
             session.error = Some(format!("Object {id} no longer in manifest"));
             return;
         };
-        // Use the per-object reference image as the LLM target. The proper
-        // shape would be a per-object rendered thumbnail; we lean on the
-        // reference image as a stand-in so the review stage works even
-        // before the user has rebuilt thumbnails. (A rendered thumbnail
-        // can replace this once thumb_path is wired up.)
-        let img_path = obj.thumb_path.clone().or_else(|| obj.reference_image.clone());
+        // A target reference cannot substitute for an image of the generated
+        // asset: that would ask the reviewer to approve the target itself.
+        let img_path = obj.thumb_path.clone();
         let Some(img_path) = img_path else {
-            session.error = Some(format!("No image available for {id} — generate a reference first."));
+            session.error = Some(format!("No rendered thumbnail for {id} — open the object in Studio and Generate Thumbnail before review."));
             return;
         };
         let Ok(image_bytes) = std::fs::read(&img_path) else {
