@@ -244,7 +244,7 @@ fn check_connectivity(graph: &SceneGraph) -> Vec<Diagnostic> {
         ));
     }
     msg.push_str(
-        ". Use `attach` to join these parts to the rest of the scene, or tag them \
+        ". This is a bounding-box connectivity check, not proof of surface contact. Use `measure` for distances and closest points. Use `attach` to join these parts to the rest of the scene, or tag them \
          with `tags=\"floating\"` if the gap is intentional.",
     );
 

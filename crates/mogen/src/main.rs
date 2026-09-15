@@ -16,7 +16,7 @@ use commands::bench::bench;
 use commands::build::build;
 use commands::generate::{generate, GenerateArgs};
 use commands::import::import;
-use commands::inspect::{check, dump_scene, inspect, parse_cmd};
+use commands::inspect::{check, dump_scene, inspect, measure, parse_cmd};
 use commands::mcp::run as run_mcp_server;
 use commands::modify::{modify, ModifyArgs};
 use commands::repair::{repair, RepairArgs};
@@ -63,6 +63,7 @@ fn main() -> ExitCode {
         Cmd::Check { input, json } => check(input, json),
         Cmd::DumpScene { input, json } => dump_scene(input, json),
         Cmd::Inspect { input } => inspect(input),
+        Cmd::Measure { input, first, second, tolerance, max_work } => measure(input, first, second, tolerance, max_work),
         Cmd::Pack { input, out, lossy } => commands::binary::pack(input, out, lossy),
         Cmd::Unpack { input, out } => commands::binary::unpack(input, out),
         Cmd::Thumbnail {

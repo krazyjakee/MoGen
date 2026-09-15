@@ -13,6 +13,13 @@ pub enum ModelingTool {
         revision: String,
         name: Option<String>,
     },
+    Measure {
+        revision: String,
+        first: String,
+        second: String,
+        tolerance: Option<f64>,
+        max_work: Option<usize>,
+    },
     Documentation {
         topic: String,
     },
@@ -37,6 +44,7 @@ pub enum ModelingTool {
 /// receive filesystem or shell tools. Each response contains exactly one call.
 pub const TOOL_INSTRUCTIONS: &str = r#"Modeling operations: return exactly one JSON object per turn.
 {"tool":"inspect","revision":"current revision","name":null} returns hierarchy, transforms, bounds and materials.
+{"tool":"measure","revision":"current revision","first":"foot","second":"leg","tolerance":0.002,"max_work":100000} returns current world triangle-surface distance, closest points and authored fit constraints; tolerance is in metres. Use this for suspected gaps, not bounding-box overlap.
 {"tool":"documentation","topic":"loft"} returns relevant DSL documentation.
 {"tool":"apply","revision":"current revision","edits":"SEARCH/REPLACE blocks or full DSL"} stages an atomic edit.
 {"tool":"compile","revision":"current revision"} returns diagnostics.
@@ -48,6 +56,13 @@ Do not claim quality based on compilation alone. Inspect silhouette, dimensions,
 "#;
 
 pub fn compile(source: &str, base: Option<&Path>) -> Result<SceneGraph> {
+    compile_with_connectivity(source, base, true)
+}
+fn compile_with_connectivity(
+    source: &str,
+    base: Option<&Path>,
+    strict: bool,
+) -> Result<SceneGraph> {
     // Check dependency scope before the compiler opens imports or textures.
     dependencies(source, base)?;
     let preview = mogen_dsl::synthesise_standalone_module_use(source);
@@ -64,7 +79,10 @@ pub fn compile(source: &str, base: Option<&Path>) -> Result<SceneGraph> {
     if mogen_core::has_mesh_contract_errors(&diagnostics) {
         return Err(mogen_core::MeshContractError { diagnostics }.into());
     }
-    if mogen_core::has_errors(&diagnostics) {
+    if diagnostics
+        .iter()
+        .any(|d| d.severity == mogen_core::Severity::Error && (strict || d.code != "E1101"))
+    {
         bail!(
             "{}",
             mogen_validate::render_json("session.mog", &diagnostics)
@@ -218,7 +236,10 @@ impl ModelingWorkspace {
         Ok(json!({"revision":self.revision()?,"applied":true}))
     }
     pub fn inspect(&self, name: Option<&str>) -> Result<Value> {
-        let scene = compile(&self.source, self.base.as_deref())?;
+        let revision = self.revision()?;
+        self.check_revision(&revision)?;
+        let scene = compile_with_connectivity(&self.source, self.base.as_deref(), false)?;
+        let measurements = mogen_core::world_part_measurements(&scene);
         if let Some(n) = name {
             unique_node(&scene, n)?;
         }
@@ -227,18 +248,65 @@ impl ModelingWorkspace {
             "name":n.name,"kind":n.kind,"parent":n.parent.map(|id|scene.get(id).name.clone()),
             "children":n.children.iter().map(|id|scene.get(*id).name.clone()).collect::<Vec<_>>(),
             "transform":n.transform,"world":world[i],"bounds":n.mesh.as_ref().map(mogen_core::Aabb::from_mesh),
+            "world_measurements":measurements[i],
             "material":n.material.map(|id|&scene.materials[id.0 as usize]),"path_frame":n.path_frame
         })).collect();
+        self.check_revision(&revision)?;
         Ok(
-            json!({"revision":self.revision()?,"parts":parts,"relationships":scene.relationships,"guides":scene.guides.iter().map(|g|json!({"name":g.name,"target":scene.get(g.target).name,"section":g.section,"closed":g.closed,"tolerance":g.tolerance,"samples":g.points.len()})).collect::<Vec<_>>(),"locks":self.locks,"selected":self.selected}),
+            json!({"revision":revision,"units":"m","space":"world","ground_plane":"Y=0","parts":parts,"diagnostics":mogen_validate::validate_graph(&scene),"relationship_checks":mogen_core::relationship_measurements(&scene),"relationships":scene.relationships,"guides":scene.guides.iter().map(|g|json!({"name":g.name,"target":scene.get(g.target).name,"section":g.section,"closed":g.closed,"tolerance":g.tolerance,"samples":g.points.len()})).collect::<Vec<_>>(),"locks":self.locks,"selected":self.selected}),
+        )
+    }
+
+    pub fn measure(
+        &self,
+        expected: &str,
+        first: &str,
+        second: &str,
+        tolerance: Option<f64>,
+        max_work: Option<usize>,
+    ) -> Result<Value> {
+        self.check_revision(expected)?;
+        let scene = compile_with_connectivity(&self.source, self.base.as_deref(), false)?;
+        let a = unique_node(&scene, first)?;
+        let b = unique_node(&scene, second)?;
+        let options = mogen_geom::measure::MeasureOptions {
+            tolerance: tolerance.unwrap_or(0.002),
+            max_work: max_work.unwrap_or(100_000),
+            ..Default::default()
+        };
+        let distance = mogen_geom::measure::measure_surfaces(&scene, a, b, options)?;
+        let parts = mogen_core::world_part_measurements(&scene);
+        let checks: Vec<_> = mogen_core::relationship_measurements(&scene)
+            .into_iter()
+            .filter(|r| {
+                (r.child == first && r.target == second) || (r.child == second && r.target == first)
+            })
+            .collect();
+        self.check_revision(expected)?;
+        Ok(
+            json!({"revision":expected,"units":"m","space":"world","ground_plane":"Y=0",
+            "first":first,"second":second,"first_measurements":parts[a.0 as usize],"second_measurements":parts[b.0 as usize],
+            "surface":distance,"relationship_checks":checks,
+            "policy":"unsigned triangle-surface distance; intentional insertion is allowed; containment, penetration depth and aesthetic fit are not inferred",
+            "evidence":"current static tessellated geometry","cached":false,
+            "limits":{"max_work":options.max_work,"max_triangles_per_part":options.max_triangles}}),
         )
     }
 }
 pub fn documentation(topic: &str) -> Result<String> {
     match topic.to_ascii_lowercase().as_str() {
-        "guide" | "welt" | "surface details" => return Ok(include_str!("../../../../docs/surface-guides.md").into()),
-        "relate" | "relationships" => return Ok(include_str!("../../../../docs/relational-modeling.md").into()),
-        "frame_up" | "path frames" => return Ok(include_str!("../../../../docs/sweep-frames.md").into()),
+        "measure" | "measurements" | "fit" => {
+            return Ok(include_str!("../../../../docs/fit-measurements.md").into())
+        }
+        "guide" | "welt" | "surface details" => {
+            return Ok(include_str!("../../../../docs/surface-guides.md").into())
+        }
+        "relate" | "relationships" => {
+            return Ok(include_str!("../../../../docs/relational-modeling.md").into())
+        }
+        "frame_up" | "path frames" => {
+            return Ok(include_str!("../../../../docs/sweep-frames.md").into())
+        }
         _ => {}
     }
 
@@ -332,9 +400,18 @@ pub fn part_framing(scene: &SceneGraph, name: &str) -> Result<([f32; 3], f32)> {
 mod mesh_contract_tests {
     #[test]
     fn session_preserves_mesh_contract_diagnostics() {
-        let error = super::compile("scene { box \"collapsed\" (size=[1,1,1],scale=[0,1,1]) }", None).unwrap_err();
-        let contract = error.downcast_ref::<mogen_core::MeshContractError>().unwrap();
-        assert!(contract.diagnostics.iter().any(|d| d.code == "E1201" && d.message.contains("collapsed")));
+        let error = super::compile(
+            "scene { box \"collapsed\" (size=[1,1,1],scale=[0,1,1]) }",
+            None,
+        )
+        .unwrap_err();
+        let contract = error
+            .downcast_ref::<mogen_core::MeshContractError>()
+            .unwrap();
+        assert!(contract
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "E1201" && d.message.contains("collapsed")));
         let serialized: serde_json::Value = serde_json::from_str(&contract.to_string()).unwrap();
         assert_eq!(serialized["mesh_contract"], "failed");
     }

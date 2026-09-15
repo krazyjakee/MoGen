@@ -35,3 +35,6 @@ schemars = "0.8"
 serde = { workspace = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "process", "sync"] }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["env-filter", "fmt"] }
+
+[dev-dependencies]
+mogen-geom = { workspace = true, default-features = false }

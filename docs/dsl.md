@@ -2145,3 +2145,11 @@ Use `frame_up=[0,1,0]` for local profile height toward +Y; width is height × ta
 ## Surface-derived details
 
 Declare `guide "welt" (target="cushion",section="latitude",level=0,tolerance=0.001)` and reuse it in `sweep (guide="welt",profile=[...],lift=0.002)`. Curved-frame trim uses `section="profile_edge",edge=...`. See [surface-guides.md](surface-guides.md) for the shared conform offset model and supported semantic references.
+
+### Measuring dimensions and fit
+
+`mogen inspect model.mog` reports world bounds, dimensions, ground clearance and
+resolved relationship checks. `mogen measure model.mog --first foot --second leg`
+reports bounded triangle-surface distance, closest points and evidence in metres.
+See [world-space fit measurements](fit-measurements.md) for tool JSON, tolerance,
+intentional overlap policy, revision handling and approximation limits.
