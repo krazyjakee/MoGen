@@ -23,7 +23,7 @@ const VIDEO_FPS: u32 = 30;
 const CAPTURE_PITCH: f32 = 0.5;
 /// Yaw (radians) of the static thumbnail. 45° gives the same 3/4 framing the
 /// viewer's "Frame" button uses.
-const THUMBNAIL_YAW: f32 = std::f32::consts::FRAC_PI_4;
+const THUMBNAIL_YAW: f32 = 3.0 * std::f32::consts::FRAC_PI_4;
 
 /// One in-flight ffmpeg encode. `frames_dir` is owned so we can clean it up
 /// after the worker completes whether the encode succeeded or failed.
@@ -119,7 +119,9 @@ impl MogenStudioApp {
             size: THUMBNAIL_SIZE,
             bg,
             frames: vec![CaptureFrame {
-                yaw: THUMBNAIL_YAW,
+                yaw: self.files[i].last_result.as_ref().and_then(|r| r.scene.as_ref())
+                    .and_then(|s| mogen_core::AssetView::Presentation.camera_for(s).ok())
+                    .map(|c| c.0).unwrap_or(THUMBNAIL_YAW),
                 pitch: CAPTURE_PITCH,
                 time: 0.0,
                 path,

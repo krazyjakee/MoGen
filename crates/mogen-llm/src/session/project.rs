@@ -80,6 +80,12 @@ pub struct RenderedView {
     pub label: String,
     pub revision: String,
     pub image: ImageInput,
+    /// Absent on legacy artifacts; never reinterpret those as convention v1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub camera: Option<mogen_core::views::CaptureInfo>,
+    /// Separately labeled fit image; never substitutes for comparison image.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diagnostic_fit: Option<ImageInput>,
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LockKind {

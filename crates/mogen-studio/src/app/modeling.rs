@@ -16,8 +16,18 @@ pub(in crate::app) struct WorkerRenderer {
     pub control: SessionControl,
     pub base_dir: Option<std::path::PathBuf>,
     pub framing: Option<(glam::Vec3, f32)>,
+    pub front_yaw: Option<f32>,
+    pub last_capture: Option<mogen_core::views::CaptureInfo>,
+    pub fit_image: Option<mogen_llm::ImageInput>,
+    pub capture_part: Option<String>,
 }
 impl SessionRenderer for WorkerRenderer {
+    fn capture_info(&self) -> Option<mogen_core::views::CaptureInfo> {
+        self.last_capture.clone()
+    }
+    fn diagnostic_fit(&self) -> Option<mogen_llm::ImageInput> {
+        self.fit_image.clone()
+    }
     fn render_part(
         &mut self,
         source: &str,
@@ -28,14 +38,18 @@ impl SessionRenderer for WorkerRenderer {
         let scene = mogen_llm::session::compile(source, self.base_dir.as_deref())?;
         let (center, radius) = mogen_llm::session::part_framing(&scene, name)?;
         let old = self.framing.replace((center.into(), radius));
+        let old_front = self.front_yaw;
+        let old_part = self.capture_part.replace(name.into());
         let result = self.render(source, revision, view);
         self.framing = old;
+        self.front_yaw = old_front;
+        self.capture_part = old_part;
         result
     }
     fn render(
         &mut self,
         source: &str,
-        _revision: &str,
+        revision: &str,
         view: View,
     ) -> anyhow::Result<mogen_llm::ImageInput> {
         self.control.check().map_err(anyhow::Error::msg)?;
@@ -47,7 +61,8 @@ impl SessionRenderer for WorkerRenderer {
         let (center, radius) = *self
             .framing
             .get_or_insert((mesh.center, mesh.radius.max(0.001)));
-        let (yaw, pitch) = view.camera();
+        let front = mogen_core::asset_front_yaw(&scene).map_err(anyhow::Error::msg)?;
+        let (yaw, pitch) = view.camera_from_front(*self.front_yaw.get_or_insert(front));
         let camera = mogen_render::OrbitCamera {
             yaw,
             pitch,
@@ -55,11 +70,47 @@ impl SessionRenderer for WorkerRenderer {
             zoom: 1.0,
             target: center,
         };
+        self.fit_image = None;
+        let info = mogen_render::capture_info(
+            &scene,
+            &camera,
+            revision,
+            view.label(),
+            self.capture_part.as_deref(),
+        );
+        let comparison = self.render_image(mesh.clone(), camera, view.label())?;
+        if info.out_of_frame_vertices != 0 {
+            self.tx
+                .send(LlmMessage::Progress(LlmProgress::Status(format!(
+                    "{} comparison crops {} vertices; rendering separate diagnostic fit",
+                    view.label(),
+                    info.out_of_frame_vertices
+                ))))?;
+            let fit = mogen_render::OrbitCamera {
+                yaw,
+                pitch,
+                fit_distance: mesh.radius.max(0.001) * 2.8,
+                zoom: 1.0,
+                target: mesh.center,
+            };
+            self.fit_image = Some(self.render_image(mesh, fit, "diagnostic_fit")?);
+        }
+        self.last_capture = Some(info);
+        Ok(comparison)
+    }
+}
+impl WorkerRenderer {
+    fn render_image(
+        &self,
+        mesh: Arc<mogen_render::FlatMesh>,
+        camera: mogen_render::OrbitCamera,
+        label: &str,
+    ) -> anyhow::Result<mogen_llm::ImageInput> {
         let (reply, rx) = mpsc::channel();
         self.tx
             .send(LlmMessage::Progress(LlmProgress::Status(format!(
                 "Rendering {} view",
-                view.label()
+                label
             ))))?;
         self.tx.send(LlmMessage::Render(RenderJob {
             mesh,
@@ -266,6 +317,19 @@ impl super::MogenStudioApp {
                                         if let Some(v) =
                                             c.views.iter().find(|v| v.label == view.label())
                                         {
+                                            if let Some(camera) = &v.camera {
+                                                ui.label(format!("Camera v{} · {} cropped vertices",camera.convention_version,camera.out_of_frame_vertices));
+                                            } else { ui.label("Legacy camera convention (unversioned)"); }
+                                            if let Some(fit) = &v.diagnostic_fit {
+                                                ui.collapsing("Diagnostic fit · independent framing", |ui| {
+                                                    if let Ok(img) = image::load_from_memory(&fit.data) {
+                                                        let img = img.to_rgba8();
+                                                        let color = egui::ColorImage::from_rgba_unmultiplied([img.width() as usize,img.height() as usize],img.as_raw());
+                                                        let texture = ui.ctx().load_texture(format!("fit-{}-{}",c.revision,v.label),color,egui::TextureOptions::LINEAR);
+                                                        ui.image((texture.id(),egui::vec2(220.0,220.0)));
+                                                    }
+                                                });
+                                            }
                                             let key = egui::Id::new((
                                                 "modeling_preview",
                                                 &c.revision,

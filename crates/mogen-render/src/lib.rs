@@ -14,6 +14,7 @@
 
 pub mod anim;
 pub mod camera;
+pub mod capture_info;
 pub mod flatten;
 pub mod gizmo_gl;
 mod gl_util;
@@ -26,6 +27,7 @@ pub mod renderer;
 pub mod shaders;
 
 pub use camera::{CameraSnapshot, OrbitCamera};
+pub use capture_info::capture_info;
 pub use flatten::{
     flatten, flatten_with_worlds, update_palettes, ClipSummary, DrawBatch, FlatMesh,
     PaletteSource, SkinPalette, FLOATS_PER_VERTEX, MAX_JOINTS,

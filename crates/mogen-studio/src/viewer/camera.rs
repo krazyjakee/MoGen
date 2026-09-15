@@ -57,7 +57,7 @@ pub struct CameraSnapshot {
 impl Default for OrbitCamera {
     fn default() -> Self {
         Self {
-            yaw: std::f32::consts::FRAC_PI_4,
+            yaw: 3.0 * std::f32::consts::FRAC_PI_4,
             // Positive pitch lifts the eye above the target so we get a
             // classic 3/4 view looking slightly down at the model.
             pitch: 0.5,

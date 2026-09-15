@@ -47,6 +47,8 @@ fn meta_from_node(n: &Node) -> Meta {
     let mut m = Meta::default();
     for (k, v) in &n.attrs {
         match (k.as_str(), v) {
+            ("front", Value::String(s)) | ("front", Value::Ident(s)) => m.front = Some(s.clone()),
+            ("front_node", Value::String(s)) | ("front_node", Value::Ident(s)) => m.front_node = Some(s.clone()),
             ("name", Value::String(s)) | ("name", Value::Ident(s)) => m.name = Some(s.clone()),
             ("version", Value::String(s)) | ("version", Value::Ident(s)) => {
                 m.version = Some(s.clone())
