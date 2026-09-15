@@ -72,6 +72,8 @@ pub struct Candidate {
     pub model: String,
     pub usage: Usage,
     pub findings: String,
+    #[serde(default)]
+    pub reviewed: bool,
     pub views: Vec<RenderedView>,
     pub dependencies: BTreeMap<PathBuf, Vec<u8>>,
 }
@@ -100,6 +102,31 @@ pub struct PartLock {
     pub kind: LockKind,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionRequestSettings {
+    pub provider: String,
+    pub model: String,
+    pub temperature: Option<f32>,
+    pub seed: Option<u64>,
+    pub thinking: Option<crate::ThinkingLevel>,
+}
+impl SessionRequestSettings {
+    pub fn new(cfg: &GenerateConfig, provider: &str) -> Self {
+        Self {
+            provider: provider.into(),
+            model: cfg.model.clone(),
+            temperature: cfg.temperature,
+            seed: cfg.seed,
+            thinking: cfg.thinking_level,
+        }
+    }
+    pub fn apply(&self, cfg: &mut GenerateConfig) {
+        cfg.model = self.model.clone();
+        cfg.temperature = self.temperature;
+        cfg.seed = self.seed;
+        cfg.thinking_level = self.thinking;
+    }
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ModelingProject {
     pub version: u32,
@@ -112,11 +139,25 @@ pub struct ModelingProject {
     pub selected_candidate: Option<usize>,
     pub stop_reason: String,
     pub experimental_guidance: bool,
+    pub attempts: Vec<super::Attempt>,
+    pub previous_attempts: Vec<super::Attempt>,
+    pub stage: String,
+    pub meter: super::SessionMeter,
+    pub elapsed_seconds: u64,
+    pub session_initial: Option<usize>,
+    pub session_context: String,
+    pub session_prompt: String,
+    pub session_images: Vec<ImageInput>,
+    pub generation_response: Option<crate::GenerateResponse>,
+    pub generation_request: String,
+    /// CLI input retained before rendering or refinement starts.
+    pub input_source: Option<String>,
+    pub request_settings: Option<SessionRequestSettings>,
 }
 impl Default for ModelingProject {
     fn default() -> Self {
         Self {
-            version: 1,
+            version: 2,
             brief: ModelingBrief::default(),
             mode: QualityMode::Draft,
             limits: SessionLimits::default(),
@@ -126,10 +167,30 @@ impl Default for ModelingProject {
             selected_candidate: None,
             stop_reason: String::new(),
             experimental_guidance: false,
+            attempts: vec![],
+            previous_attempts: vec![],
+            stage: String::new(),
+            meter: Default::default(),
+            elapsed_seconds: 0,
+            session_initial: None,
+            session_context: String::new(),
+            session_prompt: String::new(),
+            session_images: vec![],
+            generation_response: None,
+            generation_request: String::new(),
+            input_source: None,
+            request_settings: None,
         }
     }
 }
 impl ModelingProject {
+    pub fn sync_control(&mut self, cfg: &GenerateConfig) {
+        if let Some(c) = &cfg.session_control {
+            self.meter = c.meter();
+            self.elapsed_seconds = c.elapsed().as_secs();
+        }
+    }
+
     pub fn sidecar(path: &Path) -> PathBuf {
         let mut name = path.as_os_str().to_os_string();
         name.push(".modeling.json");
@@ -140,8 +201,8 @@ impl ModelingProject {
         if !path.exists() {
             return Ok(Self::default());
         }
-        let project: Self = serde_json::from_slice(&std::fs::read(&path)?)?;
-        if project.version != 1 {
+        let mut project: Self = serde_json::from_slice(&std::fs::read(&path)?)?;
+        if project.version != 1 && project.version != 2 {
             bail!("Unsupported modeling session version {}", project.version);
         }
         if project
@@ -150,15 +211,38 @@ impl ModelingProject {
         {
             bail!("Invalid selected candidate in modeling session");
         }
+        if project
+            .session_initial
+            .is_some_and(|i| i >= project.candidates.len())
+        {
+            bail!("Invalid initial candidate in modeling session");
+        }
+        for attempt in project.attempts.iter().chain(&project.previous_attempts) {
+            if attempt.version != 1 {
+                bail!("Unsupported response journal version {}", attempt.version);
+            }
+            if let Some(view) = &attempt.render {
+                if view.revision != attempt.revision
+                    || view
+                        .camera
+                        .as_ref()
+                        .is_some_and(|c| c.revision != view.revision)
+                {
+                    bail!("Stale tool capture in response journal");
+                }
+            }
+        }
         for candidate in &project.candidates {
             if revision(&candidate.source, &candidate.dependencies) != candidate.revision {
                 bail!("Corrupt candidate snapshot");
             }
-            if candidate
-                .views
-                .iter()
-                .any(|view| view.revision != candidate.revision)
-            {
+            if candidate.views.iter().any(|view| {
+                view.revision != candidate.revision
+                    || view
+                        .camera
+                        .as_ref()
+                        .is_some_and(|c| c.revision != view.revision)
+            }) {
                 bail!("Stale render revision in candidate snapshot");
             }
         }
@@ -167,6 +251,7 @@ impl ModelingProject {
                 bail!("Corrupt reference: {}", r.label);
             }
         }
+        project.version = 2;
         Ok(project)
     }
     pub fn save(&self, path: &Path) -> Result<()> {
@@ -207,6 +292,7 @@ impl ModelingProject {
                 .map(|c| c.meter().usage)
                 .unwrap_or_default(),
             findings,
+            reviewed: false,
             views,
             dependencies,
         };
@@ -240,8 +326,8 @@ pub fn dependencies(source: &str, base: Option<&Path>) -> Result<BTreeMap<PathBu
                 }
                 for (key, value) in &n.attrs {
                     if key.contains("texture") || (n.kind == "mesh" && key == "src") {
-                        if let mogen_dsl::ast::Value::String(p)
-                        | mogen_dsl::ast::Value::Ident(p) = value
+                        if let mogen_dsl::ast::Value::String(p) | mogen_dsl::ast::Value::Ident(p) =
+                            value
                         {
                             paths.push((p.clone(), false));
                         }

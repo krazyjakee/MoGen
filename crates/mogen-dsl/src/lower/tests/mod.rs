@@ -3,6 +3,8 @@ use glam::Vec3;
 
 mod branch;
 mod control_flow;
+#[cfg(feature = "csg")]
+mod csg;
 mod deform;
 mod extrude_sweep_loft;
 mod faced_box;
@@ -32,11 +34,17 @@ pub(super) fn find_mesh_node<'a>(g: &'a SceneGraph, name: &str) -> &'a mogen_cor
 
 pub(super) fn mesh_aabb(g: &SceneGraph, name: &str) -> (Vec3, Vec3) {
     let mesh = find_mesh_node(g, name).mesh.as_ref().unwrap();
-    let min = mesh.positions.iter().fold(Vec3::splat(f32::INFINITY), |a, p| {
-        a.min(Vec3::from_array(*p))
-    });
-    let max = mesh.positions.iter().fold(Vec3::splat(f32::NEG_INFINITY), |a, p| {
-        a.max(Vec3::from_array(*p))
-    });
+    let min = mesh
+        .positions
+        .iter()
+        .fold(Vec3::splat(f32::INFINITY), |a, p| {
+            a.min(Vec3::from_array(*p))
+        });
+    let max = mesh
+        .positions
+        .iter()
+        .fold(Vec3::splat(f32::NEG_INFINITY), |a, p| {
+            a.max(Vec3::from_array(*p))
+        });
     (min, max)
 }

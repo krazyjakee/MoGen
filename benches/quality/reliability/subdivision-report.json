@@ -1,0 +1,293 @@
+{
+  "camera_convention_version": 1,
+  "human_review_status": "pending",
+  "mesh_contract_controls": [
+    {
+      "detected": true,
+      "diagnostics": [
+        {
+          "code": "E1204",
+          "message": "part \"contract_control\" (node #0): 24 vertices on nondegenerate faces have zero or non-unit NORMAL vectors (length tolerance 0.001). Generate finite unit normals in the constructor/importer, preserving hard edges and UV seams.",
+          "severity": "error",
+          "span": {
+            "end": 46,
+            "start": 8
+          }
+        }
+      ],
+      "expected_code": "E1204",
+      "mutation": "zero_normals",
+      "source": "scene { box \"contract_control\" (size=[1,1,1]) }",
+      "source_revision": "be29f3d89accaff4a3ad7dbc336d312de7cadbe97d63c8aa736b89e755579da2",
+      "visual_quality": "not applicable: malformed geometry control"
+    },
+    {
+      "detected": true,
+      "diagnostics": [
+        {
+          "code": "E1202",
+          "message": "part \"contract_control\" (node #0): 1 POSITION entries contain NaN/Inf. Correct the source parameters or importer producing non-finite values.",
+          "severity": "error",
+          "span": {
+            "end": 46,
+            "start": 8
+          }
+        }
+      ],
+      "expected_code": "E1202",
+      "mutation": "nan_position",
+      "source": "scene { box \"contract_control\" (size=[1,1,1]) }",
+      "source_revision": "be29f3d89accaff4a3ad7dbc336d312de7cadbe97d63c8aa736b89e755579da2",
+      "visual_quality": "not applicable: malformed geometry control"
+    },
+    {
+      "detected": true,
+      "diagnostics": [
+        {
+          "code": "E1200",
+          "message": "part \"contract_control\" (node #0): NORMAL has 0 entries; expected 24. Supply one entry per position; generate missing normals in the geometry constructor/importer.",
+          "severity": "error",
+          "span": {
+            "end": 46,
+            "start": 8
+          }
+        }
+      ],
+      "expected_code": "E1200",
+      "mutation": "missing_normals",
+      "source": "scene { box \"contract_control\" (size=[1,1,1]) }",
+      "source_revision": "be29f3d89accaff4a3ad7dbc336d312de7cadbe97d63c8aa736b89e755579da2",
+      "visual_quality": "not applicable: malformed geometry control"
+    },
+    {
+      "detected": true,
+      "diagnostics": [
+        {
+          "code": "E1203",
+          "message": "part \"contract_control\" (node #0): 1 indices are out of range for 24 positions. Repair the triangle indices before rendering.",
+          "severity": "error",
+          "span": {
+            "end": 46,
+            "start": 8
+          }
+        }
+      ],
+      "expected_code": "E1203",
+      "mutation": "invalid_index",
+      "source": "scene { box \"contract_control\" (size=[1,1,1]) }",
+      "source_revision": "be29f3d89accaff4a3ad7dbc336d312de7cadbe97d63c8aa736b89e755579da2",
+      "visual_quality": "not applicable: malformed geometry control"
+    },
+    {
+      "detected": true,
+      "diagnostics": [
+        {
+          "code": "E1205",
+          "message": "part \"contract_control\" (node #0): 24 TEXCOORD_0 entries contain NaN/Inf. Correct the source parameters or importer producing non-finite values.",
+          "severity": "error",
+          "span": {
+            "end": 46,
+            "start": 8
+          }
+        }
+      ],
+      "expected_code": "E1205",
+      "mutation": "nan_uv",
+      "source": "scene { box \"contract_control\" (size=[1,1,1]) }",
+      "source_revision": "be29f3d89accaff4a3ad7dbc336d312de7cadbe97d63c8aa736b89e755579da2",
+      "visual_quality": "not applicable: malformed geometry control"
+    }
+  ],
+  "provenance": "Milestone 2 deterministic subdivision variants of issue #138 fixture; exact source-camera framing.",
+  "renderer_caveats": [
+    "#105 UV seams",
+    "#107 water shader"
+  ],
+  "runs": [
+    {
+      "checks": {
+        "asset_pass": true,
+        "compiles": true,
+        "dimensions_ok": true,
+        "extent": [
+          1.906048059463501,
+          0.6098194122314453,
+          4.4499993324279785
+        ],
+        "finite": true,
+        "framing_radius": 2.439640998840332,
+        "measurements": {
+          "constraints_ok": true,
+          "evidence": "static tessellated geometry; unsigned distance does not infer penetration or aesthetic fit",
+          "ground_plane": "Y=0",
+          "parts": [
+            {
+              "bounds": {
+                "max": [
+                  0.9531412720680237,
+                  0.8369687795639038,
+                  2.2249996662139893
+                ],
+                "min": [
+                  -0.9529068470001221,
+                  0.22714939713478088,
+                  -2.2249996662139893
+                ]
+              },
+              "dimensions": [
+                1.906048059463501,
+                0.6098194122314453,
+                4.4499993324279785
+              ],
+              "ground_clearance": 0.22714939713478088,
+              "name": "body_shell"
+            }
+          ],
+          "relationships": [],
+          "revision": "ee2cb23a6940bfa1ba83cab0b94522278df3f7d39d82448a759d81839005f335",
+          "space": "world",
+          "surface_pairs": [],
+          "units": "m"
+        },
+        "mesh_contract": {
+          "diagnostics": [],
+          "pass": true
+        },
+        "missing_parts": [],
+        "visual_quality": "requires blinded human review"
+      },
+      "elapsed_seconds": 0.000461009,
+      "export_ok": true,
+      "human_review": null,
+      "limits": {
+        "calls": 12,
+        "iterations": 3,
+        "output_tokens": 8192,
+        "seconds": 600,
+        "spend_usd": null
+      },
+      "manifest_sha256": "05324be56b535f140ae95dc4363c8a0b164a9ca39969a1eefdaf9a1b9f6b537b",
+      "meter": {
+        "call_pending": false,
+        "calls": 0,
+        "cancelled": false,
+        "estimated_usd": 0.0,
+        "stage": "",
+        "stage_started_seconds": 0.0,
+        "stopped": null,
+        "unknown_cost": false,
+        "usage": {
+          "cached_tokens": 0,
+          "prompt_tokens": 0,
+          "response_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "mode": "fixture",
+      "model": "authored fixture",
+      "prompt_sha256": "bc109e20e58637c8f38713e114bfeaab211aab5be283a7d4471405ceeff004df",
+      "provider": "none",
+      "repeat": 0,
+      "seed": 42,
+      "stop_reason": "",
+      "task": "sports_body_level_1",
+      "temperature": 0.30000001192092896,
+      "thinking": "high",
+      "variant": "baseline",
+      "wall_seconds": 13.431486822
+    },
+    {
+      "checks": {
+        "asset_pass": true,
+        "compiles": true,
+        "dimensions_ok": true,
+        "extent": [
+          1.9041684865951538,
+          0.6079918146133423,
+          4.4499430656433105
+        ],
+        "finite": true,
+        "framing_radius": 2.439134359359741,
+        "measurements": {
+          "constraints_ok": true,
+          "evidence": "static tessellated geometry; unsigned distance does not infer penetration or aesthetic fit",
+          "ground_plane": "Y=0",
+          "parts": [
+            {
+              "bounds": {
+                "max": [
+                  0.9523191452026367,
+                  0.8353711366653442,
+                  2.2249693870544434
+                ],
+                "min": [
+                  -0.9518493413925171,
+                  0.22737929224967957,
+                  -2.224973678588867
+                ]
+              },
+              "dimensions": [
+                1.9041684865951538,
+                0.6079918146133423,
+                4.4499430656433105
+              ],
+              "ground_clearance": 0.22737929224967957,
+              "name": "body_shell"
+            }
+          ],
+          "relationships": [],
+          "revision": "d8b1dca1a1b0ec4f6c503d7a9f90d060a60b8517a6b34a38944a543f6c1a5cc0",
+          "space": "world",
+          "surface_pairs": [],
+          "units": "m"
+        },
+        "mesh_contract": {
+          "diagnostics": [],
+          "pass": true
+        },
+        "missing_parts": [],
+        "visual_quality": "requires blinded human review"
+      },
+      "elapsed_seconds": 0.000507431,
+      "export_ok": true,
+      "human_review": null,
+      "limits": {
+        "calls": 12,
+        "iterations": 3,
+        "output_tokens": 8192,
+        "seconds": 600,
+        "spend_usd": null
+      },
+      "manifest_sha256": "05324be56b535f140ae95dc4363c8a0b164a9ca39969a1eefdaf9a1b9f6b537b",
+      "meter": {
+        "call_pending": false,
+        "calls": 0,
+        "cancelled": false,
+        "estimated_usd": 0.0,
+        "stage": "",
+        "stage_started_seconds": 0.0,
+        "stopped": null,
+        "unknown_cost": false,
+        "usage": {
+          "cached_tokens": 0,
+          "prompt_tokens": 0,
+          "response_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "mode": "fixture",
+      "model": "authored fixture",
+      "prompt_sha256": "bc109e20e58637c8f38713e114bfeaab211aab5be283a7d4471405ceeff004df",
+      "provider": "none",
+      "repeat": 0,
+      "seed": 42,
+      "stop_reason": "",
+      "task": "sports_body_level_2",
+      "temperature": 0.30000001192092896,
+      "thinking": "high",
+      "variant": "baseline",
+      "wall_seconds": 39.909142878
+    }
+  ],
+  "version": 1
+}

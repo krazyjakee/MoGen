@@ -276,7 +276,7 @@ fn refinement_rejects_dependency_changes_during_capture_or_review() {
             candidate.dependencies[std::path::Path::new("chair.mog")],
             module.as_bytes()
         );
-        assert_eq!(candidate.views.len(), if during_render { 0 } else { 5 });
+        assert_eq!(candidate.views.len(), if during_render { 2 } else { 5 });
         assert!(candidate.findings.contains("awaiting visual review"));
         project.save(&dir.path().join("scene.mog")).unwrap();
         ModelingProject::load(&dir.path().join("scene.mog")).unwrap();
@@ -558,7 +558,7 @@ fn six_quality_targets_compile_and_techniques_are_retrievable() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../benches/quality");
     let manifest: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(root.join("tasks.json")).unwrap()).unwrap();
-    assert_eq!(manifest["tasks"].as_array().unwrap().len(), 6);
+    assert_eq!(manifest["tasks"].as_array().unwrap().len(), 7);
     for task in manifest["tasks"].as_array().unwrap() {
         let path = root.join(task["source"].as_str().unwrap());
         compile(&std::fs::read_to_string(&path).unwrap(), path.parent())
@@ -664,8 +664,11 @@ fn closeup_framing_uses_parent_world_transform_and_selected_subtree() {
 fn relational_driver_changes_cannot_bypass_dependent_geometry_locks() {
     let source = "scene { box \"seat\" (pos=[0,0.6,0],size=[1,0.1,1]) spline_tube \"leg\" (points=[[0,0,0],[0,0.3,0]],radius=0.025) } relate (child=\"leg\",target=\"seat\",mode=\"endpoint\",socket=\"bottom\",insertion=0.01)";
     let changed = source.replace("pos=[0,0.6,0]", "pos=[0,0.9,0]");
-    let locks = vec![PartLock { name:"leg".into(),kind:LockKind::Geometry }];
-    let error = enforce_locks(source,&changed,&locks,None).unwrap_err();
+    let locks = vec![PartLock {
+        name: "leg".into(),
+        kind: LockKind::Geometry,
+    }];
+    let error = enforce_locks(source, &changed, &locks, None).unwrap_err();
     assert!(error.to_string().contains("locked"));
 }
 
@@ -673,68 +676,518 @@ fn relational_driver_changes_cannot_bypass_dependent_geometry_locks() {
 fn guided_details_respect_dependent_geometry_locks() {
     let source = include_str!("../../../../examples/furniture/guided_cushion.mog");
     let changed = source.replace("use \"cushion\" ()", "use \"cushion\" (w=1.2)");
-    let locks = vec![PartLock { name: "welt".into(), kind: LockKind::Geometry }];
-    assert!(enforce_locks(source, &changed, &locks, None).unwrap_err().to_string().contains("locked"));
+    let locks = vec![PartLock {
+        name: "welt".into(),
+        kind: LockKind::Geometry,
+    }];
+    assert!(enforce_locks(source, &changed, &locks, None)
+        .unwrap_err()
+        .to_string()
+        .contains("locked"));
 }
 
 #[test]
 fn measurements_report_broken_joints_and_serialize_revision() {
     let source = "scene { box \"foot\" (size=[0.2,0.04,0.2],pos=[0,0.02,0]) box \"leg\" (size=[0.06,0.4,0.06],pos=[0,0.25,0]) }";
-    let mut w=ModelingWorkspace::new(source.into(),None,vec![],None).unwrap();
-    let r=w.revision().unwrap();
-    let m=w.measure(&r,"foot","leg",Some(0.002),None).unwrap();
-    assert_eq!(m["units"],"m");
-    assert_eq!(m["surface"]["status"],"separated");
-    assert!((m["surface"]["distance"].as_f64().unwrap()-0.01).abs()<1e-6);
-    let restored:serde_json::Value=serde_json::from_str(&serde_json::to_string(&m).unwrap()).unwrap();
-    assert_eq!(restored["revision"],r);
-    assert!(w.inspect(None).unwrap()["diagnostics"].as_array().unwrap().iter().any(|d|d["code"]=="E1101"));
-    w.source=source.replace("pos=[0,0.25,0]","pos=[0,0.24,0]");
-    assert!(w.measure(&r,"foot","leg",None,None).is_err());
-    let m=w.measure(&w.revision().unwrap(),"foot","leg",None,None).unwrap();
-    assert_eq!(m["surface"]["status"],"within_tolerance");
+    let mut w = ModelingWorkspace::new(source.into(), None, vec![], None).unwrap();
+    let r = w.revision().unwrap();
+    let m = w.measure(&r, "foot", "leg", Some(0.002), None).unwrap();
+    assert_eq!(m["units"], "m");
+    assert_eq!(m["surface"]["status"], "separated");
+    assert!((m["surface"]["distance"].as_f64().unwrap() - 0.01).abs() < 1e-6);
+    let restored: serde_json::Value =
+        serde_json::from_str(&serde_json::to_string(&m).unwrap()).unwrap();
+    assert_eq!(restored["revision"], r);
+    assert!(w.inspect(None).unwrap()["diagnostics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|d| d["code"] == "E1101"));
+    w.source = source.replace("pos=[0,0.25,0]", "pos=[0,0.24,0]");
+    assert!(w.measure(&r, "foot", "leg", None, None).is_err());
+    let m = w
+        .measure(&w.revision().unwrap(), "foot", "leg", None, None)
+        .unwrap();
+    assert_eq!(m["surface"]["status"], "within_tolerance");
 }
 
 #[test]
 fn measurements_recheck_module_relationships_and_world_transforms() {
     let source = "module \"joint\" () { box \"rail\" (size=[0.3,0.1,0.2],pos=[0,0.5,0]) box \"tenon\" (size=[0.08,0.3,0.08]) relate (child=\"tenon\",target=\"rail\",mode=\"align\",plug=\"top\",socket=\"bottom\",insertion=0.02) } scene { use \"joint\" (pos=[2,0,0],rot=[0,30,0]) }";
-    for input in [source.to_owned(),source.replace("pos=[0,0.5,0]","pos=[0,0.8,0]")] {
-        let w=ModelingWorkspace::new(input.clone(),None,vec![],None).unwrap();
-        let m=w.measure(&w.revision().unwrap(),"tenon","rail",None,None).unwrap();
-        assert_eq!(m["relationship_checks"][0]["intent"],"intentional_insertion");
-        assert_eq!(m["relationship_checks"][0]["satisfied"],true);
-        let mut scene=compile(&input,None).unwrap();
-        let child=scene.relationships[0].child;
-        scene.nodes[child.0 as usize].transform.translation.y+=0.1;
+    for input in [
+        source.to_owned(),
+        source.replace("pos=[0,0.5,0]", "pos=[0,0.8,0]"),
+    ] {
+        let w = ModelingWorkspace::new(input.clone(), None, vec![], None).unwrap();
+        let m = w
+            .measure(&w.revision().unwrap(), "tenon", "rail", None, None)
+            .unwrap();
+        assert_eq!(
+            m["relationship_checks"][0]["intent"],
+            "intentional_insertion"
+        );
+        assert_eq!(m["relationship_checks"][0]["satisfied"], true);
+        let mut scene = compile(&input, None).unwrap();
+        let child = scene.relationships[0].child;
+        scene.nodes[child.0 as usize].transform.translation.y += 0.1;
         assert!(!mogen_core::relationship_measurements(&scene)[0].satisfied);
     }
 }
 
 #[test]
 fn fit_fixture_covers_curved_separation_and_grounding_edits() {
-    let source=include_str!("../../../../examples/features/joint_measurements.mog");
-    let w=ModelingWorkspace::new(source.into(),None,vec![],None).unwrap();
-    let m=w.measure(&w.revision().unwrap(),"curved_a","curved_b",None,None).unwrap();
-    assert_eq!(m["surface"]["status"],"separated");
-    let source=include_str!("../../../../examples/furniture/relational_chair.mog");
-    let mut scene=compile(source,None).unwrap();
-    let r=scene.relationships.iter().find(|r|r.mode=="ground").unwrap().clone();
-    assert!(mogen_core::relationship_measurements(&scene).iter().filter(|r|r.mode=="ground").all(|r|r.satisfied));
-    scene.nodes[r.child.0 as usize].transform.translation.y+=0.01;
-    let child_name=scene.get(r.child).name.clone();
-    assert!(mogen_core::relationship_measurements(&scene).iter().any(|r|r.child==child_name && !r.satisfied));
+    let source = include_str!("../../../../examples/features/joint_measurements.mog");
+    let w = ModelingWorkspace::new(source.into(), None, vec![], None).unwrap();
+    let m = w
+        .measure(&w.revision().unwrap(), "curved_a", "curved_b", None, None)
+        .unwrap();
+    assert_eq!(m["surface"]["status"], "separated");
+    let source = include_str!("../../../../examples/furniture/relational_chair.mog");
+    let mut scene = compile(source, None).unwrap();
+    let r = scene
+        .relationships
+        .iter()
+        .find(|r| r.mode == "ground")
+        .unwrap()
+        .clone();
+    assert!(mogen_core::relationship_measurements(&scene)
+        .iter()
+        .filter(|r| r.mode == "ground")
+        .all(|r| r.satisfied));
+    scene.nodes[r.child.0 as usize].transform.translation.y += 0.01;
+    let child_name = scene.get(r.child).name.clone();
+    assert!(mogen_core::relationship_measurements(&scene)
+        .iter()
+        .any(|r| r.child == child_name && !r.satisfied));
 }
 
 #[test]
 fn measurements_reject_changed_imports() {
-    let dir=tempfile::tempdir().unwrap();
-    let module="module \"joint\" () { box \"a\" () box \"b\" (pos=[0,1,0]) }";
-    std::fs::write(dir.path().join("joint.mog"),module).unwrap();
-    let source="import \"joint.mog\"\nscene { use \"joint\" () }";
-    let w=ModelingWorkspace::new(source.into(),Some(dir.path().into()),vec![],None).unwrap();
-    let old=w.revision().unwrap();
-    let result=w.measure(&old,"a","b",None,None).unwrap();
-    assert_eq!(result["revision"],old);
-    std::fs::write(dir.path().join("joint.mog"),module.replace("0,1,0","0,2,0")).unwrap();
-    assert!(w.measure(&old,"a","b",None,None).is_err());
+    let dir = tempfile::tempdir().unwrap();
+    let module = "module \"joint\" () { box \"a\" () box \"b\" (pos=[0,1,0]) }";
+    std::fs::write(dir.path().join("joint.mog"), module).unwrap();
+    let source = "import \"joint.mog\"\nscene { use \"joint\" () }";
+    let w = ModelingWorkspace::new(source.into(), Some(dir.path().into()), vec![], None).unwrap();
+    let old = w.revision().unwrap();
+    let result = w.measure(&old, "a", "b", None, None).unwrap();
+    assert_eq!(result["revision"], old);
+    std::fs::write(
+        dir.path().join("joint.mog"),
+        module.replace("0,1,0", "0,2,0"),
+    )
+    .unwrap();
+    assert!(w.measure(&old, "a", "b", None, None).is_err());
+}
+
+#[test]
+fn restart_at_every_durable_stage_reuses_responses_and_captures() {
+    let next = ORIGINAL.replace("0.1,0.1,1", "0.12,0.1,1");
+    let responses=vec![
+        r#"{"findings":["Thin arm."],"complete":false,"improved":false,"correction":"Thicken arm"}"#.to_string(),
+        next.clone(),
+        json!({"tool":"render","revision":rev(&next),"view":"front"}).to_string(),
+        json!({"tool":"finish","revision":rev(&next),"findings":"Arm thickened"}).to_string(),
+        r#"{"findings":"Arm is thicker.","complete":true,"improved":true,"correction":""}"#.to_string(),
+    ];
+    // Crash on each checkpoint in an uninterrupted run, including received,
+    // interpreted, applied, captured, reviewed, and selected boundaries.
+    for crash_at in 1..36 {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("scene.mog");
+        let mut project = ModelingProject::default();
+        let mut cfg = GenerateConfig::new("chair");
+        let control = SessionControl::new(project.limits.clone());
+        cfg.session_control = Some(control.clone());
+        let mut calls = 0;
+        let mut checkpoint_count = 0;
+        let mut renderer = Renderer {
+            seen: vec![],
+            fail: false,
+        };
+        let mut model = |cfg: &GenerateConfig| -> anyhow::Result<GenerateResponse> {
+            cfg.session_control
+                .as_ref()
+                .unwrap()
+                .before_call(cfg, None)
+                .unwrap();
+            let result = response(responses[calls].clone());
+            calls += 1;
+            cfg.session_control
+                .as_ref()
+                .unwrap()
+                .after_call(Some(&result.usage), None);
+            Ok(result)
+        };
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            refine_session(
+                &mut project,
+                ORIGINAL,
+                None,
+                &cfg,
+                "fixture",
+                &mut model,
+                &mut renderer,
+                &mut |p| {
+                    checkpoint_count += 1;
+                    if checkpoint_count == crash_at {
+                        p.save(&path).unwrap();
+                        panic!("injected crash");
+                    }
+                },
+            )
+        }));
+        if !ModelingProject::sidecar(&path).exists() {
+            project.save(&path).unwrap();
+        }
+        let mut saved = ModelingProject::load(&path).unwrap();
+        if saved.session_initial.is_none() {
+            continue;
+        }
+        cfg.session_control = Some(SessionControl::resume(
+            saved.limits.clone(),
+            saved.meter.clone(),
+            saved.elapsed_seconds,
+        ));
+        let mut model = |cfg: &GenerateConfig| -> anyhow::Result<GenerateResponse> {
+            cfg.session_control
+                .as_ref()
+                .unwrap()
+                .before_call(cfg, None)
+                .unwrap();
+            let result = response(responses[calls].clone());
+            calls += 1;
+            cfg.session_control
+                .as_ref()
+                .unwrap()
+                .after_call(Some(&result.usage), None);
+            Ok(result)
+        };
+        let result = resume_session(
+            &mut saved,
+            ORIGINAL,
+            None,
+            &cfg,
+            "fixture",
+            &mut model,
+            &mut renderer,
+            &mut |_| {},
+        )
+        .unwrap();
+        assert_eq!(result, next, "crash {crash_at}: {}", saved.stop_reason);
+        assert_eq!(calls, 5, "crash {crash_at}");
+        assert!(
+            (5..=6).contains(&saved.meter.calls),
+            "crash {crash_at}: interrupted admission reserves an uncertain call"
+        );
+        assert_eq!(saved.meter.usage.total_tokens, 100, "crash {crash_at}");
+        assert_eq!(saved.candidates.len(), 2);
+        assert!(saved.candidates[1].reviewed);
+        assert_eq!(
+            renderer.seen.len(),
+            11,
+            "completed captures must be reused, crash {crash_at}"
+        );
+    }
+}
+
+#[test]
+fn format_retry_is_bounded_and_preserves_raw_evidence() {
+    let mut project = ModelingProject::default();
+    let mut calls = 0;
+    let mut model = |cfg: &GenerateConfig| -> anyhow::Result<GenerateResponse> {
+        calls += 1;
+        if calls == 2 {
+            assert!(cfg.user_images.is_empty());
+            assert!(cfg.user_prompt.contains("do not invent"));
+        }
+        Ok(response("{\"findings\":"))
+    };
+    let result = refine_session(
+        &mut project,
+        ORIGINAL,
+        None,
+        &GenerateConfig::new("chair"),
+        "fixture",
+        &mut model,
+        &mut Renderer {
+            seen: vec![],
+            fail: false,
+        },
+        &mut |_| {},
+    )
+    .unwrap();
+    assert_eq!(calls, 2);
+    assert_eq!(result, ORIGINAL);
+    assert!(project.stop_reason.contains("format recovery exhausted"));
+    assert_eq!(project.attempts.len(), 2);
+    assert!(!project.candidates[0].reviewed);
+}
+
+#[test]
+fn new_refinement_captures_its_own_candidates_and_resumes_without_calls() {
+    let next = ORIGINAL.replace("0.1,0.1,1", "0.12,0.1,1");
+    let mut project = ModelingProject::default();
+    let cfg = GenerateConfig::new("chair");
+    let mut renderer = Renderer {
+        seen: vec![],
+        fail: false,
+    };
+    for run in 0..2 {
+        // The same edit can recur after restoring an earlier source, with a
+        // changed brief or camera framing. Its captures belong to this run.
+        project.brief.corrections.push(format!("Refinement {run}"));
+        let mut responses = vec![
+            r#"{"findings":"Thin arm","complete":false,"improved":false,"correction":"Thicken arm"}"#.to_string(),
+            next.clone(),
+            json!({"tool":"finish","revision":rev(&next),"findings":"Thickened"}).to_string(),
+            r#"{"findings":"Thicker arm","complete":true,"improved":true,"correction":""}"#.to_string(),
+        ].into_iter();
+        let result = refine_session(
+            &mut project,
+            ORIGINAL,
+            None,
+            &cfg,
+            "fixture",
+            &mut |_| {
+                Ok(response(
+                    responses.next().expect("unexpected provider call"),
+                ))
+            },
+            &mut renderer,
+            &mut |_| {},
+        )
+        .unwrap();
+        assert_eq!(result, next);
+        assert!(responses.next().is_none());
+        assert_eq!(project.session_initial, Some(run * 2));
+        assert_eq!(project.selected_candidate, Some(run * 2 + 1));
+        assert_eq!(renderer.seen.len(), (run + 1) * 10);
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("scene.mog");
+    project.save(&path).unwrap();
+    let mut project = ModelingProject::load(&path).unwrap();
+    let result = resume_session(
+        &mut project,
+        &next,
+        None,
+        &cfg,
+        "fixture",
+        &mut |_| panic!("completed responses must be replayed"),
+        &mut Renderer {
+            seen: vec![],
+            fail: true,
+        },
+        &mut |_| {},
+    )
+    .unwrap();
+    assert_eq!(result, next);
+    assert_eq!(project.selected_candidate, Some(3));
+    assert!(
+        !project.stop_reason.starts_with("Stopped:"),
+        "{}",
+        project.stop_reason
+    );
+}
+
+#[test]
+fn late_raw_edit_is_saved_but_cannot_mutate_cancelled_session() {
+    let mut project = ModelingProject::default();
+    let mut cfg = GenerateConfig::new("chair");
+    let control = SessionControl::new(project.limits.clone());
+    cfg.session_control = Some(control.clone());
+    let mut calls = 0;
+    let next = ORIGINAL.replace("0.1,0.1,1", "0.12,0.1,1");
+    let mut model = |_: &GenerateConfig| -> anyhow::Result<GenerateResponse> {
+        calls += 1;
+        if calls == 1 {
+            Ok(response(
+                r#"{"findings":[],"complete":false,"improved":false,"correction":"thicken"}"#,
+            ))
+        } else {
+            control.cancel();
+            Ok(response(&next))
+        }
+    };
+    let result = refine_session(
+        &mut project,
+        ORIGINAL,
+        None,
+        &cfg,
+        "fixture",
+        &mut model,
+        &mut Renderer {
+            seen: vec![],
+            fail: false,
+        },
+        &mut |_| {},
+    )
+    .unwrap();
+    assert_eq!(result, ORIGINAL);
+    assert_eq!(project.candidates.len(), 1);
+    assert_eq!(project.attempts[1].response, next);
+    assert_eq!(project.attempts[1].state, "received");
+}
+
+#[test]
+fn raw_dsl_recovery_cannot_change_locked_material_indirectly() {
+    let mut workspace = ModelingWorkspace::new(
+        ORIGINAL.into(),
+        None,
+        vec![PartLock {
+            name: "seat".into(),
+            kind: LockKind::Material,
+        }],
+        None,
+    )
+    .unwrap();
+    let mut calls = 0;
+    tool_session(
+        &mut workspace,
+        &GenerateConfig::new("chair"),
+        "change arm finish",
+        &mut |cfg| {
+            calls += 1;
+            if calls == 1 {
+                Ok(response(ORIGINAL.replace("0.5,0.3,0.1", "0.9,0.1,0.1")))
+            } else {
+                assert!(cfg.user_prompt.contains("locked"));
+                Ok(response(
+                    json!({"tool":"finish","revision":rev(ORIGINAL),"findings":"Lock preserved"})
+                        .to_string(),
+                ))
+            }
+        },
+        &mut Renderer {
+            seen: vec![],
+            fail: false,
+        },
+    )
+    .unwrap();
+    assert_eq!(workspace.source, ORIGINAL);
+}
+#[test]
+fn generation_receipt_survives_restart_without_another_call() {
+    let mut p = ModelingProject::default();
+    let cfg = GenerateConfig::new("box");
+    let mut calls = 0;
+    let mut call = |_: &GenerateConfig| {
+        calls += 1;
+        Ok(response("scene {box}"))
+    };
+    let source = generate_candidate(&mut p, &cfg, "fixture", &mut call, &mut |_| {}).unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("asset.mog");
+    p.save(&path).unwrap();
+    let mut p = ModelingProject::load(&path).unwrap();
+    assert_eq!(
+        generate_candidate(&mut p, &cfg, "fixture", &mut call, &mut |_| {}).unwrap(),
+        source
+    );
+    assert_eq!(calls, 1);
+}
+
+#[test]
+fn oversized_response_is_retained_without_a_repair_call() {
+    let mut project = ModelingProject::default();
+    let oversized = "x".repeat(MAX_RESPONSE_BYTES + 1);
+    let mut calls = 0;
+    let result = refine_session(
+        &mut project,
+        ORIGINAL,
+        None,
+        &GenerateConfig::new("chair"),
+        "fixture",
+        &mut |_| {
+            calls += 1;
+            Ok(response(&oversized))
+        },
+        &mut Renderer {
+            seen: vec![],
+            fail: false,
+        },
+        &mut |_| {},
+    )
+    .unwrap();
+    assert_eq!(calls, 1);
+    assert_eq!(result, ORIGINAL);
+    assert_eq!(project.attempts[0].response, oversized);
+    assert_eq!(project.attempts[0].state, "oversized");
+    assert!(!project.candidates[0].reviewed);
+}
+
+#[test]
+fn successful_format_repair_keeps_original_error_and_judgments() {
+    let mut project = ModelingProject::default();
+    let mut calls = 0;
+    refine_session(
+        &mut project, ORIGINAL, None, &GenerateConfig::new("chair"), "fixture",
+        &mut |_| {
+            calls += 1;
+            Ok(response(if calls == 1 {
+                r#"{"findings":"No remaining defects.","complete":true,"improved":false,"correction":"","extra":"discard"}"#
+            } else {
+                r#"{"findings":"No remaining defects.","complete":true,"improved":false,"correction":""}"#
+            }))
+        },
+        &mut Renderer { seen: vec![], fail: false }, &mut |_| {},
+    ).unwrap();
+    assert_eq!(calls, 2);
+    assert!(project.candidates[0].reviewed);
+    let outcome = project.attempts[0].outcome.as_ref().unwrap();
+    assert!(outcome["parse_error"]
+        .as_str()
+        .unwrap()
+        .contains("unknown field"));
+    assert_eq!(outcome["findings"], "No remaining defects.");
+    assert!(project.attempts[0].provenance.contains("repair"));
+}
+
+#[test]
+fn exhausted_resume_preserves_the_previously_selected_improvement() {
+    let next = ORIGINAL.replace("0.1,0.1,1", "0.12,0.1,1");
+    let mut responses = std::collections::VecDeque::from([
+        r#"{"findings":"Thin arm.","complete":false,"improved":false,"correction":"Thicken arm"}"#
+            .to_string(),
+        next.clone(),
+        json!({"tool":"finish","revision":rev(&next),"findings":"Thicker arm"}).to_string(),
+        r#"{"findings":"Improved.","complete":true,"improved":true,"correction":""}"#.to_string(),
+    ]);
+    let mut project = ModelingProject::default();
+    let mut cfg = GenerateConfig::new("chair");
+    let mut renderer = Renderer {
+        seen: vec![],
+        fail: false,
+    };
+    let result = refine_session(
+        &mut project,
+        ORIGINAL,
+        None,
+        &cfg,
+        "fixture",
+        &mut |_| Ok(response(responses.pop_front().unwrap())),
+        &mut renderer,
+        &mut |_| {},
+    )
+    .unwrap();
+    assert_eq!(result, next);
+    let selected = project.selected_candidate;
+    cfg.session_control = Some(SessionControl::resume(
+        project.limits.clone(),
+        project.meter.clone(),
+        project.limits.seconds,
+    ));
+    let result = resume_session(
+        &mut project,
+        &next,
+        None,
+        &cfg,
+        "fixture",
+        &mut |_| panic!("No new call after deadline"),
+        &mut renderer,
+        &mut |p| assert_eq!(p.selected_candidate, selected),
+    )
+    .unwrap();
+    assert_eq!(result, next);
+    assert_eq!(project.selected_candidate, selected);
 }

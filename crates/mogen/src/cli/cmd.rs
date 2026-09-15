@@ -12,6 +12,8 @@ use super::value_args::{BuildFormatArg, ProviderArg, StyleArg, ThinkingArg};
 
 #[derive(Subcommand)]
 pub(crate) enum Cmd {
+    /// Generate, refine, inspect or resume a durable shared modeling session.
+    Session(crate::commands::session::SessionArgs),
     /// Sign in / out for every credential `mogen` persists under
     /// `~/.mogen/`. Targets:
     ///

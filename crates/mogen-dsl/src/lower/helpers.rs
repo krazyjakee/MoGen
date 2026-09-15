@@ -16,7 +16,12 @@ pub(super) fn apply_subdivide(node: &Node, mesh: Mesh) -> Result<Mesh> {
     if n == 0 {
         return Ok(mesh);
     }
-    Ok(loop_subdivide(&mesh, n))
+    let mesh = loop_subdivide(&mesh, n);
+    Ok(if node.attr_number("faceted").unwrap_or(0.0) != 0.0 {
+        mogen_geom::crease_normals(&mesh, 0.0)
+    } else {
+        mesh
+    })
 }
 
 /// Effective (validated, LOD-scaled and capped) subdivision count. Shared with

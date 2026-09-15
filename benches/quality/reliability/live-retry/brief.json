@@ -1,0 +1,11 @@
+{
+  "revision": 0,
+  "prompt": "Create a beautiful original red two-seat sports coupe called Rosso S1. Contemporary premium automotive design, elegant and aggressive, no copied badge or existing brand. A complete editable 3D asset, with a convincing silhouette and craftsmanship visible from every angle. Develop the actual curved shapes rather than assembling a car-shaped collection of boxes.",
+  "corrections": [],
+  "style": "Refined realistic automotive proportions; glossy deep vermilion red paint, dark glass, satin black aerodynamic trim, machined alloy wheels with dark recesses. No cartoon styling.",
+  "dimensions": "Metres: approximately 4.45 long along Z, 1.92 wide along X, 1.20 high along Y. +Y up, FRONT points toward -Z. Ground at Y=0. Wheelbase 2.65m; tire radius about 0.34m. Car centered around X=0. Symmetric about X=0.",
+  "intended_use": "Static hero game asset, standalone GLB and native MoGen editable source; close inspection from front/side/back/three-quarter. No animation.",
+  "required_details": "Continuous sculpted body with curved/sloped hood and shoulder line, real open wheel arches clearing all four tires, low fastback cabin with raked windscreen and rear glass, side windows with thin red roof pillars, four round tires with realistic sidewalls and detailed five-spoke rims, visible brake discs and red calipers, recessed slim LED headlamps, front grille/intake and splitter, rear lamps and rear diffuser with twin exhausts, door seams and flush handles, two side mirrors, subtly flared rear haunches. Important named parts/groups body, cabin, wheel_fl, wheel_fr, wheel_rl, wheel_rr. A coherent drivable car with four wheels, no floating decorative parts.",
+  "constraints": "No ground plane or stage included in the exported car. No external assets or image files required. Use explicit PBR materials. Proper physical proportions and useful curved surface tessellation. Prefer loft/sweep/CSG where appropriate; avoid angular slab windshield/body and ellipsoid bubbles pretending to be panels. Ensure tires protrude realistically from open arches rather than being swallowed by bodywork. Spend geometry on silhouette and wheel detail, not arbitrary greebles. Build a substantial finished model; a low-detail blockout is not completion.",
+  "references": []
+}

@@ -18,7 +18,7 @@ pub const DEFAULT_TEMPERATURE: f32 = 0.3;
 ///   `thinking.type = "enabled"`).
 /// - OpenAI: `reasoning.effort` (`low`/`medium`/`high`/`high`).
 /// - Ollama: ignored (local models don't expose a separate reasoning budget).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ThinkingLevel {
     /// 512 tokens / `low` effort — fast path. Usually enough for a
     /// well-specified DSL prompt.
@@ -105,6 +105,12 @@ pub struct ImageInput {
 /// Gemini, `seed` for some) are silently ignored elsewhere.
 #[derive(Debug, Clone)]
 pub struct GenerateConfig {
+    /// Optional JSON schema; transported only by supported native adapters.
+    pub response_schema: Option<serde_json::Value>,
+    /// Shared journal receives a completed response even when a stop arrives
+    /// in flight. It must save receipt and check control before interpretation.
+    /// Legacy callers keep the default false behavior.
+    pub retain_stopped_response: bool,
     pub session_control: Option<crate::session::SessionControl>,
     /// Server-side output cap, distinct from the legacy total-token rejection cap.
     pub max_output_tokens: Option<u32>,
@@ -155,6 +161,8 @@ pub struct GenerateConfig {
 impl GenerateConfig {
     pub fn new(user_prompt: impl Into<String>) -> Self {
         Self {
+            response_schema: None,
+            retain_stopped_response: false,
             session_control: None,
             max_output_tokens: None,
             model: String::new(),
@@ -234,7 +242,7 @@ impl Usage {
 }
 
 /// Decoded text + telemetry from a single provider call.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct GenerateResponse {
     pub text: String,
     pub usage: Usage,

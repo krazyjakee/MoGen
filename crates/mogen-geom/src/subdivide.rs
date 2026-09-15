@@ -10,7 +10,7 @@
 //! triangle count grows by 4^N — the lowering pass caps `N` to keep this in
 //! check.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap as HashMap;
 
 use glam::Vec3;
 use mogen_core::Mesh;
@@ -36,7 +36,11 @@ pub fn loop_subdivide(mesh: &Mesh, iterations: u32) -> Mesh {
 type EdgeKey = (u32, u32);
 
 fn edge_key(a: u32, b: u32) -> EdgeKey {
-    if a < b { (a, b) } else { (b, a) }
+    if a < b {
+        (a, b)
+    } else {
+        (b, a)
+    }
 }
 
 struct EdgeData {
@@ -63,8 +67,13 @@ fn subdivide_once(mesh: &Mesh) -> Mesh {
     for tri in mesh.indices.chunks_exact(3) {
         let (a, b, c) = (tri[0], tri[1], tri[2]);
         for &(u, v, opp) in &[(a, b, c), (b, c, a), (c, a, b)] {
-            edges.entry(edge_key(u, v)).or_insert_with(|| EdgeData { opposites: Vec::new() })
-                .opposites.push(opp);
+            edges
+                .entry(edge_key(u, v))
+                .or_insert_with(|| EdgeData {
+                    opposites: Vec::new(),
+                })
+                .opposites
+                .push(opp);
         }
         add_neighbour(&mut neighbours, a, b);
         add_neighbour(&mut neighbours, a, c);
@@ -85,7 +94,7 @@ fn subdivide_once(mesh: &Mesh) -> Mesh {
     }
 
     // Pass 3: allocate new vertex for every edge.
-    let mut edge_to_new: HashMap<EdgeKey, u32> = HashMap::with_capacity(edges.len());
+    let mut edge_to_new: HashMap<EdgeKey, u32> = HashMap::new();
     let mut new_positions: Vec<[f32; 3]> = Vec::with_capacity(n_in_verts + edges.len());
     let mut new_uvs: Vec<[f32; 2]> = if has_uvs {
         Vec::with_capacity(n_in_verts + edges.len())
@@ -112,7 +121,7 @@ fn subdivide_once(mesh: &Mesh) -> Mesh {
                     count += 1;
                 }
             }
-            if count == 0 {
+            if count != 2 {
                 p_old
             } else {
                 p_old * 0.75 + acc * (1.0 / 8.0)
@@ -180,11 +189,7 @@ fn subdivide_once(mesh: &Mesh) -> Mesh {
     // matching-length but zeroed normals array here to keep the Mesh field
     // shapes consistent for intermediate iterations.
     let normals = vec![[0.0_f32, 0.0, 0.0]; new_positions.len()];
-    let uvs = if has_uvs {
-        new_uvs
-    } else {
-        Vec::new()
-    };
+    let uvs = if has_uvs { new_uvs } else { Vec::new() };
 
     Mesh {
         positions: new_positions,
@@ -254,5 +259,210 @@ mod tests {
                 "non-unit normal after subdivide: |n|={len}",
             );
         }
+    }
+}
+
+/// Checked CSG path: geometric adjacency drives positions; render adjacency
+/// drives interpolation of UVs. No tolerance weld, remeshing or hole closing.
+pub fn loop_subdivide_geometric(mesh: &Mesh, iterations: u32) -> Result<Mesh, String> {
+    if iterations == 0 {
+        return Ok(mesh.clone());
+    }
+    if mesh.indices.len() % 3 != 0
+        || mesh
+            .indices
+            .iter()
+            .any(|&i| i as usize >= mesh.positions.len())
+        || mesh.positions.iter().flatten().any(|p| !p.is_finite())
+        || (!mesh.uvs.is_empty() && mesh.uvs.len() != mesh.positions.len())
+    {
+        return Err("Subdivision requires finite positions, complete triangles, valid indices and aligned UVs".into());
+    }
+    let growth = 4usize
+        .checked_pow(iterations)
+        .ok_or("Subdivision growth overflow")?;
+    if mesh.indices.len() / 3 > 2_000_000 / growth {
+        return Err(
+            "Subdivision exceeds 2 million triangle limit; reduce subdivide or tessellation".into(),
+        );
+    }
+    if !mesh.joints.is_empty() || !mesh.weights.is_empty() || !mesh.colors.is_empty() {
+        return Err("CSG subdivision requires an unskinned mesh without vertex colors".into());
+    }
+    let mut current = mesh.clone();
+    for _ in 0..iterations {
+        let (ids, positions) = crate::shading::position_ids(&current);
+        let mut geometric = Mesh {
+            positions,
+            indices: current.indices.iter().map(|&i| ids[i as usize]).collect(),
+            ..Default::default()
+        };
+        let mut edges = HashMap::<EdgeKey, usize>::new();
+        let mut orientations = HashMap::<EdgeKey, i32>::new();
+        for t in geometric.indices.chunks_exact(3) {
+            if t[0] == t[1] || t[1] == t[2] || t[2] == t[0] {
+                return Err(
+                    "Subdivision has collapsed geometric triangles; remove degenerate faces".into(),
+                );
+            }
+            for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
+                *edges.entry(edge_key(a, b)).or_default() += 1;
+                *orientations.entry(edge_key(a, b)).or_default() += if a < b { 1 } else { -1 };
+            }
+        }
+        let mut boundary = vec![0; geometric.positions.len()];
+        for (&(a, b), &count) in &edges {
+            if count > 2 {
+                return Err(
+                    "Subdivision requires manifold edges; separate intersecting shells".into(),
+                );
+            }
+            if count == 2 && orientations[&(a, b)] != 0 {
+                return Err(
+                    "Subdivision requires consistent face winding; orient the input shell".into(),
+                );
+            }
+            if count == 1 {
+                boundary[a as usize] += 1;
+                boundary[b as usize] += 1;
+            }
+        }
+        if boundary.iter().any(|&n| n != 0 && n != 2) {
+            return Err("Subdivision requires two boundary neighbors per vertex; separate pinched boundaries".into());
+        }
+        // Edge-manifold is insufficient: two closed shells can touch at a
+        // single position. Their disconnected vertex links are unsupported.
+        let mut links = vec![Vec::<(u32, u32)>::new(); geometric.positions.len()];
+        for t in geometric.indices.chunks_exact(3) {
+            for i in 0..3 {
+                links[t[i] as usize].push((t[(i + 1) % 3], t[(i + 2) % 3]));
+            }
+        }
+        for link in links {
+            if link.is_empty() {
+                continue;
+            }
+            let mut adjacency = HashMap::<u32, Vec<u32>>::new();
+            for (a, b) in link {
+                adjacency.entry(a).or_default().push(b);
+                adjacency.entry(b).or_default().push(a);
+            }
+            let mut pending = vec![*adjacency.keys().next().unwrap()];
+            let mut visited = std::collections::BTreeSet::new();
+            while let Some(v) = pending.pop() {
+                if visited.insert(v) {
+                    pending.extend(&adjacency[&v]);
+                }
+            }
+            if visited.len() != adjacency.len() {
+                return Err("Subdivision requires a connected vertex fan; separate shells touching at one point".into());
+            }
+        }
+        let old_count = geometric.positions.len();
+        geometric = subdivide_once(&geometric);
+        let geom_edges: HashMap<_, _> = edges
+            .keys()
+            .enumerate()
+            .map(|(i, &e)| (e, old_count + i))
+            .collect();
+        let mut render_edges = HashMap::new();
+        for t in current.indices.chunks_exact(3) {
+            for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
+                render_edges.insert(edge_key(a, b), ());
+            }
+        }
+        let mut next = subdivide_once(&current);
+        for (i, &id) in ids.iter().enumerate() {
+            next.positions[i] = geometric.positions[id as usize];
+        }
+        for (i, &(a, b)) in render_edges.keys().enumerate() {
+            next.positions[ids.len() + i] =
+                geometric.positions[geom_edges[&edge_key(ids[a as usize], ids[b as usize])]];
+        }
+        if next.positions.iter().flatten().any(|v| !v.is_finite()) {
+            return Err("Subdivision produced non-finite positions".into());
+        }
+        current = next;
+    }
+    Ok(current)
+}
+
+#[cfg(test)]
+mod geometric_tests {
+    use super::*;
+    #[test]
+    fn seam_split_closed_mesh_matches_geometric_positions() {
+        let mesh = Mesh {
+            positions: vec![[0., 0., 0.], [1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
+            indices: vec![0, 2, 1, 0, 1, 3, 0, 3, 2, 1, 2, 3],
+            ..Default::default()
+        };
+        let split = Mesh {
+            positions: mesh
+                .indices
+                .iter()
+                .map(|&i| mesh.positions[i as usize])
+                .collect(),
+            indices: (0..12).collect(),
+            uvs: vec![[0., 0.]; 12],
+            ..Default::default()
+        };
+        for level in [1, 2] {
+            let a = loop_subdivide_geometric(&mesh, level).unwrap();
+            let b = loop_subdivide_geometric(&split, level).unwrap();
+            for (&i, &j) in a.indices.iter().zip(&b.indices) {
+                assert_eq!(a.positions[i as usize], b.positions[j as usize]);
+            }
+            for p in &b.positions {
+                assert!(p.iter().all(|x| *x >= 0. && *x <= 1.));
+            }
+        }
+    }
+    #[test]
+    fn boundaries_slivers_nonmanifold_and_growth() {
+        let mesh = Mesh {
+            positions: vec![[0., 0., 0.], [1., 0., 0.], [1., 1e-8, 0.], [0., 1., 0.]],
+            indices: vec![0, 1, 2, 0, 2, 3],
+            ..Default::default()
+        };
+        let out = loop_subdivide_geometric(&mesh, 2).unwrap();
+        assert_eq!(out.indices.len(), 96);
+        assert!(out
+            .positions
+            .iter()
+            .flatten()
+            .all(|x| x.is_finite() && *x >= 0. && *x <= 1.));
+        let mut bad = mesh.clone();
+        bad.indices.extend_from_slice(&[0, 2, 1]);
+        assert!(loop_subdivide_geometric(&bad, 1)
+            .unwrap_err()
+            .contains("manifold"));
+        assert!(loop_subdivide_geometric(&mesh, 20).is_err());
+    }
+    #[test]
+    fn invalid_indices_winding_and_disconnected_fans_are_rejected() {
+        let mut mesh = Mesh {
+            positions: vec![
+                [0., 0., 0.],
+                [1., 0., 0.],
+                [0., 1., 0.],
+                [-1., 0., 0.],
+                [0., -1., 0.],
+            ],
+            indices: vec![0, 1, 2, 0, 3, 4],
+            ..Default::default()
+        };
+        assert!(loop_subdivide_geometric(&mesh, 1).is_err());
+        mesh.indices = vec![0, 1, 2, 0, 1, 3];
+        assert!(loop_subdivide_geometric(&mesh, 1)
+            .unwrap_err()
+            .contains("winding"));
+        mesh.indices = vec![0, 1, 99];
+        assert!(loop_subdivide_geometric(&mesh, 1).is_err());
+        mesh.indices = vec![0, 1];
+        assert!(loop_subdivide_geometric(&mesh, 1).is_err());
+        mesh.indices = vec![0, 1, 2];
+        mesh.positions[0][0] = f32::NAN;
+        assert!(loop_subdivide_geometric(&mesh, 1).is_err());
     }
 }

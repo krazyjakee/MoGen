@@ -218,6 +218,17 @@ impl ModelingWorkspace {
         Ok(())
     }
     pub fn apply(&mut self, expected: &str, response: &str) -> Result<Value> {
+        self.apply_controlled(expected, response, None)
+    }
+    pub fn apply_controlled(
+        &mut self,
+        expected: &str,
+        response: &str,
+        control: Option<&super::SessionControl>,
+    ) -> Result<Value> {
+        if let Some(c) = control {
+            c.check().map_err(anyhow::Error::msg)?;
+        }
         self.check_revision(expected)?;
         let next = if response.contains("<<<<<<< SEARCH") {
             crate::repair::apply_edit_blocks(
@@ -231,9 +242,18 @@ impl ModelingWorkspace {
         };
         enforce_scope(&self.source, &next, self.selected.as_deref())?;
         enforce_locks(&self.source, &next, &self.locks, self.base.as_deref())?;
+        let proposed_dependencies = dependencies(&next, self.base.as_deref())?;
         compile(&next, self.base.as_deref()).context("Candidate rejected; source unchanged")?;
+        self.check_revision(expected)?;
+        if dependencies(&next, self.base.as_deref())? != proposed_dependencies {
+            bail!("Proposed dependency changed during validation; source unchanged");
+        }
+        if let Some(c) = control {
+            c.check().map_err(anyhow::Error::msg)?;
+        }
+        let next_revision = revision(&next, &proposed_dependencies);
         self.source = next;
-        Ok(json!({"revision":self.revision()?,"applied":true}))
+        Ok(json!({"revision":next_revision,"applied":true}))
     }
     pub fn inspect(&self, name: Option<&str>) -> Result<Value> {
         let revision = self.revision()?;
@@ -249,7 +269,7 @@ impl ModelingWorkspace {
             "children":n.children.iter().map(|id|scene.get(*id).name.clone()).collect::<Vec<_>>(),
             "transform":n.transform,"world":world[i],"bounds":n.mesh.as_ref().map(mogen_core::Aabb::from_mesh),
             "world_measurements":measurements[i],
-            "material":n.material.map(|id|&scene.materials[id.0 as usize]),"path_frame":n.path_frame
+            "material":n.material.map(|id|&scene.materials[id.0 as usize]),"path_frame":n.path_frame,"conform_binding":n.conform_binding
         })).collect();
         self.check_revision(&revision)?;
         Ok(
@@ -295,6 +315,12 @@ impl ModelingWorkspace {
 }
 pub fn documentation(topic: &str) -> Result<String> {
     match topic.to_ascii_lowercase().as_str() {
+        "conform" | "external target" => {
+            return Ok(include_str!("../../../../docs/external-conform.md").into());
+        }
+        "crease_angle" | "csg shading" | "subdivide" => {
+            return Ok(include_str!("../../../../docs/csg-surface-policy.md").into());
+        }
         "measure" | "measurements" | "fit" => {
             return Ok(include_str!("../../../../docs/fit-measurements.md").into())
         }

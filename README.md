@@ -69,6 +69,9 @@ The release binary is at `target/release/mogen`. The `./scripts/run-mogen.sh` wr
 
 Drop `chair.glb` into Godot, Blender, three.js, or anything else that reads glTF 2.0.
 
+For generation with visual review, scoped corrections and durable resume, see
+[`mogen session` (CLI, MCP and Studio)](docs/modeling-session-cli.md).
+
 ## Importing Pascal buildings
 
 [pascalorg/editor](https://github.com/pascalorg/editor) is a free web-based

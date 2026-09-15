@@ -24,6 +24,7 @@ impl Default for SessionLimits {
     }
 }
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SessionMeter {
     pub calls: u32,
     pub cancelled: bool,
@@ -31,6 +32,8 @@ pub struct SessionMeter {
     pub estimated_usd: f64,
     pub unknown_cost: bool,
     pub stage: String,
+    pub stage_started_seconds: f64,
+    pub call_pending: bool,
     pub stopped: Option<String>,
 }
 #[derive(Debug, Clone)]
@@ -39,6 +42,7 @@ pub struct SessionControl(Arc<Control>);
 struct Control {
     limits: SessionLimits,
     started: Instant,
+    prior_elapsed: Duration,
     state: Mutex<SessionMeter>,
     finished: Mutex<Option<Duration>>,
 }
@@ -47,7 +51,21 @@ impl SessionControl {
         Self(Arc::new(Control {
             limits,
             started: Instant::now(),
+            prior_elapsed: Duration::ZERO,
             state: Mutex::new(SessionMeter::default()),
+            finished: Mutex::new(None),
+        }))
+    }
+    /// A deliberate resume clears the stop flag, preserving charged usage and
+    /// elapsed budget. In-flight requests without a saved response are uncertain.
+    pub fn resume(limits: SessionLimits, mut meter: SessionMeter, seconds: u64) -> Self {
+        meter.cancelled = false;
+        meter.stopped = None;
+        Self(Arc::new(Control {
+            limits,
+            started: Instant::now(),
+            prior_elapsed: Duration::from_secs(seconds),
+            state: Mutex::new(meter),
             finished: Mutex::new(None),
         }))
     }
@@ -62,14 +80,14 @@ impl SessionControl {
             .finished
             .lock()
             .unwrap()
-            .unwrap_or_else(|| self.0.started.elapsed())
+            .unwrap_or_else(|| self.0.prior_elapsed + self.0.started.elapsed())
     }
     pub fn finish(&self) {
         self.0
             .finished
             .lock()
             .unwrap()
-            .get_or_insert_with(|| self.0.started.elapsed());
+            .get_or_insert_with(|| self.0.prior_elapsed + self.0.started.elapsed());
     }
     pub fn is_cancelled(&self) -> bool {
         self.0.state.lock().unwrap().cancelled
@@ -148,6 +166,8 @@ impl SessionControl {
         }
         state.calls += 1;
         state.stage = cfg.spend_context.operation.clone();
+        state.stage_started_seconds = self.elapsed().as_secs_f64();
+        state.call_pending = true;
         Ok(())
     }
     pub fn after_call(
@@ -156,6 +176,7 @@ impl SessionControl {
         price: Option<crate::spend::pricing::TextPricing>,
     ) {
         let mut state = self.0.state.lock().unwrap();
+        state.call_pending = false;
         if let Some(u) = usage {
             state.usage.add(u);
             if let Some(p) = price {

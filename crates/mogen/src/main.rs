@@ -3,6 +3,7 @@ mod commands;
 mod common;
 mod format;
 mod refine_render;
+mod session_render;
 mod spinner;
 
 use std::process::ExitCode;
@@ -43,6 +44,7 @@ fn main() -> ExitCode {
     }
 
     let result = match cli.cmd {
+        Cmd::Session(args) => commands::session::run(args),
         Cmd::Auth { cmd } => auth_dispatch(cmd.into()),
         Cmd::Moghub { cmd } => dispatch_moghub(cmd),
         Cmd::Build { input, out, format } => {
@@ -63,7 +65,13 @@ fn main() -> ExitCode {
         Cmd::Check { input, json } => check(input, json),
         Cmd::DumpScene { input, json } => dump_scene(input, json),
         Cmd::Inspect { input } => inspect(input),
-        Cmd::Measure { input, first, second, tolerance, max_work } => measure(input, first, second, tolerance, max_work),
+        Cmd::Measure {
+            input,
+            first,
+            second,
+            tolerance,
+            max_work,
+        } => measure(input, first, second, tolerance, max_work),
         Cmd::Pack { input, out, lossy } => commands::binary::pack(input, out, lossy),
         Cmd::Unpack { input, out } => commands::binary::unpack(input, out),
         Cmd::Thumbnail {

@@ -1,0 +1,2330 @@
+{
+  "before": {
+    "camera_convention_version": 1,
+    "human_review_status": "pending",
+    "mesh_contract_controls": [
+      {
+        "detected": true,
+        "diagnostics": [
+          {
+            "code": "E1204",
+            "message": "part \"contract_control\" (node #0): 24 vertices on nondegenerate faces have zero or non-unit NORMAL vectors (length tolerance 0.001). Generate finite unit normals in the constructor/importer, preserving hard edges and UV seams.",
+            "severity": "error",
+            "span": {
+              "end": 46,
+              "start": 8
+            }
+          }
+        ],
+        "expected_code": "E1204",
+        "mutation": "zero_normals",
+        "source": "scene { box \"contract_control\" (size=[1,1,1]) }",
+        "source_revision": "be29f3d89accaff4a3ad7dbc336d312de7cadbe97d63c8aa736b89e755579da2",
+        "visual_quality": "not applicable: malformed geometry control"
+      },
+      {
+        "detected": true,
+        "diagnostics": [
+          {
+            "code": "E1202",
+            "message": "part \"contract_control\" (node #0): 1 POSITION entries contain NaN/Inf. Correct the source parameters or importer producing non-finite values.",
+            "severity": "error",
+            "span": {
+              "end": 46,
+              "start": 8
+            }
+          }
+        ],
+        "expected_code": "E1202",
+        "mutation": "nan_position",
+        "source": "scene { box \"contract_control\" (size=[1,1,1]) }",
+        "source_revision": "be29f3d89accaff4a3ad7dbc336d312de7cadbe97d63c8aa736b89e755579da2",
+        "visual_quality": "not applicable: malformed geometry control"
+      },
+      {
+        "detected": true,
+        "diagnostics": [
+          {
+            "code": "E1200",
+            "message": "part \"contract_control\" (node #0): NORMAL has 0 entries; expected 24. Supply one entry per position; generate missing normals in the geometry constructor/importer.",
+            "severity": "error",
+            "span": {
+              "end": 46,
+              "start": 8
+            }
+          }
+        ],
+        "expected_code": "E1200",
+        "mutation": "missing_normals",
+        "source": "scene { box \"contract_control\" (size=[1,1,1]) }",
+        "source_revision": "be29f3d89accaff4a3ad7dbc336d312de7cadbe97d63c8aa736b89e755579da2",
+        "visual_quality": "not applicable: malformed geometry control"
+      },
+      {
+        "detected": true,
+        "diagnostics": [
+          {
+            "code": "E1203",
+            "message": "part \"contract_control\" (node #0): 1 indices are out of range for 24 positions. Repair the triangle indices before rendering.",
+            "severity": "error",
+            "span": {
+              "end": 46,
+              "start": 8
+            }
+          }
+        ],
+        "expected_code": "E1203",
+        "mutation": "invalid_index",
+        "source": "scene { box \"contract_control\" (size=[1,1,1]) }",
+        "source_revision": "be29f3d89accaff4a3ad7dbc336d312de7cadbe97d63c8aa736b89e755579da2",
+        "visual_quality": "not applicable: malformed geometry control"
+      },
+      {
+        "detected": true,
+        "diagnostics": [
+          {
+            "code": "E1205",
+            "message": "part \"contract_control\" (node #0): 24 TEXCOORD_0 entries contain NaN/Inf. Correct the source parameters or importer producing non-finite values.",
+            "severity": "error",
+            "span": {
+              "end": 46,
+              "start": 8
+            }
+          }
+        ],
+        "expected_code": "E1205",
+        "mutation": "nan_uv",
+        "source": "scene { box \"contract_control\" (size=[1,1,1]) }",
+        "source_revision": "be29f3d89accaff4a3ad7dbc336d312de7cadbe97d63c8aa736b89e755579da2",
+        "visual_quality": "not applicable: malformed geometry control"
+      }
+    ],
+    "provenance": "Original procedural targets authored for MoGen in 2026; source and derived reference renders CC0-1.0. These are diagnostic fixtures, not AI baseline results.",
+    "renderer_caveats": [
+      "#105 UV seams",
+      "#107 water shader"
+    ],
+    "runs": [
+      {
+        "checks": {
+          "asset_pass": true,
+          "compiles": true,
+          "dimensions_ok": true,
+          "extent": [
+            0.6000000238418579,
+            1.0399999618530273,
+            0.5600000023841858
+          ],
+          "finite": true,
+          "framing_radius": 0.6624197959899902,
+          "measurements": {
+            "constraints_ok": true,
+            "evidence": "static tessellated geometry; unsigned distance does not infer penetration or aesthetic fit",
+            "ground_plane": "Y=0",
+            "parts": [
+              {
+                "bounds": {
+                  "max": [
+                    0.30000001192092896,
+                    0.4899999797344208,
+                    0.2750000059604645
+                  ],
+                  "min": [
+                    -0.30000001192092896,
+                    0.4099999964237213,
+                    -0.2750000059604645
+                  ]
+                },
+                "dimensions": [
+                  0.6000000238418579,
+                  0.07999998331069946,
+                  0.550000011920929
+                ],
+                "ground_clearance": 0.4099999964237213,
+                "name": "seat"
+              },
+              {
+                "bounds": {
+                  "max": [
+                    0.30000001192092896,
+                    0.9800000190734863,
+                    0.2750000059604645
+                  ],
+                  "min": [
+                    -0.30000001192092896,
+                    0.48000001907348633,
+                    0.2150000035762787
+                  ]
+                },
+                "dimensions": [
+                  0.6000000238418579,
+                  0.5,
+                  0.06000000238418579
+                ],
+                "ground_clearance": 0.48000001907348633,
+                "name": "back"
+              },
+              {
+                "bounds": {
+                  "max": [
+                    -0.22499999403953552,
+                    0.44999998807907104,
+                    -0.19499999284744263
+                  ],
+                  "min": [
+                    -0.2750000059604645,
+                    0.0,
+                    -0.24500000476837158
+                  ]
+                },
+                "dimensions": [
+                  0.050000011920928955,
+                  0.44999998807907104,
+                  0.050000011920928955
+                ],
+                "ground_clearance": 0.0,
+                "name": "leg_fl"
+              },
+              {
+                "bounds": {
+                  "max": [
+                    0.2750000059604645,
+                    0.44999998807907104,
+                    -0.19499999284744263
+                  ],
+                  "min": [
+                    0.22499999403953552,
+                    0.0,
+                    -0.24500000476837158
+                  ]
+                },
+                "dimensions": [
+                  0.050000011920928955,
+                  0.44999998807907104,
+                  0.050000011920928955
+                ],
+                "ground_clearance": 0.0,
+                "name": "leg_fr"
+              },
+              {
+                "bounds": {
+                  "max": [
+                    -0.22499999403953552,
+                    0.44999998807907104,
+                    0.24500000476837158
+                  ],
+                  "min": [
+                    -0.2750000059604645,
+                    0.0,
+                    0.19499999284744263
+                  ]
+                },
+                "dimensions": [
+                  0.050000011920928955,
+                  0.44999998807907104,
+                  0.050000011920928955
+                ],
+                "ground_clearance": 0.0,
+                "name": "leg_bl"
+              },
+              {
+                "bounds": {
+                  "max": [
+                    0.2750000059604645,
+                    0.44999998807907104,
+                    0.24500000476837158
+                  ],
+                  "min": [
+                    0.22499999403953552,
+                    0.0,
+                    0.19499999284744263
+                  ]
+                },
+                "dimensions": [
+                  0.050000011920928955,
+                  0.44999998807907104,
+                  0.050000011920928955
+                ],
+                "ground_clearance": 0.0,
+                "name": "leg_br"
+              },
+              {
+                "bounds": {
+                  "max": [
+                    -0.21000000834465027,
+                    1.0399999618530273,
+                    0.2849999964237213
+                  ],
+                  "min": [
+                    -0.28999999165534973,
+                    0.9599999785423279,
+                    0.20500001311302185
+                  ]
+                },
+                "dimensions": [
+                  0.07999998331069946,
+                  0.07999998331069946,
+                  0.07999998331069946
+                ],
+                "ground_clearance": 0.9599999785423279,
+                "name": "finial_l"
+              },
+              {
+                "bounds": {
+                  "max": [
+                    0.28999999165534973,
+                    1.0399999618530273,
+                    0.2849999964237213
+                  ],
+                  "min": [
+                    0.21000000834465027,
+                    0.9599999785423279,
+                    0.20500001311302185
+                  ]
+                },
+                "dimensions": [
+                  0.07999998331069946,
+                  0.07999998331069946,
+                  0.07999998331069946
+                ],
+                "ground_clearance": 0.9599999785423279,
+                "name": "finial_r"
+              }
+            ],
+            "relationships": [],
+            "revision": "c6e387d073f281bf615cbf6abd87905d4868deb3856ce875484338fe593e9f13",
+            "space": "world",
+            "surface_pairs": [
+              {
+                "first": "seat",
+                "second": "leg_fl",
+                "surface": {
+                  "closest_first": [
+                    -0.22499999403953552,
+                    0.4099999964237213,
+                    -0.19944444298744202
+                  ],
+                  "closest_second": [
+                    -0.22499999403953552,
+                    0.4099999964237213,
+                    -0.19944444298744202
+                  ],
+                  "direction_first_to_second": null,
+                  "distance": 0.0,
+                  "exact": true,
+                  "lower_bound": 0.0,
+                  "status": "within_tolerance",
+                  "tolerance": 0.002,
+                  "triangle_tests": 40,
+                  "work": 52
+                }
+              },
+              {
+                "first": "seat",
+                "second": "back",
+                "surface": {
+                  "closest_first": [
+                    -0.30000001192092896,
+                    0.48000001907348633,
+                    0.2750000059604645
+                  ],
+                  "closest_second": [
+                    -0.30000001192092896,
+                    0.48000001907348633,
+                    0.2750000059604645
+                  ],
+                  "direction_first_to_second": null,
+                  "distance": 0.0,
+                  "exact": true,
+                  "lower_bound": 0.0,
+                  "status": "within_tolerance",
+                  "tolerance": 0.002,
+                  "triangle_tests": 1,
+                  "work": 1
+                }
+              }
+            ],
+            "units": "m"
+          },
+          "mesh_contract": {
+            "diagnostics": [
+              {
+                "code": "W1208",
+                "message": "part \"finial_l\" (node #6): 12 zero-area triangles contribute no visible surface. Check collapsed dimensions or repeated points; triangles are retained unchanged.",
+                "severity": "warning",
+                "span": {
+                  "end": 637,
+                  "start": 570
+                }
+              },
+              {
+                "code": "W1208",
+                "message": "part \"finial_r\" (node #7): 12 zero-area triangles contribute no visible surface. Check collapsed dimensions or repeated points; triangles are retained unchanged.",
+                "severity": "warning",
+                "span": {
+                  "end": 701,
+                  "start": 637
+                }
+              }
+            ],
+            "pass": true
+          },
+          "missing_parts": [],
+          "visual_quality": "requires blinded human review"
+        },
+        "elapsed_seconds": 1.6792e-05,
+        "export_ok": true,
+        "human_review": null,
+        "limits": {
+          "calls": 12,
+          "iterations": 3,
+          "output_tokens": 8192,
+          "seconds": 600,
+          "spend_usd": null
+        },
+        "manifest_sha256": "8e2e4a536d67e5cf7ac30fcaf74989adfc4643e556736b58d6722c70410bed33",
+        "meter": {
+          "calls": 0,
+          "cancelled": false,
+          "estimated_usd": 0.0,
+          "stage": "",
+          "stopped": null,
+          "unknown_cost": false,
+          "usage": {
+            "cached_tokens": 0,
+            "prompt_tokens": 0,
+            "response_tokens": 0,
+            "total_tokens": 0
+          }
+        },
+        "mode": "fixture",
+        "model": "authored fixture",
+        "prompt_sha256": "eba17e0215175bfdcc62204d54d605a523c649d7bc1a56e6c149414d002ffda6",
+        "provider": "none",
+        "repeat": 0,
+        "seed": 42,
+        "stop_reason": "",
+        "task": "ornate_chair",
+        "temperature": 0.30000001192092896,
+        "thinking": "high",
+        "variant": "baseline",
+        "wall_seconds": 0.671883198
+      },
+      {
+        "checks": {
+          "asset_pass": true,
+          "compiles": true,
+          "dimensions_ok": true,
+          "extent": [
+            1.0,
+            0.42000001668930054,
+            0.800000011920929
+          ],
+          "finite": true,
+          "framing_radius": 0.6738694310188293,
+          "measurements": {
+            "constraints_ok": true,
+            "evidence": "static tessellated geometry; unsigned distance does not infer penetration or aesthetic fit",
+            "ground_plane": "Y=0",
+            "parts": [
+              {
+                "bounds": {
+                  "max": [
+                    0.5,
+                    0.20000000298023224,
+                    0.4000000059604645
+                  ],
+                  "min": [
+                    -0.5,
+                    0.0,
+                    -0.4000000059604645
+                  ]
+                },
+                "dimensions": [
+                  1.0,
+                  0.20000000298023224,
+                  0.800000011920929
+                ],
+                "ground_clearance": 0.0,
+                "name": "frame"
+              },
+              {
+                "bounds": {
+                  "max": [
+                    0.5,
+                    0.42000001668930054,
+                    0.4000000059604645
+                  ],
+                  "min": [
+                    -0.5,
+                    0.20000000298023224,
+                    -0.4000000059604645
+                  ]
+                },
+                "dimensions": [
+                  1.0,
+                  0.2200000137090683,
+                  0.800000011920929
+                ],
+                "ground_clearance": 0.20000000298023224,
+                "name": "cushion"
+              }
+            ],
+            "relationships": [],
+            "revision": "ffddb074aea165882e0b105930d1ca4a68442aa6dfce4ee69a33c3cc49a0d2d5",
+            "space": "world",
+            "surface_pairs": [
+              {
+                "first": "frame",
+                "second": "cushion",
+                "surface": {
+                  "closest_first": [
+                    -0.44999998807907104,
+                    0.20000000298023224,
+                    0.3499999940395355
+                  ],
+                  "closest_second": [
+                    -0.44999998807907104,
+                    0.20000000298023224,
+                    0.3499999940395355
+                  ],
+                  "direction_first_to_second": null,
+                  "distance": 0.0,
+                  "exact": true,
+                  "lower_bound": 0.0,
+                  "status": "within_tolerance",
+                  "tolerance": 0.002,
+                  "triangle_tests": 8,
+                  "work": 40
+                }
+              }
+            ],
+            "units": "m"
+          },
+          "mesh_contract": {
+            "diagnostics": [],
+            "pass": true
+          },
+          "missing_parts": [],
+          "visual_quality": "requires blinded human review"
+        },
+        "elapsed_seconds": 1.7556e-05,
+        "export_ok": true,
+        "human_review": null,
+        "limits": {
+          "calls": 12,
+          "iterations": 3,
+          "output_tokens": 8192,
+          "seconds": 600,
+          "spend_usd": null
+        },
+        "manifest_sha256": "8e2e4a536d67e5cf7ac30fcaf74989adfc4643e556736b58d6722c70410bed33",
+        "meter": {
+          "calls": 0,
+          "cancelled": false,
+          "estimated_usd": 0.0,
+          "stage": "",
+          "stopped": null,
+          "unknown_cost": false,
+          "usage": {
+            "cached_tokens": 0,
+            "prompt_tokens": 0,
+            "response_tokens": 0,
+            "total_tokens": 0
+          }
+        },
+        "mode": "fixture",
+        "model": "authored fixture",
+        "prompt_sha256": "eba17e0215175bfdcc62204d54d605a523c649d7bc1a56e6c149414d002ffda6",
+        "provider": "none",
+        "repeat": 0,
+        "seed": 42,
+        "stop_reason": "",
+        "task": "upholstery",
+        "temperature": 0.30000001192092896,
+        "thinking": "high",
+        "variant": "baseline",
+        "wall_seconds": 0.681161223
+      },
+      {
+        "checks": {
+          "asset_pass": true,
+          "compiles": true,
+          "dimensions_ok": true,
+          "extent": [
+            0.4399999976158142,
+            0.5,
+            0.4399999976158142
+          ],
+          "finite": true,
+          "framing_radius": 0.39912402629852295,
+          "measurements": {
+            "constraints_ok": true,
+            "evidence": "static tessellated geometry; unsigned distance does not infer penetration or aesthetic fit",
+            "ground_plane": "Y=0",
+            "parts": [
+              {
+                "bounds": {
+                  "max": [
+                    0.2199999988079071,
+                    0.5,
+                    0.2199999988079071
+                  ],
+                  "min": [
+                    -0.2199999988079071,
+                    0.0,
+                    -0.2199999988079071
+                  ]
+                },
+                "dimensions": [
+                  0.4399999976158142,
+                  0.5,
+                  0.4399999976158142
+                ],
+                "ground_clearance": 0.0,
+                "name": "vessel"
+              }
+            ],
+            "relationships": [],
+            "revision": "7b3870d9c22bcd6ab6d4b5e246122a12358c6643c8494f6a38ce341fd8734abb",
+            "space": "world",
+            "surface_pairs": [],
+            "units": "m"
+          },
+          "mesh_contract": {
+            "diagnostics": [
+              {
+                "code": "W1208",
+                "message": "part \"vessel\" (node #0): 96 zero-area triangles contribute no visible surface. Check collapsed dimensions or repeated points; triangles are retained unchanged.",
+                "severity": "warning",
+                "span": {
+                  "end": 308,
+                  "start": 140
+                }
+              }
+            ],
+            "pass": true
+          },
+          "missing_parts": [],
+          "visual_quality": "requires blinded human review"
+        },
+        "elapsed_seconds": 1.5986e-05,
+        "export_ok": true,
+        "human_review": null,
+        "limits": {
+          "calls": 12,
+          "iterations": 3,
+          "output_tokens": 8192,
+          "seconds": 600,
+          "spend_usd": null
+        },
+        "manifest_sha256": "8e2e4a536d67e5cf7ac30fcaf74989adfc4643e556736b58d6722c70410bed33",
+        "meter": {
+          "calls": 0,
+          "cancelled": false,
+          "estimated_usd": 0.0,
+          "stage": "",
+          "stopped": null,
+          "unknown_cost": false,
+          "usage": {
+            "cached_tokens": 0,
+            "prompt_tokens": 0,
+            "response_tokens": 0,
+            "total_tokens": 0
+          }
+        },
+        "mode": "fixture",
+        "model": "authored fixture",
+        "prompt_sha256": "eba17e0215175bfdcc62204d54d605a523c649d7bc1a56e6c149414d002ffda6",
+        "provider": "none",
+        "repeat": 0,
+        "seed": 42,
+        "stop_reason": "",
+        "task": "hollow_vessel",
+        "temperature": 0.30000001192092896,
+        "thinking": "high",
+        "variant": "baseline",
+        "wall_seconds": 0.840993999
+      },
+      {
+        "checks": {
+          "asset_pass": true,
+          "compiles": true,
+          "dimensions_ok": true,
+          "extent": [
+            1.0,
+            0.8550000190734863,
+            0.5099999904632568
+          ],
+          "finite": true,
+          "framing_radius": 0.7055361270904541,
+          "measurements": {
+            "constraints_ok": true,
+            "evidence": "static tessellated geometry; unsigned distance does not infer penetration or aesthetic fit",
+            "ground_plane": "Y=0",
+            "parts": [
+              {
+                "bounds": {
+                  "max": [
+                    0.5,
+                    0.15000000596046448,
+                    0.25
+                  ],
+                  "min": [
+                    -0.5,
+                    0.0,
+                    -0.25
+                  ]
+                },
+                "dimensions": [
+                  1.0,
+                  0.15000000596046448,
+                  0.5
+                ],
+                "ground_clearance": 0.0,
+                "name": "base"
+              },
+              {
+                "bounds": {
+                  "max": [
+                    0.09000000357627869,
+                    0.6499999761581421,
+                    0.10000000149011612
+                  ],
+                  "min": [
+                    -0.09000000357627869,
+                    0.15000000596046448,
+                    -0.10000000149011612
+                  ]
+                },
+                "dimensions": [
+                  0.18000000715255737,
+                  0.4999999701976776,
+                  0.20000000298023224
+                ],
+                "ground_clearance": 0.15000000596046448,
+                "name": "support"
+              },
+              {
+                "bounds": {
+                  "max": [
+                    0.3749999701976776,
+                    0.6550000309944153,
+                    0.054999999701976776
+                  ],
+                  "min": [
+                    -0.3749999701976776,
+                    0.5450000166893005,
+                    -0.054999999701976776
+                  ]
+                },
+                "dimensions": [
+                  0.7499999403953552,
+                  0.11000001430511475,
+                  0.10999999940395355
+                ],
+                "ground_clearance": 0.5450000166893005,
+                "name": "shaft"
+              },
+              {
+                "bounds": {
+                  "max": [
+                    -0.29500001668930054,
+                    0.8550000190734863,
+                    0.2549999952316284
+                  ],
+                  "min": [
+                    -0.36500000953674316,
+                    0.3450000584125519,
+                    -0.2549999952316284
+                  ]
+                },
+                "dimensions": [
+                  0.06999999284744263,
+                  0.5099999904632568,
+                  0.5099999904632568
+                ],
+                "ground_clearance": 0.3450000584125519,
+                "name": "wheel"
+              }
+            ],
+            "relationships": [],
+            "revision": "6f2eeabdd4b0005b5520355ba180e8cb35e89d32a376f005ca353d36e46cbecb",
+            "space": "world",
+            "surface_pairs": [],
+            "units": "m"
+          },
+          "mesh_contract": {
+            "diagnostics": [],
+            "pass": true
+          },
+          "missing_parts": [],
+          "visual_quality": "requires blinded human review"
+        },
+        "elapsed_seconds": 1.6272e-05,
+        "export_ok": true,
+        "human_review": null,
+        "limits": {
+          "calls": 12,
+          "iterations": 3,
+          "output_tokens": 8192,
+          "seconds": 600,
+          "spend_usd": null
+        },
+        "manifest_sha256": "8e2e4a536d67e5cf7ac30fcaf74989adfc4643e556736b58d6722c70410bed33",
+        "meter": {
+          "calls": 0,
+          "cancelled": false,
+          "estimated_usd": 0.0,
+          "stage": "",
+          "stopped": null,
+          "unknown_cost": false,
+          "usage": {
+            "cached_tokens": 0,
+            "prompt_tokens": 0,
+            "response_tokens": 0,
+            "total_tokens": 0
+          }
+        },
+        "mode": "fixture",
+        "model": "authored fixture",
+        "prompt_sha256": "eba17e0215175bfdcc62204d54d605a523c649d7bc1a56e6c149414d002ffda6",
+        "provider": "none",
+        "repeat": 0,
+        "seed": 42,
+        "stop_reason": "",
+        "task": "machinery",
+        "temperature": 0.30000001192092896,
+        "thinking": "high",
+        "variant": "baseline",
+        "wall_seconds": 0.743650997
+      },
+      {
+        "checks": {
+          "asset_pass": true,
+          "compiles": true,
+          "dimensions_ok": true,
+          "extent": [
+            0.597446084022522,
+            0.7964280843734741,
+            0.597446084022522
+          ],
+          "finite": true,
+          "framing_radius": 0.5805560350418091,
+          "measurements": {
+            "constraints_ok": true,
+            "evidence": "static tessellated geometry; unsigned distance does not infer penetration or aesthetic fit",
+            "ground_plane": "Y=0",
+            "parts": [
+              {
+                "bounds": {
+                  "max": [
+                    0.29872506856918335,
+                    0.7977071404457092,
+                    0.29872506856918335
+                  ],
+                  "min": [
+                    -0.29872098565101624,
+                    0.0012790262699127197,
+                    -0.29872098565101624
+                  ]
+                },
+                "dimensions": [
+                  0.597446084022522,
+                  0.7964280843734741,
+                  0.597446084022522
+                ],
+                "ground_clearance": 0.0012790262699127197,
+                "name": "form"
+              }
+            ],
+            "relationships": [],
+            "revision": "e3eb1981ab6bb16add2e46f422f89989de35ea5ae9e7e808874a93b532604101",
+            "space": "world",
+            "surface_pairs": [],
+            "units": "m"
+          },
+          "mesh_contract": {
+            "diagnostics": [],
+            "pass": true
+          },
+          "missing_parts": [],
+          "visual_quality": "requires blinded human review"
+        },
+        "elapsed_seconds": 1.6762e-05,
+        "export_ok": true,
+        "human_review": null,
+        "limits": {
+          "calls": 12,
+          "iterations": 3,
+          "output_tokens": 8192,
+          "seconds": 600,
+          "spend_usd": null
+        },
+        "manifest_sha256": "8e2e4a536d67e5cf7ac30fcaf74989adfc4643e556736b58d6722c70410bed33",
+        "meter": {
+          "calls": 0,
+          "cancelled": false,
+          "estimated_usd": 0.0,
+          "stage": "",
+          "stopped": null,
+          "unknown_cost": false,
+          "usage": {
+            "cached_tokens": 0,
+            "prompt_tokens": 0,
+            "response_tokens": 0,
+            "total_tokens": 0
+          }
+        },
+        "mode": "fixture",
+        "model": "authored fixture",
+        "prompt_sha256": "eba17e0215175bfdcc62204d54d605a523c649d7bc1a56e6c149414d002ffda6",
+        "provider": "none",
+        "repeat": 0,
+        "seed": 42,
+        "stop_reason": "",
+        "task": "organic",
+        "temperature": 0.30000001192092896,
+        "thinking": "high",
+        "variant": "baseline",
+        "wall_seconds": 1.010663425
+      },
+      {
+        "checks": {
+          "asset_pass": true,
+          "compiles": true,
+          "dimensions_ok": true,
+          "extent": [
+            2.0,
+            0.940000057220459,
+            2.0
+          ],
+          "finite": true,
+          "framing_radius": 1.4902684688568115,
+          "measurements": {
+            "constraints_ok": true,
+            "evidence": "static tessellated geometry; unsigned distance does not infer penetration or aesthetic fit",
+            "ground_plane": "Y=0",
+            "parts": [
+              {
+                "bounds": {
+                  "max": [
+                    1.0,
+                    0.0,
+                    1.0
+                  ],
+                  "min": [
+                    -1.0,
+                    -0.05000000074505806,
+                    -1.0
+                  ]
+                },
+                "dimensions": [
+                  2.0,
+                  0.05000000074505806,
+                  2.0
+                ],
+                "ground_clearance": -0.05000000074505806,
+                "name": "floor"
+              },
+              {
+                "bounds": {
+                  "max": [
+                    0.4000000059604645,
+                    0.6899999976158142,
+                    0.30000001192092896
+                  ],
+                  "min": [
+                    -0.4000000059604645,
+                    0.60999995470047,
+                    -0.30000001192092896
+                  ]
+                },
+                "dimensions": [
+                  0.800000011920929,
+                  0.08000004291534424,
+                  0.6000000238418579
+                ],
+                "ground_clearance": 0.60999995470047,
+                "name": "table_top"
+              },
+              {
+                "bounds": {
+                  "max": [
+                    0.09000000357627869,
+                    0.6499999761581421,
+                    0.09000000357627869
+                  ],
+                  "min": [
+                    -0.09000000357627869,
+                    0.0,
+                    -0.09000000357627869
+                  ]
+                },
+                "dimensions": [
+                  0.18000000715255737,
+                  0.6499999761581421,
+                  0.18000000715255737
+                ],
+                "ground_clearance": 0.0,
+                "name": "pedestal"
+              },
+              {
+                "bounds": {
+                  "max": [
+                    0.3199999928474426,
+                    0.89000004529953,
+                    0.11999999731779099
+                  ],
+                  "min": [
+                    0.08000000566244125,
+                    0.6899999976158142,
+                    -0.11999999731779099
+                  ]
+                },
+                "dimensions": [
+                  0.23999997973442078,
+                  0.20000004768371582,
+                  0.23999999463558197
+                ],
+                "ground_clearance": 0.6899999976158142,
+                "name": "pot"
+              },
+              {
+                "bounds": {
+                  "max": [
+                    -0.10000000149011612,
+                    0.7199999690055847,
+                    0.125
+                  ],
+                  "min": [
+                    -0.30000001192092896,
+                    0.6899999976158142,
+                    -0.125
+                  ]
+                },
+                "dimensions": [
+                  0.20000001788139343,
+                  0.029999971389770508,
+                  0.25
+                ],
+                "ground_clearance": 0.6899999976158142,
+                "name": "book"
+              }
+            ],
+            "relationships": [],
+            "revision": "cc2c069ed83044b4160f45333d9c5191726f374afdf0198586250fa53d14ebb9",
+            "space": "world",
+            "surface_pairs": [],
+            "units": "m"
+          },
+          "mesh_contract": {
+            "diagnostics": [],
+            "pass": true
+          },
+          "missing_parts": [],
+          "visual_quality": "requires blinded human review"
+        },
+        "elapsed_seconds": 1.6487e-05,
+        "export_ok": true,
+        "human_review": null,
+        "limits": {
+          "calls": 12,
+          "iterations": 3,
+          "output_tokens": 8192,
+          "seconds": 600,
+          "spend_usd": null
+        },
+        "manifest_sha256": "8e2e4a536d67e5cf7ac30fcaf74989adfc4643e556736b58d6722c70410bed33",
+        "meter": {
+          "calls": 0,
+          "cancelled": false,
+          "estimated_usd": 0.0,
+          "stage": "",
+          "stopped": null,
+          "unknown_cost": false,
+          "usage": {
+            "cached_tokens": 0,
+            "prompt_tokens": 0,
+            "response_tokens": 0,
+            "total_tokens": 0
+          }
+        },
+        "mode": "fixture",
+        "model": "authored fixture",
+        "prompt_sha256": "eba17e0215175bfdcc62204d54d605a523c649d7bc1a56e6c149414d002ffda6",
+        "provider": "none",
+        "repeat": 0,
+        "seed": 42,
+        "stop_reason": "",
+        "task": "assembled_scene",
+        "temperature": 0.30000001192092896,
+        "thinking": "high",
+        "variant": "baseline",
+        "wall_seconds": 0.597186729
+      },
+      {
+        "checks": {
+          "asset_pass": true,
+          "compiles": true,
+          "dimensions_ok": true,
+          "extent": [
+            1.90702486038208,
+            0.6181608438491821,
+            4.4499993324279785
+          ],
+          "finite": true,
+          "framing_radius": 2.440356492996216,
+          "measurements": {
+            "constraints_ok": true,
+            "evidence": "static tessellated geometry; unsigned distance does not infer penetration or aesthetic fit",
+            "ground_plane": "Y=0",
+            "parts": [
+              {
+                "bounds": {
+                  "max": [
+                    0.95351243019104,
+                    0.8450000286102295,
+                    2.2249996662139893
+                  ],
+                  "min": [
+                    -0.95351243019104,
+                    0.22683915495872498,
+                    -2.2249996662139893
+                  ]
+                },
+                "dimensions": [
+                  1.90702486038208,
+                  0.6181608438491821,
+                  4.4499993324279785
+                ],
+                "ground_clearance": 0.22683915495872498,
+                "name": "body_shell"
+              }
+            ],
+            "relationships": [],
+            "revision": "4710c02cadb18f2bc95a16d657ff974dfe97f4e879938c7f7e062b94341c6a2b",
+            "space": "world",
+            "surface_pairs": [],
+            "units": "m"
+          },
+          "mesh_contract": {
+            "diagnostics": [],
+            "pass": true
+          },
+          "missing_parts": [],
+          "visual_quality": "requires blinded human review"
+        },
+        "elapsed_seconds": 1.7576e-05,
+        "export_ok": true,
+        "human_review": null,
+        "limits": {
+          "calls": 12,
+          "iterations": 3,
+          "output_tokens": 8192,
+          "seconds": 600,
+          "spend_usd": null
+        },
+        "manifest_sha256": "8e2e4a536d67e5cf7ac30fcaf74989adfc4643e556736b58d6722c70410bed33",
+        "meter": {
+          "calls": 0,
+          "cancelled": false,
+          "estimated_usd": 0.0,
+          "stage": "",
+          "stopped": null,
+          "unknown_cost": false,
+          "usage": {
+            "cached_tokens": 0,
+            "prompt_tokens": 0,
+            "response_tokens": 0,
+            "total_tokens": 0
+          }
+        },
+        "mode": "fixture",
+        "model": "authored fixture",
+        "prompt_sha256": "eba17e0215175bfdcc62204d54d605a523c649d7bc1a56e6c149414d002ffda6",
+        "provider": "none",
+        "repeat": 0,
+        "seed": 42,
+        "stop_reason": "",
+        "task": "sports_body",
+        "temperature": 0.30000001192092896,
+        "thinking": "high",
+        "variant": "baseline",
+        "wall_seconds": 4.272848548
+      }
+    ],
+    "version": 1
+  },
+  "after": {
+    "camera_convention_version": 1,
+    "human_review_status": "pending",
+    "mesh_contract_controls": [
+      {
+        "detected": true,
+        "diagnostics": [
+          {
+            "code": "E1204",
+            "message": "part \"contract_control\" (node #0): 24 vertices on nondegenerate faces have zero or non-unit NORMAL vectors (length tolerance 0.001). Generate finite unit normals in the constructor/importer, preserving hard edges and UV seams.",
+            "severity": "error",
+            "span": {
+              "end": 46,
+              "start": 8
+            }
+          }
+        ],
+        "expected_code": "E1204",
+        "mutation": "zero_normals",
+        "source": "scene { box \"contract_control\" (size=[1,1,1]) }",
+        "source_revision": "be29f3d89accaff4a3ad7dbc336d312de7cadbe97d63c8aa736b89e755579da2",
+        "visual_quality": "not applicable: malformed geometry control"
+      },
+      {
+        "detected": true,
+        "diagnostics": [
+          {
+            "code": "E1202",
+            "message": "part \"contract_control\" (node #0): 1 POSITION entries contain NaN/Inf. Correct the source parameters or importer producing non-finite values.",
+            "severity": "error",
+            "span": {
+              "end": 46,
+              "start": 8
+            }
+          }
+        ],
+        "expected_code": "E1202",
+        "mutation": "nan_position",
+        "source": "scene { box \"contract_control\" (size=[1,1,1]) }",
+        "source_revision": "be29f3d89accaff4a3ad7dbc336d312de7cadbe97d63c8aa736b89e755579da2",
+        "visual_quality": "not applicable: malformed geometry control"
+      },
+      {
+        "detected": true,
+        "diagnostics": [
+          {
+            "code": "E1200",
+            "message": "part \"contract_control\" (node #0): NORMAL has 0 entries; expected 24. Supply one entry per position; generate missing normals in the geometry constructor/importer.",
+            "severity": "error",
+            "span": {
+              "end": 46,
+              "start": 8
+            }
+          }
+        ],
+        "expected_code": "E1200",
+        "mutation": "missing_normals",
+        "source": "scene { box \"contract_control\" (size=[1,1,1]) }",
+        "source_revision": "be29f3d89accaff4a3ad7dbc336d312de7cadbe97d63c8aa736b89e755579da2",
+        "visual_quality": "not applicable: malformed geometry control"
+      },
+      {
+        "detected": true,
+        "diagnostics": [
+          {
+            "code": "E1203",
+            "message": "part \"contract_control\" (node #0): 1 indices are out of range for 24 positions. Repair the triangle indices before rendering.",
+            "severity": "error",
+            "span": {
+              "end": 46,
+              "start": 8
+            }
+          }
+        ],
+        "expected_code": "E1203",
+        "mutation": "invalid_index",
+        "source": "scene { box \"contract_control\" (size=[1,1,1]) }",
+        "source_revision": "be29f3d89accaff4a3ad7dbc336d312de7cadbe97d63c8aa736b89e755579da2",
+        "visual_quality": "not applicable: malformed geometry control"
+      },
+      {
+        "detected": true,
+        "diagnostics": [
+          {
+            "code": "E1205",
+            "message": "part \"contract_control\" (node #0): 24 TEXCOORD_0 entries contain NaN/Inf. Correct the source parameters or importer producing non-finite values.",
+            "severity": "error",
+            "span": {
+              "end": 46,
+              "start": 8
+            }
+          }
+        ],
+        "expected_code": "E1205",
+        "mutation": "nan_uv",
+        "source": "scene { box \"contract_control\" (size=[1,1,1]) }",
+        "source_revision": "be29f3d89accaff4a3ad7dbc336d312de7cadbe97d63c8aa736b89e755579da2",
+        "visual_quality": "not applicable: malformed geometry control"
+      }
+    ],
+    "provenance": "Original procedural targets authored for MoGen in 2026; source and derived reference renders CC0-1.0. These are diagnostic fixtures, not AI baseline results.",
+    "renderer_caveats": [
+      "#105 UV seams",
+      "#107 water shader"
+    ],
+    "runs": [
+      {
+        "checks": {
+          "asset_pass": true,
+          "compiles": true,
+          "dimensions_ok": true,
+          "extent": [
+            0.6000000238418579,
+            1.0399999618530273,
+            0.5600000023841858
+          ],
+          "finite": true,
+          "framing_radius": 0.6624197959899902,
+          "measurements": {
+            "constraints_ok": true,
+            "evidence": "static tessellated geometry; unsigned distance does not infer penetration or aesthetic fit",
+            "ground_plane": "Y=0",
+            "parts": [
+              {
+                "bounds": {
+                  "max": [
+                    0.30000001192092896,
+                    0.4899999797344208,
+                    0.2750000059604645
+                  ],
+                  "min": [
+                    -0.30000001192092896,
+                    0.4099999964237213,
+                    -0.2750000059604645
+                  ]
+                },
+                "dimensions": [
+                  0.6000000238418579,
+                  0.07999998331069946,
+                  0.550000011920929
+                ],
+                "ground_clearance": 0.4099999964237213,
+                "name": "seat"
+              },
+              {
+                "bounds": {
+                  "max": [
+                    0.30000001192092896,
+                    0.9800000190734863,
+                    0.2750000059604645
+                  ],
+                  "min": [
+                    -0.30000001192092896,
+                    0.48000001907348633,
+                    0.2150000035762787
+                  ]
+                },
+                "dimensions": [
+                  0.6000000238418579,
+                  0.5,
+                  0.06000000238418579
+                ],
+                "ground_clearance": 0.48000001907348633,
+                "name": "back"
+              },
+              {
+                "bounds": {
+                  "max": [
+                    -0.22499999403953552,
+                    0.44999998807907104,
+                    -0.19499999284744263
+                  ],
+                  "min": [
+                    -0.2750000059604645,
+                    0.0,
+                    -0.24500000476837158
+                  ]
+                },
+                "dimensions": [
+                  0.050000011920928955,
+                  0.44999998807907104,
+                  0.050000011920928955
+                ],
+                "ground_clearance": 0.0,
+                "name": "leg_fl"
+              },
+              {
+                "bounds": {
+                  "max": [
+                    0.2750000059604645,
+                    0.44999998807907104,
+                    -0.19499999284744263
+                  ],
+                  "min": [
+                    0.22499999403953552,
+                    0.0,
+                    -0.24500000476837158
+                  ]
+                },
+                "dimensions": [
+                  0.050000011920928955,
+                  0.44999998807907104,
+                  0.050000011920928955
+                ],
+                "ground_clearance": 0.0,
+                "name": "leg_fr"
+              },
+              {
+                "bounds": {
+                  "max": [
+                    -0.22499999403953552,
+                    0.44999998807907104,
+                    0.24500000476837158
+                  ],
+                  "min": [
+                    -0.2750000059604645,
+                    0.0,
+                    0.19499999284744263
+                  ]
+                },
+                "dimensions": [
+                  0.050000011920928955,
+                  0.44999998807907104,
+                  0.050000011920928955
+                ],
+                "ground_clearance": 0.0,
+                "name": "leg_bl"
+              },
+              {
+                "bounds": {
+                  "max": [
+                    0.2750000059604645,
+                    0.44999998807907104,
+                    0.24500000476837158
+                  ],
+                  "min": [
+                    0.22499999403953552,
+                    0.0,
+                    0.19499999284744263
+                  ]
+                },
+                "dimensions": [
+                  0.050000011920928955,
+                  0.44999998807907104,
+                  0.050000011920928955
+                ],
+                "ground_clearance": 0.0,
+                "name": "leg_br"
+              },
+              {
+                "bounds": {
+                  "max": [
+                    -0.21000000834465027,
+                    1.0399999618530273,
+                    0.2849999964237213
+                  ],
+                  "min": [
+                    -0.28999999165534973,
+                    0.9599999785423279,
+                    0.20500001311302185
+                  ]
+                },
+                "dimensions": [
+                  0.07999998331069946,
+                  0.07999998331069946,
+                  0.07999998331069946
+                ],
+                "ground_clearance": 0.9599999785423279,
+                "name": "finial_l"
+              },
+              {
+                "bounds": {
+                  "max": [
+                    0.28999999165534973,
+                    1.0399999618530273,
+                    0.2849999964237213
+                  ],
+                  "min": [
+                    0.21000000834465027,
+                    0.9599999785423279,
+                    0.20500001311302185
+                  ]
+                },
+                "dimensions": [
+                  0.07999998331069946,
+                  0.07999998331069946,
+                  0.07999998331069946
+                ],
+                "ground_clearance": 0.9599999785423279,
+                "name": "finial_r"
+              }
+            ],
+            "relationships": [],
+            "revision": "c6e387d073f281bf615cbf6abd87905d4868deb3856ce875484338fe593e9f13",
+            "space": "world",
+            "surface_pairs": [
+              {
+                "first": "seat",
+                "second": "leg_fl",
+                "surface": {
+                  "closest_first": [
+                    -0.22499999403953552,
+                    0.4099999964237213,
+                    -0.19944444298744202
+                  ],
+                  "closest_second": [
+                    -0.22499999403953552,
+                    0.4099999964237213,
+                    -0.19944444298744202
+                  ],
+                  "direction_first_to_second": null,
+                  "distance": 0.0,
+                  "exact": true,
+                  "lower_bound": 0.0,
+                  "status": "within_tolerance",
+                  "tolerance": 0.002,
+                  "triangle_tests": 40,
+                  "work": 52
+                }
+              },
+              {
+                "first": "seat",
+                "second": "back",
+                "surface": {
+                  "closest_first": [
+                    -0.30000001192092896,
+                    0.48000001907348633,
+                    0.2750000059604645
+                  ],
+                  "closest_second": [
+                    -0.30000001192092896,
+                    0.48000001907348633,
+                    0.2750000059604645
+                  ],
+                  "direction_first_to_second": null,
+                  "distance": 0.0,
+                  "exact": true,
+                  "lower_bound": 0.0,
+                  "status": "within_tolerance",
+                  "tolerance": 0.002,
+                  "triangle_tests": 1,
+                  "work": 1
+                }
+              }
+            ],
+            "units": "m"
+          },
+          "mesh_contract": {
+            "diagnostics": [
+              {
+                "code": "W1208",
+                "message": "part \"finial_l\" (node #6): 12 zero-area triangles contribute no visible surface. Check collapsed dimensions or repeated points; triangles are retained unchanged.",
+                "severity": "warning",
+                "span": {
+                  "end": 637,
+                  "start": 570
+                }
+              },
+              {
+                "code": "W1208",
+                "message": "part \"finial_r\" (node #7): 12 zero-area triangles contribute no visible surface. Check collapsed dimensions or repeated points; triangles are retained unchanged.",
+                "severity": "warning",
+                "span": {
+                  "end": 701,
+                  "start": 637
+                }
+              }
+            ],
+            "pass": true
+          },
+          "missing_parts": [],
+          "visual_quality": "requires blinded human review"
+        },
+        "elapsed_seconds": 1.6316e-05,
+        "export_ok": true,
+        "human_review": null,
+        "limits": {
+          "calls": 12,
+          "iterations": 3,
+          "output_tokens": 8192,
+          "seconds": 600,
+          "spend_usd": null
+        },
+        "manifest_sha256": "8e2e4a536d67e5cf7ac30fcaf74989adfc4643e556736b58d6722c70410bed33",
+        "meter": {
+          "call_pending": false,
+          "calls": 0,
+          "cancelled": false,
+          "estimated_usd": 0.0,
+          "stage": "",
+          "stage_started_seconds": 0.0,
+          "stopped": null,
+          "unknown_cost": false,
+          "usage": {
+            "cached_tokens": 0,
+            "prompt_tokens": 0,
+            "response_tokens": 0,
+            "total_tokens": 0
+          }
+        },
+        "mode": "fixture",
+        "model": "authored fixture",
+        "prompt_sha256": "bc109e20e58637c8f38713e114bfeaab211aab5be283a7d4471405ceeff004df",
+        "provider": "none",
+        "repeat": 0,
+        "seed": 42,
+        "stop_reason": "",
+        "task": "ornate_chair",
+        "temperature": 0.30000001192092896,
+        "thinking": "high",
+        "variant": "baseline",
+        "wall_seconds": 0.681089923
+      },
+      {
+        "checks": {
+          "asset_pass": true,
+          "compiles": true,
+          "dimensions_ok": true,
+          "extent": [
+            1.0,
+            0.42000001668930054,
+            0.800000011920929
+          ],
+          "finite": true,
+          "framing_radius": 0.6738694310188293,
+          "measurements": {
+            "constraints_ok": true,
+            "evidence": "static tessellated geometry; unsigned distance does not infer penetration or aesthetic fit",
+            "ground_plane": "Y=0",
+            "parts": [
+              {
+                "bounds": {
+                  "max": [
+                    0.5,
+                    0.20000000298023224,
+                    0.4000000059604645
+                  ],
+                  "min": [
+                    -0.5,
+                    0.0,
+                    -0.4000000059604645
+                  ]
+                },
+                "dimensions": [
+                  1.0,
+                  0.20000000298023224,
+                  0.800000011920929
+                ],
+                "ground_clearance": 0.0,
+                "name": "frame"
+              },
+              {
+                "bounds": {
+                  "max": [
+                    0.5,
+                    0.42000001668930054,
+                    0.4000000059604645
+                  ],
+                  "min": [
+                    -0.5,
+                    0.20000000298023224,
+                    -0.4000000059604645
+                  ]
+                },
+                "dimensions": [
+                  1.0,
+                  0.2200000137090683,
+                  0.800000011920929
+                ],
+                "ground_clearance": 0.20000000298023224,
+                "name": "cushion"
+              }
+            ],
+            "relationships": [],
+            "revision": "ffddb074aea165882e0b105930d1ca4a68442aa6dfce4ee69a33c3cc49a0d2d5",
+            "space": "world",
+            "surface_pairs": [
+              {
+                "first": "frame",
+                "second": "cushion",
+                "surface": {
+                  "closest_first": [
+                    -0.44999998807907104,
+                    0.20000000298023224,
+                    0.3499999940395355
+                  ],
+                  "closest_second": [
+                    -0.44999998807907104,
+                    0.20000000298023224,
+                    0.3499999940395355
+                  ],
+                  "direction_first_to_second": null,
+                  "distance": 0.0,
+                  "exact": true,
+                  "lower_bound": 0.0,
+                  "status": "within_tolerance",
+                  "tolerance": 0.002,
+                  "triangle_tests": 8,
+                  "work": 40
+                }
+              }
+            ],
+            "units": "m"
+          },
+          "mesh_contract": {
+            "diagnostics": [],
+            "pass": true
+          },
+          "missing_parts": [],
+          "visual_quality": "requires blinded human review"
+        },
+        "elapsed_seconds": 1.7286e-05,
+        "export_ok": true,
+        "human_review": null,
+        "limits": {
+          "calls": 12,
+          "iterations": 3,
+          "output_tokens": 8192,
+          "seconds": 600,
+          "spend_usd": null
+        },
+        "manifest_sha256": "8e2e4a536d67e5cf7ac30fcaf74989adfc4643e556736b58d6722c70410bed33",
+        "meter": {
+          "call_pending": false,
+          "calls": 0,
+          "cancelled": false,
+          "estimated_usd": 0.0,
+          "stage": "",
+          "stage_started_seconds": 0.0,
+          "stopped": null,
+          "unknown_cost": false,
+          "usage": {
+            "cached_tokens": 0,
+            "prompt_tokens": 0,
+            "response_tokens": 0,
+            "total_tokens": 0
+          }
+        },
+        "mode": "fixture",
+        "model": "authored fixture",
+        "prompt_sha256": "bc109e20e58637c8f38713e114bfeaab211aab5be283a7d4471405ceeff004df",
+        "provider": "none",
+        "repeat": 0,
+        "seed": 42,
+        "stop_reason": "",
+        "task": "upholstery",
+        "temperature": 0.30000001192092896,
+        "thinking": "high",
+        "variant": "baseline",
+        "wall_seconds": 0.69221061
+      },
+      {
+        "checks": {
+          "asset_pass": true,
+          "compiles": true,
+          "dimensions_ok": true,
+          "extent": [
+            0.4399999976158142,
+            0.5,
+            0.4399999976158142
+          ],
+          "finite": true,
+          "framing_radius": 0.39912402629852295,
+          "measurements": {
+            "constraints_ok": true,
+            "evidence": "static tessellated geometry; unsigned distance does not infer penetration or aesthetic fit",
+            "ground_plane": "Y=0",
+            "parts": [
+              {
+                "bounds": {
+                  "max": [
+                    0.2199999988079071,
+                    0.5,
+                    0.2199999988079071
+                  ],
+                  "min": [
+                    -0.2199999988079071,
+                    0.0,
+                    -0.2199999988079071
+                  ]
+                },
+                "dimensions": [
+                  0.4399999976158142,
+                  0.5,
+                  0.4399999976158142
+                ],
+                "ground_clearance": 0.0,
+                "name": "vessel"
+              }
+            ],
+            "relationships": [],
+            "revision": "7b3870d9c22bcd6ab6d4b5e246122a12358c6643c8494f6a38ce341fd8734abb",
+            "space": "world",
+            "surface_pairs": [],
+            "units": "m"
+          },
+          "mesh_contract": {
+            "diagnostics": [
+              {
+                "code": "W1208",
+                "message": "part \"vessel\" (node #0): 96 zero-area triangles contribute no visible surface. Check collapsed dimensions or repeated points; triangles are retained unchanged.",
+                "severity": "warning",
+                "span": {
+                  "end": 308,
+                  "start": 140
+                }
+              }
+            ],
+            "pass": true
+          },
+          "missing_parts": [],
+          "visual_quality": "requires blinded human review"
+        },
+        "elapsed_seconds": 1.676e-05,
+        "export_ok": true,
+        "human_review": null,
+        "limits": {
+          "calls": 12,
+          "iterations": 3,
+          "output_tokens": 8192,
+          "seconds": 600,
+          "spend_usd": null
+        },
+        "manifest_sha256": "8e2e4a536d67e5cf7ac30fcaf74989adfc4643e556736b58d6722c70410bed33",
+        "meter": {
+          "call_pending": false,
+          "calls": 0,
+          "cancelled": false,
+          "estimated_usd": 0.0,
+          "stage": "",
+          "stage_started_seconds": 0.0,
+          "stopped": null,
+          "unknown_cost": false,
+          "usage": {
+            "cached_tokens": 0,
+            "prompt_tokens": 0,
+            "response_tokens": 0,
+            "total_tokens": 0
+          }
+        },
+        "mode": "fixture",
+        "model": "authored fixture",
+        "prompt_sha256": "bc109e20e58637c8f38713e114bfeaab211aab5be283a7d4471405ceeff004df",
+        "provider": "none",
+        "repeat": 0,
+        "seed": 42,
+        "stop_reason": "",
+        "task": "hollow_vessel",
+        "temperature": 0.30000001192092896,
+        "thinking": "high",
+        "variant": "baseline",
+        "wall_seconds": 0.830177865
+      },
+      {
+        "checks": {
+          "asset_pass": true,
+          "compiles": true,
+          "dimensions_ok": true,
+          "extent": [
+            1.0,
+            0.8550000190734863,
+            0.5099999904632568
+          ],
+          "finite": true,
+          "framing_radius": 0.7055361270904541,
+          "measurements": {
+            "constraints_ok": true,
+            "evidence": "static tessellated geometry; unsigned distance does not infer penetration or aesthetic fit",
+            "ground_plane": "Y=0",
+            "parts": [
+              {
+                "bounds": {
+                  "max": [
+                    0.5,
+                    0.15000000596046448,
+                    0.25
+                  ],
+                  "min": [
+                    -0.5,
+                    0.0,
+                    -0.25
+                  ]
+                },
+                "dimensions": [
+                  1.0,
+                  0.15000000596046448,
+                  0.5
+                ],
+                "ground_clearance": 0.0,
+                "name": "base"
+              },
+              {
+                "bounds": {
+                  "max": [
+                    0.09000000357627869,
+                    0.6499999761581421,
+                    0.10000000149011612
+                  ],
+                  "min": [
+                    -0.09000000357627869,
+                    0.15000000596046448,
+                    -0.10000000149011612
+                  ]
+                },
+                "dimensions": [
+                  0.18000000715255737,
+                  0.4999999701976776,
+                  0.20000000298023224
+                ],
+                "ground_clearance": 0.15000000596046448,
+                "name": "support"
+              },
+              {
+                "bounds": {
+                  "max": [
+                    0.3749999701976776,
+                    0.6550000309944153,
+                    0.054999999701976776
+                  ],
+                  "min": [
+                    -0.3749999701976776,
+                    0.5450000166893005,
+                    -0.054999999701976776
+                  ]
+                },
+                "dimensions": [
+                  0.7499999403953552,
+                  0.11000001430511475,
+                  0.10999999940395355
+                ],
+                "ground_clearance": 0.5450000166893005,
+                "name": "shaft"
+              },
+              {
+                "bounds": {
+                  "max": [
+                    -0.29500001668930054,
+                    0.8550000190734863,
+                    0.2549999952316284
+                  ],
+                  "min": [
+                    -0.36500000953674316,
+                    0.3450000584125519,
+                    -0.2549999952316284
+                  ]
+                },
+                "dimensions": [
+                  0.06999999284744263,
+                  0.5099999904632568,
+                  0.5099999904632568
+                ],
+                "ground_clearance": 0.3450000584125519,
+                "name": "wheel"
+              }
+            ],
+            "relationships": [],
+            "revision": "6f2eeabdd4b0005b5520355ba180e8cb35e89d32a376f005ca353d36e46cbecb",
+            "space": "world",
+            "surface_pairs": [],
+            "units": "m"
+          },
+          "mesh_contract": {
+            "diagnostics": [],
+            "pass": true
+          },
+          "missing_parts": [],
+          "visual_quality": "requires blinded human review"
+        },
+        "elapsed_seconds": 1.6443e-05,
+        "export_ok": true,
+        "human_review": null,
+        "limits": {
+          "calls": 12,
+          "iterations": 3,
+          "output_tokens": 8192,
+          "seconds": 600,
+          "spend_usd": null
+        },
+        "manifest_sha256": "8e2e4a536d67e5cf7ac30fcaf74989adfc4643e556736b58d6722c70410bed33",
+        "meter": {
+          "call_pending": false,
+          "calls": 0,
+          "cancelled": false,
+          "estimated_usd": 0.0,
+          "stage": "",
+          "stage_started_seconds": 0.0,
+          "stopped": null,
+          "unknown_cost": false,
+          "usage": {
+            "cached_tokens": 0,
+            "prompt_tokens": 0,
+            "response_tokens": 0,
+            "total_tokens": 0
+          }
+        },
+        "mode": "fixture",
+        "model": "authored fixture",
+        "prompt_sha256": "bc109e20e58637c8f38713e114bfeaab211aab5be283a7d4471405ceeff004df",
+        "provider": "none",
+        "repeat": 0,
+        "seed": 42,
+        "stop_reason": "",
+        "task": "machinery",
+        "temperature": 0.30000001192092896,
+        "thinking": "high",
+        "variant": "baseline",
+        "wall_seconds": 0.727565318
+      },
+      {
+        "checks": {
+          "asset_pass": true,
+          "compiles": true,
+          "dimensions_ok": true,
+          "extent": [
+            0.597446084022522,
+            0.7964280843734741,
+            0.597446084022522
+          ],
+          "finite": true,
+          "framing_radius": 0.5805560350418091,
+          "measurements": {
+            "constraints_ok": true,
+            "evidence": "static tessellated geometry; unsigned distance does not infer penetration or aesthetic fit",
+            "ground_plane": "Y=0",
+            "parts": [
+              {
+                "bounds": {
+                  "max": [
+                    0.29872506856918335,
+                    0.7977071404457092,
+                    0.29872506856918335
+                  ],
+                  "min": [
+                    -0.29872098565101624,
+                    0.0012790262699127197,
+                    -0.29872098565101624
+                  ]
+                },
+                "dimensions": [
+                  0.597446084022522,
+                  0.7964280843734741,
+                  0.597446084022522
+                ],
+                "ground_clearance": 0.0012790262699127197,
+                "name": "form"
+              }
+            ],
+            "relationships": [],
+            "revision": "e3eb1981ab6bb16add2e46f422f89989de35ea5ae9e7e808874a93b532604101",
+            "space": "world",
+            "surface_pairs": [],
+            "units": "m"
+          },
+          "mesh_contract": {
+            "diagnostics": [],
+            "pass": true
+          },
+          "missing_parts": [],
+          "visual_quality": "requires blinded human review"
+        },
+        "elapsed_seconds": 1.7472e-05,
+        "export_ok": true,
+        "human_review": null,
+        "limits": {
+          "calls": 12,
+          "iterations": 3,
+          "output_tokens": 8192,
+          "seconds": 600,
+          "spend_usd": null
+        },
+        "manifest_sha256": "8e2e4a536d67e5cf7ac30fcaf74989adfc4643e556736b58d6722c70410bed33",
+        "meter": {
+          "call_pending": false,
+          "calls": 0,
+          "cancelled": false,
+          "estimated_usd": 0.0,
+          "stage": "",
+          "stage_started_seconds": 0.0,
+          "stopped": null,
+          "unknown_cost": false,
+          "usage": {
+            "cached_tokens": 0,
+            "prompt_tokens": 0,
+            "response_tokens": 0,
+            "total_tokens": 0
+          }
+        },
+        "mode": "fixture",
+        "model": "authored fixture",
+        "prompt_sha256": "bc109e20e58637c8f38713e114bfeaab211aab5be283a7d4471405ceeff004df",
+        "provider": "none",
+        "repeat": 0,
+        "seed": 42,
+        "stop_reason": "",
+        "task": "organic",
+        "temperature": 0.30000001192092896,
+        "thinking": "high",
+        "variant": "baseline",
+        "wall_seconds": 0.974690099
+      },
+      {
+        "checks": {
+          "asset_pass": true,
+          "compiles": true,
+          "dimensions_ok": true,
+          "extent": [
+            2.0,
+            0.940000057220459,
+            2.0
+          ],
+          "finite": true,
+          "framing_radius": 1.4902684688568115,
+          "measurements": {
+            "constraints_ok": true,
+            "evidence": "static tessellated geometry; unsigned distance does not infer penetration or aesthetic fit",
+            "ground_plane": "Y=0",
+            "parts": [
+              {
+                "bounds": {
+                  "max": [
+                    1.0,
+                    0.0,
+                    1.0
+                  ],
+                  "min": [
+                    -1.0,
+                    -0.05000000074505806,
+                    -1.0
+                  ]
+                },
+                "dimensions": [
+                  2.0,
+                  0.05000000074505806,
+                  2.0
+                ],
+                "ground_clearance": -0.05000000074505806,
+                "name": "floor"
+              },
+              {
+                "bounds": {
+                  "max": [
+                    0.4000000059604645,
+                    0.6899999976158142,
+                    0.30000001192092896
+                  ],
+                  "min": [
+                    -0.4000000059604645,
+                    0.60999995470047,
+                    -0.30000001192092896
+                  ]
+                },
+                "dimensions": [
+                  0.800000011920929,
+                  0.08000004291534424,
+                  0.6000000238418579
+                ],
+                "ground_clearance": 0.60999995470047,
+                "name": "table_top"
+              },
+              {
+                "bounds": {
+                  "max": [
+                    0.09000000357627869,
+                    0.6499999761581421,
+                    0.09000000357627869
+                  ],
+                  "min": [
+                    -0.09000000357627869,
+                    0.0,
+                    -0.09000000357627869
+                  ]
+                },
+                "dimensions": [
+                  0.18000000715255737,
+                  0.6499999761581421,
+                  0.18000000715255737
+                ],
+                "ground_clearance": 0.0,
+                "name": "pedestal"
+              },
+              {
+                "bounds": {
+                  "max": [
+                    0.3199999928474426,
+                    0.89000004529953,
+                    0.11999999731779099
+                  ],
+                  "min": [
+                    0.08000000566244125,
+                    0.6899999976158142,
+                    -0.11999999731779099
+                  ]
+                },
+                "dimensions": [
+                  0.23999997973442078,
+                  0.20000004768371582,
+                  0.23999999463558197
+                ],
+                "ground_clearance": 0.6899999976158142,
+                "name": "pot"
+              },
+              {
+                "bounds": {
+                  "max": [
+                    -0.10000000149011612,
+                    0.7199999690055847,
+                    0.125
+                  ],
+                  "min": [
+                    -0.30000001192092896,
+                    0.6899999976158142,
+                    -0.125
+                  ]
+                },
+                "dimensions": [
+                  0.20000001788139343,
+                  0.029999971389770508,
+                  0.25
+                ],
+                "ground_clearance": 0.6899999976158142,
+                "name": "book"
+              }
+            ],
+            "relationships": [],
+            "revision": "cc2c069ed83044b4160f45333d9c5191726f374afdf0198586250fa53d14ebb9",
+            "space": "world",
+            "surface_pairs": [],
+            "units": "m"
+          },
+          "mesh_contract": {
+            "diagnostics": [],
+            "pass": true
+          },
+          "missing_parts": [],
+          "visual_quality": "requires blinded human review"
+        },
+        "elapsed_seconds": 1.6832e-05,
+        "export_ok": true,
+        "human_review": null,
+        "limits": {
+          "calls": 12,
+          "iterations": 3,
+          "output_tokens": 8192,
+          "seconds": 600,
+          "spend_usd": null
+        },
+        "manifest_sha256": "8e2e4a536d67e5cf7ac30fcaf74989adfc4643e556736b58d6722c70410bed33",
+        "meter": {
+          "call_pending": false,
+          "calls": 0,
+          "cancelled": false,
+          "estimated_usd": 0.0,
+          "stage": "",
+          "stage_started_seconds": 0.0,
+          "stopped": null,
+          "unknown_cost": false,
+          "usage": {
+            "cached_tokens": 0,
+            "prompt_tokens": 0,
+            "response_tokens": 0,
+            "total_tokens": 0
+          }
+        },
+        "mode": "fixture",
+        "model": "authored fixture",
+        "prompt_sha256": "bc109e20e58637c8f38713e114bfeaab211aab5be283a7d4471405ceeff004df",
+        "provider": "none",
+        "repeat": 0,
+        "seed": 42,
+        "stop_reason": "",
+        "task": "assembled_scene",
+        "temperature": 0.30000001192092896,
+        "thinking": "high",
+        "variant": "baseline",
+        "wall_seconds": 0.590552771
+      },
+      {
+        "checks": {
+          "asset_pass": true,
+          "compiles": true,
+          "dimensions_ok": true,
+          "extent": [
+            1.90702486038208,
+            0.6181608438491821,
+            4.4499993324279785
+          ],
+          "finite": true,
+          "framing_radius": 2.440356492996216,
+          "measurements": {
+            "constraints_ok": true,
+            "evidence": "static tessellated geometry; unsigned distance does not infer penetration or aesthetic fit",
+            "ground_plane": "Y=0",
+            "parts": [
+              {
+                "bounds": {
+                  "max": [
+                    0.95351243019104,
+                    0.8450000286102295,
+                    2.2249996662139893
+                  ],
+                  "min": [
+                    -0.95351243019104,
+                    0.22683915495872498,
+                    -2.2249996662139893
+                  ]
+                },
+                "dimensions": [
+                  1.90702486038208,
+                  0.6181608438491821,
+                  4.4499993324279785
+                ],
+                "ground_clearance": 0.22683915495872498,
+                "name": "body_shell"
+              }
+            ],
+            "relationships": [],
+            "revision": "4710c02cadb18f2bc95a16d657ff974dfe97f4e879938c7f7e062b94341c6a2b",
+            "space": "world",
+            "surface_pairs": [],
+            "units": "m"
+          },
+          "mesh_contract": {
+            "diagnostics": [],
+            "pass": true
+          },
+          "missing_parts": [],
+          "visual_quality": "requires blinded human review"
+        },
+        "elapsed_seconds": 1.7549e-05,
+        "export_ok": true,
+        "human_review": null,
+        "limits": {
+          "calls": 12,
+          "iterations": 3,
+          "output_tokens": 8192,
+          "seconds": 600,
+          "spend_usd": null
+        },
+        "manifest_sha256": "8e2e4a536d67e5cf7ac30fcaf74989adfc4643e556736b58d6722c70410bed33",
+        "meter": {
+          "call_pending": false,
+          "calls": 0,
+          "cancelled": false,
+          "estimated_usd": 0.0,
+          "stage": "",
+          "stage_started_seconds": 0.0,
+          "stopped": null,
+          "unknown_cost": false,
+          "usage": {
+            "cached_tokens": 0,
+            "prompt_tokens": 0,
+            "response_tokens": 0,
+            "total_tokens": 0
+          }
+        },
+        "mode": "fixture",
+        "model": "authored fixture",
+        "prompt_sha256": "bc109e20e58637c8f38713e114bfeaab211aab5be283a7d4471405ceeff004df",
+        "provider": "none",
+        "repeat": 0,
+        "seed": 42,
+        "stop_reason": "",
+        "task": "sports_body",
+        "temperature": 0.30000001192092896,
+        "thinking": "high",
+        "variant": "baseline",
+        "wall_seconds": 5.920761776
+      }
+    ],
+    "version": 1
+  }
+}

@@ -148,6 +148,13 @@ pub fn inline_block(index: &StdlibIndex) -> String {
 /// index. Section order is unchanged from the pre-split assembly — callers
 /// without `cachedContents` configured see exactly the prompt they always did.
 pub fn system_instruction(index: &StdlibIndex) -> String {
+    let mut s = modeling_guidance(index);
+    s.push_str(OUTPUT_CONTRACT);
+    s
+}
+
+/// Modeling knowledge without an output contract, shared by all session phases.
+pub fn modeling_guidance(index: &StdlibIndex) -> String {
     let mut s = String::with_capacity(40 * 1024);
     s.push_str(PREAMBLE);
     append_grammar(&mut s);
@@ -156,7 +163,6 @@ pub fn system_instruction(index: &StdlibIndex) -> String {
     append_allowlist(&mut s);
     append_fewshots(&mut s);
     append_modules(&mut s, index);
-    s.push_str(OUTPUT_CONTRACT);
     s
 }
 
@@ -256,12 +262,18 @@ mod tests {
         let mut idx = StdlibIndex::default();
         idx.modules.push(ModuleSummary {
             name: "leg".into(),
-            params: vec![("height".into(), Some("0.5".into())), ("radius".into(), Some("0.05".into()))],
+            params: vec![
+                ("height".into(), Some("0.5".into())),
+                ("radius".into(), Some("0.05".into())),
+            ],
             doc: Some("a cylindrical leg".into()),
         });
         idx.modules.push(ModuleSummary {
             name: "slab".into(),
-            params: vec![("width".into(), Some("1".into())), ("required".into(), None)],
+            params: vec![
+                ("width".into(), Some("1".into())),
+                ("required".into(), None),
+            ],
             doc: None,
         });
         let s = system_instruction(&idx);
@@ -303,17 +315,44 @@ mod tests {
         // If a primitive exists in mogen-geom but not here, the model won't use it.
         let s = system_instruction(&StdlibIndex::default());
         for kind in [
-            "box", "rounded_box", "plane", "quad", "disc", "cylinder", "cone",
-            "capsule", "sphere", "icosphere", "torus", "prism", "pyramid",
-            "wedge", "frustum", "tube", "hemisphere", "half_cylinder",
-            "torus_arc", "ellipsoid", "superellipsoid", "curved_plane",
-            "lathe", "spline_tube", "spline_ribbon",
+            "box",
+            "rounded_box",
+            "plane",
+            "quad",
+            "disc",
+            "cylinder",
+            "cone",
+            "capsule",
+            "sphere",
+            "icosphere",
+            "torus",
+            "prism",
+            "pyramid",
+            "wedge",
+            "frustum",
+            "tube",
+            "hemisphere",
+            "half_cylinder",
+            "torus_arc",
+            "ellipsoid",
+            "superellipsoid",
+            "curved_plane",
+            "lathe",
+            "spline_tube",
+            "spline_ribbon",
             // Foliage card + recursive procedural tree.
-            "leaf_card", "branch",
+            "leaf_card",
+            "branch",
             // Box aliases + hole-punched wall.
-            "slab", "post", "panel", "wall",
+            "slab",
+            "post",
+            "panel",
+            "wall",
         ] {
-            assert!(s.contains(&format!("`{kind}`")), "kinds table missing {kind}");
+            assert!(
+                s.contains(&format!("`{kind}`")),
+                "kinds table missing {kind}"
+            );
         }
     }
 
@@ -331,12 +370,27 @@ mod tests {
             "grammar reference missing solid cleanup option"
         );
         // Placement shortcuts:
-        assert!(s.contains("`anchor=bottom"), "grammar missing anchor shortcut");
-        assert!(s.contains("above=\"sib\""), "grammar missing relative placement");
-        assert!(s.contains("`from=[x,y,z]"), "grammar missing from/to corners");
+        assert!(
+            s.contains("`anchor=bottom"),
+            "grammar missing anchor shortcut"
+        );
+        assert!(
+            s.contains("above=\"sib\""),
+            "grammar missing relative placement"
+        );
+        assert!(
+            s.contains("`from=[x,y,z]"),
+            "grammar missing from/to corners"
+        );
         // Output-contract self-check picks them up:
-        assert!(s.contains("Flush-joined siblings"), "output contract missing sibling-placement rule");
-        assert!(s.contains("single solid shape"), "output contract missing solid-grouping rule");
+        assert!(
+            s.contains("Flush-joined siblings"),
+            "output contract missing sibling-placement rule"
+        );
+        assert!(
+            s.contains("single solid shape"),
+            "output contract missing solid-grouping rule"
+        );
         // An archway fewshot actually demonstrates solid+post+slab+above+cleanup.
         assert!(
             s.contains("Prompt: \"a stone archway\""),
@@ -372,11 +426,23 @@ mod tests {
         let s = system_instruction(&StdlibIndex::default());
         assert!(s.contains("`skeleton`"), "kinds table missing skeleton row");
         assert!(s.contains("`bone`"), "kinds table missing bone row");
-        assert!(s.contains("skin=\"rig\""), "grammar reference missing skin= example");
-        assert!(s.contains("parent-relative"), "conventions missing bone-pos-is-parent-relative rule");
-        assert!(s.contains("envelope"), "conventions missing envelope guidance");
+        assert!(
+            s.contains("skin=\"rig\""),
+            "grammar reference missing skin= example"
+        );
+        assert!(
+            s.contains("parent-relative"),
+            "conventions missing bone-pos-is-parent-relative rule"
+        );
+        assert!(
+            s.contains("envelope"),
+            "conventions missing envelope guidance"
+        );
         // Multi-keyframe tracks:
-        assert!(s.contains("keys=[[t, v]"), "grammar reference missing keys=[[t,v]] form");
+        assert!(
+            s.contains("keys=[[t, v]"),
+            "grammar reference missing keys=[[t,v]] form"
+        );
         // The humanoid fewshot is the concrete demonstration.
         assert!(
             s.contains("Prompt: \"a person walking\""),
@@ -553,7 +619,10 @@ mod tests {
         let s = system_instruction(&StdlibIndex::default());
         // Kinds table rows.
         assert!(s.contains("`branch`"), "kinds table missing branch row");
-        assert!(s.contains("`leaf_card`"), "kinds table missing leaf_card row");
+        assert!(
+            s.contains("`leaf_card`"),
+            "kinds table missing leaf_card row"
+        );
         // Conventions paragraph names the recursive-tree feature.
         assert!(
             s.contains("recursive procedural tree"),
@@ -622,8 +691,7 @@ mod tests {
         // The colour-param contract must show up — at minimum the walking
         // fewshot wires `skin=`, `shirt=`, `pants=`, `boot=`.
         assert!(
-            s.contains("skin =[0.85, 0.65, 0.55]")
-                || s.contains("skin=[0.85, 0.65, 0.55]"),
+            s.contains("skin =[0.85, 0.65, 0.55]") || s.contains("skin=[0.85, 0.65, 0.55]"),
             "walking fewshot must demonstrate skin colour param"
         );
         assert!(s.contains("shirt"), "shirt colour param must appear");
@@ -680,7 +748,10 @@ mod tests {
             "output contract missing meta-block lead-in rule"
         );
         assert!(s.contains("`name = "), "meta rule missing name");
-        assert!(s.contains("`description = "), "meta rule missing description");
+        assert!(
+            s.contains("`description = "),
+            "meta rule missing description"
+        );
         assert!(s.contains("`tags = "), "meta rule missing tags");
         // The full set of toolchain-stamped attrs must be called out so the
         // LLM doesn't invent a seed (would overwrite ours) or stamp a stale
@@ -750,7 +821,8 @@ mod tests {
         // before the grammar so the model knows the rest of the system
         // prompt is just reference material.
         let s = reviewer_system_instruction(&StdlibIndex::default());
-        let preamble_idx = s.find("Reviewer agent in a self-refinement loop")
+        let preamble_idx = s
+            .find("Reviewer agent in a self-refinement loop")
             .expect("missing reviewer preamble");
         let grammar_idx = s.find("## DSL grammar").expect("missing grammar section");
         assert!(preamble_idx < grammar_idx, "preamble must precede grammar");
@@ -764,6 +836,11 @@ mod tests {
 /// Candidate guidance for measured comparisons; ordinary defaults stay stable
 /// until a release comparison establishes the quality tradeoffs.
 pub fn experimental_system_instruction() -> String {
+    let mut s = experimental_modeling_guidance();
+    s.push_str(OUTPUT_CONTRACT);
+    s
+}
+pub fn experimental_modeling_guidance() -> String {
     let mut s = String::from("You are a 3D technical artist. Match the original target, dimensions, silhouette and negative space. Use named parts and preserve editable structure. Choose geometry for the shape: primitives and attachments for discrete rigid assemblies; loft for shaped sections and upholstery; sweep for curved frames; lathe for hollow vessels; deformation or blob for continuous organic surfaces. Authored placement is valid when dimensions determine positions. Use modules for repeated structures. Inspect joints, edge treatment, UV scale and orientation before adding fine detail. Do not add animation, stock body proportions or a style absent from the brief.\n");
     append_grammar(&mut s);
     append_conventions(&mut s);
@@ -773,6 +850,40 @@ pub fn experimental_system_instruction() -> String {
         &mut s,
         &StdlibIndex::from_registry(mogen_dsl::stdlib_registry()),
     );
-    s.push_str(OUTPUT_CONTRACT);
     s
+}
+
+#[cfg(test)]
+mod session_phase_tests {
+    #[test]
+    fn generation_and_tool_contracts_are_exclusive() {
+        let index = super::StdlibIndex::default();
+        for (generation, guidance) in [
+            (
+                super::system_instruction(&index),
+                super::modeling_guidance(&index),
+            ),
+            (
+                super::experimental_system_instruction(),
+                super::experimental_modeling_guidance(),
+            ),
+        ] {
+            assert_eq!(
+                generation.matches("Reply with ONLY the DSL source").count(),
+                1
+            );
+            assert!(!guidance.contains("Reply with ONLY the DSL source"));
+            let tools = format!("{guidance}\n{}", crate::session::TOOL_INSTRUCTIONS);
+            assert_eq!(
+                tools
+                    .matches("return exactly one JSON object per turn")
+                    .count(),
+                1
+            );
+            assert!(!tools.contains("Reply with ONLY the DSL source"));
+        }
+        let review = crate::session::review_instructions();
+        assert!(review.contains("\"findings\":{\"type\":\"string\"}"));
+        assert!(!review.contains("Reply with ONLY the DSL source"));
+    }
 }

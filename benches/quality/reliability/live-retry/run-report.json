@@ -1,0 +1,161 @@
+{
+  "candidates": [
+    {
+      "path": "original-run/candidate-0.mog",
+      "reviewed": false,
+      "revision": "1efd35da92e0e6162661ee323e65867b373e9930915852cb7217de5b5f5f74b9",
+      "selected": false,
+      "views": []
+    },
+    {
+      "path": "original-run/candidate-1.mog",
+      "reviewed": true,
+      "revision": "1efd35da92e0e6162661ee323e65867b373e9930915852cb7217de5b5f5f74b9",
+      "selected": true,
+      "views": [
+        {
+          "camera": {
+            "convention_version": 1,
+            "cropped_parts": [],
+            "distance": 7.20115327835083,
+            "out_of_frame_vertices": 0,
+            "pitch": 0.0,
+            "revision": "1efd35da92e0e6162661ee323e65867b373e9930915852cb7217de5b5f5f74b9",
+            "target": [
+              0.0,
+              0.6001995801925659,
+              -0.01999986171722412
+            ],
+            "view": "front",
+            "yaw": 3.1415927410125732
+          },
+          "path": "original-run/candidate-1-front.png",
+          "revision": "1efd35da92e0e6162661ee323e65867b373e9930915852cb7217de5b5f5f74b9"
+        },
+        {
+          "camera": {
+            "convention_version": 1,
+            "cropped_parts": [],
+            "distance": 7.20115327835083,
+            "out_of_frame_vertices": 0,
+            "pitch": 0.0,
+            "revision": "1efd35da92e0e6162661ee323e65867b373e9930915852cb7217de5b5f5f74b9",
+            "target": [
+              0.0,
+              0.6001995801925659,
+              -0.01999986171722412
+            ],
+            "view": "side",
+            "yaw": 1.5707963705062866
+          },
+          "path": "original-run/candidate-1-side.png",
+          "revision": "1efd35da92e0e6162661ee323e65867b373e9930915852cb7217de5b5f5f74b9"
+        },
+        {
+          "camera": {
+            "convention_version": 1,
+            "cropped_parts": [],
+            "distance": 7.20115327835083,
+            "out_of_frame_vertices": 0,
+            "pitch": 0.0,
+            "revision": "1efd35da92e0e6162661ee323e65867b373e9930915852cb7217de5b5f5f74b9",
+            "target": [
+              0.0,
+              0.6001995801925659,
+              -0.01999986171722412
+            ],
+            "view": "back",
+            "yaw": 0.0
+          },
+          "path": "original-run/candidate-1-back.png",
+          "revision": "1efd35da92e0e6162661ee323e65867b373e9930915852cb7217de5b5f5f74b9"
+        },
+        {
+          "camera": {
+            "convention_version": 1,
+            "cropped_parts": [],
+            "distance": 7.20115327835083,
+            "out_of_frame_vertices": 0,
+            "pitch": 0.5,
+            "revision": "1efd35da92e0e6162661ee323e65867b373e9930915852cb7217de5b5f5f74b9",
+            "target": [
+              0.0,
+              0.6001995801925659,
+              -0.01999986171722412
+            ],
+            "view": "three_quarter",
+            "yaw": 2.356194496154785
+          },
+          "path": "original-run/candidate-1-three_quarter.png",
+          "revision": "1efd35da92e0e6162661ee323e65867b373e9930915852cb7217de5b5f5f74b9"
+        },
+        {
+          "camera": {
+            "convention_version": 1,
+            "cropped_parts": [],
+            "distance": 7.20115327835083,
+            "out_of_frame_vertices": 0,
+            "pitch": 0.5,
+            "revision": "1efd35da92e0e6162661ee323e65867b373e9930915852cb7217de5b5f5f74b9",
+            "target": [
+              0.0,
+              0.6001995801925659,
+              -0.01999986171722412
+            ],
+            "view": "presentation",
+            "yaw": 2.356194496154785
+          },
+          "path": "original-run/candidate-1-presentation.png",
+          "revision": "1efd35da92e0e6162661ee323e65867b373e9930915852cb7217de5b5f5f74b9"
+        }
+      ]
+    },
+    {
+      "path": "original-run/candidate-2.mog",
+      "reviewed": false,
+      "revision": "721b417fa40edffa028bc01944147294e11ebbf494f3959c8b785154e6725db3",
+      "selected": false,
+      "views": []
+    },
+    {
+      "path": "original-run/candidate-3.mog",
+      "reviewed": false,
+      "revision": "78afd1693f459dc81913b51b8f749814e9a7d528bf2daae9ac9dc22b7be821a1",
+      "selected": false,
+      "views": []
+    },
+    {
+      "path": "original-run/candidate-4.mog",
+      "reviewed": false,
+      "revision": "ed7b688f068112cd08a22b1146b63ff5cd4e31531bdb81228d812b0ebcef67b7",
+      "selected": false,
+      "views": []
+    }
+  ],
+  "elapsed_seconds": 1964,
+  "final_mog": "original-run/final.mog",
+  "latest_revision": "ed7b688f068112cd08a22b1146b63ff5cd4e31531bdb81228d812b0ebcef67b7",
+  "report": "original-run/report.json",
+  "saved_responses": 17,
+  "selected_revision": "1efd35da92e0e6162661ee323e65867b373e9930915852cb7217de5b5f5f74b9",
+  "sidecar": "original-run/final.mog.modeling.json",
+  "stage": "stopped",
+  "status": "budget_exhausted",
+  "stop_reason": "Stopped: invalid response: Call limit reached; retained the best completed candidate",
+  "usage": {
+    "calls": 24,
+    "cancelled": false,
+    "estimated_usd": 0.0,
+    "stage": "refine",
+    "stopped": "Call limit reached",
+    "unknown_cost": true,
+    "usage": {
+      "cached_tokens": 25344,
+      "prompt_tokens": 2737585,
+      "response_tokens": 52227,
+      "total_tokens": 2789812
+    }
+  },
+  "version": 1,
+  "visual_quality": "Requires human review; orchestration success does not establish aesthetic improvement"
+}

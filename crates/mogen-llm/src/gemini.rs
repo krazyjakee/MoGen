@@ -161,10 +161,7 @@ impl GeminiClient {
     /// stands in for `cloudcode-pa.googleapis.com` so the URL/body/header
     /// shape can be verified without hitting Google. Defaults to the
     /// gemini-cli OAuth variant.
-    pub fn from_oauth_with_base_url(
-        bundle: OAuthBundle,
-        base_url: impl Into<String>,
-    ) -> Self {
+    pub fn from_oauth_with_base_url(bundle: OAuthBundle, base_url: impl Into<String>) -> Self {
         let http = build_http();
         Self {
             http,
@@ -264,11 +261,7 @@ impl GeminiClient {
         cloudcode_url: &str,
         body: &serde_json::Value,
     ) -> Result<Vec<u8>, GeminiError> {
-        self.oauth_post_inner(
-            cloudcode_url,
-            body,
-            google_oauth::cloudcode::apply_headers,
-        )
+        self.oauth_post_inner(cloudcode_url, body, google_oauth::cloudcode::apply_headers)
     }
 
     /// Same as [`oauth_post_with_retry`] but applies the image-surface
@@ -325,11 +318,8 @@ impl GeminiClient {
 
         let url = google_oauth::cloudcode::fetch_available_models_url(endpoint_base);
         let body = google_oauth::cloudcode::fetch_available_models_body(project);
-        let result = self.oauth_post_inner(
-            &url,
-            &body,
-            google_oauth::cloudcode::apply_image_headers,
-        );
+        let result =
+            self.oauth_post_inner(&url, &body, google_oauth::cloudcode::apply_image_headers);
 
         let static_list: Vec<&'static str> =
             google_oauth::client::ANTIGRAVITY_IMAGE_MODELS.to_vec();
@@ -379,10 +369,7 @@ impl GeminiClient {
         &self,
         cloudcode_url: &str,
         body: &serde_json::Value,
-        apply: fn(
-            reqwest::blocking::RequestBuilder,
-            &str,
-        ) -> reqwest::blocking::RequestBuilder,
+        apply: fn(reqwest::blocking::RequestBuilder, &str) -> reqwest::blocking::RequestBuilder,
     ) -> Result<Vec<u8>, GeminiError> {
         let (mu, config) = self.oauth_state().ok_or_else(|| {
             GeminiError::OAuth("oauth_post_with_retry called on API-key client".into())
@@ -472,9 +459,9 @@ impl GeminiClient {
                     .map_err(|e| GeminiError::InvalidResponse(e.to_string()))?
             }
             GeminiAuth::OAuth(_) | GeminiAuth::AntigravityOAuth(_) => {
-                let project = self
-                    .oauth_project_id()
-                    .ok_or_else(|| GeminiError::OAuth("missing project id in token bundle".into()))?;
+                let project = self.oauth_project_id().ok_or_else(|| {
+                    GeminiError::OAuth("missing project id in token bundle".into())
+                })?;
                 // Cloud Code Assist takes BARE model names ("gemini-3-pro-preview"),
                 // never "models/...". `wrap_body` strips the prefix defensively
                 // but pass it bare here too so the URL/body shape matches what
@@ -486,11 +473,11 @@ impl GeminiClient {
                 // Cloud Code Assist wraps the response in `{ response: {...} }`.
                 let envelope: RawGenerateEnvelope = serde_json::from_slice(&bytes)
                     .map_err(|e| GeminiError::InvalidResponse(e.to_string()))?;
-                envelope
-                    .response
-                    .ok_or_else(|| GeminiError::InvalidResponse(
+                envelope.response.ok_or_else(|| {
+                    GeminiError::InvalidResponse(
                         "v1internal response missing `response` field".into(),
-                    ))?
+                    )
+                })?
             }
         };
 
@@ -558,7 +545,10 @@ impl GeminiClient {
 
         if !status.is_success() {
             let message = parse_error_message(&bytes);
-            return Err(GeminiError::Api { status: status.as_u16(), message });
+            return Err(GeminiError::Api {
+                status: status.as_u16(),
+                message,
+            });
         }
 
         let parsed: RawCachedContent = serde_json::from_slice(&bytes)
@@ -667,6 +657,13 @@ fn build_request(cfg: &GenerateConfig) -> serde_json::Value {
     }
 
     let mut gen_cfg = serde_json::Map::new();
+    if let Some(schema) = &cfg.response_schema {
+        gen_cfg.insert(
+            "responseMimeType".into(),
+            serde_json::json!("application/json"),
+        );
+        gen_cfg.insert("responseJsonSchema".into(), schema.clone());
+    }
     if let Some(t) = cfg.temperature {
         gen_cfg.insert("temperature".into(), serde_json::json!(t));
     }
@@ -828,8 +825,14 @@ mod tests {
         let mut cfg = GenerateConfig::new("fix it");
         cfg.system_instruction = Some("inline portion".into());
         cfg.cached_content = Some("cachedContents/abc123".into());
-        cfg.history.push(Turn { role: Role::User, text: "make a chair".into() });
-        cfg.history.push(Turn { role: Role::Model, text: "scene { box }".into() });
+        cfg.history.push(Turn {
+            role: Role::User,
+            text: "make a chair".into(),
+        });
+        cfg.history.push(Turn {
+            role: Role::Model,
+            text: "scene { box }".into(),
+        });
         let body = build_request(&cfg);
         let contents = body["contents"].as_array().unwrap();
         assert_eq!(contents.len(), 5);
@@ -856,8 +859,14 @@ mod tests {
     #[test]
     fn history_is_threaded_before_current_prompt() {
         let mut cfg = GenerateConfig::new("fix the diagnostics");
-        cfg.history.push(Turn { role: Role::User, text: "make a chair".into() });
-        cfg.history.push(Turn { role: Role::Model, text: "scene { box }".into() });
+        cfg.history.push(Turn {
+            role: Role::User,
+            text: "make a chair".into(),
+        });
+        cfg.history.push(Turn {
+            role: Role::Model,
+            text: "scene { box }".into(),
+        });
         let body = build_request(&cfg);
         let contents = body["contents"].as_array().unwrap();
         assert_eq!(contents.len(), 3);
@@ -987,5 +996,23 @@ mod tests {
             .create_cached_content("gemini-pro-latest", "be helpful", 60)
             .expect_err("OAuth path must reject cachedContents");
         assert!(matches!(err, GeminiError::CacheUnavailableOverOAuth));
+    }
+}
+
+#[cfg(test)]
+mod schema_tests {
+    #[test]
+    fn review_uses_shared_schema() {
+        let mut cfg = crate::GenerateConfig::new("review");
+        cfg.response_schema = Some(crate::session::review_schema());
+        let request = super::build_request(&cfg);
+        assert_eq!(
+            request["generationConfig"]["responseMimeType"],
+            "application/json"
+        );
+        assert_eq!(
+            request["generationConfig"]["responseJsonSchema"],
+            crate::session::review_schema()
+        );
     }
 }

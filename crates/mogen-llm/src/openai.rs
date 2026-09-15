@@ -63,7 +63,11 @@ impl OpenAIClient {
             .timeout(Duration::from_secs(600))
             .build()
             .expect("reqwest client");
-        Self { http, api_key: api_key.into(), base_url: base_url.into() }
+        Self {
+            http,
+            api_key: api_key.into(),
+            base_url: base_url.into(),
+        }
     }
 
     pub fn from_env() -> Result<Self, OpenAIError> {
@@ -92,7 +96,10 @@ impl OpenAIClient {
 
         if !status.is_success() {
             let message = parse_error_message(&bytes);
-            return Err(OpenAIError::Api { status: status.as_u16(), message });
+            return Err(OpenAIError::Api {
+                status: status.as_u16(),
+                message,
+            });
         }
 
         let parsed: RawChatResponse = serde_json::from_slice(&bytes)
@@ -123,7 +130,10 @@ impl OpenAIClient {
 
         if let Some(budget) = cfg.budget_tokens {
             if usage.total_tokens > budget {
-                return Err(OpenAIError::BudgetExceeded { used: usage.total_tokens, budget });
+                return Err(OpenAIError::BudgetExceeded {
+                    used: usage.total_tokens,
+                    budget,
+                });
             }
         }
 
@@ -163,10 +173,13 @@ fn build_request(cfg: &GenerateConfig) -> serde_json::Value {
     let user_content = if cfg.user_images.is_empty() {
         serde_json::json!(cfg.user_prompt)
     } else {
-        let mut parts: Vec<serde_json::Value> =
-            Vec::with_capacity(cfg.user_images.len() + 1);
+        let mut parts: Vec<serde_json::Value> = Vec::with_capacity(cfg.user_images.len() + 1);
         for img in &cfg.user_images {
-            let url = format!("data:{};base64,{}", img.mime_type, STANDARD.encode(&img.data));
+            let url = format!(
+                "data:{};base64,{}",
+                img.mime_type,
+                STANDARD.encode(&img.data)
+            );
             parts.push(serde_json::json!({
                 "type": "image_url",
                 "image_url": { "url": url },
@@ -182,6 +195,23 @@ fn build_request(cfg: &GenerateConfig) -> serde_json::Value {
         "messages": messages,
     });
 
+    // Explicit model capability gate; custom/older text models use the typed
+    // prompt and identical local validation without unsupported API options.
+    if (cfg.model == "gpt-4o"
+        || cfg.model.starts_with("gpt-4o-mini")
+        || cfg.model.starts_with("gpt-4o-2024-08")
+        || cfg.model.starts_with("gpt-4o-2024-11")
+        || cfg.model.starts_with("gpt-4.1")
+        || cfg.model.starts_with("gpt-5")
+        || cfg.model.starts_with("gpt-6-astra")
+        || cfg.model.starts_with("o3")
+        || cfg.model.starts_with("o4")
+        || cfg.model == "o1"
+        || cfg.model.starts_with("o1-2024-12"))
+        && cfg.response_schema.is_some()
+    {
+        req["response_format"] = serde_json::json!({"type":"json_schema","json_schema":{"name":"modeling_review_v1","strict":true,"schema":cfg.response_schema}});
+    }
     let reasoning = is_reasoning_model(&cfg.model);
     if let Some(t) = cfg.temperature {
         if !reasoning {
@@ -299,8 +329,14 @@ mod tests {
     fn request_body_threads_history_with_assistant_role() {
         let mut cfg = GenerateConfig::new("again");
         cfg.model = "gpt-5.5".into();
-        cfg.history.push(Turn { role: Role::User, text: "make a chair".into() });
-        cfg.history.push(Turn { role: Role::Model, text: "scene { box }".into() });
+        cfg.history.push(Turn {
+            role: Role::User,
+            text: "make a chair".into(),
+        });
+        cfg.history.push(Turn {
+            role: Role::Model,
+            text: "scene { box }".into(),
+        });
         let body = build_request(&cfg);
         let messages = body["messages"].as_array().unwrap();
         assert_eq!(messages.len(), 3);
@@ -356,8 +392,14 @@ mod tests {
             cfg.model = model.into();
             cfg.thinking_level = Some(ThinkingLevel::High);
             let body = build_request(&cfg);
-            assert_eq!(body["reasoning_effort"], "high", "{model} should accept reasoning_effort");
-            assert!(body.get("reasoning").is_none(), "{model} must not emit nested reasoning");
+            assert_eq!(
+                body["reasoning_effort"], "high",
+                "{model} should accept reasoning_effort"
+            );
+            assert!(
+                body.get("reasoning").is_none(),
+                "{model} must not emit nested reasoning"
+            );
         }
     }
 
@@ -394,7 +436,9 @@ mod tests {
         });
         let body = build_request(&cfg);
         let last = body["messages"].as_array().unwrap().last().unwrap();
-        let parts = last["content"].as_array().expect("content should be array of parts");
+        let parts = last["content"]
+            .as_array()
+            .expect("content should be array of parts");
         assert_eq!(parts.len(), 2);
         assert_eq!(parts[0]["type"], "image_url");
         let url = parts[0]["image_url"]["url"].as_str().unwrap();
@@ -407,5 +451,22 @@ mod tests {
     fn parse_error_message_extracts_nested_field() {
         let raw = br#"{"error":{"message":"invalid api key","type":"auth"}}"#;
         assert_eq!(parse_error_message(raw), "invalid api key");
+    }
+}
+
+#[cfg(test)]
+mod schema_tests {
+    #[test]
+    fn supported_review_models_use_shared_schema() {
+        let mut cfg = crate::GenerateConfig::new("review");
+        cfg.model = "gpt-4.1".into();
+        cfg.response_schema = Some(crate::session::review_schema());
+        let request = super::build_request(&cfg);
+        assert_eq!(
+            request["response_format"]["json_schema"]["schema"],
+            crate::session::review_schema()
+        );
+        cfg.model = "text-only-unknown".into();
+        assert!(super::build_request(&cfg).get("response_format").is_none());
     }
 }
