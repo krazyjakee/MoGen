@@ -26,17 +26,52 @@ listed base branch while reviewing to avoid counting earlier changes again.
 The final integrated branch is `feat/fit-measurements`. The implementation used
 isolated worktrees; pre-existing changes in the original checkout were preserved.
 
-## Validation performed
+## Review validation (2026-09-15)
 
-The implementation intentionally minimized builds and tests at the user's request.
-Nine focused core mesh-contract tests passed when that contract was introduced.
-Scoped compile checks passed for DSL/validation, rendering/modeling libraries,
-and finally the CLI plus quality evaluator. Diff whitespace checks passed.
-The final CLI/example check emitted existing unused-mut exporter warnings.
+Review covered #119, #128–#135 and the independent lowering PR #109.
+Xiaomi support (#87) was excluded at the user's request. No PR was merged or
+marked ready, and no live provider requests were made.
 
-Regression tests were added alongside the changes but their broader execution,
-Studio builds, exported-artifact inspection, matched-camera renders, and aesthetic
-acceptance remain for review. Compilation alone does not establish those outcomes.
+Blockers fixed and propagated through the stack:
+
+- **#128:** updated the gabled-house golden's repaired NORMAL accessor bytes.
+  All other bytes were retained, including positions, indices and UVs.
+- **#129:** normalized surface-net field gradients before storing blob normals.
+  The new contract previously rejected the ordinary organic quality target.
+  Added coverage at three grid resolutions; connectivity tests now assert
+  connectivity separately from advisory pole-degeneracy diagnostics.
+- **#130–#131:** shortened redundant primitive examples to retain numeric-array
+  and explicit-frame guidance within the existing 34,000-byte prompt budget.
+- **#133:** replaced unsupported unary parameter negation in the chair fixture
+  with supported subtraction expressions. Parameter-sweep and fit tests pass.
+- **#134:** measured cushion guide error against the nearest point on each
+  chord, rather than equal parameter fractions, and evaluated cardinal angles
+  accurately. Fractional-power curves no longer exhaust the sample limit due
+  to nonuniform speed. A dense 4,096-point analytic check verifies tolerance.
+
+`cargo test --workspace --no-fail-fast -- --test-threads=1` passed with
+**1,943 tests and two existing ignores**, including Studio, session, geometry,
+validation, export and all 22 goldens. The additional dense guide regression
+then passed in the four-test `surface_guides` target. `git diff --check` passed
+for every updated branch. Existing compiler warnings remain.
+
+The credential-free quality evaluator passed compilation, dimensions, required
+parts, mesh-contract and GLB export checks for all six authored quality targets,
+and produced their five canonical views using software Mesa/EGL. Six further
+fixtures (profile normals, explicit sweep frame, orientation marker, relational
+chair, guided cushion and frame trim) also passed asset/export checks and rendered
+five views each. The deliberately disconnected joint-measurement fixture is
+covered by measurement tests; strict rendering correctly rejects its untagged
+disconnected clusters. The compiling-but-incomplete negative control and
+malformed mesh controls were detected.
+
+#109's DSL and CLI suites passed after incorporating current master: 719 tests,
+one existing ignore, including all 22 goldens. Earlier golden failures on its
+outdated base no longer occur.
+
+These are implementation and authored-fixture checks. Live-provider comparisons,
+independent human judgments and milestone acceptance remain pending; the runs
+do not establish generated-model quality.
 
 ## Review guides and fixtures
 
