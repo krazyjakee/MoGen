@@ -2135,3 +2135,8 @@ lowering applies the same checks. See
 ## Explicit sweep frames
 
 Use `frame_up=[0,1,0]` for local profile height toward +Y; width is height × tangent. `closed=1` uses a periodic path and matching seam frames. Omitting `frame_up` preserves the legacy orientation. See [sweep-frames.md](sweep-frames.md) for roll, closure, parent-transform and migration rules.
+
+
+## Relational modeling
+
+`relate` adds endpoint anchoring, connector-plane grounding and translation-only connector alignment to existing `attach`/`conform`. See [relational-modeling.md](relational-modeling.md) and [relational_chair.mog](../examples/furniture/relational_chair.mog) for supported syntax, dependency order, module coordinates, diagnostics and compiled-lock behavior.

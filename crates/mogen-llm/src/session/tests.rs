@@ -659,3 +659,12 @@ fn closeup_framing_uses_parent_world_transform_and_selected_subtree() {
     assert!(radius < 0.2);
     assert!(part_framing(&scene, "missing").is_err());
 }
+
+#[test]
+fn relational_driver_changes_cannot_bypass_dependent_geometry_locks() {
+    let source = "scene { box \"seat\" (pos=[0,0.6,0],size=[1,0.1,1]) spline_tube \"leg\" (points=[[0,0,0],[0,0.3,0]],radius=0.025) } relate (child=\"leg\",target=\"seat\",mode=\"endpoint\",socket=\"bottom\",insertion=0.01)";
+    let changed = source.replace("pos=[0,0.6,0]", "pos=[0,0.9,0]");
+    let locks = vec![PartLock { name:"leg".into(),kind:LockKind::Geometry }];
+    let error = enforce_locks(source,&changed,&locks,None).unwrap_err();
+    assert!(error.to_string().contains("locked"));
+}
