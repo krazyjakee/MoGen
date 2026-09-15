@@ -578,8 +578,12 @@ impl MogenStudioApp {
         // Show the welcome flow exactly once per install. Skip it for users
         // upgrading from a settings file that predates the `onboarded` field
         // but already has a saved key — they've clearly walked through
-        // Preferences themselves and don't need the orientation pass.
-        if !settings.onboarded && !settings.gemini_api_key.trim().is_empty() {
+        // Preferences themselves and don't need the orientation pass. Check
+        // every provider's key, not just the active slot's: a pre-existing
+        // Gemini-only setup from before OpenAI became the default provider
+        // must not be treated as unconfigured just because `openai_api_key`
+        // is empty.
+        if !settings.onboarded && settings.has_any_saved_api_key() {
             settings.onboarded = true;
             let _ = settings.save();
         }

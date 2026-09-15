@@ -25,7 +25,7 @@ pub use providers::{preview_fast_model, preview_thinking_model};
 
 use std::fs;
 
-use mogen_llm::gemini::{DEFAULT_MODEL, DEFAULT_TEMPERATURE};
+use mogen_llm::gemini::DEFAULT_TEMPERATURE;
 use mogen_llm::{Style, ThinkingLevel};
 use mogen_moghub_client::session_store as moghub_session;
 use serde::{Deserialize, Serialize};
@@ -252,6 +252,14 @@ pub struct Settings {
     #[serde(default)]
     pub claude_code_path: String,
 
+    /// Codex executable override. Blank uses `codex` on PATH.
+    #[serde(default)]
+    pub codex_path: String,
+    #[serde(default)]
+    pub codex_model: String,
+    #[serde(default)]
+    pub codex_fast_model: String,
+
     /// API key for Fireworks AI. Stored as a plain string so switching to
     /// Fireworks in the provider dropdown doesn't require re-pasting the
     /// `fw_…` token. Empty → fall back to the `FIREWORKS_API_KEY` env var.
@@ -471,27 +479,31 @@ impl Settings {
             }
         };
         let mut s: Self = serde_json::from_slice(&bytes).unwrap_or_default();
+        s.migrate_provider_slot();
+        s
+    }
+
+    /// Backfill `provider_slot` for settings files saved before it existed.
+    /// Split out from [`Self::load_raw`] so the migration can be unit-tested
+    /// without touching the filesystem.
+    fn migrate_provider_slot(&mut self) {
         // Pre-`ProviderSlot` settings only stored `provider`; copy it over so
         // the rest of the app reads the slot field uniformly. Migration is a
         // one-shot — once `provider_slot` is non-empty, `provider` is ignored.
-        if s.provider_slot.trim().is_empty() {
-            if let Some(slot) = ProviderSlot::parse(&s.provider) {
-                s.provider_slot = slot.key().to_string();
+        if self.provider_slot.trim().is_empty() {
+            if let Some(slot) = ProviderSlot::parse(&self.provider) {
+                self.provider_slot = slot.key().to_string();
             }
         }
-        // First-time onboarding: when no slot has ever been picked, prefer the
-        // OAuth slot if a Google token bundle already exists on disk. Users
-        // who ran `mogen auth login` shouldn't have to also manually flip the
-        // provider dropdown — picking the OAuth slot makes both the text-LLM
-        // and image-gen paths route through their paid Antigravity plan.
-        if s.provider_slot.trim().is_empty() {
-            if let Some(path) = mogen_llm::token_store_path() {
-                if matches!(mogen_llm::load_bundle(&path), Ok(Some(_))) {
-                    s.provider_slot = ProviderSlot::GeminiOAuth.key().to_string();
-                }
-            }
+        // A settings file with a saved Gemini key but no recorded slot
+        // predates both `ProviderSlot` and the migration above — the
+        // original onboarding dialog only ever wrote `gemini_api_key`.
+        // Pin these existing installs to the Gemini API-key slot rather
+        // than silently picking up the new `OpenAI` default, which would
+        // leave a working setup calling a provider with no saved key.
+        if self.provider_slot.trim().is_empty() && !self.gemini_api_key.trim().is_empty() {
+            self.provider_slot = ProviderSlot::GeminiApiKey.key().to_string();
         }
-        s
     }
 
     pub fn save(&self) -> Result<(), String> {
@@ -641,17 +653,6 @@ impl Settings {
 
     pub fn set_preview_shader(&mut self, shader: PreviewShader) {
         self.preview_shader = preview_shader_key(shader).to_string();
-    }
-
-    /// Current Gemini text model, falling back to the library default when
-    /// the setting is empty.
-    pub fn gemini_model(&self) -> String {
-        let m = self.gemini_model.trim();
-        if m.is_empty() {
-            DEFAULT_MODEL.to_string()
-        } else {
-            m.to_string()
-        }
     }
 
     /// Sampling temperature, clamped to a sane range so a corrupted file
@@ -903,5 +904,32 @@ mod tests {
         let s = Settings::default();
         assert!(!s.remote_enabled());
         assert!(!s.remote_allow_lan());
+    }
+
+    #[test]
+    fn migrate_provider_slot_pins_preexisting_gemini_key_setups() {
+        // Predates both `ProviderSlot` and the `provider` field: the
+        // original onboarding dialog only ever wrote `gemini_api_key`.
+        let mut s: Settings =
+            serde_json::from_str(r#"{"gemini_api_key":"saved-gemini-key"}"#).unwrap();
+        s.migrate_provider_slot();
+        assert_eq!(s.provider_slot(), ProviderSlot::GeminiApiKey);
+        assert_eq!(s.provider_api_key(), Some("saved-gemini-key"));
+    }
+
+    #[test]
+    fn migrate_provider_slot_leaves_fresh_installs_on_the_new_default() {
+        let mut s = Settings::default();
+        s.migrate_provider_slot();
+        assert_eq!(s.provider_slot(), ProviderSlot::OpenAI);
+    }
+
+    #[test]
+    fn migrate_provider_slot_prefers_legacy_provider_field_over_gemini_key() {
+        let mut s: Settings =
+            serde_json::from_str(r#"{"provider":"anthropic","gemini_api_key":"saved-gemini-key"}"#)
+                .unwrap();
+        s.migrate_provider_slot();
+        assert_eq!(s.provider_slot(), ProviderSlot::Anthropic);
     }
 }

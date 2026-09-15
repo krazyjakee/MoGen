@@ -154,6 +154,7 @@ pub(in crate::app) struct ProviderEndpoints {
     /// Path to the `claude` binary for [`Provider::ClaudeCode`]. Blank →
     /// the client falls back to `claude` on `PATH`.
     pub claude_code_path: String,
+    pub codex_path: String,
     /// Base URL for the Z.ai chat-completions surface (GLM Coding Plan vs
     /// general PaaS). Blank → library default.
     pub zai_base_url: String,
@@ -187,9 +188,12 @@ pub(in crate::app) fn build_provider_client(
         (Provider::Gemini, Credential::AntigravityOAuth(bundle)) => {
             LlmClient::gemini_from_credential(GoogleCredential::AntigravityOAuth(bundle))
         }
-        (Provider::ClaudeCode, cred) => {
-            LlmClient::with_base_url(provider, cred.api_key_or_empty(), &endpoints.claude_code_path)
-        }
+        (Provider::Codex, _) => LlmClient::with_base_url(provider, "", &endpoints.codex_path),
+        (Provider::ClaudeCode, cred) => LlmClient::with_base_url(
+            provider,
+            cred.api_key_or_empty(),
+            &endpoints.claude_code_path,
+        ),
         (Provider::Zai, cred) => {
             LlmClient::with_base_url(provider, cred.api_key_or_empty(), &endpoints.zai_base_url)
         }
@@ -510,6 +514,7 @@ pub(in crate::app) fn run_llm(
             Err(e) => {
                 let info = classify(&e);
                 return LlmOutcome {
+                    subscription: provider == Provider::Codex,
                     dsl: existing.unwrap_or_default(),
                     diagnostics: Vec::new(),
                     usage: prefix_usage,
@@ -597,6 +602,7 @@ pub(in crate::app) fn run_llm(
                 mogen_dsl::stamp_mogen_version(&wrapped, env!("CARGO_PKG_VERSION"));
             let wrapped = stamp_style_header(&wrapped, effective_style);
             LlmOutcome {
+                subscription: provider == Provider::Codex,
                 dsl: wrapped,
                 diagnostics: outcome.diagnostics,
                 usage: total_usage,
@@ -611,6 +617,7 @@ pub(in crate::app) fn run_llm(
         Err(e) => {
             let info = classify(&e);
             LlmOutcome {
+                subscription: provider == Provider::Codex,
                 dsl: existing.unwrap_or_default(),
                 diagnostics: Vec::new(),
                 usage: prefix_usage,

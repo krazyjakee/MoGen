@@ -10,6 +10,7 @@ impl MogenStudioApp {
     /// OpenAI-compatible (issue 68) endpoint settings.
     pub(in crate::app) fn provider_endpoints(&self) -> ProviderEndpoints {
         ProviderEndpoints {
+            codex_path: self.settings.codex_path.clone(),
             claude_code_path: self.settings.claude_code_path(),
             zai_base_url: self.settings.zai_base_url().to_string(),
             ollama_base_url: self.settings.ollama_base_url.clone(),

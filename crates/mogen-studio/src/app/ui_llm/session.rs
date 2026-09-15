@@ -21,7 +21,11 @@ impl MogenStudioApp {
         {
             self.session_usage = Default::default();
         }
-        let tooltip = session_tooltip(&u, &self.settings.gemini_model());
+        let tooltip = session_tooltip(
+            &u,
+            &self.settings.provider_model(),
+            self.settings.provider() == mogen_llm::Provider::Codex,
+        );
         ui.label(format!(
             "· {} ({} tok, {})",
             calls_label(&u),
@@ -51,7 +55,10 @@ fn calls_label(u: &SessionUsage) -> String {
     parts.join(", ")
 }
 
-fn session_tooltip(u: &SessionUsage, model: &str) -> String {
+fn session_tooltip(u: &SessionUsage, model: &str, subscription: bool) -> String {
+    if subscription {
+        return format!("Session totals: {} tokens, estimated cost {}. Codex text calls use your subscription limits; texture generation is billed separately.", u.prompt_tokens + u.response_tokens, format_usd(u.estimated_usd));
+    }
     let price = text_pricing(model);
     let img = image_pricing(model);
     format!(

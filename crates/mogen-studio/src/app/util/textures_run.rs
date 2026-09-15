@@ -48,6 +48,7 @@ pub(in crate::app) fn run_llm_textures(
         Ok(a) => a,
         Err(e) => {
             return LlmOutcome {
+                subscription: false,
                 dsl: src,
                 diagnostics: Vec::new(),
                 usage: Usage::default(),
@@ -116,6 +117,7 @@ pub(in crate::app) fn run_llm_textures(
     });
     if !anything_to_do {
         return LlmOutcome {
+            subscription: false,
             dsl: src,
             diagnostics: Vec::new(),
             usage: Usage::default(),
@@ -166,6 +168,7 @@ pub(in crate::app) fn run_llm_textures(
         Credential::Zai(k) => ImageClient::Zai(ZaiClient::new(k.clone())),
         Credential::GeminiOAuth(_) => {
             return LlmOutcome {
+                subscription: false,
                 dsl: src,
                 diagnostics: Vec::new(),
                 usage: Usage::default(),
@@ -256,6 +259,7 @@ pub(in crate::app) fn run_llm_textures(
 
     match splice_textures(&src, &edits) {
         Ok(new_src) => LlmOutcome {
+            subscription: false,
             dsl: mogen_dsl::stamp_mogen_version(&new_src, env!("CARGO_PKG_VERSION")),
             diagnostics: Vec::new(),
             usage: Usage::default(),
@@ -267,6 +271,7 @@ pub(in crate::app) fn run_llm_textures(
             kind: LlmKind::Textures,
         },
         Err(e) => LlmOutcome {
+            subscription: false,
             dsl: src,
             diagnostics: Vec::new(),
             usage: Usage::default(),

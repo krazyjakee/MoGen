@@ -115,6 +115,25 @@ mod tests {
     }
 
     #[test]
+    fn codex_subscription_is_free_for_default_and_custom_models() {
+        let dir = tmpdb();
+        let conn = open(&dir.path().join("spend.db")).unwrap();
+        let usage = Usage {
+            prompt_tokens: 1000,
+            response_tokens: 500,
+            total_tokens: 1500,
+            cached_tokens: 0,
+        };
+        let ctx = CallContext::new(Operation::Generate);
+        for model in ["gpt-6-astra", "gpt-5.5", "custom-model"] {
+            let record = CallRecord::from_text("codex", model, &usage, &ctx, true, None);
+            assert_eq!(pricing::cost_for_record(&conn, &record).unwrap(), 0.0);
+        }
+        let api = CallRecord::from_text("openai", "gpt-6-astra", &usage, &ctx, true, None);
+        assert!(pricing::cost_for_record(&conn, &api).unwrap() > 0.0);
+    }
+
+    #[test]
     fn record_and_query_round_trip() {
         let dir = tmpdb();
         let path = dir.path().join("spend.db");

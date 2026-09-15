@@ -21,6 +21,11 @@ use crate::types::Usage;
 /// "no tier flip").
 pub const DEFAULT_LONG_CONTEXT_THRESHOLD: u32 = 200_000;
 
+/// GPT-6 Astra Standard rates, including the >272k prompt tier.
+/// Source: https://developers.openai.com/api/docs/models/gpt-6-astra
+pub const ASTRA_PRICING: TextPricing =
+    TextPricing::tiered(272_000, (10.00, 50.00, 1.00), (20.00, 75.00, 2.00));
+
 /// Rates for one text model. Per-million-tokens, USD.
 ///
 /// Tiered models (Gemini Pro family) carry distinct short- vs long-context
@@ -180,6 +185,10 @@ pub fn text_price_for_model(model: &str) -> TextPricing {
         return TextPricing::flat(0.30, 2.50, 0.03);
     }
 
+    if m.starts_with("gpt-6-astra") {
+        return ASTRA_PRICING;
+    }
+
     // --- OpenAI GPT family. Conservative defaults from published rates.
     if m.contains("gpt-5") {
         return TextPricing::flat(2.50, 10.00, 1.25);
@@ -331,6 +340,12 @@ pub const SEED: &[PricingSeed] = &[
     // --- OpenAI.
     PricingSeed {
         provider: "openai",
+        model: "gpt-6-astra",
+        text: Some(ASTRA_PRICING),
+        image: None,
+    },
+    PricingSeed {
+        provider: "openai",
         model: "gpt-5",
         text: Some(TextPricing::flat(2.50, 10.00, 1.25)),
         image: None,
@@ -405,6 +420,12 @@ pub const SEED: &[PricingSeed] = &[
         text: Some(TextPricing::flat(0.0, 0.0, 0.0)),
         image: None,
     },
+    PricingSeed {
+        provider: "codex",
+        model: crate::codex::DEFAULT_MODEL,
+        text: Some(TextPricing::flat(0.0, 0.0, 0.0)),
+        image: None,
+    },
     // --- Claude Code (user's subscription pays — no per-call billing).
     PricingSeed {
         provider: "claude-code",
@@ -417,6 +438,29 @@ pub const SEED: &[PricingSeed] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn astra_cost_switches_tiers_only_above_272k() {
+        let price = text_price_for_model("gpt-6-astra");
+        let mut usage = Usage {
+            prompt_tokens: 272_000,
+            response_tokens: 1_000,
+            cached_tokens: 2_000,
+            ..Usage::default()
+        };
+        assert_eq!(price.tier_for(usage.prompt_tokens), PriceTier::Short);
+        assert!((compute_cost(&usage, price) - 2.752).abs() < 1e-9);
+        usage.prompt_tokens += 1;
+        assert_eq!(price.tier_for(usage.prompt_tokens), PriceTier::Long);
+        assert!((compute_cost(&usage, price) - 5.47902).abs() < 1e-9);
+        assert_eq!(
+            SEED.iter()
+                .find(|row| row.model == "gpt-6-astra")
+                .unwrap()
+                .text,
+            Some(price)
+        );
+    }
 
     #[test]
     fn pro_pricing_matches_published_rates() {

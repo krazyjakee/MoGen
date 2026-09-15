@@ -1,7 +1,7 @@
 //! OpenAI Chat Completions client.
 //!
 //! Talks to `POST {base_url}/chat/completions` with the standard
-//! `messages: [{role, content}]` shape. Supports the GPT-4o/4.1/5/5.5 line
+//! `messages: [{role, content}]` shape. Supports GPT-6 Astra, the GPT-4o/4.1/5 line,
 //! and the o-series reasoning models — the latter pick up [`ThinkingLevel`]
 //! via the top-level `reasoning_effort` field. We only emit that field for
 //! models that accept it: current OpenAI Chat Completions rejects unknown
@@ -19,13 +19,11 @@ use thiserror::Error;
 
 use crate::types::{GenerateConfig, GenerateResponse, Usage};
 
-/// Default heavy text model. GPT-5.5 (Apr 2026) — current frontier model
-/// with a 1M+ token context window and native multimodal input.
-pub const DEFAULT_MODEL: &str = "gpt-5.5";
+/// Default heavy text model for 3D generation, with native multimodal input.
+pub const DEFAULT_MODEL: &str = "gpt-6-astra";
 
 /// Default fast model used by the Studio Prompt Enhancer / Ask modal.
-/// `gpt-5-mini` is the cheapest current-generation multimodal option; no
-/// `gpt-5.5-mini` exists yet.
+/// Keeps lightweight rewrites on the existing cheaper multimodal tier.
 pub const DEFAULT_FAST_MODEL: &str = "gpt-5-mini";
 
 const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
@@ -142,6 +140,7 @@ fn is_reasoning_model(model: &str) -> bool {
         || m.starts_with("o3")
         || m.starts_with("o4")
         || m.starts_with("gpt-5")
+        || m.starts_with("gpt-6-astra")
 }
 
 fn build_request(cfg: &GenerateConfig) -> serde_json::Value {
@@ -258,6 +257,29 @@ mod tests {
     use crate::types::{ImageInput, Role, ThinkingLevel, Turn};
 
     #[test]
+    fn astra_request_preserves_supported_reasoning_levels_and_vision() {
+        for level in [
+            ThinkingLevel::Low,
+            ThinkingLevel::Medium,
+            ThinkingLevel::High,
+            ThinkingLevel::XHigh,
+        ] {
+            let mut cfg = GenerateConfig::new("make a chair from this image");
+            cfg.model = DEFAULT_MODEL.into();
+            cfg.thinking_level = Some(level);
+            cfg.user_images.push(ImageInput {
+                mime_type: "image/png".into(),
+                data: vec![1, 2, 3],
+            });
+            let body = build_request(&cfg);
+            assert_eq!(body["model"], "gpt-6-astra");
+            assert_eq!(body["reasoning_effort"], level.openai_effort());
+            assert!(body.get("temperature").is_none());
+            assert_eq!(body["messages"][0]["content"][0]["type"], "image_url");
+        }
+    }
+
+    #[test]
     fn request_body_includes_system_message() {
         let mut cfg = GenerateConfig::new("hello");
         cfg.model = "gpt-5.5".into();
@@ -296,7 +318,15 @@ mod tests {
     #[test]
     fn temperature_omitted_for_reasoning_models() {
         // o-series and gpt-5.x reject any temperature except the default (1).
-        for model in ["o3", "o4-mini", "gpt-5", "gpt-5-mini", "gpt-5.5", "gpt-5.5-pro"] {
+        for model in [
+            "o3",
+            "o4-mini",
+            "gpt-5",
+            "gpt-5-mini",
+            "gpt-5.5",
+            "gpt-5.5-pro",
+            "gpt-6-astra",
+        ] {
             let mut cfg = GenerateConfig::new("x");
             cfg.model = model.into();
             cfg.temperature = Some(0.3);
@@ -310,7 +340,15 @@ mod tests {
 
     #[test]
     fn reasoning_effort_emitted_for_reasoning_models() {
-        for model in ["o3", "o4-mini", "gpt-5", "gpt-5-mini", "gpt-5.5", "gpt-5.5-pro"] {
+        for model in [
+            "o3",
+            "o4-mini",
+            "gpt-5",
+            "gpt-5-mini",
+            "gpt-5.5",
+            "gpt-5.5-pro",
+            "gpt-6-astra",
+        ] {
             let mut cfg = GenerateConfig::new("x");
             cfg.model = model.into();
             cfg.thinking_level = Some(ThinkingLevel::High);

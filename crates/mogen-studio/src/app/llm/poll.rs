@@ -93,7 +93,11 @@ impl MogenStudioApp {
         // Roll the usage into the session meter regardless of success: a
         // failed repair iteration still consumed tokens.
         let price = text_pricing(&outcome.model);
-        let text_cost = cost_text(&outcome.usage, price);
+        let text_cost = if outcome.subscription {
+            0.0
+        } else {
+            cost_text(&outcome.usage, price)
+        };
         let image_price = image_pricing(&outcome.model);
         let image_cost = cost_images(outcome.image_calls, image_price);
         if outcome.calls > 0 || outcome.usage.total_tokens > 0 {
