@@ -150,6 +150,8 @@ pub struct ModelingProject {
     pub session_images: Vec<ImageInput>,
     pub generation_response: Option<crate::GenerateResponse>,
     pub generation_request: String,
+    /// CLI input retained before rendering or refinement starts.
+    pub input_source: Option<String>,
     pub request_settings: Option<SessionRequestSettings>,
 }
 impl Default for ModelingProject {
@@ -176,6 +178,7 @@ impl Default for ModelingProject {
             session_images: vec![],
             generation_response: None,
             generation_request: String::new(),
+            input_source: None,
             request_settings: None,
         }
     }

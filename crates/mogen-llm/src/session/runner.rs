@@ -161,6 +161,7 @@ fn tool_session_saved(
                     if !project
                         .candidates
                         .iter()
+                        .skip(project.session_initial.unwrap_or(0))
                         .any(|c| c.revision == result["revision"].as_str().unwrap_or(""))
                     {
                         project.record(
@@ -563,7 +564,10 @@ fn run_session(
                 candidate = if let Some(index) = project
                     .candidates
                     .iter()
-                    .position(|c| c.revision == workspace.revision().unwrap_or_default())
+                    .enumerate()
+                    .skip(initial)
+                    .find(|(_, c)| c.revision == workspace.revision().unwrap_or_default())
+                    .map(|(index, _)| index)
                 {
                     index
                 } else {

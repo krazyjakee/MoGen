@@ -64,6 +64,14 @@ pub(crate) struct SessionArgs {
     pub script: Option<PathBuf>,
 }
 pub(crate) fn run(args: SessionArgs) -> Result<()> {
+    if (args.resume || args.inspect)
+        && !ModelingProject::sidecar(&args.out_dir.join("final.mog")).is_file()
+    {
+        bail!(
+            "No saved modeling session in {}; use a new --out-dir to start a session",
+            args.out_dir.display()
+        );
+    }
     if args.inspect {
         let dir = args.out_dir.canonicalize()?;
         let project = ModelingProject::load(&dir.join("final.mog"))?;
@@ -108,6 +116,9 @@ pub(crate) fn run(args: SessionArgs) -> Result<()> {
     } else {
         ModelingProject::default()
     };
+    if args.resume && project.request_settings.is_none() {
+        bail!("Saved project has no resumable execution; inspect its candidates or start a new session with --input");
+    }
     let limits = SessionLimits {
         calls: args.calls,
         iterations: args.iterations,
@@ -116,6 +127,12 @@ pub(crate) fn run(args: SessionArgs) -> Result<()> {
         output_tokens: args.output_tokens,
     };
     if !args.resume {
+        // An input sidecar supplies history and authoring constraints. Its
+        // previous execution must not be resumed as this new refinement.
+        project.session_initial = None;
+        project.generation_response = None;
+        project.generation_request.clear();
+        project.input_source = None;
         if let Some(path) = &args.brief {
             project.brief = serde_json::from_slice(&std::fs::read(path)?)?;
         } else if project.brief.prompt.is_empty() {
@@ -215,6 +232,49 @@ pub(crate) fn run(args: SessionArgs) -> Result<()> {
         ))
     });
     project.brief.attach(&mut cfg)?;
+    if !args.resume {
+        if let Some(input) = &args.input {
+            let source = std::fs::read_to_string(input)?;
+            let base = input
+                .parent()
+                .filter(|p| !p.as_os_str().is_empty())
+                .unwrap_or(std::path::Path::new("."));
+            let deps = dependencies(&source, Some(base))?;
+            // Output artifacts must never overwrite a dependency with the
+            // same path. Fail before copying anything into the output project.
+            for path in deps.keys() {
+                let name = path
+                    .components()
+                    .next()
+                    .unwrap()
+                    .as_os_str()
+                    .to_string_lossy();
+                if matches!(
+                    name.as_ref(),
+                    "final.mog"
+                        | "final.glb"
+                        | "final.mog.modeling.json"
+                        | "report.json"
+                        | "generation-response.txt"
+                ) || name.starts_with("candidate-")
+                    || name.starts_with("revision-")
+                {
+                    bail!("Input dependency {} conflicts with session output artifacts; rename it before refining", path.display());
+                }
+            }
+            for (path, data) in deps {
+                let target = dir.join(path);
+                std::fs::create_dir_all(target.parent().unwrap())?;
+                std::fs::write(target, data)?;
+            }
+            compile(&source, Some(&dir))?;
+            write_source(&entry, &source)?;
+            project.input_source = Some(source);
+        }
+        project.request_settings = Some(SessionRequestSettings::new(&cfg, provider.key()));
+        project.sync_control(&cfg);
+        project.save(&entry)?;
+    }
     let mut renderer = Renderer {
         base: dir.clone(),
         framing: None,
@@ -295,15 +355,8 @@ pub(crate) fn run(args: SessionArgs) -> Result<()> {
         let source = if args.resume && project.session_initial.is_some() {
             std::fs::read_to_string(&entry)
                 .context("Missing final.mog; inspect retained candidates in sidecar")?
-        } else if let Some(input) = &args.input {
-            let source = std::fs::read_to_string(input)?;
-            let base = input.parent().unwrap_or(std::path::Path::new("."));
-            for (path, data) in dependencies(&source, Some(base))? {
-                let target = dir.join(path);
-                std::fs::create_dir_all(target.parent().unwrap())?;
-                std::fs::write(target, data)?;
-            }
-            source
+        } else if let Some(source) = &project.input_source {
+            source.clone()
         } else {
             cfg.spend_context.operation = "generate".into();
             let source = generate_candidate(

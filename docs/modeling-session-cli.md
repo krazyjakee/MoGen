@@ -39,6 +39,15 @@ resume restores the original sampling settings. An input asset's existing
 sidecar supplies its persistent brief, references and locks. `--prompt` appends
 a correction to that brief; an explicit `--brief` replaces it. Added locks are
 combined with the saved locks.
+The input source is saved before render preflight, so a resumed input refinement
+continues from that source even if rendering initially failed. `--resume` and
+`--inspect` require a saved session; they never initialize a missing project.
+Legacy sidecars without execution settings can be inspected and used with
+`--input` to start a new session. Input dependencies must avoid the session's
+root output names (`final.mog`, `final.glb`, `final.mog.modeling.json`,
+`report.json`, `generation-response.txt`, `candidate-*` and `revision-*`);
+conflicts are rejected before copying, so report/export writes cannot replace
+an imported source or texture.
 `--spend-usd` stops if pricing is unknown. Subscription usage is reported as
 unknown cost, not zero dollars. The selected model must accept images for
 Refined mode; capability checks and a real GL probe run before generation.

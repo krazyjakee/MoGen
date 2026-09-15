@@ -3,6 +3,31 @@
 Validation on Linux with Mesa software EGL, 2026-09-15. These artifacts separate
 geometry and recovery correctness from model aesthetics.
 
+## PR review fixes
+
+Review found and fixed four session boundary problems:
+
+- Missing or legacy execution state could make `--resume` start generation.
+  Resume now requires saved execution settings; inspect requires a sidecar.
+- Repeating an edit in a new refinement could select an older candidate and
+  reuse its camera captures. Candidate reuse is now limited to the current run.
+- A render-preflight failure before an input refinement started could lose the
+  input on resume. The CLI now saves input source and request settings first,
+  and clears inherited execution state when starting a new input refinement.
+- Session reports/exports could overwrite input dependencies with matching
+  names. Those collisions are rejected before copying dependencies.
+
+The affected suites passed, including 353 LLM unit tests, 137 geometry unit
+tests, 680 DSL unit tests, 107 validation unit tests, all 22 golden tests and
+five CLI session tests. Additional integration tests passed; one pre-existing
+CLI test remains ignored. `cargo check --locked -p mogen-studio` passed.
+
+A final-binary Mesa smoke repeated the five-call generation/refinement run and
+resumed it with an empty transcript, retaining exactly five charged calls and
+the same selected revision. A separate input run deliberately failed render
+preflight, then resumed with one scripted review and no generation call,
+preserving the supplied source. These checks use no paid model calls.
+
 ## Deterministic checks
 
 | Check | Result |

@@ -924,6 +924,73 @@ fn format_retry_is_bounded_and_preserves_raw_evidence() {
 }
 
 #[test]
+fn new_refinement_captures_its_own_candidates_and_resumes_without_calls() {
+    let next = ORIGINAL.replace("0.1,0.1,1", "0.12,0.1,1");
+    let mut project = ModelingProject::default();
+    let cfg = GenerateConfig::new("chair");
+    let mut renderer = Renderer {
+        seen: vec![],
+        fail: false,
+    };
+    for run in 0..2 {
+        // The same edit can recur after restoring an earlier source, with a
+        // changed brief or camera framing. Its captures belong to this run.
+        project.brief.corrections.push(format!("Refinement {run}"));
+        let mut responses = vec![
+            r#"{"findings":"Thin arm","complete":false,"improved":false,"correction":"Thicken arm"}"#.to_string(),
+            next.clone(),
+            json!({"tool":"finish","revision":rev(&next),"findings":"Thickened"}).to_string(),
+            r#"{"findings":"Thicker arm","complete":true,"improved":true,"correction":""}"#.to_string(),
+        ].into_iter();
+        let result = refine_session(
+            &mut project,
+            ORIGINAL,
+            None,
+            &cfg,
+            "fixture",
+            &mut |_| {
+                Ok(response(
+                    responses.next().expect("unexpected provider call"),
+                ))
+            },
+            &mut renderer,
+            &mut |_| {},
+        )
+        .unwrap();
+        assert_eq!(result, next);
+        assert!(responses.next().is_none());
+        assert_eq!(project.session_initial, Some(run * 2));
+        assert_eq!(project.selected_candidate, Some(run * 2 + 1));
+        assert_eq!(renderer.seen.len(), (run + 1) * 10);
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("scene.mog");
+    project.save(&path).unwrap();
+    let mut project = ModelingProject::load(&path).unwrap();
+    let result = resume_session(
+        &mut project,
+        &next,
+        None,
+        &cfg,
+        "fixture",
+        &mut |_| panic!("completed responses must be replayed"),
+        &mut Renderer {
+            seen: vec![],
+            fail: true,
+        },
+        &mut |_| {},
+    )
+    .unwrap();
+    assert_eq!(result, next);
+    assert_eq!(project.selected_candidate, Some(3));
+    assert!(
+        !project.stop_reason.starts_with("Stopped:"),
+        "{}",
+        project.stop_reason
+    );
+}
+
+#[test]
 fn late_raw_edit_is_saved_but_cannot_mutate_cancelled_session() {
     let mut project = ModelingProject::default();
     let mut cfg = GenerateConfig::new("chair");
