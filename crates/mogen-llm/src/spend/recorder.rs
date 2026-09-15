@@ -11,6 +11,10 @@ use super::{CallFilter, CallRecord, CallRow, ModelSummary, SummaryRow};
 /// Persistent sink for [`CallRecord`]s. Implementations may queue, batch,
 /// or write synchronously — callers should treat `record` as fire-and-forget.
 pub trait SpendRecorder: Send + Sync + 'static {
+    fn text_price(&self, _provider: &str, _model: &str) -> Option<super::pricing::TextPricing> {
+        None
+    }
+
     /// Persist one call. Implementations must not block the calling
     /// thread for an unbounded time — the SQLite backend ships off to a
     /// writer thread for exactly this reason.

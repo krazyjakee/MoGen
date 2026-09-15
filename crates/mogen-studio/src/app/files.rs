@@ -290,6 +290,9 @@ impl MogenStudioApp {
     /// Ctrl+Shift+T can re-open them; untitled tabs are skipped (no path
     /// to re-open).
     pub(super) fn close_file(&mut self, i: usize) {
+        if let Some(control) = self.files.get(i).and_then(|f| f.modeling_control.as_ref()) {
+            control.cancel();
+        }
         if let Some(p) = self.files.get(i).and_then(|f| f.path.clone()) {
             self.push_recently_closed(p);
         }
@@ -362,6 +365,11 @@ impl MogenStudioApp {
         f.disk_mtime = mtime;
         f.last_watch_check = Some(Instant::now());
         f.status = format!("saved {}", path.display());
+        if f.modeling_load_error.is_none() {
+            if let Err(e) = f.modeling.lock().unwrap().save(path) {
+                f.status = format!("Source saved; modeling session save failed: {e}");
+            }
+        }
         if i == self.active {
             self.remember_last_opened();
         }

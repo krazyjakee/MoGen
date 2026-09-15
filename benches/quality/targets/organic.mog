@@ -1,0 +1,8 @@
+// Original procedural test target, CC0-1.0, MoGen contributors, 2026.
+material "green" (color=[0.18,0.4,0.12],roughness=0.9)
+scene {
+  blob "form" (blend=0.10,resolution=40,mat="green") {
+    sphere "body" (radius=0.3,pos=[0,0.3,0])
+    sphere "crown" (radius=0.2,pos=[0.05,0.6,0])
+  }
+}

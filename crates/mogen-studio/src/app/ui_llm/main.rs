@@ -28,6 +28,7 @@ impl MogenStudioApp {
         // Spending panel filtered to this scene. No-op when the spend
         // tracker isn't installed (e.g. read-only DB).
         self.ui_scene_spend_pill(ui);
+        self.ui_modeling(ui);
 
         // Inline provider switcher + global LLM toggles. Mirrors the
         // Preferences pane so the user can flip provider / planning mode /

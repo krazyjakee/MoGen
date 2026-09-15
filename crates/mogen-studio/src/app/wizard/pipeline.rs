@@ -323,7 +323,20 @@ pub fn run_object_mog(
         on_iteration: None,
         allow_edit_mode: true,
     };
-    let outcome = generate_with_repair(&client, gc, &repair).map_err(|e| e.to_string())?;
+    let mut modeling =
+        mogen_llm::session::ModelingProject::load(&out_path).map_err(|e| e.to_string())?;
+    modeling.brief.prompt = header_prompt.clone();
+    modeling.brief.dimensions =
+        format!("{} × {} × {} metres", obj.size[0], obj.size[1], obj.size[2]);
+    modeling.brief.style = cfg.style.map(|s| s.key().into()).unwrap_or_default();
+    for image in &gc.user_images {
+        modeling
+            .brief
+            .add_reference("wizard object target".into(), image.clone());
+    }
+    modeling.brief.revision += 1;
+    modeling.save(&out_path).map_err(|e| e.to_string())?;
+    let outcome = generate_with_repair(&client, gc.clone(), &repair).map_err(|e| e.to_string())?;
     let mut dsl = outcome.dsl;
     // Belt-and-braces: ensure the result actually defines a `module "<id>"`.
     // If the model forgot the wrapper, wrap the produced body ourselves so
@@ -335,6 +348,17 @@ pub fn run_object_mog(
     let wrapped = mogen_dsl::stamp_mogen_version(&wrapped, env!("CARGO_PKG_VERSION"));
     std::fs::write(&out_path, wrapped.as_bytes())
         .map_err(|e| format!("write {}: {e}", out_path.display()))?;
+    if let Ok(i) = modeling.record(
+        wrapped.clone(),
+        out_path.parent(),
+        &gc,
+        client.provider().key(),
+        "Generated in Scene Wizard".into(),
+        vec![],
+    ) {
+        modeling.selected_candidate = Some(i);
+    }
+    modeling.save(&out_path).map_err(|e| e.to_string())?;
     let guide = compute_position_guide(&wrapped, &obj.id).unwrap_or(PositionGuide {
         anchor: [0.0, 0.0, 0.0],
         up: [0.0, 1.0, 0.0],
@@ -375,13 +399,27 @@ pub fn run_object_review(
     gc.temperature = Some(cfg.temperature);
     gc.thinking_level = Some(cfg.thinking);
     gc.system_instruction = Some((*sys_instr).clone());
+    if let Some(path) = &obj.reference_image {
+        let data = std::fs::read(path)
+            .map_err(|e| format!("Missing original reference {}: {e}", path.display()))?;
+        let mime = if path.extension().is_some_and(|e| e == "jpg" || e == "jpeg") {
+            "image/jpeg"
+        } else {
+            "image/png"
+        };
+        gc.user_images.push(mogen_llm::ImageInput {
+            mime_type: mime.into(),
+            data,
+        });
+    }
+    gc.user_prompt.push_str(&format!("\nImage roles: first {} images are original target references; the last image is the current rendered model.",gc.user_images.len()));
     gc.user_images.push(mogen_llm::ImageInput {
         mime_type: image_mime,
         data: image_bytes,
     });
     gc.spend_context = mogen_llm::CallContext {
-        operation: "Generate".into(),
-        scene_path: None,
+        operation: "review".into(),
+        scene_path: obj.mog_path.as_ref().map(|p| p.display().to_string()),
         session_id: if cfg.session_id.is_empty() {
             None
         } else {

@@ -86,10 +86,10 @@ impl ThinkingLevel {
 /// One image attached to the user turn. Sent to providers that support
 /// vision input (see [`crate::Provider::supports_images`]) as a base64-encoded
 /// inline part alongside the text prompt — `inline_data` for Gemini,
-/// `image_url` data-URI for OpenAI Chat Completions. Non-vision providers
-/// silently ignore the field. Used by Studio's "New from Prompt" dialog to
+/// `image_url` data-URI for OpenAI Chat Completions. The unified client rejects unsupported vision
+/// inputs before issuing a provider call. Used by Studio's "New from Prompt" dialog to
 /// enable image-to-3D generation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ImageInput {
     /// MIME type, e.g. `"image/png"` or `"image/jpeg"`. Must start with
     /// `image/` — Gemini rejects anything else on a vision turn.
@@ -105,6 +105,9 @@ pub struct ImageInput {
 /// Gemini, `seed` for some) are silently ignored elsewhere.
 #[derive(Debug, Clone)]
 pub struct GenerateConfig {
+    pub session_control: Option<crate::session::SessionControl>,
+    /// Server-side output cap, distinct from the legacy total-token rejection cap.
+    pub max_output_tokens: Option<u32>,
     pub model: String,
     /// Single-shot prompt from the user (e.g. `"a wooden stool"`). May be
     /// empty when [`Self::user_images`] is non-empty — the image alone is a
@@ -113,7 +116,7 @@ pub struct GenerateConfig {
     /// Optional images attached to the user turn (image-to-3D). Vision-capable
     /// providers re-send these on every call (including repair iterations) so
     /// the model retains the visual reference while it fixes validator errors.
-    /// Non-vision providers ignore this field.
+    /// The unified client rejects providers without vision input.
     pub user_images: Vec<ImageInput>,
     /// Prior turns (e.g. first attempt's DSL + diagnostic feedback for repair).
     pub history: Vec<Turn>,
@@ -152,6 +155,8 @@ pub struct GenerateConfig {
 impl GenerateConfig {
     pub fn new(user_prompt: impl Into<String>) -> Self {
         Self {
+            session_control: None,
+            max_output_tokens: None,
             model: String::new(),
             user_prompt: user_prompt.into(),
             user_images: Vec::new(),
@@ -209,7 +214,7 @@ impl Role {
 /// Token usage reported by the provider for a single call. Fields are
 /// best-effort: providers that don't break out cached tokens leave that
 /// counter at 0.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct Usage {
     pub prompt_tokens: u32,
     pub response_tokens: u32,

@@ -3,12 +3,11 @@ use std::sync::mpsc::Sender;
 use std::sync::Arc;
 
 use mogen_llm::{
-    apply_style_to_prompt, cacheable_block, default_cache_path, embed_seed_header,
-    format_imports_preserve_block, generate_edits_with_repair, generate_with_repair, inline_block,
-    parse_prompt_header, parse_seed_header, parse_style_header, repair_message,
-    resolve_or_create_cache, stamp_style_header, summarize_imports, validate_text,
+    apply_style_to_prompt, embed_seed_header, format_imports_preserve_block,
+    generate_edits_with_repair, generate_with_repair, parse_prompt_header, parse_seed_header,
+    parse_style_header, repair_message, stamp_style_header, summarize_imports, validate_text,
     GenerateConfig, GoogleCredential, ImageInput, LlmClient, OAuthBundle, Provider, RepairConfig,
-    StdlibIndex, Style, ThinkingLevel, Usage, DEFAULT_TTL_SECONDS, EDIT_BLOCK_INSTRUCTIONS,
+    Style, ThinkingLevel, Usage, EDIT_BLOCK_INSTRUCTIONS,
 };
 
 use crate::app::error_class::classify;
@@ -19,6 +18,11 @@ use crate::app::types::{LlmKind, LlmMessage, LlmOutcome, LlmProgress};
 /// every new setting would push another through every call site.
 #[derive(Clone)]
 pub(in crate::app) struct LlmRunConfig {
+    pub modeling: Arc<std::sync::Mutex<mogen_llm::session::ModelingProject>>,
+    pub control: mogen_llm::session::SessionControl,
+    pub recovery_path: Option<PathBuf>,
+    pub brief_revision: u64,
+
     pub model: String,
     pub thinking: ThinkingLevel,
     pub temperature: f32,
@@ -55,49 +59,6 @@ pub(in crate::app) struct LlmRunConfig {
     /// the caller didn't allocate one; the panel falls back to "all
     /// time" in that case.
     pub session_id: String,
-}
-
-/// Pin the system instruction onto `cfg`. For Gemini, upload `cacheable_block`
-/// (~17 KB of grammar/kinds/allowlist that's stable across sessions) as a
-/// `cachedContents` resource and pair it with `inline_block(idx)` (~22 KB of
-/// rules/conventions/fewshots/output) sent fresh per request. The cache is
-/// persisted under `$HOME/.cache/mogen/` so repeat calls across sessions pay
-/// the cached-input rate on the static portion. Falls back to the full
-/// `sys_instr` inline on any failure (no cache dir, API down, instruction
-/// below the model's minimum cacheable size). Mirrors the CLI's
-/// `attach_system_instruction` so the two frontends share cache state.
-fn attach_system_instruction(
-    cfg: &mut GenerateConfig,
-    client: &LlmClient,
-    sys_instr: &Arc<String>,
-    send_progress: &dyn Fn(LlmProgress),
-) {
-    if let Some(g) = client.as_gemini() {
-        if let Some(cache_path) = default_cache_path() {
-            let cacheable = cacheable_block();
-            match resolve_or_create_cache(
-                g,
-                &cfg.model,
-                &cacheable,
-                &cache_path,
-                DEFAULT_TTL_SECONDS,
-            ) {
-                Ok(name) => {
-                    let idx =
-                        StdlibIndex::from_registry(mogen_dsl::stdlib_registry());
-                    cfg.cached_content = Some(name);
-                    cfg.system_instruction = Some(inline_block(&idx));
-                    return;
-                }
-                Err(e) => {
-                    send_progress(LlmProgress::Status(format!(
-                        "cache unavailable ({e}); sending system instruction inline"
-                    )));
-                }
-            }
-        }
-    }
-    cfg.system_instruction = Some((**sys_instr).clone());
 }
 
 /// Resolved credential for one LLM call. Carries either an API key (any
@@ -245,6 +206,38 @@ pub(in crate::app) fn run_llm(
     };
 
     let client = build_provider_client(provider, credential, &run_cfg.endpoints);
+    // Persist target context before the first potentially long provider call.
+    {
+        let mut project = run_cfg.modeling.lock().unwrap().clone();
+        if let Some(source) = existing.as_ref() {
+            if mogen_llm::session::compile(source, run_cfg.base_dir.as_deref()).is_ok()
+                && !project.candidates.iter().any(|c| &c.source == source)
+            {
+                let mut cfg = GenerateConfig::new(&prompt);
+                cfg.model = run_cfg.model.clone();
+                let _ = project.record(
+                    source.clone(),
+                    run_cfg.base_dir.as_deref(),
+                    &cfg,
+                    provider.key(),
+                    "Before AI edit".into(),
+                    vec![],
+                );
+            }
+        }
+        let mut stored = run_cfg.modeling.lock().unwrap();
+        if stored.brief.revision == run_cfg.brief_revision && run_cfg.control.check().is_ok() {
+            *stored = project;
+            let path = run_cfg.scene_path.as_ref().map(PathBuf::from)
+                .or_else(|| run_cfg.recovery_path.clone());
+            if let Some(path) = path {
+                if let Some(parent) = path.parent() { let _ = std::fs::create_dir_all(parent); }
+                if let Err(e) = stored.save(&path) {
+                    send_progress(LlmProgress::Status(format!("Session checkpoint failed: {e}")));
+                }
+            }
+        }
+    }
     let seed = run_cfg.seed_override.unwrap_or_else(|| {
         existing
             .as_deref()
@@ -464,6 +457,8 @@ pub(in crate::app) fn run_llm(
     let user_prompt = apply_style_to_prompt(&user_prompt, effective_style);
     let mut cfg = GenerateConfig::new(user_prompt);
     cfg.model = run_cfg.model.clone();
+    cfg.session_control = Some(run_cfg.control.clone());
+    cfg.max_output_tokens = Some(run_cfg.control.limits().output_tokens);
     cfg.seed = Some(seed);
     cfg.thinking_level = Some(run_cfg.thinking);
     cfg.temperature = Some(run_cfg.temperature);
@@ -476,23 +471,53 @@ pub(in crate::app) fn run_llm(
             Some(run_cfg.session_id.clone())
         },
     };
-    attach_system_instruction(&mut cfg, &client, &sys_instr, &send_progress);
+    // Session calls send the instruction inline: a cache-creation request must
+    // not escape the session admission/billing boundary.
+    cfg.system_instruction = Some((*sys_instr).clone());
+    {
+        let project = run_cfg.modeling.lock().unwrap();
+        if let Err(e) = project.brief.attach(&mut cfg) {
+            return LlmOutcome {
+                subscription: provider == Provider::Codex,
+                dsl: existing.unwrap_or_default(),
+                diagnostics: vec![],
+                usage: Usage::default(),
+                calls: 0,
+                model: cfg.model,
+                image_calls: 0,
+                retry_prompt: Some(prompt),
+                error: Some(classify(&mogen_llm::ProviderError::InvalidResponse(
+                    e.to_string(),
+                ))),
+                kind,
+            };
+        }
+        cfg.user_prompt
+            .push_str(&format!("\nEnforced part locks: {:?}\n", project.locks));
+        if let Some(part) = &project.selected_part {
+            cfg.user_prompt.push_str(&format!("Focus this edit only on the authored subtree named {part:?}. Preserve every byte outside it, including the existing meta block.\n"));
+        }
+        if project.experimental_guidance {
+            cfg.system_instruction = Some(mogen_llm::session::experimental_system_instruction());
+        }
+    }
     if let Some(img) = image {
         // Carried through every repair iteration: `repair.rs` rewrites
         // `cfg.user_prompt` but leaves `cfg.user_images` alone, so the model
         // keeps the visual reference while it fixes validator errors.
-        cfg.user_images.push(img);
+        if kind != LlmKind::Generate {
+            cfg.user_prompt.push_str("\nImage roles: the last attached image is the current model render; preceding images are original target references.\n");
+            cfg.user_images.push(img);
+        } else if !cfg.user_images.iter().any(|i| i.data == img.data) {
+            cfg.user_images.push(img);
+        }
     }
 
-    // Architect (planner) pass. Only meaningful when (a) the user opted in,
-    // (b) the call is Generate, and (c) there's a text prompt to plan
-    // against — image-only generates skip planning because the planner
-    // is text-only and "describe an unseen image" is not a useful task.
-    // Mirrors `crates/mogen/src/commands/generate.rs:109-130` (the CLI's
-    // `--plan` two-phase shape).
-    let plan_prompt_text = prompt.trim().to_string();
-    let want_plan =
-        kind == LlmKind::Generate && run_cfg.plan && !plan_prompt_text.is_empty();
+    // Planning retains the same target context and accepts image-only input.
+    let plan_prompt_text = cfg.user_prompt.clone();
+    let want_plan = kind == LlmKind::Generate
+        && run_cfg.plan
+        && (!plan_prompt_text.is_empty() || !cfg.user_images.is_empty());
     let mut prefix_usage = Usage::default();
     let mut prefix_calls: u32 = 0;
     if want_plan {
@@ -527,17 +552,6 @@ pub(in crate::app) fn run_llm(
                 };
             }
         }
-    }
-
-    // Z.ai vision auto-swap. The Studio's per-provider model dropdown
-    // pins a *text* model id (`glm-5.1`); when the user attaches an
-    // image we have to route through `glm-5v-turbo` instead — the text
-    // models can't see the image and the call would 400 on a
-    // mismatched-input shape. The override is intentional and silent;
-    // a future user staring at "why isn't my custom model used?" should
-    // find this comment.
-    if provider == Provider::Zai && !cfg.user_images.is_empty() {
-        cfg.model = mogen_llm::ZAI_DEFAULT_VISION_MODEL.to_string();
     }
 
     send_progress(LlmProgress::Status(format!(
@@ -576,12 +590,31 @@ pub(in crate::app) fn run_llm(
             .map(str::to_string),
         _ => None,
     };
+    let session_cfg = cfg.clone();
     let result = match modify_baseline {
         Some(baseline) => generate_edits_with_repair(&client, cfg, &repair, &baseline),
         None => generate_with_repair(&client, cfg, &repair),
     };
     match result {
         Ok(outcome) => {
+            if !outcome.is_ok() {
+                run_cfg.modeling.lock().unwrap().stop_reason =
+                    "Candidate failed validation; existing work preserved".into();
+                return LlmOutcome {
+                    subscription: provider == Provider::Codex,
+                    dsl: existing.unwrap_or_default(),
+                    diagnostics: outcome.diagnostics,
+                    usage: run_cfg.control.meter().usage,
+                    calls: run_cfg.control.meter().calls,
+                    model: run_cfg.model,
+                    image_calls: 0,
+                    retry_prompt: Some(prompt),
+                    error: Some(classify(&mogen_llm::ProviderError::InvalidResponse(
+                        "Candidate failed validation; existing work preserved".into(),
+                    ))),
+                    kind,
+                };
+            }
             // Roll planner usage/calls into the final summary so the
             // status line reflects the full cost of the run, not just
             // the Coder pass.
@@ -598,9 +631,142 @@ pub(in crate::app) fn run_llm(
                 &header_prompt,
                 Some(run_cfg.thinking),
             );
-            let wrapped =
-                mogen_dsl::stamp_mogen_version(&wrapped, env!("CARGO_PKG_VERSION"));
+            let wrapped = mogen_dsl::stamp_mogen_version(&wrapped, env!("CARGO_PKG_VERSION"));
             let wrapped = stamp_style_header(&wrapped, effective_style);
+            let mut project = run_cfg.modeling.lock().unwrap().clone();
+            let wrapped = if project.selected_part.is_some() {
+                outcome.dsl.clone()
+            } else {
+                wrapped
+            };
+            let mut checkpoint = |project: &mogen_llm::session::ModelingProject| {
+                let mut stored = run_cfg.modeling.lock().unwrap();
+                // A cancelled worker cannot overwrite a newer session or UI brief.
+                if stored.brief.revision != run_cfg.brief_revision {
+                    return;
+                }
+                if run_cfg.control.check().is_err() {
+                    for candidate in &project.candidates {
+                        if !stored
+                            .candidates
+                            .iter()
+                            .any(|c| c.revision == candidate.revision)
+                        {
+                            stored.candidates.push(candidate.clone());
+                        }
+                    }
+                    stored.stop_reason = project.stop_reason.clone();
+                } else {
+                    *stored = project.clone();
+                }
+                let project = &*stored;
+                let path = run_cfg
+                    .scene_path
+                    .as_ref()
+                    .map(PathBuf::from)
+                    .or_else(|| run_cfg.recovery_path.clone());
+                if let Some(path) = path {
+                    if run_cfg.scene_path.is_none() {
+                        if let Some(candidate) = project
+                            .selected_candidate
+                            .and_then(|i| project.candidates.get(i))
+                        {
+                            let _ = std::fs::write(&path, &candidate.source);
+                        }
+                    }
+                    if let Err(e) = project.save(&path) {
+                        send_progress(LlmProgress::Status(format!(
+                            "Session checkpoint failed: {e}"
+                        )));
+                    }
+                }
+            };
+            let guarded = existing
+                .as_deref()
+                .map(|old| {
+                    mogen_llm::session::enforce_locks(
+                        old,
+                        &wrapped,
+                        &project.locks,
+                        run_cfg.base_dir.as_deref(),
+                    )
+                    .and_then(|_| {
+                        mogen_llm::session::enforce_scope(
+                            old,
+                            &wrapped,
+                            project.selected_part.as_deref(),
+                        )
+                    })
+                })
+                .unwrap_or(Ok(()));
+            let mut wrapped = wrapped;
+            if let Err(e) = guarded {
+                project.stop_reason = format!("Edit rejected: {e}");
+                checkpoint(&project);
+                return LlmOutcome {
+                    subscription: provider == Provider::Codex,
+                    dsl: existing.unwrap_or_default(),
+                    diagnostics: vec![],
+                    usage: run_cfg.control.meter().usage,
+                    calls: run_cfg.control.meter().calls,
+                    model: session_cfg.model.clone(),
+                    image_calls: 0,
+                    retry_prompt: Some(prompt),
+                    error: Some(classify(&mogen_llm::ProviderError::InvalidResponse(
+                        e.to_string(),
+                    ))),
+                    kind,
+                };
+            }
+            if project.mode == mogen_llm::session::QualityMode::Refined
+                && matches!(kind, LlmKind::Generate | LlmKind::Modify)
+                && outcome.is_ok()
+            {
+                let mut renderer = crate::app::modeling::WorkerRenderer {
+                    tx: tx.clone(),
+                    control: run_cfg.control.clone(),
+                    base_dir: run_cfg.base_dir.clone(),
+                    framing: None,
+                };
+                let mut call = |cfg: &GenerateConfig| {
+                    send_progress(LlmProgress::Status(format!(
+                        "{} · {}",
+                        cfg.spend_context.operation, cfg.model
+                    )));
+                    client.generate(cfg).map_err(anyhow::Error::from)
+                };
+                match mogen_llm::session::refine_session(
+                    &mut project,
+                    &wrapped,
+                    run_cfg.base_dir.as_deref(),
+                    &session_cfg,
+                    provider.key(),
+                    &mut call,
+                    &mut renderer,
+                    &mut checkpoint,
+                ) {
+                    Ok(best) => wrapped = best,
+                    Err(e) => {
+                        project.stop_reason = format!("Refinement stopped: {e}");
+                        checkpoint(&project);
+                    }
+                }
+            } else if outcome.is_ok() {
+                match project.record(
+                    wrapped.clone(),
+                    run_cfg.base_dir.as_deref(),
+                    &session_cfg,
+                    provider.key(),
+                    "Draft candidate; visual quality has not been assessed".into(),
+                    vec![],
+                ) {
+                    Ok(i) => project.selected_candidate = Some(i),
+                    Err(e) => project.stop_reason = format!("Candidate checkpoint failed: {e}"),
+                }
+                checkpoint(&project);
+            }
+            let total_usage = run_cfg.control.meter().usage;
+            let total_calls = run_cfg.control.meter().calls;
             LlmOutcome {
                 subscription: provider == Provider::Codex,
                 dsl: wrapped,
@@ -620,8 +786,8 @@ pub(in crate::app) fn run_llm(
                 subscription: provider == Provider::Codex,
                 dsl: existing.unwrap_or_default(),
                 diagnostics: Vec::new(),
-                usage: prefix_usage,
-                calls: prefix_calls,
+                usage: run_cfg.control.meter().usage,
+                calls: run_cfg.control.meter().calls,
                 model: run_cfg.model,
                 image_calls: 0,
                 retry_prompt: Some(prompt),

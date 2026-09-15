@@ -54,6 +54,7 @@ const MODIFY_SCREENSHOT_YAW: f32 = std::f32::consts::FRAC_PI_4;
 /// clicking Modify.
 pub(in crate::app) struct PendingModifyCapture {
     pub file_index: usize,
+    pub tab_id: u64,
     /// Disk path the GL worker writes the PNG to. Read back in
     /// `on_modify_screenshot_render_done` and unlinked after the bytes
     /// are loaded.
@@ -99,6 +100,7 @@ impl MogenStudioApp {
         // so the slot can't leak across calls.
         self.pending_modify_capture = Some(PendingModifyCapture {
             file_index,
+            tab_id: self.active().tab_id,
             png_path: png_path.clone(),
             prompt: prompt.clone(),
             existing,
@@ -159,7 +161,7 @@ impl MogenStudioApp {
         };
 
         let i = pending.file_index;
-        if i >= self.files.len() {
+        if i >= self.files.len() || self.files[i].tab_id != pending.tab_id {
             // Tab closed mid-render. Nothing to write a status into.
             return;
         }
@@ -172,6 +174,14 @@ impl MogenStudioApp {
             return;
         }
 
+        if self.files[i].source != pending.existing {
+            self.fail_modify_screenshot(
+                i,
+                "source changed during capture; retry against the current revision".into(),
+            );
+            let _ = std::fs::remove_file(&pending.png_path);
+            return;
+        }
         if let Some(err) = outcome.error {
             self.fail_modify_screenshot(i, format!("render failed — {err}"));
             return;

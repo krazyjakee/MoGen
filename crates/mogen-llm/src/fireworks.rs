@@ -190,6 +190,9 @@ fn build_request(cfg: &GenerateConfig) -> serde_json::Value {
     // Fireworks routers run Kimi K2; the model has no `reasoning.effort`
     // analogue and ignores unknown top-level fields. Skip emitting one so
     // the request body stays tight on the wire.
+    if let Some(cap) = cfg.max_output_tokens {
+        req["max_tokens"] = serde_json::json!(cap);
+    }
     req
 }
 

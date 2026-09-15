@@ -28,5 +28,8 @@ tempfile = "3"
 # installed (or doesn't).
 rusqlite = { version = "0.31", features = ["bundled"] }
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 base64 = "0.22"

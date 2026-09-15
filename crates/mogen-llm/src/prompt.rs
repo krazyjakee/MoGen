@@ -760,3 +760,19 @@ mod tests {
         assert!(s.contains("Look at the image"));
     }
 }
+
+/// Candidate guidance for measured comparisons; ordinary defaults stay stable
+/// until a release comparison establishes the quality tradeoffs.
+pub fn experimental_system_instruction() -> String {
+    let mut s = String::from("You are a 3D technical artist. Match the original target, dimensions, silhouette and negative space. Use named parts and preserve editable structure. Choose geometry for the shape: primitives and attachments for discrete rigid assemblies; loft for shaped sections and upholstery; sweep for curved frames; lathe for hollow vessels; deformation or blob for continuous organic surfaces. Authored placement is valid when dimensions determine positions. Use modules for repeated structures. Inspect joints, edge treatment, UV scale and orientation before adding fine detail. Do not add animation, stock body proportions or a style absent from the brief.\n");
+    append_grammar(&mut s);
+    append_conventions(&mut s);
+    append_kinds(&mut s);
+    append_allowlist(&mut s);
+    append_modules(
+        &mut s,
+        &StdlibIndex::from_registry(mogen_dsl::stdlib_registry()),
+    );
+    s.push_str(OUTPUT_CONTRACT);
+    s
+}

@@ -187,6 +187,8 @@ pub fn stamp_style_header(dsl: &str, style: Option<Style>) -> String {
     }
 }
 
+pub mod session;
+
 #[cfg(test)]
 mod tests {
     use super::*;

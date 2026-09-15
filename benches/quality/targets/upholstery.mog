@@ -1,0 +1,7 @@
+// Original procedural test target, CC0-1.0, MoGen contributors, 2026.
+material "linen" (color=[0.62,0.29,0.18],roughness=0.95)
+material "wood" (color=[0.15,0.08,0.04])
+scene {
+  box "frame" (size=[1,0.2,0.8],pos=[0,0.1,0],mat="wood")
+  loft "cushion" (pos=[0,0.2,0],points=[[-0.45,-0.35],[0.45,-0.35],[0.45,0.35],[-0.45,0.35],[-0.5,-0.4],[0.5,-0.4],[0.5,0.4],[-0.5,0.4],[-0.44,-0.34],[0.44,-0.34],[0.44,0.34],[-0.44,0.34]],heights=[0,0.12,0.22],samples=12,mat="linen")
+}

@@ -104,6 +104,24 @@ impl Drop for SqliteRecorderInner {
 }
 
 impl SpendRecorder for SqliteRecorder {
+    fn text_price(
+        &self,
+        provider: &str,
+        model: &str,
+    ) -> Option<crate::spend::pricing::TextPricing> {
+        let conn = open(&self.inner.path).ok()?;
+        let r = super::pricing::lookup_pricing(&conn, provider, model, now_unix()).ok()??;
+        Some(crate::spend::pricing::TextPricing {
+            input_per_mtok: r.input_per_mtok_usd,
+            output_per_mtok: r.output_per_mtok_usd,
+            cached_input_per_mtok: r.cached_input_per_mtok_usd,
+            input_per_mtok_long: r.input_per_mtok_long_usd,
+            output_per_mtok_long: r.output_per_mtok_long_usd,
+            cached_input_per_mtok_long: r.cached_input_per_mtok_long_usd,
+            long_context_threshold: r.long_context_threshold as u32,
+        })
+    }
+
     fn record(&self, record: CallRecord) {
         let tx = self.inner.tx.lock().unwrap();
         if let Some(tx) = tx.as_ref() {

@@ -42,12 +42,11 @@ pub fn generate_plan(
     base: &GenerateConfig,
     prompt: &str,
 ) -> Result<PlanOutcome, ProviderError> {
-    let mut cfg = GenerateConfig::new(prompt);
-    cfg.model = base.model.clone();
-    cfg.temperature = base.temperature;
-    cfg.budget_tokens = base.budget_tokens;
-    cfg.seed = base.seed;
-    cfg.thinking_level = base.thinking_level;
+    let mut cfg = base.clone();
+    cfg.user_prompt =
+        format!("{prompt}\n\nAttached images are original target references, not current renders.");
+    cfg.history.clear();
+    cfg.spend_context.operation = "plan".into();
     cfg.system_instruction = Some(planner_system_instruction());
     // Cache resources are keyed by the DSL system instruction; the planner
     // ships a different system prompt, so reusing a coder-side cache would

@@ -128,6 +128,7 @@ impl ClaudeCodeClient {
 
         cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
 
+        crate::session::configure_child(&mut cmd);
         let mut child = cmd.spawn().map_err(|e| ClaudeCodeError::SpawnFailed {
             path: self.path.clone(),
             source: e,
@@ -136,11 +137,17 @@ impl ClaudeCodeClient {
         // Write the flattened prompt to stdin and close it so `claude` knows
         // input is complete. `take()` releases the handle so wait_with_output
         // can collect stdout/stderr without deadlocking.
-        if let Some(mut stdin) = child.stdin.take() {
-            stdin.write_all(prompt.as_bytes())?;
-        }
-
-        let out = child.wait_with_output()?;
+        let stdin = child.stdin.take();
+        let writer = std::thread::spawn(move || {
+            if let Some(mut stdin) = stdin {
+                stdin.write_all(prompt.as_bytes())?;
+            }
+            Ok::<_, std::io::Error>(())
+        });
+        let out = crate::session::wait_for_child(child, cfg.session_control.as_ref())?;
+        writer
+            .join()
+            .map_err(|_| std::io::Error::other("stdin writer failed"))??;
         let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
 
         // `claude --output-format json` writes its structured error envelope to

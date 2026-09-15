@@ -2820,6 +2820,7 @@ dependencies = [
  "base64 0.22.1",
  "glam 0.30.10",
  "image",
+ "libc",
  "mogen-core",
  "mogen-dsl",
  "mogen-validate",

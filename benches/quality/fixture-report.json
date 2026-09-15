@@ -1,0 +1,329 @@
+{
+  "human_review_status": "pending",
+  "provenance": "Original procedural targets authored for MoGen in 2026; source and derived reference renders CC0-1.0. These are diagnostic fixtures, not AI baseline results.",
+  "renderer_caveats": [
+    "#105 UV seams",
+    "#107 water shader"
+  ],
+  "runs": [
+    {
+      "checks": {
+        "asset_pass": true,
+        "compiles": true,
+        "dimensions_ok": true,
+        "extent": [
+          0.6000000238418579,
+          1.0399999618530273,
+          0.5600000023841858
+        ],
+        "finite": true,
+        "framing_radius": 0.6624197959899902,
+        "missing_parts": [],
+        "visual_quality": "requires blinded human review"
+      },
+      "elapsed_seconds": 0.000037445,
+      "export_ok": true,
+      "human_review": null,
+      "limits": {
+        "calls": 12,
+        "iterations": 3,
+        "output_tokens": 8192,
+        "seconds": 600,
+        "spend_usd": null
+      },
+      "manifest_sha256": "7b2ce66553baccfcf14857eb1adf3dc44ff77b9def93614b936fdfb8e3612cee",
+      "meter": {
+        "calls": 0,
+        "cancelled": false,
+        "estimated_usd": 0.0,
+        "stage": "",
+        "stopped": null,
+        "unknown_cost": false,
+        "usage": {
+          "cached_tokens": 0,
+          "prompt_tokens": 0,
+          "response_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "mode": "fixture",
+      "model": "authored fixture",
+      "prompt_sha256": "e580e42122595de06cabeea48a32b4a28aee559fef2e0238541e98ee3ac35500",
+      "provider": "none",
+      "repeat": 0,
+      "seed": 42,
+      "stop_reason": "",
+      "task": "ornate_chair",
+      "temperature": 0.30000001192092896,
+      "thinking": "high",
+      "variant": "baseline",
+      "wall_seconds": 1.281083368
+    },
+    {
+      "checks": {
+        "asset_pass": true,
+        "compiles": true,
+        "dimensions_ok": true,
+        "extent": [
+          1.0,
+          0.42000001668930054,
+          0.800000011920929
+        ],
+        "finite": true,
+        "framing_radius": 0.6738694310188293,
+        "missing_parts": [],
+        "visual_quality": "requires blinded human review"
+      },
+      "elapsed_seconds": 0.000019709,
+      "export_ok": true,
+      "human_review": null,
+      "limits": {
+        "calls": 12,
+        "iterations": 3,
+        "output_tokens": 8192,
+        "seconds": 600,
+        "spend_usd": null
+      },
+      "manifest_sha256": "7b2ce66553baccfcf14857eb1adf3dc44ff77b9def93614b936fdfb8e3612cee",
+      "meter": {
+        "calls": 0,
+        "cancelled": false,
+        "estimated_usd": 0.0,
+        "stage": "",
+        "stopped": null,
+        "unknown_cost": false,
+        "usage": {
+          "cached_tokens": 0,
+          "prompt_tokens": 0,
+          "response_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "mode": "fixture",
+      "model": "authored fixture",
+      "prompt_sha256": "e580e42122595de06cabeea48a32b4a28aee559fef2e0238541e98ee3ac35500",
+      "provider": "none",
+      "repeat": 0,
+      "seed": 42,
+      "stop_reason": "",
+      "task": "upholstery",
+      "temperature": 0.30000001192092896,
+      "thinking": "high",
+      "variant": "baseline",
+      "wall_seconds": 0.664852223
+    },
+    {
+      "checks": {
+        "asset_pass": true,
+        "compiles": true,
+        "dimensions_ok": true,
+        "extent": [
+          0.4399999976158142,
+          0.5,
+          0.4399999976158142
+        ],
+        "finite": true,
+        "framing_radius": 0.39912402629852295,
+        "missing_parts": [],
+        "visual_quality": "requires blinded human review"
+      },
+      "elapsed_seconds": 0.00002966,
+      "export_ok": true,
+      "human_review": null,
+      "limits": {
+        "calls": 12,
+        "iterations": 3,
+        "output_tokens": 8192,
+        "seconds": 600,
+        "spend_usd": null
+      },
+      "manifest_sha256": "7b2ce66553baccfcf14857eb1adf3dc44ff77b9def93614b936fdfb8e3612cee",
+      "meter": {
+        "calls": 0,
+        "cancelled": false,
+        "estimated_usd": 0.0,
+        "stage": "",
+        "stopped": null,
+        "unknown_cost": false,
+        "usage": {
+          "cached_tokens": 0,
+          "prompt_tokens": 0,
+          "response_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "mode": "fixture",
+      "model": "authored fixture",
+      "prompt_sha256": "e580e42122595de06cabeea48a32b4a28aee559fef2e0238541e98ee3ac35500",
+      "provider": "none",
+      "repeat": 0,
+      "seed": 42,
+      "stop_reason": "",
+      "task": "hollow_vessel",
+      "temperature": 0.30000001192092896,
+      "thinking": "high",
+      "variant": "baseline",
+      "wall_seconds": 0.96728939
+    },
+    {
+      "checks": {
+        "asset_pass": true,
+        "compiles": true,
+        "dimensions_ok": true,
+        "extent": [
+          1.0,
+          0.8550000190734863,
+          0.5099999904632568
+        ],
+        "finite": true,
+        "framing_radius": 0.7055361270904541,
+        "missing_parts": [],
+        "visual_quality": "requires blinded human review"
+      },
+      "elapsed_seconds": 0.000019149,
+      "export_ok": true,
+      "human_review": null,
+      "limits": {
+        "calls": 12,
+        "iterations": 3,
+        "output_tokens": 8192,
+        "seconds": 600,
+        "spend_usd": null
+      },
+      "manifest_sha256": "7b2ce66553baccfcf14857eb1adf3dc44ff77b9def93614b936fdfb8e3612cee",
+      "meter": {
+        "calls": 0,
+        "cancelled": false,
+        "estimated_usd": 0.0,
+        "stage": "",
+        "stopped": null,
+        "unknown_cost": false,
+        "usage": {
+          "cached_tokens": 0,
+          "prompt_tokens": 0,
+          "response_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "mode": "fixture",
+      "model": "authored fixture",
+      "prompt_sha256": "e580e42122595de06cabeea48a32b4a28aee559fef2e0238541e98ee3ac35500",
+      "provider": "none",
+      "repeat": 0,
+      "seed": 42,
+      "stop_reason": "",
+      "task": "machinery",
+      "temperature": 0.30000001192092896,
+      "thinking": "high",
+      "variant": "baseline",
+      "wall_seconds": 0.728605426
+    },
+    {
+      "checks": {
+        "asset_pass": true,
+        "compiles": true,
+        "dimensions_ok": true,
+        "extent": [
+          0.597446084022522,
+          0.7964280843734741,
+          0.597446084022522
+        ],
+        "finite": true,
+        "framing_radius": 0.5805560350418091,
+        "missing_parts": [],
+        "visual_quality": "requires blinded human review"
+      },
+      "elapsed_seconds": 0.000018368,
+      "export_ok": true,
+      "human_review": null,
+      "limits": {
+        "calls": 12,
+        "iterations": 3,
+        "output_tokens": 8192,
+        "seconds": 600,
+        "spend_usd": null
+      },
+      "manifest_sha256": "7b2ce66553baccfcf14857eb1adf3dc44ff77b9def93614b936fdfb8e3612cee",
+      "meter": {
+        "calls": 0,
+        "cancelled": false,
+        "estimated_usd": 0.0,
+        "stage": "",
+        "stopped": null,
+        "unknown_cost": false,
+        "usage": {
+          "cached_tokens": 0,
+          "prompt_tokens": 0,
+          "response_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "mode": "fixture",
+      "model": "authored fixture",
+      "prompt_sha256": "e580e42122595de06cabeea48a32b4a28aee559fef2e0238541e98ee3ac35500",
+      "provider": "none",
+      "repeat": 0,
+      "seed": 42,
+      "stop_reason": "",
+      "task": "organic",
+      "temperature": 0.30000001192092896,
+      "thinking": "high",
+      "variant": "baseline",
+      "wall_seconds": 0.942871508
+    },
+    {
+      "checks": {
+        "asset_pass": true,
+        "compiles": true,
+        "dimensions_ok": true,
+        "extent": [
+          2.0,
+          0.940000057220459,
+          2.0
+        ],
+        "finite": true,
+        "framing_radius": 1.4902684688568115,
+        "missing_parts": [],
+        "visual_quality": "requires blinded human review"
+      },
+      "elapsed_seconds": 0.00001947,
+      "export_ok": true,
+      "human_review": null,
+      "limits": {
+        "calls": 12,
+        "iterations": 3,
+        "output_tokens": 8192,
+        "seconds": 600,
+        "spend_usd": null
+      },
+      "manifest_sha256": "7b2ce66553baccfcf14857eb1adf3dc44ff77b9def93614b936fdfb8e3612cee",
+      "meter": {
+        "calls": 0,
+        "cancelled": false,
+        "estimated_usd": 0.0,
+        "stage": "",
+        "stopped": null,
+        "unknown_cost": false,
+        "usage": {
+          "cached_tokens": 0,
+          "prompt_tokens": 0,
+          "response_tokens": 0,
+          "total_tokens": 0
+        }
+      },
+      "mode": "fixture",
+      "model": "authored fixture",
+      "prompt_sha256": "e580e42122595de06cabeea48a32b4a28aee559fef2e0238541e98ee3ac35500",
+      "provider": "none",
+      "repeat": 0,
+      "seed": 42,
+      "stop_reason": "",
+      "task": "assembled_scene",
+      "temperature": 0.30000001192092896,
+      "thinking": "high",
+      "variant": "baseline",
+      "wall_seconds": 0.604285975
+    }
+  ],
+  "version": 1
+}
