@@ -390,8 +390,7 @@ pub(super) const CONVENTIONS: &str = "\
   diverge into a lens/saddle instead of sharing a surface.
 - `lathe`: authored as a `(radius, y)` polyline, bottom row first. Use for \
   vases, gourds, onions, bulbs, fruits with a single axis of symmetry.
-- `spline_tube`: the right primitive for bananas, stems, tentacles, horns, \
-  elephant trunks, rope handles. `radii` (one value or one per control point, including exactly three) tapers \
+- `spline_tube`: for stems, horns and handles. `radii` (one value or one per control point, including exactly three) tapers \
   the tube; a Catmull–Rom path keeps the curve smooth between points.
 - `spline_ribbon`: flat double-sided strip along a Catmull–Rom curve, like \
   `spline_tube` but with `width` / `widths` instead of a radius. Sashes, \
@@ -474,9 +473,9 @@ pub(super) const KINDS_REFERENCE: &str = "\
 | `lathe` | `profile=[[r,y], …]` (bottom→top) | `segments`, `cap_ends`; vases, gourds, bulbs, onions |
 | `spline_tube` | `points=[[x,y,z], …]` | `radius` or `radii=[…]`, `segments`, `samples`; bananas, stems, horns, handles |
 | `spline_ribbon` | `points=[[x,y,z], …]` | `width` or `widths=[…]`, `samples`, `twist` deg; flat double-sided strip — sashes, ribbons, straps |
-| `extrude` | `points=[[x,z], …]` (closed CCW outline) | `hole=[[x,z], …]` (one CW inner contour), `height` (Y span, 1.0), `taper` (top scale ratio, 1.0), `twist` deg (total roll), `caps=0\\|1` (1); push a 2D polygon to 3D for I-beams, gear teeth, custom pillars, picture-frame moulding (in fixed cross-section). Multi-hole authoring not yet supported — chain `extrude` + `difference` for now. |
-| `sweep` | `profile=[[x,y], …]` (closed CCW), `path=[[x,y,z], …]` (Catmull–Rom centreline) | `samples` (8), `twist` deg (uniform total roll), `roll=[deg, …]` (one constant or one per path control point; triples work), `scale_along=[s, …]` (one constant or one per path point, finite nonnegative), `caps=0\\|1`; generalises `spline_tube` (always circular) and `spline_ribbon` (flat) — square pipes, picture-frame moulding on a curved path, gun rails. |
-| `loft` | `points=[[x,z], …]` (all sections flat-packed, same vertex count each), `heights=[y, …]` (Y of each section) | `samples` (rings between adjacent sections, 4), `caps=0\\|1`; closes the gap that `frustum` (two rectangles only) and `lathe` (axisymmetric only) cannot reach — boat hulls, fuselages, shaped bottles. Section vertex counts MUST match. |
+| `extrude` | `points=[[x,z], …]` (closed CCW outline) | `hole=[[x,z], …]` (one CW inner contour), `height` (Y span, 1.0), `taper` (top scale ratio, 1.0), `twist` deg (total roll), `caps=0\\|1` (1); extrudes a 2D polygon. For multiple holes, chain `extrude` + `difference`. |
+| `sweep` | `profile=[[x,y], …]` (closed CCW), `path=[[x,y,z], …]` (Catmull–Rom centreline) | `samples` (8), `twist` deg (uniform total roll), `roll=[deg, …]` (one constant or one per path control point; triples work), `scale_along=[s, …]` (one constant or one per path point, finite nonnegative), `caps=0\\|1`; sweeps an arbitrary profile along a curve. |
+| `loft` | `points=[[x,z], …]` (all sections flat-packed, same vertex count each), `heights=[y, …]` (Y of each section) | `samples` (rings between adjacent sections, 4), `caps=0\\|1`; joins shaped sections; section vertex counts MUST match. |
 | `leaf_card` | `size=[w,h]` | `cards` (2 cross / 3 fan); paired alpha-cutout planes for foliage — pair with `alpha_mode=\"mask\", double_sided=1` |
 | `coil` | `radius`, `height`, `turns` | `profile_radius` (tube radius, 0.02), `samples` (per turn, 24), `segments` (around tube, 8), `cap_ends=0\\|1` (1), `handedness=\"right\"\\|\"left\"`; helix swept by a circular cross-section — springs, screw threads, snail-shell ribs, twisted vines. |
 | `heightfield` | `size=[x,z]` | `segments_u`/`segments_v` (64 each, capped at 4096), `amplitude` (Y relief, 0.5), `octaves` (fbm depth, 1\\|..\\|8, default 4), `frequency` (base spatial freq, 1.0), `persistence` (octave amplitude falloff, 0.5), `seed`; tessellated XZ grid displaced along +Y by deterministic fbm value-noise. Hash mixer is byte-compatible with `noise=` deformer's `cell_noise`, so a heightfield and a `noise=`-deformed mesh share the same bumps for the same seed. Use for terrain, dunes, scaled rooftops, organic stone slabs. |
