@@ -266,14 +266,7 @@ pub(in crate::app) fn run_llm(
             &mut renderer,
             &mut checkpoint,
         );
-        let dsl = match result {
-            Ok(source) => source,
-            Err(e) => {
-                project.stop_reason = format!("Resume stopped: {e:#}");
-                checkpoint(&project);
-                source
-            }
-        };
+        let (dsl, error) = resume_outcome(result, source, &mut project, &mut checkpoint);
         return LlmOutcome {
             subscription: provider == Provider::Codex,
             dsl,
@@ -283,7 +276,7 @@ pub(in crate::app) fn run_llm(
             model: run_cfg.model,
             image_calls: 0,
             retry_prompt: None,
-            error: None,
+            error,
             kind,
         };
     }
@@ -899,4 +892,84 @@ pub(in crate::app) fn pick_default_seed() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos() as u64)
         .unwrap_or(0x5EED)
+}
+
+/// Turns a `resume_session` result into the `(dsl, error)` pair `run_llm`'s
+/// resume branch returns. On failure, records the failure on `project` and
+/// checkpoints it, and falls back to `fallback_dsl` (the pre-resume source)
+/// rather than losing the in-progress edit. Split out from `run_llm` so the
+/// failure path — previously hardcoded to `error: None` even on `Err`, which
+/// made a failed resume look like a completed run — is unit-testable without
+/// the surrounding provider/channel plumbing.
+fn resume_outcome(
+    result: anyhow::Result<String>,
+    fallback_dsl: String,
+    project: &mut mogen_llm::session::ModelingProject,
+    checkpoint: &mut dyn FnMut(&mogen_llm::session::ModelingProject),
+) -> (String, Option<crate::app::types::LlmErrorInfo>) {
+    match result {
+        Ok(source) => (source, None),
+        Err(e) => {
+            let detail = format!("{e:#}");
+            project.stop_reason = format!("Resume stopped: {detail}");
+            checkpoint(project);
+            (
+                fallback_dsl,
+                Some(crate::app::types::LlmErrorInfo {
+                    headline: "Resume failed".into(),
+                    detail,
+                    class: crate::app::types::LlmErrorClass::Other,
+                    retryable: true,
+                    action: None,
+                }),
+            )
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mogen_llm::session::ModelingProject;
+
+    #[test]
+    fn successful_resume_reports_no_error() {
+        let mut project = ModelingProject::default();
+        let mut checkpoints = 0;
+        let mut checkpoint = |_: &ModelingProject| checkpoints += 1;
+        let (dsl, error) = resume_outcome(
+            Ok("new source".into()),
+            "old source".into(),
+            &mut project,
+            &mut checkpoint,
+        );
+        assert_eq!(dsl, "new source");
+        assert!(error.is_none());
+        assert_eq!(checkpoints, 0);
+    }
+
+    #[test]
+    fn failed_resume_reports_a_retryable_error_and_checkpoints_the_failure() {
+        // Regression: this used to hardcode `error: None` in both the `Ok`
+        // and `Err` arms, so a failed resume (network error, invalid
+        // response, etc.) looked like a completed run with the failure text
+        // buried in `project.stop_reason`.
+        let mut project = ModelingProject::default();
+        let mut checkpoints = 0;
+        let mut checkpoint = |_: &ModelingProject| checkpoints += 1;
+        let (dsl, error) = resume_outcome(
+            Err(anyhow::anyhow!("network unreachable")),
+            "old source".into(),
+            &mut project,
+            &mut checkpoint,
+        );
+        assert_eq!(dsl, "old source");
+        let error = error.expect("a failed resume must report an error");
+        assert_eq!(error.headline, "Resume failed");
+        assert!(error.detail.contains("network unreachable"));
+        assert_eq!(error.class, crate::app::types::LlmErrorClass::Other);
+        assert!(error.retryable);
+        assert!(project.stop_reason.contains("network unreachable"));
+        assert_eq!(checkpoints, 1);
+    }
 }

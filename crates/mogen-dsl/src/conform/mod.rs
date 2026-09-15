@@ -76,7 +76,7 @@ fn resolve_specs(
                 && !bindings
                     .iter()
                     .enumerate()
-                    .any(|(j, (_, child))| !done[j] && *child == bindings[i].0)
+                    .any(|(j, (_, child))| j != i && !done[j] && *child == bindings[i].0)
         }) else {
             bail!(
                 "conform: cyclic target/child dependency at bytes {}..{}",
