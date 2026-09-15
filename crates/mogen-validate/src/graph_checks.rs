@@ -328,7 +328,11 @@ mod connectivity_tests {
     fn diags(src: &str) -> Vec<Diagnostic> {
         let ast = parse(src).unwrap();
         let g = lower(&ast).unwrap();
-        validate_graph(&g)
+        let diagnostics = validate_graph(&g);
+        assert!(!mogen_core::has_mesh_contract_errors(&diagnostics), "{diagnostics:?}");
+        // These tests assert connectivity, independently of mesh advisories
+        // such as the sphere's intentional collapsed pole triangles.
+        diagnostics.into_iter().filter(|d| d.code == "E1101").collect()
     }
 
     #[test]
