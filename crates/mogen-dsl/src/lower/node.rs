@@ -36,7 +36,8 @@ pub(super) fn lower_into(
     // `lod=2.0` group can boost detail in a hero subtree (and `lod=0.5`
     // can drop background parts) without touching the file-global
     // `lod_scale`. The multiplier guard compounds with whatever the
-    // origin guard set up; both restore previous values on drop.
+    // origin guard set up. It is stored separately so an imported child
+    // cannot erase its ancestors' multipliers. Both guards restore on drop.
     let _lod_mul = LodMultiplierGuard::for_node(node);
     if node.kind == "mirror" || node.kind == "array" {
         return expand_replicator(node, parent, graph);
