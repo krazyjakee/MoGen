@@ -266,12 +266,22 @@ pub(in crate::app) fn run_llm(
             &mut renderer,
             &mut checkpoint,
         );
-        let dsl = match result {
-            Ok(source) => source,
+        let (dsl, error) = match result {
+            Ok(source) => (source, None),
             Err(e) => {
-                project.stop_reason = format!("Resume stopped: {e:#}");
+                let detail = format!("{e:#}");
+                project.stop_reason = format!("Resume stopped: {detail}");
                 checkpoint(&project);
-                source
+                (
+                    source,
+                    Some(crate::app::types::LlmErrorInfo {
+                        headline: "Resume failed".into(),
+                        detail,
+                        class: crate::app::types::LlmErrorClass::Other,
+                        retryable: true,
+                        action: None,
+                    }),
+                )
             }
         };
         return LlmOutcome {
@@ -283,7 +293,7 @@ pub(in crate::app) fn run_llm(
             model: run_cfg.model,
             image_calls: 0,
             retry_prompt: None,
-            error: None,
+            error,
             kind,
         };
     }

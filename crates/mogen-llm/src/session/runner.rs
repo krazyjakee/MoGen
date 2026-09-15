@@ -111,8 +111,19 @@ fn tool_session_saved(
         workspace.source
     );
     cfg.spend_context.operation = "refine".into();
-    // Also bounded without a session control (e.g. fixture clients).
-    for _ in 0..24 {
+    // Each iteration makes at most one provider call, so bound the loop by
+    // the session's own configured call budget rather than an arbitrary
+    // constant — otherwise a larger `--calls` budget than this cap would be
+    // truncated early, and a smaller one would let this loop run past what
+    // `SessionControl::before_call` already intends to allow. Fall back to a
+    // fixed cap only when there's no session control to read a budget from
+    // (e.g. fixture clients in tests).
+    let max_steps = cfg
+        .session_control
+        .as_ref()
+        .map(|c| c.limits().calls)
+        .unwrap_or(24);
+    for _ in 0..max_steps {
         if let Some(c) = &cfg.session_control {
             c.check().map_err(anyhow::Error::msg)?;
         }
