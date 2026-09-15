@@ -128,7 +128,9 @@ pub fn blob_to_mesh(children: &[BlobChild], blend: f32, resolution: u32) -> Mesh
 
     Mesh {
         positions,
-        normals: buf.normals,
+        // Surface nets returns field gradients, whose magnitude depends on
+        // voxel spacing. Rendering requires unit directions.
+        normals: buf.normals.into_iter().map(|n| Vec3::from_array(n).normalize_or_zero().to_array()).collect(),
         uvs,
         indices: buf.indices,
         ..Default::default()
