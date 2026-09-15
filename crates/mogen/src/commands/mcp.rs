@@ -25,7 +25,9 @@ use std::path::PathBuf;
 use anyhow::Result;
 use rmcp::{
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
-    model::{CallToolResult, Content, Implementation, ProtocolVersion, ServerCapabilities, ServerInfo},
+    model::{
+        CallToolResult, Content, Implementation, ProtocolVersion, ServerCapabilities, ServerInfo,
+    },
     schemars, tool, tool_handler, tool_router,
     transport::stdio,
     ErrorData as McpError, ServerHandler, ServiceExt,
@@ -263,6 +265,39 @@ struct ThumbnailArgs {
     /// Background fill, 6-digit hex (`#2a2d33`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     bg: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct SessionArgs {
+    out_dir: PathBuf,
+    prompt: Option<String>,
+    brief: Option<PathBuf>,
+    input: Option<PathBuf>,
+    #[serde(default)]
+    resume: bool,
+    #[serde(default)]
+    inspect: bool,
+    provider: Option<String>,
+    model: Option<String>,
+    seed: Option<u64>,
+    temperature: Option<f32>,
+    thinking: Option<String>,
+    #[serde(default)]
+    draft: bool,
+    #[serde(default)]
+    reference: Vec<PathBuf>,
+    selected_part: Option<String>,
+    #[serde(default)]
+    lock: Vec<String>,
+    calls: Option<u32>,
+    iterations: Option<u32>,
+    seconds: Option<u64>,
+    spend_usd: Option<f64>,
+    output_tokens: Option<u32>,
+    #[serde(default)]
+    glb: bool,
+    #[serde(default)]
+    experimental_guidance: bool,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -571,13 +606,17 @@ pub(crate) struct MogenMcp {
 #[tool_router]
 impl MogenMcp {
     pub(crate) fn new() -> Self {
-        Self { tool_router: Self::tool_router() }
+        Self {
+            tool_router: Self::tool_router(),
+        }
     }
 
     // -- pipeline ----------------------------------------------------------
 
-    #[tool(description = "Compile a .mog DSL file to a binary scene container (GLB or FBX). \
-        The output extension picks the format unless `format` is set explicitly.")]
+    #[tool(
+        description = "Compile a .mog DSL file to a binary scene container (GLB or FBX). \
+        The output extension picks the format unless `format` is set explicitly."
+    )]
     async fn build(
         &self,
         Parameters(p): Parameters<BuildArgs>,
@@ -593,11 +632,17 @@ impl MogenMcp {
         &self,
         Parameters(p): Parameters<InputOnly>,
     ) -> Result<CallToolResult, McpError> {
-        run_mogen(vec!["parse".to_string(), p.input.to_string_lossy().into_owned()]).await
+        run_mogen(vec![
+            "parse".to_string(),
+            p.input.to_string_lossy().into_owned(),
+        ])
+        .await
     }
 
-    #[tool(description = "Validate a .mog file (semantic + reference checks). Returns \
-        diagnostics; tool result is marked as error iff any diagnostic is a hard error.")]
+    #[tool(
+        description = "Validate a .mog file (semantic + reference checks). Returns \
+        diagnostics; tool result is marked as error iff any diagnostic is a hard error."
+    )]
     async fn check(
         &self,
         Parameters(p): Parameters<CheckArgs>,
@@ -612,35 +657,65 @@ impl MogenMcp {
         &self,
         Parameters(p): Parameters<DumpSceneArgs>,
     ) -> Result<CallToolResult, McpError> {
-        let mut args = vec!["dump-scene".to_string(), p.input.to_string_lossy().into_owned()];
+        let mut args = vec![
+            "dump-scene".to_string(),
+            p.input.to_string_lossy().into_owned(),
+        ];
         push_flag(&mut args, "--json", p.json);
         run_mogen(args).await
     }
 
-    #[tool(description = "Inspect .mog world bounds, dimensions, grounding and authored relationships, or read .glb structure (chunks, accessors, meshes, \
-        materials, animations, skins).")]
+    #[tool(
+        description = "Inspect .mog world bounds, dimensions, grounding and authored relationships, or read .glb structure (chunks, accessors, meshes, \
+        materials, animations, skins)."
+    )]
     async fn inspect(
         &self,
         Parameters(p): Parameters<InputOnly>,
     ) -> Result<CallToolResult, McpError> {
-        run_mogen(vec!["inspect".to_string(), p.input.to_string_lossy().into_owned()]).await
+        run_mogen(vec![
+            "inspect".to_string(),
+            p.input.to_string_lossy().into_owned(),
+        ])
+        .await
     }
 
-    #[tool(description = "Measure world triangle-surface distance between named .mog parts. Returns revision, metres, closest points, tolerance, evidence and budget limits. AABB overlap is not proof of contact.")]
-    async fn measure(&self, Parameters(p): Parameters<MeasureArgs>) -> Result<CallToolResult, McpError> {
-        let mut args = vec!["measure".into(), p.input.to_string_lossy().into_owned(), "--first".into(), p.first, "--second".into(), p.second];
-        if let Some(t) = p.tolerance { args.extend(["--tolerance".into(), t.to_string()]); }
-        if let Some(w) = p.max_work { args.extend(["--max-work".into(), w.to_string()]); }
+    #[tool(
+        description = "Measure world triangle-surface distance between named .mog parts. Returns revision, metres, closest points, tolerance, evidence and budget limits. AABB overlap is not proof of contact."
+    )]
+    async fn measure(
+        &self,
+        Parameters(p): Parameters<MeasureArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let mut args = vec![
+            "measure".into(),
+            p.input.to_string_lossy().into_owned(),
+            "--first".into(),
+            p.first,
+            "--second".into(),
+            p.second,
+        ];
+        if let Some(t) = p.tolerance {
+            args.extend(["--tolerance".into(), t.to_string()]);
+        }
+        if let Some(w) = p.max_work {
+            args.extend(["--max-work".into(), w.to_string()]);
+        }
         run_mogen(args).await
     }
 
-    #[tool(description = "Render a PNG preview of a .mog via the headless GL pipeline. Suitable \
-        to feed back into moghub_publish as a thumbnail.")]
+    #[tool(
+        description = "Render a PNG preview of a .mog via the headless GL pipeline. Suitable \
+        to feed back into moghub_publish as a thumbnail."
+    )]
     async fn thumbnail(
         &self,
         Parameters(p): Parameters<ThumbnailArgs>,
     ) -> Result<CallToolResult, McpError> {
-        let mut args = vec!["thumbnail".to_string(), p.input.to_string_lossy().into_owned()];
+        let mut args = vec![
+            "thumbnail".to_string(),
+            p.input.to_string_lossy().into_owned(),
+        ];
         push_path_opt(&mut args, "--out", p.out);
         push_opt(&mut args, "--size", p.size);
         push_opt(&mut args, "--yaw", p.yaw);
@@ -649,10 +724,61 @@ impl MogenMcp {
         run_mogen(args).await
     }
 
+    #[tool(
+        description = "Generate/refine or resume the shared durable modeling session. Returns structured final/latest artifact paths, revisions, usage and stop status. Resume uses saved limits/context; inspect makes no model calls."
+    )]
+    async fn session(
+        &self,
+        Parameters(p): Parameters<SessionArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let mut args = vec![
+            "session".into(),
+            "--out-dir".into(),
+            p.out_dir.to_string_lossy().into_owned(),
+        ];
+        push_opt(&mut args, "--prompt", p.prompt);
+        push_path_opt(&mut args, "--brief", p.brief);
+        push_path_opt(&mut args, "--input", p.input);
+        push_flag(&mut args, "--resume", p.resume);
+        push_flag(&mut args, "--inspect", p.inspect);
+        push_opt(&mut args, "--provider", p.provider);
+        push_opt(&mut args, "--model", p.model);
+        push_opt(&mut args, "--seed", p.seed);
+        push_opt(&mut args, "--temperature", p.temperature);
+        push_opt(&mut args, "--thinking", p.thinking);
+        push_flag(&mut args, "--draft", p.draft);
+        push_flag(&mut args, "--glb", p.glb);
+        push_flag(
+            &mut args,
+            "--experimental-guidance",
+            p.experimental_guidance,
+        );
+        push_opt(&mut args, "--selected-part", p.selected_part);
+        for path in p.reference {
+            push_path_opt(&mut args, "--reference", Some(path));
+        }
+        for name in p.lock {
+            push_opt(&mut args, "--lock", Some(name));
+        }
+        push_opt(&mut args, "--calls", p.calls);
+        push_opt(&mut args, "--iterations", p.iterations);
+        push_opt(&mut args, "--seconds", p.seconds);
+        push_opt(&mut args, "--spend-usd", p.spend_usd);
+        push_opt(&mut args, "--output-tokens", p.output_tokens);
+        let mut result = run_mogen(args).await?;
+        // The ordinary command's stdout is one JSON document, including stops.
+        if let Some(text) = result.content.first().and_then(|c| c.as_text()) {
+            result.structured_content = serde_json::from_str(&text.text).ok();
+        }
+        Ok(result)
+    }
+
     // -- LLM-driven ---------------------------------------------------------
 
-    #[tool(description = "Generate a .mog from a natural-language prompt via the configured LLM \
-        provider, validate, and compile to GLB. Uses mogen's own LLM credentials.")]
+    #[tool(
+        description = "Generate a .mog from a natural-language prompt via the configured LLM \
+        provider, validate, and compile to GLB. Uses mogen's own LLM credentials."
+    )]
     async fn generate(
         &self,
         Parameters(p): Parameters<GenerateArgs>,
@@ -666,14 +792,20 @@ impl MogenMcp {
         run_mogen(args).await
     }
 
-    #[tool(description = "Modify an existing .mog with a natural-language prompt, validate, and \
+    #[tool(
+        description = "Modify an existing .mog with a natural-language prompt, validate, and \
         recompile. Default mode emits SEARCH/REPLACE edit blocks; set `rewrite=true` to force a \
-        full rewrite.")]
+        full rewrite."
+    )]
     async fn modify(
         &self,
         Parameters(p): Parameters<ModifyArgs>,
     ) -> Result<CallToolResult, McpError> {
-        let mut args = vec!["modify".to_string(), p.input.to_string_lossy().into_owned(), p.prompt];
+        let mut args = vec![
+            "modify".to_string(),
+            p.input.to_string_lossy().into_owned(),
+            p.prompt,
+        ];
         push_path_opt(&mut args, "--out", p.out);
         push_path_opt(&mut args, "--dsl-out", p.dsl_out);
         push_flag(&mut args, "--plan", p.plan);
@@ -683,22 +815,30 @@ impl MogenMcp {
         run_mogen(args).await
     }
 
-    #[tool(description = "Add or edit animations on an existing .mog via the LLM. Restricted to \
-        animation declarations (joint, clip/track, spin, open_close, wave, flap, idle).")]
+    #[tool(
+        description = "Add or edit animations on an existing .mog via the LLM. Restricted to \
+        animation declarations (joint, clip/track, spin, open_close, wave, flap, idle)."
+    )]
     async fn animate(
         &self,
         Parameters(p): Parameters<AnimateArgs>,
     ) -> Result<CallToolResult, McpError> {
-        let mut args = vec!["animate".to_string(), p.input.to_string_lossy().into_owned(), p.prompt];
+        let mut args = vec![
+            "animate".to_string(),
+            p.input.to_string_lossy().into_owned(),
+            p.prompt,
+        ];
         push_path_opt(&mut args, "--out", p.out);
         push_path_opt(&mut args, "--dsl-out", p.dsl_out);
         p.common.push(&mut args);
         run_mogen(args).await
     }
 
-    #[tool(description = "Repair validation errors in an existing .mog via the LLM. Runs the \
+    #[tool(
+        description = "Repair validation errors in an existing .mog via the LLM. Runs the \
         validator first, feeds each diagnostic back to the model, and re-validates. No-op if the \
-        file already validates.")]
+        file already validates."
+    )]
     async fn repair(
         &self,
         Parameters(p): Parameters<RepairArgs>,
@@ -711,14 +851,19 @@ impl MogenMcp {
         run_mogen(args).await
     }
 
-    #[tool(description = "Generate PBR textures for every material in a .mog (LLM-drawn albedo \
+    #[tool(
+        description = "Generate PBR textures for every material in a .mog (LLM-drawn albedo \
         + locally-derived normal / metallic-roughness / occlusion). Gemini-only. PNGs are \
-        written next to the .mog and the matching texture attrs spliced into the source.")]
+        written next to the .mog and the matching texture attrs spliced into the source."
+    )]
     async fn textures(
         &self,
         Parameters(p): Parameters<TexturesArgs>,
     ) -> Result<CallToolResult, McpError> {
-        let mut args = vec!["textures".to_string(), p.input.to_string_lossy().into_owned()];
+        let mut args = vec![
+            "textures".to_string(),
+            p.input.to_string_lossy().into_owned(),
+        ];
         push_path_opt(&mut args, "--out", p.out);
         push_path_opt(&mut args, "--glb", p.glb);
         push_path_opt(&mut args, "--textures-dir", p.textures_dir);
@@ -731,7 +876,11 @@ impl MogenMcp {
         push_opt(&mut args, "--zai-api-key", p.zai_api_key);
         push_flag(&mut args, "--no-pbr", p.no_pbr);
         push_flag(&mut args, "--no-normal", p.no_normal);
-        push_flag(&mut args, "--no-metallic-roughness", p.no_metallic_roughness);
+        push_flag(
+            &mut args,
+            "--no-metallic-roughness",
+            p.no_metallic_roughness,
+        );
         push_flag(&mut args, "--no-occlusion", p.no_occlusion);
         push_opt(&mut args, "--texture-size", p.texture_size);
         run_mogen(args).await
@@ -739,8 +888,10 @@ impl MogenMcp {
 
     // -- ops / bench --------------------------------------------------------
 
-    #[tool(description = "Download the latest release from GitHub and replace the running mogen \
-        binary in place. Without `yes=true`, only checks and prints what it would do.")]
+    #[tool(
+        description = "Download the latest release from GitHub and replace the running mogen \
+        binary in place. Without `yes=true`, only checks and prints what it would do."
+    )]
     async fn update(
         &self,
         Parameters(p): Parameters<UpdateArgs>,
@@ -752,8 +903,10 @@ impl MogenMcp {
         run_mogen(args).await
     }
 
-    #[tool(description = "Run a suite of prompts through `generate` and report success rate and \
-        mean token cost. Does not write GLBs.")]
+    #[tool(
+        description = "Run a suite of prompts through `generate` and report success rate and \
+        mean token cost. Does not write GLBs."
+    )]
     async fn bench(
         &self,
         Parameters(p): Parameters<BenchArgs>,
@@ -798,8 +951,10 @@ impl MogenMcp {
         run_mogen(args).await
     }
 
-    #[tool(description = "Print full detail for a MoGHub model. Reference is `<user>/<slug>` \
-        or `@<user>/<slug>`.")]
+    #[tool(
+        description = "Print full detail for a MoGHub model. Reference is `<user>/<slug>` \
+        or `@<user>/<slug>`."
+    )]
     async fn moghub_info(
         &self,
         Parameters(p): Parameters<MoghubRefArgs>,
@@ -810,8 +965,10 @@ impl MogenMcp {
         run_mogen(args).await
     }
 
-    #[tool(description = "Download a MoGHub model's `.mog` files into a directory. Defaults to \
-        the latest version.")]
+    #[tool(
+        description = "Download a MoGHub model's `.mog` files into a directory. Defaults to \
+        the latest version."
+    )]
     async fn moghub_download(
         &self,
         Parameters(p): Parameters<MoghubDownloadArgs>,
@@ -880,9 +1037,11 @@ impl MogenMcp {
         run_mogen(args).await
     }
 
-    #[tool(description = "Publish a `.mog` to MoGHub. Bundles every locally imported `.mog` \
+    #[tool(
+        description = "Publish a `.mog` to MoGHub. Bundles every locally imported `.mog` \
         plus referenced PNG/JPG/JPEG/WebP textures. Re-publishing a file with a prior MoGHub \
-        stamp appends a version unless `new=true`.")]
+        stamp appends a version unless `new=true`."
+    )]
     async fn moghub_publish(
         &self,
         Parameters(p): Parameters<MoghubPublishArgs>,
@@ -920,13 +1079,10 @@ impl ServerHandler for MogenMcp {
         info.server_info = Implementation::from_build_env();
         info.server_info.name = env!("CARGO_PKG_NAME").to_string();
         info.server_info.version = env!("CARGO_PKG_VERSION").to_string();
-        info.server_info = info
-            .server_info
-            .with_title("MoGen")
-            .with_description(
-                "Procedural 3D model generator. Compiles `.mog` DSL to glTF/FBX and \
+        info.server_info = info.server_info.with_title("MoGen").with_description(
+            "Procedural 3D model generator. Compiles `.mog` DSL to glTF/FBX and \
                 drives an LLM-backed generation pipeline.",
-            );
+        );
         info.instructions = Some(
             "MoGen MCP server. Exposes every `mogen` CLI subcommand as a tool. \
             Use `build` / `check` / `parse` / `dump_scene` / `inspect` / `thumbnail` for \

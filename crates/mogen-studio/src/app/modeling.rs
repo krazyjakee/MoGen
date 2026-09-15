@@ -22,6 +22,16 @@ pub(in crate::app) struct WorkerRenderer {
     pub capture_part: Option<String>,
 }
 impl SessionRenderer for WorkerRenderer {
+    fn restore_camera(&mut self, info: &mogen_core::views::CaptureInfo) -> anyhow::Result<()> {
+        if info.convention_version != mogen_core::views::CAMERA_CONVENTION_VERSION
+            || info.view != "front"
+        {
+            anyhow::bail!("Unsupported saved camera");
+        }
+        self.framing = Some((info.target.into(), info.distance / 2.8));
+        self.front_yaw = Some(info.yaw);
+        Ok(())
+    }
     fn capture_info(&self) -> Option<mogen_core::views::CaptureInfo> {
         self.last_capture.clone()
     }
@@ -223,6 +233,7 @@ impl super::MogenStudioApp {
             ui.ctx().request_repaint_after(Duration::from_millis(100));
             return;
         };
+        let mut resume_requested = false;
         ui.collapsing("Modeling session",|ui| {
             ui.add_enabled_ui(!busy,|ui| {
                 quality_controls(ui,&mut project);
@@ -253,9 +264,21 @@ impl super::MogenStudioApp {
             });
             if let Some(control)=&self.active().modeling_control {
                 let meter=control.meter();
+                if meter.call_pending {ui.label(format!("{} pending · {:.1}s in current call",meter.stage,(control.elapsed().as_secs_f64()-meter.stage_started_seconds).max(0.0)));}
                 ui.label(format!("{} calls · {} tokens · {:.1}s · {}",meter.calls,meter.usage.total_tokens,control.elapsed().as_secs_f64(),
                     if meter.unknown_cost {"cost unavailable/subscription".into()} else {format!("estimated ${:.3}",meter.estimated_usd)}));
             }
+            ui.label(format!("Stage: {} · {} saved responses",project.stage,project.attempts.len()));
+            if ui.add_enabled(!busy && project.session_initial.is_some(),egui::Button::new("Resume saved refinement")).clicked(){resume_requested=true;}
+            ui.collapsing("Saved responses and recovery",|ui| {
+                for (i,a) in project.attempts.iter().enumerate().rev().take(20) {
+                    ui.collapsing(format!("{} · {} · {} · {}",i+1,a.phase,a.state,a.model),|ui|{
+                        ui.label(&a.provenance);if let Some(outcome)=&a.outcome {ui.label(outcome.to_string());}
+                        if ui.button("Copy raw response").clicked(){ui.ctx().copy_text(a.response.clone());}
+                        ui.label(format!("{} bytes saved for revision {}",a.response.len(),&a.revision[..12]));
+                    });
+                }
+            });
             if !project.stop_reason.is_empty(){ui.label(&project.stop_reason);}
             ui.label(format!("{} recoverable candidates",project.candidates.len()));
             if self.active().path.is_none(){ui.label(egui::RichText::new("Unsaved candidates are recoverable from ~/.mogen/modeling-recovery; save the asset to keep its session beside the project.").weak());}
@@ -264,7 +287,7 @@ impl super::MogenStudioApp {
             let mut restore_copy=None;
             for (i,candidate) in project.candidates.iter().enumerate().rev().take(20) {
                 ui.horizontal(|ui| {
-                    ui.label(format!("Revision {} · {}",i+1,candidate.model));
+                    ui.label(format!("Revision {} · {} · {}",i+1,candidate.model,if candidate.reviewed{"reviewed"}else{"unreviewed"}));
                     if ui.button("Compare").clicked(){compare=Some(i);}
                     if ui.add_enabled(!busy,egui::Button::new("Restore as copy")).clicked(){restore_copy=Some(i);}
                     if ui.add_enabled(!busy,egui::Button::new("Restore / Keep")).clicked(){restore=Some(i);}
@@ -373,6 +396,11 @@ impl super::MogenStudioApp {
                     self.active_mut().modeling_compare = None;
                 }
             }
+        }
+        if resume_requested {
+            drop(project);
+            self.spawn_modeling_resume(ui.ctx().clone());
+            return;
         }
         if !busy {
             if let Some(path) = self.active().path.clone() {

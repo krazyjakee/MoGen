@@ -99,3 +99,7 @@ pub use csg_stub::{
     difference, difference_many, hull_mesh, intersect, intersect_many, is_csg_manifold,
     try_union_many, union, union_many, union_smooth,
 };
+
+pub mod shading;
+pub use shading::crease_normals;
+pub use subdivide::loop_subdivide_geometric;

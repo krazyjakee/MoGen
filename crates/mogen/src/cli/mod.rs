@@ -50,3 +50,5 @@ mod tests {
         }
     }
 }
+
+pub(crate) use value_args::ProviderArg;

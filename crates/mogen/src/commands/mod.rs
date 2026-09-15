@@ -15,3 +15,5 @@ pub(crate) mod repair;
 pub(crate) mod textures;
 pub(crate) mod thumbnail;
 pub(crate) mod update;
+
+pub(crate) mod session;

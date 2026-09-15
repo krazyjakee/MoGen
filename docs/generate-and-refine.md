@@ -127,3 +127,11 @@ focused follow-up issues.
 Release validation still requires live baseline/refinement/guidance runs and
 independent human review. The included authored fixtures prove the evaluation
 pipeline works; they do not establish AI modeling quality or a release threshold.
+
+## Supported headless sessions
+
+Use [`mogen session`](modeling-session-cli.md) for the shared Generate/Refine
+runner, durable response recovery, artifact reports and resume. MCP exposes the
+same `session` operation. Legacy `generate`/`modify --auto-refine` remain
+compatible. The [milestone validation artifacts](../benches/quality/reliability/compare.html)
+include matched sports-body shading and subdivision captures.

@@ -14,9 +14,7 @@
 //! before `bind_meshes` so skin bind-pose world matrices reflect the
 //! deformed geometry.
 
-use std::collections::HashMap;
-
-use anyhow::{anyhow, bail, Result};
+use anyhow::{bail, Result};
 
 use mogen_core::{NodeId, SceneGraph};
 
@@ -35,17 +33,7 @@ use spec::{collect_conforms, walk, ConformMode, ConformSpec};
 
 /// Resolve every `conform` declared at AST scope.
 pub fn resolve_conforms(ast: &[Node], graph: &mut SceneGraph) -> Result<()> {
-    let specs = collect_conforms(ast)?;
-    let mut by_use: HashMap<Option<u32>, Vec<ConformSpec>> = HashMap::new();
-    for s in specs {
-        by_use.entry(s.use_id).or_default().push(s);
-    }
-    for (_, group) in by_use {
-        for spec in group {
-            apply_conform(&spec, graph, None)?;
-        }
-    }
-    Ok(())
+    resolve_specs(&collect_conforms(ast)?, graph, None)
 }
 
 /// Resolve `conform` declarations inside a replicated subtree.
@@ -58,35 +46,135 @@ pub fn resolve_conforms_in_scope(
     for c in children {
         walk(c, &mut specs)?;
     }
-    for spec in &specs {
-        apply_conform(spec, graph, Some(scope_root))?;
+    resolve_specs(&specs, graph, Some(scope_root))
+}
+
+fn resolve_specs(
+    specs: &[ConformSpec],
+    graph: &mut SceneGraph,
+    scope: Option<NodeId>,
+) -> Result<()> {
+    if specs.is_empty() {
+        return Ok(());
     }
+    // Resolve identities before reparenting changes paths; operate on a private
+    // graph so a failed/cyclic binding cannot leave a partially deformed scene.
+    let bindings: Vec<_> = specs
+        .iter()
+        .map(|s| {
+            Ok((
+                find(s, graph, scope, &s.target, true)?,
+                find(s, graph, scope, &s.child, false)?,
+            ))
+        })
+        .collect::<Result<_>>()?;
+    let mut staged = graph.clone();
+    let mut done = vec![false; specs.len()];
+    for _ in 0..specs.len() {
+        let Some(i) = (0..specs.len()).find(|&i| {
+            !done[i]
+                && !bindings
+                    .iter()
+                    .enumerate()
+                    .any(|(j, (_, child))| !done[j] && *child == bindings[i].0)
+        }) else {
+            bail!(
+                "conform: cyclic target/child dependency at bytes {}..{}",
+                specs[done.iter().position(|d| !*d).unwrap()].span.start,
+                specs[done.iter().position(|d| !*d).unwrap()].span.end
+            );
+        };
+        apply_conform(&specs[i], &mut staged, bindings[i].0, bindings[i].1).map_err(|e| {
+            anyhow::anyhow!(
+                "conform at bytes {}..{} in use {:?}: target {:?}, child {:?}: {e:#}",
+                specs[i].span.start,
+                specs[i].span.end,
+                specs[i].use_id,
+                specs[i].target,
+                specs[i].child
+            )
+        })?;
+        done[i] = true;
+    }
+    *graph = staged;
     Ok(())
+}
+fn find(
+    spec: &ConformSpec,
+    graph: &SceneGraph,
+    scope: Option<NodeId>,
+    name: &str,
+    target: bool,
+) -> Result<NodeId> {
+    let matches: Vec<NodeId> = if target && name.starts_with('/') {
+        let mut parents = graph.roots.clone();
+        let segments: Vec<_> = name[1..].split('/').collect();
+        if segments
+            .iter()
+            .any(|s| s.is_empty() || *s == "." || *s == "..")
+        {
+            bail!("conform: absolute target path requires named instance segments: {name:?}");
+        }
+        let mut found = vec![];
+        for (index, segment) in segments.iter().enumerate() {
+            found = parents
+                .into_iter()
+                .filter(|&id| graph.get(id).name == *segment)
+                .collect();
+            if found.len() != 1 {
+                break;
+            }
+            if index + 1 < segments.len() {
+                parents = graph.get(found[0]).children.clone();
+            } else {
+                parents = vec![];
+            }
+        }
+        found
+    } else {
+        graph
+            .nodes
+            .iter()
+            .enumerate()
+            .filter(|(i, n)| {
+                if n.name != name {
+                    return false;
+                }
+                if let Some(root) = scope {
+                    let mut current = Some(NodeId(*i as u32));
+                    while let Some(id) = current {
+                        if id == root {
+                            return true;
+                        }
+                        current = graph.get(id).parent;
+                    }
+                    false
+                } else {
+                    graph.use_id_visible(spec.use_id, n.use_id)
+                }
+            })
+            .map(|(i, _)| NodeId(i as u32))
+            .collect()
+    };
+    if matches.len() == 1 {
+        return Ok(matches[0]);
+    }
+    let reason = if matches.len() > 1 {
+        "ambiguous"
+    } else if graph.nodes.iter().any(|n| n.name == name) {
+        "present but inaccessible"
+    } else {
+        "unknown"
+    };
+    bail!("conform: {reason} {} node {name:?} at bytes {}..{} (use {:?}, replicated scope {:?}). Plain names stay instance-local. Bind an external target with its absolute /assembly/body instance path, or declare conform at scene scope after instantiation. External targets in replicators must already exist.",if target{"target"}else{"child"},spec.span.start,spec.span.end,spec.use_id,scope);
 }
 
 fn apply_conform(
     spec: &ConformSpec,
     graph: &mut SceneGraph,
-    scope: Option<NodeId>,
+    target_id: NodeId,
+    child_id: NodeId,
 ) -> Result<()> {
-    // Lookup precedence mirrors `attach`: explicit scope (replicator
-    // per-instance pass) is strict; otherwise frame-visible match against
-    // the spec's `use_id`.
-    let find = |name: &str| -> Option<NodeId> {
-        if let Some(root) = scope {
-            return graph.find_node_in_subtree(root, name);
-        }
-        graph
-            .nodes
-            .iter()
-            .position(|n| n.name == name && graph.use_id_visible(spec.use_id, n.use_id))
-            .map(|i| NodeId(i as u32))
-    };
-
-    let target_id = find(&spec.target)
-        .ok_or_else(|| anyhow!("conform: unknown target node \"{}\"", spec.target))?;
-    let child_id = find(&spec.child)
-        .ok_or_else(|| anyhow!("conform: unknown child node \"{}\"", spec.child))?;
     if target_id == child_id {
         bail!(
             "conform: \"{}\" cannot be conformed onto itself",

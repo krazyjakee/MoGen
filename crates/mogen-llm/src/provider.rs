@@ -289,7 +289,10 @@ pub enum ProviderError {
     #[error("invalid response: {0}")]
     InvalidResponse(String),
     #[error("provider {provider} does not support {feature}")]
-    Unsupported { provider: Provider, feature: &'static str },
+    Unsupported {
+        provider: Provider,
+        feature: &'static str,
+    },
     /// OAuth subsystem failure (refresh failed, project missing, store
     /// corrupted). The body carries the [`crate::google_oauth::OAuthError`]
     /// message verbatim so the CLI can show the actionable hint.
@@ -300,7 +303,9 @@ pub enum ProviderError {
 impl From<GeminiError> for ProviderError {
     fn from(e: GeminiError) -> Self {
         match e {
-            GeminiError::MissingApiKey => Self::MissingApiKey { var: "GEMINI_API_KEY" },
+            GeminiError::MissingApiKey => Self::MissingApiKey {
+                var: "GEMINI_API_KEY",
+            },
             GeminiError::Transport(err) => classify_reqwest(&err),
             GeminiError::Api { status, message } => Self::Api { status, message },
             GeminiError::EmptyResponse => Self::EmptyResponse,
@@ -322,7 +327,9 @@ impl From<GeminiError> for ProviderError {
 impl From<OpenAIError> for ProviderError {
     fn from(e: OpenAIError) -> Self {
         match e {
-            OpenAIError::MissingApiKey => Self::MissingApiKey { var: "OPENAI_API_KEY" },
+            OpenAIError::MissingApiKey => Self::MissingApiKey {
+                var: "OPENAI_API_KEY",
+            },
             OpenAIError::Transport(err) => classify_reqwest(&err),
             OpenAIError::Api { status, message } => Self::Api { status, message },
             OpenAIError::EmptyResponse => Self::EmptyResponse,
@@ -335,11 +342,15 @@ impl From<OpenAIError> for ProviderError {
 impl From<AnthropicError> for ProviderError {
     fn from(e: AnthropicError) -> Self {
         match e {
-            AnthropicError::MissingApiKey => Self::MissingApiKey { var: "ANTHROPIC_API_KEY" },
+            AnthropicError::MissingApiKey => Self::MissingApiKey {
+                var: "ANTHROPIC_API_KEY",
+            },
             AnthropicError::Transport(err) => classify_reqwest(&err),
             AnthropicError::Api { status, message } => Self::Api { status, message },
             AnthropicError::EmptyResponse => Self::EmptyResponse,
-            AnthropicError::BudgetExceeded { used, budget } => Self::BudgetExceeded { used, budget },
+            AnthropicError::BudgetExceeded { used, budget } => {
+                Self::BudgetExceeded { used, budget }
+            }
             AnthropicError::InvalidResponse(s) => Self::InvalidResponse(s),
         }
     }
@@ -360,11 +371,15 @@ impl From<OllamaError> for ProviderError {
 impl From<FireworksError> for ProviderError {
     fn from(e: FireworksError) -> Self {
         match e {
-            FireworksError::MissingApiKey => Self::MissingApiKey { var: "FIREWORKS_API_KEY" },
+            FireworksError::MissingApiKey => Self::MissingApiKey {
+                var: "FIREWORKS_API_KEY",
+            },
             FireworksError::Transport(err) => classify_reqwest(&err),
             FireworksError::Api { status, message } => Self::Api { status, message },
             FireworksError::EmptyResponse => Self::EmptyResponse,
-            FireworksError::BudgetExceeded { used, budget } => Self::BudgetExceeded { used, budget },
+            FireworksError::BudgetExceeded { used, budget } => {
+                Self::BudgetExceeded { used, budget }
+            }
             FireworksError::InvalidResponse(s) => Self::InvalidResponse(s),
         }
     }
@@ -514,9 +529,7 @@ impl LlmClient {
     pub fn gemini_from_credential(credential: GoogleCredential) -> Self {
         match credential {
             GoogleCredential::ApiKey(key) => LlmClient::Gemini(GeminiClient::new(key)),
-            GoogleCredential::OAuth(bundle) => {
-                LlmClient::Gemini(GeminiClient::from_oauth(bundle))
-            }
+            GoogleCredential::OAuth(bundle) => LlmClient::Gemini(GeminiClient::from_oauth(bundle)),
             GoogleCredential::AntigravityOAuth(bundle) => {
                 LlmClient::Gemini(GeminiClient::from_antigravity_oauth(bundle))
             }
@@ -714,9 +727,7 @@ impl LlmClient {
                             &usage,
                             &cfg.spend_context,
                             false,
-                            Some(format!(
-                                "budget exceeded: {used} > {budget}"
-                            )),
+                            Some(format!("budget exceeded: {used} > {budget}")),
                         );
                         crate::spend::record(rec);
                     }
@@ -727,7 +738,9 @@ impl LlmClient {
         if let Some(control) = &cfg.session_control {
             control.after_call(result.as_ref().ok().map(|r| &r.usage), price);
             // Usage is recorded even if cancellation/deadline arrived in flight.
-            control.check().map_err(ProviderError::InvalidResponse)?;
+            if !cfg.retain_stopped_response || result.is_err() {
+                control.check().map_err(ProviderError::InvalidResponse)?;
+            }
         }
         result
     }
@@ -813,8 +826,14 @@ mod tests {
         assert_eq!(Provider::parse("LM-Studio"), Some(Provider::OpenAiCompat));
         assert_eq!(Provider::parse("llama.cpp"), Some(Provider::OpenAiCompat));
         assert_eq!(Provider::parse("llamacpp"), Some(Provider::OpenAiCompat));
-        assert_eq!(Provider::parse("local-openai"), Some(Provider::OpenAiCompat));
-        assert_eq!(Provider::parse("openai-compatible"), Some(Provider::OpenAiCompat));
+        assert_eq!(
+            Provider::parse("local-openai"),
+            Some(Provider::OpenAiCompat)
+        );
+        assert_eq!(
+            Provider::parse("openai-compatible"),
+            Some(Provider::OpenAiCompat)
+        );
         assert_eq!(Provider::parse("wat"), None);
     }
 
@@ -834,14 +853,15 @@ mod tests {
         // real key on disk (env or settings file) sees this pass on CI but
         // fail locally. Point `MOGEN_SETTINGS` at a guaranteed-absent path so
         // the settings-store fallback reads nothing.
-        let missing_settings =
-            std::env::temp_dir().join("mogen-test-nonexistent-settings.json");
+        let missing_settings = std::env::temp_dir().join("mogen-test-nonexistent-settings.json");
         std::env::remove_var("OPENAI_API_KEY");
         std::env::set_var("MOGEN_SETTINGS", &missing_settings);
         let result = LlmClient::from_env(Provider::OpenAI);
         std::env::remove_var("MOGEN_SETTINGS");
         match result {
-            Err(ProviderError::MissingApiKey { var: "OPENAI_API_KEY" }) => {}
+            Err(ProviderError::MissingApiKey {
+                var: "OPENAI_API_KEY",
+            }) => {}
             Err(other) => panic!("wrong error: {other}"),
             Ok(_) => panic!("expected MissingApiKey but got Ok"),
         }
@@ -868,9 +888,8 @@ mod tests {
     fn from_env_succeeds_for_ollama_without_key() {
         // Ollama tolerates a blank key; this should construct a client.
         std::env::remove_var("OLLAMA_API_KEY");
-        let c = LlmClient::from_env(Provider::Ollama).unwrap_or_else(|_| {
-            panic!("ollama should work keyless")
-        });
+        let c = LlmClient::from_env(Provider::Ollama)
+            .unwrap_or_else(|_| panic!("ollama should work keyless"));
         assert_eq!(c.provider(), Provider::Ollama);
     }
 
@@ -879,9 +898,8 @@ mod tests {
         // OpenAiCompat is keyless (local servers need no token); from_env
         // must succeed without consulting OPENAI_COMPAT_API_KEY.
         std::env::remove_var("OPENAI_COMPAT_API_KEY");
-        let c = LlmClient::from_env(Provider::OpenAiCompat).unwrap_or_else(|_| {
-            panic!("openai-compat should work keyless")
-        });
+        let c = LlmClient::from_env(Provider::OpenAiCompat)
+            .unwrap_or_else(|_| panic!("openai-compat should work keyless"));
         assert_eq!(c.provider(), Provider::OpenAiCompat);
     }
 }

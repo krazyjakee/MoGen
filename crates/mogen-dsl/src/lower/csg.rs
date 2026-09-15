@@ -9,7 +9,7 @@ use crate::ast::{Node, Value};
 
 use super::connector::{add_aabb_connectors_if_missing, add_connector};
 use super::deform::apply_deform;
-use super::helpers::{apply_subdivide, inherit_material_from_ancestor, transform_from_attrs};
+use super::helpers::{inherit_material_from_ancestor, resolved_subdivisions, transform_from_attrs};
 use super::node::apply_metadata;
 use super::primitive::primitive_mesh;
 
@@ -110,7 +110,7 @@ pub(super) fn lower_csg(
     };
 
     let cleaned = clean_csg_output(&combined);
-    let cleaned = apply_subdivide(node, cleaned)?;
+    let cleaned = finish_csg(node, cleaned)?;
     graph.set_mesh(id, cleaned);
 
     // Attach connectors declared directly on the CSG node.
@@ -150,7 +150,7 @@ fn eval_mesh(node: &Node, bake_transform: bool, uv_mode: UvMode) -> Result<Mesh>
                         _ => operands.push(eval_mesh(c, true, uv_mode)?),
                     }
                 }
-                match node.kind.as_str() {
+                let combined = match node.kind.as_str() {
                     "union" => {
                         if operands.is_empty() {
                             bail!("`union` requires at least one operand");
@@ -174,7 +174,8 @@ fn eval_mesh(node: &Node, bake_transform: bool, uv_mode: UvMode) -> Result<Mesh>
                         intersect_many(&operands)
                     }
                     _ => unreachable!(),
-                }
+                };
+                finish_csg(node, clean_csg_output(&combined))?
             }
             other => bail!("`{other}` is not allowed as a CSG operand"),
         }
@@ -189,4 +190,38 @@ fn eval_mesh(node: &Node, bake_transform: bool, uv_mode: UvMode) -> Result<Mesh>
     } else {
         Ok(transform_mesh(&local, t.to_mat4()))
     }
+}
+
+fn finish_csg(node: &Node, mesh: Mesh) -> Result<Mesh> {
+    let degrees = node.attr_number("crease_angle").unwrap_or(60.0);
+    if !degrees.is_finite() || !(0.0..=180.0).contains(&degrees) {
+        bail!(
+            "CSG {:?} at bytes {}..{}: crease_angle must be 0–180 degrees",
+            node.name,
+            node.span.start,
+            node.span.end
+        );
+    }
+    let faceted = node.attr_number("faceted").unwrap_or(0.0) != 0.0;
+    if faceted && node.attr("crease_angle").is_some() {
+        bail!(
+            "CSG {:?} at bytes {}..{}: choose faceted=1 or crease_angle, not both",
+            node.name,
+            node.span.start,
+            node.span.end
+        );
+    }
+    let mesh =
+        mogen_geom::loop_subdivide_geometric(&mesh, resolved_subdivisions(node)?).map_err(|e| {
+            anyhow::anyhow!(
+                "CSG {:?} at bytes {}..{}: {e}",
+                node.name,
+                node.span.start,
+                node.span.end
+            )
+        })?;
+    Ok(mogen_geom::crease_normals(
+        &mesh,
+        if faceted { 0.0 } else { degrees },
+    ))
 }

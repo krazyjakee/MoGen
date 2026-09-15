@@ -1,0 +1,17 @@
+// Absolute target binding preserves module-local child names.
+module "door_detail" (s=1) {
+  box "seam" (size=[1.5,0.012,0.025])
+  conform (target="/car/body_shell", child="seam", from="door_a_$s", to="door_b_$s", along=x, lift=0.002, reparent=0)
+}
+scene {
+ group "car" {
+  box "body_shell" (size=[2,0.5,3]) {
+    connector "door_a_1" (at=[1,0.1,-0.75], dir=[1,0,0])
+    connector "door_b_1" (at=[1,0.1,0.75], dir=[1,0,0])
+    connector "door_a_-1" (at=[-1,0.1,-0.75], dir=[-1,0,0])
+    connector "door_b_-1" (at=[-1,0.1,0.75], dir=[-1,0,0])
+  }
+  use "door_detail" (s=1)
+  use "door_detail" (s=-1)
+}
+}

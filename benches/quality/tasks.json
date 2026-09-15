@@ -2,11 +2,127 @@
   "version": 1,
   "provenance": "Original procedural targets authored for MoGen in 2026; source and derived reference renders CC0-1.0. These are diagnostic fixtures, not AI baseline results.",
   "tasks": [
-    {"id":"ornate_chair","source":"targets/ornate_chair.mog","prompt":"A walnut chair, 0.6m wide and approximately 1m tall, with four legs, a broad back and two spherical finials. Preserve all eight named parts. Ornament should match the reference without inventing animation.","required":["seat","back","leg_fl","leg_fr","leg_bl","leg_br","finial_l","finial_r"],"max_extent":[0.7,1.1,0.7],"measure_pairs":[["seat","leg_fl"],["seat","back"]]},
-    {"id":"upholstery","source":"targets/upholstery.mog","prompt":"A warm linen cushion on a dark wooden ottoman frame, 1m wide, 0.8m deep, about 0.42m tall. The cushion must bulge at its middle and taper at its top and bottom; avoid a plain box.","required":["frame","cushion"],"max_extent":[1.1,0.5,0.9],"measure_pairs":[["frame","cushion"]]},
-    {"id":"hollow_vessel","source":"targets/hollow_vessel.mog","prompt":"A hollow turquoise ceramic vessel, 0.5m tall, maximum diameter 0.44m, narrowed neck and visible interior wall. Keep an open mouth and closed base.","required":["vessel"],"max_extent":[0.5,0.55,0.5]},
-    {"id":"machinery","source":"targets/machinery.mog","prompt":"A steel shaft support assembly, 1m base width, with raised support, horizontal shaft and handwheel. Match the reference joints and negative space; static geometry only.","required":["base","support","shaft","wheel"],"max_extent":[1.1,0.95,0.7]},
-    {"id":"organic","source":"targets/organic.mog","prompt":"A green continuous pear-like organic form, roughly 0.6m wide and 0.8m tall, merging its upper lobe smoothly into the body. Match silhouette without adding limbs or animation.","required":["form"],"max_extent":[0.8,1.0,0.8]},
-    {"id":"assembled_scene","source":"targets/assembled_scene.mog","prompt":"A small table scene on a 2m square floor, with a pedestal table, clay pot and closed book resting on the tabletop. Tabletop height about 0.69m. Keep each prop separately editable.","required":["floor","table_top","pedestal","pot","book"],"max_extent":[2.1,1.1,2.1]}
+    {
+      "id": "ornate_chair",
+      "source": "targets/ornate_chair.mog",
+      "prompt": "A walnut chair, 0.6m wide and approximately 1m tall, with four legs, a broad back and two spherical finials. Preserve all eight named parts. Ornament should match the reference without inventing animation.",
+      "required": [
+        "seat",
+        "back",
+        "leg_fl",
+        "leg_fr",
+        "leg_bl",
+        "leg_br",
+        "finial_l",
+        "finial_r"
+      ],
+      "max_extent": [
+        0.7,
+        1.1,
+        0.7
+      ],
+      "measure_pairs": [
+        [
+          "seat",
+          "leg_fl"
+        ],
+        [
+          "seat",
+          "back"
+        ]
+      ]
+    },
+    {
+      "id": "upholstery",
+      "source": "targets/upholstery.mog",
+      "prompt": "A warm linen cushion on a dark wooden ottoman frame, 1m wide, 0.8m deep, about 0.42m tall. The cushion must bulge at its middle and taper at its top and bottom; avoid a plain box.",
+      "required": [
+        "frame",
+        "cushion"
+      ],
+      "max_extent": [
+        1.1,
+        0.5,
+        0.9
+      ],
+      "measure_pairs": [
+        [
+          "frame",
+          "cushion"
+        ]
+      ]
+    },
+    {
+      "id": "hollow_vessel",
+      "source": "targets/hollow_vessel.mog",
+      "prompt": "A hollow turquoise ceramic vessel, 0.5m tall, maximum diameter 0.44m, narrowed neck and visible interior wall. Keep an open mouth and closed base.",
+      "required": [
+        "vessel"
+      ],
+      "max_extent": [
+        0.5,
+        0.55,
+        0.5
+      ]
+    },
+    {
+      "id": "machinery",
+      "source": "targets/machinery.mog",
+      "prompt": "A steel shaft support assembly, 1m base width, with raised support, horizontal shaft and handwheel. Match the reference joints and negative space; static geometry only.",
+      "required": [
+        "base",
+        "support",
+        "shaft",
+        "wheel"
+      ],
+      "max_extent": [
+        1.1,
+        0.95,
+        0.7
+      ]
+    },
+    {
+      "id": "organic",
+      "source": "targets/organic.mog",
+      "prompt": "A green continuous pear-like organic form, roughly 0.6m wide and 0.8m tall, merging its upper lobe smoothly into the body. Match silhouette without adding limbs or animation.",
+      "required": [
+        "form"
+      ],
+      "max_extent": [
+        0.8,
+        1.0,
+        0.8
+      ]
+    },
+    {
+      "id": "assembled_scene",
+      "source": "targets/assembled_scene.mog",
+      "prompt": "A small table scene on a 2m square floor, with a pedestal table, clay pot and closed book resting on the tabletop. Tabletop height about 0.69m. Keep each prop separately editable.",
+      "required": [
+        "floor",
+        "table_top",
+        "pedestal",
+        "pot",
+        "book"
+      ],
+      "max_extent": [
+        2.1,
+        1.1,
+        2.1
+      ]
+    },
+    {
+      "id": "sports_body",
+      "source": "targets/sports_body.mog",
+      "prompt": "Compact procedural red sports-coupe body. Preserve curved body panels, open wheel arches and cockpit cutout; inspect hard cut boundaries and smooth shoulder transitions.",
+      "required": [
+        "body_shell"
+      ],
+      "max_extent": [
+        2,
+        1,
+        4.5
+      ]
+    }
   ]
 }

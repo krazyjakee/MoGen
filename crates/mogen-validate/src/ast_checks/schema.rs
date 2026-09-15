@@ -325,7 +325,8 @@ pub fn attrs_for_kind(kind: &str) -> &'static [&'static str] {
         "light" => &["kind", "color", "intensity", "range", "inner_cone", "outer_cone", "dir"],
         // `smooth` blends limb-to-torso seams for organic shapes.
         // `difference`/`intersect` reject it via attr_type below.
-        "union" => &["smooth"],
+        "union" => &["smooth", "crease_angle"],
+        "difference" | "intersect" => &["crease_angle"],
         _ => &[],
     }
 }
@@ -379,6 +380,7 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         | (_, "wave")
         | (_, "wave_frequency")
         | (_, "wave_phase")
+        | (_, "crease_angle")
         | (_, "faceted")
         | (_, "cast_shadow")
         | (_, "lod")

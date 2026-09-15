@@ -27,6 +27,7 @@ impl MogenStudioApp {
     pub(in crate::app) fn build_run_config(&self) -> LlmRunConfig {
         let modeling_options = self.active().modeling.lock().unwrap().clone();
         LlmRunConfig {
+            resume: false,
             brief_revision: modeling_options.brief.revision,
             recovery_path: dirs::home_dir().map(|p| {
                 p.join(".mogen/modeling-recovery").join(format!(
@@ -36,9 +37,7 @@ impl MogenStudioApp {
                 ))
             }),
             modeling: self.active().modeling.clone(),
-            control: mogen_llm::session::SessionControl::new(
-                modeling_options.limits,
-            ),
+            control: mogen_llm::session::SessionControl::new(modeling_options.limits),
             model: self.settings.provider_model(),
             thinking: self.settings.thinking_level(),
             temperature: self.settings.temperature(),
@@ -69,6 +68,28 @@ impl MogenStudioApp {
         prompt: String,
         existing: Option<String>,
         image: Option<crate::app::types::GenImageInput>,
+    ) {
+        self.spawn_llm_with_resume(ctx, kind, prompt, existing, image, false);
+    }
+    pub(in crate::app) fn spawn_modeling_resume(&mut self, ctx: egui::Context) {
+        let source = self.active().source.clone();
+        self.spawn_llm_with_resume(
+            ctx,
+            LlmKind::Modify,
+            String::new(),
+            Some(source),
+            None,
+            true,
+        );
+    }
+    fn spawn_llm_with_resume(
+        &mut self,
+        ctx: egui::Context,
+        kind: LlmKind,
+        prompt: String,
+        existing: Option<String>,
+        image: Option<crate::app::types::GenImageInput>,
+        resume: bool,
     ) {
         let slot = self.settings.provider_slot();
         let provider = slot.to_provider();
@@ -105,7 +126,7 @@ impl MogenStudioApp {
             self.active_mut().status = error;
             return;
         }
-        {
+        if !resume {
             let mut project = self.active().modeling.lock().unwrap();
             if project.mode == mogen_llm::session::QualityMode::Refined
                 && !provider.supports_images()
@@ -143,6 +164,15 @@ impl MogenStudioApp {
             project.stop_reason.clear();
         }
         let mut run_cfg = self.build_run_config();
+        run_cfg.resume = resume;
+        if resume {
+            let project = self.active().modeling.lock().unwrap();
+            run_cfg.control = mogen_llm::session::SessionControl::resume(
+                project.limits.clone(),
+                project.meter.clone(),
+                project.elapsed_seconds,
+            );
+        }
         // Per-file thinking override wins over the global default. Persisted
         // into the `.mog` header so switching files reads back the last pick.
         if let Some(level) = self.active().thinking_override {
@@ -163,19 +193,12 @@ impl MogenStudioApp {
         // calls stay in style. Falls back to the persisted Settings
         // default for fresh, never-styled tabs so the dropdown's last
         // pick still applies on the first generate of a new session.
-        run_cfg.style = self
-            .active()
-            .gen_style
-            .or_else(|| self.settings.style());
+        run_cfg.style = self.active().gen_style.or_else(|| self.settings.style());
         // Spend-tracker attribution: stamp the active file path so the
         // Spending panel can answer "how much has this scene cost?".
         // Untitled buffers leave the field `None` and the call still
         // records, just without scene grouping.
-        run_cfg.scene_path = self
-            .active()
-            .path
-            .as_ref()
-            .map(|p| p.display().to_string());
+        run_cfg.scene_path = self.active().path.as_ref().map(|p| p.display().to_string());
         let sys_instr = self.cached_system_instruction();
 
         let provider_label = provider.label();
@@ -243,5 +266,4 @@ impl MogenStudioApp {
             ctx.request_repaint();
         });
     }
-
 }

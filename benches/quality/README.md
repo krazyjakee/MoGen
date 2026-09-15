@@ -13,3 +13,9 @@ this implementation. No live provider results or human preferences are invented.
 `fixture-report.json` records the executed asset/export checks and
 `negative-control.json` records rejection of the incomplete but compiling model.
 These artifacts were produced with software Mesa/EGL at 512 × 512 pixels.
+
+`reliability/` records milestone 2's sports-body regression through this same
+evaluator. Open [compare.html](reliability/compare.html) for fixed-camera
+before/after shading and levels 1–2 subdivision captures. Optional task
+`candidate_source` compares another deterministic source against the task's
+original reference using its unchanged camera; it is ignored in live mode.

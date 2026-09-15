@@ -91,7 +91,9 @@ fn conform_writes_binding_for_tooling() {
         .as_ref()
         .expect("conform binding written");
     match cb {
-        ConformBinding::Path { target, from, to, .. } => {
+        ConformBinding::Path {
+            target, from, to, ..
+        } => {
             assert_eq!(*target, g.find_node("ground").unwrap());
             assert_eq!(from, "a");
             assert_eq!(to, "b");
@@ -115,10 +117,7 @@ fn conform_rejects_sphere_child() {
         "#,
     );
     assert!(err.contains("cannot mould a \"sphere\""), "err = {err}");
-    assert!(
-        err.contains("supported path-mode kinds"),
-        "err = {err}"
-    );
+    assert!(err.contains("supported path-mode kinds"), "err = {err}");
 }
 
 #[test]
@@ -425,8 +424,14 @@ fn conformed_decal_rot_x_tilts_artwork() {
     "#;
     let g_a = build(baseline_src);
     let g_b = build(rotated_src);
-    let mesh_a = g_a.nodes[g_a.find_node("logo").unwrap().0 as usize].mesh.as_ref().unwrap();
-    let mesh_b = g_b.nodes[g_b.find_node("logo").unwrap().0 as usize].mesh.as_ref().unwrap();
+    let mesh_a = g_a.nodes[g_a.find_node("logo").unwrap().0 as usize]
+        .mesh
+        .as_ref()
+        .unwrap();
+    let mesh_b = g_b.nodes[g_b.find_node("logo").unwrap().0 as usize]
+        .mesh
+        .as_ref()
+        .unwrap();
     let mut max_diff = 0.0_f32;
     for (a, b) in mesh_a.positions.iter().zip(&mesh_b.positions) {
         for k in 0..3 {
@@ -475,7 +480,10 @@ fn decal_on_synthesizes_patch_conform() {
         );
     }
     // Decal must be reparented under the bag.
-    assert_eq!(g.nodes[logo.0 as usize].parent, Some(g.find_node("bag").unwrap()));
+    assert_eq!(
+        g.nodes[logo.0 as usize].parent,
+        Some(g.find_node("bag").unwrap())
+    );
 }
 
 #[test]
@@ -517,4 +525,43 @@ fn conform_no_reparent_keeps_original_parent() {
     let stripe = g.find_node("stripe").unwrap();
     // With reparent=0, stripe stays under "root", not under ground.
     assert_eq!(g.nodes[stripe.0 as usize].parent, Some(root));
+}
+
+#[test]
+fn external_instance_binding_is_explicit_and_inspectable() {
+    let source = include_str!("../../../../examples/features/external_conform.mog");
+    let graph = build(source);
+    assert_eq!(
+        graph
+            .nodes
+            .iter()
+            .filter(|n| n.conform_binding.is_some())
+            .count(),
+        2
+    );
+    let local = source.replace("/car/body_shell", "body_shell");
+    let error = build_err(&local);
+    assert!(error.contains("inaccessible"), "{error}");
+    assert!(error.contains("bytes"));
+    for transformed in [
+        source.replace("group \"car\" {", "group \"car\" (pos=[2,1,0],ry=30) {"),
+        source.replace("(s=-1)", "(s=-1,scale=[-1,1,1])"),
+    ] {
+        assert_eq!(
+            build(&transformed)
+                .nodes
+                .iter()
+                .filter(|n| n.conform_binding.is_some())
+                .count(),
+            2
+        );
+    }
+}
+#[test]
+fn conform_duplicate_and_missing_paths_fail() {
+    for (source,expected) in [
+        ("scene {plane \"a\" plane \"a\" box \"b\" conform(target=\"a\",child=\"b\",at=\"top\")}","ambiguous"),
+        ("scene \"s\" {plane \"a\" box \"b\" conform(target=\"/s/missing\",child=\"b\",at=\"top\")}","unknown"),
+        ("scene {box \"a\" box \"b\" conform(target=\"a\",child=\"b\",at=\"top\") conform(target=\"b\",child=\"a\",at=\"top\")}","cyclic")
+    ] {assert!(build_err(source).contains(expected));}
 }

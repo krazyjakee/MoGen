@@ -1,0 +1,15 @@
+{
+  "convention_version": 1,
+  "revision": "4710c02cadb18f2bc95a16d657ff974dfe97f4e879938c7f7e062b94341c6a2b",
+  "view": "back",
+  "yaw": 0.0,
+  "pitch": 0.0,
+  "target": [
+    0.0,
+    0.5359196,
+    0.0
+  ],
+  "distance": 6.8329983,
+  "out_of_frame_vertices": 0,
+  "cropped_parts": []
+}

@@ -18,6 +18,7 @@ use crate::app::types::{LlmKind, LlmMessage, LlmOutcome, LlmProgress};
 /// every new setting would push another through every call site.
 #[derive(Clone)]
 pub(in crate::app) struct LlmRunConfig {
+    pub resume: bool,
     pub modeling: Arc<std::sync::Mutex<mogen_llm::session::ModelingProject>>,
     pub control: mogen_llm::session::SessionControl,
     pub recovery_path: Option<PathBuf>,
@@ -98,9 +99,9 @@ impl Credential {
     pub(in crate::app) fn api_key_or_empty(&self) -> String {
         match self {
             Credential::ApiKey(k) => k.clone(),
-            Credential::Zai(_)
-            | Credential::GeminiOAuth(_)
-            | Credential::AntigravityOAuth(_) => String::new(),
+            Credential::Zai(_) | Credential::GeminiOAuth(_) | Credential::AntigravityOAuth(_) => {
+                String::new()
+            }
         }
     }
 }
@@ -159,11 +160,13 @@ pub(in crate::app) fn build_provider_client(
             LlmClient::with_base_url(provider, cred.api_key_or_empty(), &endpoints.zai_base_url)
         }
         (Provider::Ollama, cred) if !endpoints.ollama_base_url.trim().is_empty() => {
-            LlmClient::with_base_url(provider, cred.api_key_or_empty(), &endpoints.ollama_base_url)
+            LlmClient::with_base_url(
+                provider,
+                cred.api_key_or_empty(),
+                &endpoints.ollama_base_url,
+            )
         }
-        (Provider::OpenAiCompat, cred)
-            if !endpoints.openai_compat_base_url.trim().is_empty() =>
-        {
+        (Provider::OpenAiCompat, cred) if !endpoints.openai_compat_base_url.trim().is_empty() => {
             LlmClient::with_base_url(
                 provider,
                 cred.api_key_or_empty(),
@@ -206,6 +209,84 @@ pub(in crate::app) fn run_llm(
     };
 
     let client = build_provider_client(provider, credential, &run_cfg.endpoints);
+    if run_cfg.resume {
+        let mut project = run_cfg.modeling.lock().unwrap().clone();
+        let mut cfg = GenerateConfig::new(project.session_prompt.clone());
+        cfg.model = run_cfg.model.clone();
+        if let Some(settings) = &project.request_settings {
+            settings.apply(&mut cfg);
+        }
+        cfg.user_images = project.session_images.clone();
+        cfg.session_control = Some(run_cfg.control.clone());
+        cfg.spend_context = mogen_llm::CallContext {
+            operation: "refine".into(),
+            scene_path: run_cfg.scene_path.clone(),
+            session_id: Some(run_cfg.session_id.clone()),
+        };
+        let mut renderer = crate::app::modeling::WorkerRenderer {
+            tx: tx.clone(),
+            control: run_cfg.control.clone(),
+            base_dir: run_cfg.base_dir.clone(),
+            framing: None,
+            front_yaw: None,
+            last_capture: None,
+            fit_image: None,
+            capture_part: None,
+        };
+        let mut checkpoint = |p: &mogen_llm::session::ModelingProject| {
+            let mut stored = run_cfg.modeling.lock().unwrap();
+            if stored.brief.revision != run_cfg.brief_revision {
+                return;
+            }
+            *stored = p.clone();
+            if let Some(path) = run_cfg
+                .scene_path
+                .as_ref()
+                .map(PathBuf::from)
+                .or_else(|| run_cfg.recovery_path.clone())
+            {
+                if let Err(e) = p.save(&path) {
+                    run_cfg.control.stop(&format!("Checkpoint failed: {e}"));
+                }
+            }
+            send_progress(LlmProgress::Status(format!(
+                "{}; {} saved responses",
+                p.stage,
+                p.attempts.len()
+            )));
+        };
+        let source = existing.unwrap_or_default();
+        let result = mogen_llm::session::resume_session(
+            &mut project,
+            &source,
+            run_cfg.base_dir.as_deref(),
+            &cfg,
+            provider.key(),
+            &mut |cfg| Ok(client.generate(cfg)?),
+            &mut renderer,
+            &mut checkpoint,
+        );
+        let dsl = match result {
+            Ok(source) => source,
+            Err(e) => {
+                project.stop_reason = format!("Resume stopped: {e:#}");
+                checkpoint(&project);
+                source
+            }
+        };
+        return LlmOutcome {
+            subscription: provider == Provider::Codex,
+            dsl,
+            diagnostics: vec![],
+            usage: run_cfg.control.meter().usage,
+            calls: run_cfg.control.meter().calls,
+            model: run_cfg.model,
+            image_calls: 0,
+            retry_prompt: None,
+            error: None,
+            kind,
+        };
+    }
     // Persist target context before the first potentially long provider call.
     {
         let mut project = run_cfg.modeling.lock().unwrap().clone();
@@ -228,12 +309,19 @@ pub(in crate::app) fn run_llm(
         let mut stored = run_cfg.modeling.lock().unwrap();
         if stored.brief.revision == run_cfg.brief_revision && run_cfg.control.check().is_ok() {
             *stored = project;
-            let path = run_cfg.scene_path.as_ref().map(PathBuf::from)
+            let path = run_cfg
+                .scene_path
+                .as_ref()
+                .map(PathBuf::from)
                 .or_else(|| run_cfg.recovery_path.clone());
             if let Some(path) = path {
-                if let Some(parent) = path.parent() { let _ = std::fs::create_dir_all(parent); }
+                if let Some(parent) = path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
                 if let Err(e) = stored.save(&path) {
-                    send_progress(LlmProgress::Status(format!("Session checkpoint failed: {e}")));
+                    send_progress(LlmProgress::Status(format!(
+                        "Session checkpoint failed: {e}"
+                    )));
                 }
             }
         }
@@ -531,10 +619,7 @@ pub(in crate::app) fn run_llm(
             Ok(po) => {
                 prefix_usage = po.usage.clone();
                 prefix_calls = 1;
-                cfg.user_prompt = mogen_llm::compose_coder_prompt(
-                    &plan_prompt_text,
-                    &po.plan,
-                );
+                cfg.user_prompt = mogen_llm::compose_coder_prompt(&plan_prompt_text, &po.plan);
             }
             Err(e) => {
                 let info = classify(&e);
@@ -625,12 +710,8 @@ pub(in crate::app) fn run_llm(
                 "done — {} call(s), {} tokens",
                 total_calls, total_usage.total_tokens
             )));
-            let wrapped = embed_seed_header(
-                &outcome.dsl,
-                seed,
-                &header_prompt,
-                Some(run_cfg.thinking),
-            );
+            let wrapped =
+                embed_seed_header(&outcome.dsl, seed, &header_prompt, Some(run_cfg.thinking));
             let wrapped = mogen_dsl::stamp_mogen_version(&wrapped, env!("CARGO_PKG_VERSION"));
             let wrapped = stamp_style_header(&wrapped, effective_style);
             let mut project = run_cfg.modeling.lock().unwrap().clone();
@@ -656,6 +737,15 @@ pub(in crate::app) fn run_llm(
                         }
                     }
                     stored.stop_reason = project.stop_reason.clone();
+                    stored.attempts = project.attempts.clone();
+                    stored.stage = project.stage.clone();
+                    stored.meter = project.meter.clone();
+                    stored.elapsed_seconds = project.elapsed_seconds;
+                    stored.session_initial = project.session_initial;
+                    stored.session_context = project.session_context.clone();
+                    stored.session_prompt = project.session_prompt.clone();
+                    stored.session_images = project.session_images.clone();
+                    stored.request_settings = project.request_settings.clone();
                 } else {
                     *stored = project.clone();
                 }
@@ -678,6 +768,7 @@ pub(in crate::app) fn run_llm(
                         send_progress(LlmProgress::Status(format!(
                             "Session checkpoint failed: {e}"
                         )));
+                        run_cfg.control.stop("Session checkpoint write failed");
                     }
                 }
             };
@@ -727,7 +818,10 @@ pub(in crate::app) fn run_llm(
                     control: run_cfg.control.clone(),
                     base_dir: run_cfg.base_dir.clone(),
                     framing: None,
-                    front_yaw: None, last_capture: None, fit_image: None, capture_part: None,
+                    front_yaw: None,
+                    last_capture: None,
+                    fit_image: None,
+                    capture_part: None,
                 };
                 let mut call = |cfg: &GenerateConfig| {
                     send_progress(LlmProgress::Status(format!(

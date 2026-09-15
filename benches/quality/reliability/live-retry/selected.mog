@@ -1,0 +1,413 @@
+meta (name="rosso_s1", description="Rosso S1, an original vermilion two-seat sports coupe with sculpted bodywork, open wheel arches and detailed alloy wheels", tags=["automotive","sports_coupe","rosso_s1","premium","static"])
+
+material "rosso_paint" (color=[0.64,0.025,0.012], metallic=0.68, roughness=0.19)
+material "rosso_glass" (color=[0.018,0.028,0.036], metallic=0.28, roughness=0.12, double_sided=1)
+material "rosso_rubber" (color=[0.019,0.021,0.024], metallic=0, roughness=0.78)
+material "rosso_aero" (color=[0.025,0.029,0.033], metallic=0.18, roughness=0.43)
+material "rosso_recess" (color=[0.007,0.009,0.012], metallic=0.1, roughness=0.58)
+material "rosso_alloy" (color=[0.69,0.73,0.77], metallic=0.96, roughness=0.24)
+material "rosso_wheel_dark" (color=[0.075,0.086,0.10], metallic=0.85, roughness=0.32)
+material "rosso_brake" (color=[0.32,0.34,0.36], metallic=0.92, roughness=0.42)
+material "rosso_caliper" (color=[0.72,0.035,0.018], metallic=0.4, roughness=0.3)
+material "rosso_led" (color=[0.84,0.94,1], metallic=0.1, roughness=0.15, emissive=[0.75,0.9,1], emissive_strength=3)
+material "rosso_tail_led" (color=[0.65,0.008,0.012], roughness=0.22, emissive=[1,0.008,0.012], emissive_strength=2.5)
+material "rosso_reflector" (color=[0.64,0.7,0.76], metallic=1, roughness=0.08)
+
+module "s1_wheel" () {
+  connector "axle" (at=[0,-0.13,0], dir=[0,-1,0])
+  difference "tire" (mat="rosso_rubber") {
+    lathe "tire_carcass" (
+      profile=[[0.227,-0.130],[0.269,-0.130],[0.307,-0.119],[0.329,-0.099],[0.340,-0.074],[0.340,0.074],[0.329,0.099],[0.307,0.119],[0.269,0.130],[0.227,0.130]],
+      segments=80, cap_ends=1
+    )
+    cylinder "bead_opening" (radius=0.225, height=0.32, segments=80)
+  }
+  tube "rim_barrel" (outer=0.231, inner=0.211, height=0.236, segments=80, mat="rosso_alloy")
+  tube "rim_recess" (outer=0.215, inner=0.201, height=0.195, segments=64, mat="rosso_wheel_dark")
+  cylinder "brake_disc" (radius=0.203, height=0.016, segments=80, mat="rosso_brake") {
+    connector "caliper_mount" (at=[0.17,0,0], dir=[1,0,0])
+  }
+  cylinder "wheel_hub" (radius=0.052, height=0.211, segments=40, mat="rosso_alloy")
+  array "five_spokes" (count=5, around=y, start_angle=18) {
+    sweep "spoke" (
+      profile=[[-0.019,-0.009],[0.019,-0.009],[0.022,0.006],[0.015,0.010],[-0.015,0.010],[-0.022,0.006]],
+      path=[[0.038,0.102,0],[0.095,0.084,0.004],[0.164,0.094,0.013],[0.220,0.109,0.020]],
+      frame_up=[0,1,0], scale_along=[1.05,0.95,0.8,0.7], samples=10, caps=1, mat="rosso_alloy"
+    )
+  }
+  rounded_box "brake_caliper" (size=[0.072,0.071,0.135], radius=0.014, segments=4, mat="rosso_caliper") {
+    connector "disc_mount" (at=[-0.025,0,0], dir=[-1,0,0])
+  }
+  attach (parent="brake_disc", child="brake_caliper", socket="caliper_mount", plug="disc_mount")
+  cylinder "center_cap" (radius=0.032, height=0.008, segments=40, mat="rosso_wheel_dark")
+  attach (parent="wheel_hub", child="center_cap", socket="top", plug="bottom")
+  group "lug_bolts" (mat="rosso_alloy") {
+    connector "mount" (at=[0,0,0], dir=[0,-1,0])
+    use "bolt_circle" (count=5, ring_radius=0.041, head_radius=0.006, head_height=0.006)
+  }
+  attach (parent="wheel_hub", child="lug_bolts", socket="top", plug="mount")
+}
+
+module "s1_headlamp" () {
+  rounded_box "lamp_pocket" (size=[0.465,0.066,0.11], radius=0.022, segments=5, mat="rosso_recess") {
+    connector "upper_led" (at=[0,0.017,-0.055], dir=[0,0,-1])
+    connector "lower_led" (at=[0,-0.013,-0.055], dir=[0,0,-1])
+  }
+  rounded_box "upper_signature" (size=[0.403,0.010,0.008], radius=0.004, segments=3, mat="rosso_led")
+  rounded_box "lower_signature" (size=[0.325,0.007,0.008], radius=0.003, segments=3, mat="rosso_led")
+  attach (parent="lamp_pocket", child="upper_signature", socket="upper_led", plug="back")
+  attach (parent="lamp_pocket", child="lower_signature", socket="lower_led", plug="back")
+  connector "mount" (at=[0,0,0.055], dir=[0,0,1])
+}
+
+// Nested control-point vectors use literal coordinates.
+module "s1_door_l" () {
+  connector "mount" (at=[0,0,0], dir=[0,-1,0])
+  spline_tube "door_outline" (
+    points=[[0,0,0],[-0.014,-0.070,0.010],[-0.020,-0.275,0.080],[-0.005,-0.340,0.250],[-0.005,-0.340,0.930],[-0.020,-0.270,1.070],[-0.004,-0.025,1.085]],
+    radius=0.0018, segments=6, samples=14, mat="rosso_recess"
+  ) {
+    connector "handle_mount" (at=[-0.012,-0.044,0.895], dir=[-1,0,0])
+    connector "belt_mount" (at=[0,0,0], dir=[0,1,0])
+  }
+  rounded_box "flush_handle" (size=[0.009,0.025,0.137], radius=0.004, segments=3, mat="rosso_wheel_dark") {
+    connector "mount" (at=[0.0045,0,0], dir=[1,0,0])
+  }
+  attach (parent="door_outline", child="flush_handle", socket="handle_mount", plug="mount")
+  spline_tube "door_belt_seam" (
+    points=[[0,0,0],[0.003,0.006,0.34],[0.008,0.009,0.73],[-0.004,-0.025,1.085]],
+    radius=0.0016, segments=6, samples=14, mat="rosso_recess"
+  ) {
+    connector "mount" (at=[0,0,0], dir=[0,-1,0])
+  }
+  attach (parent="door_outline", child="door_belt_seam", socket="belt_mount", plug="mount")
+}
+
+module "s1_door_r" () {
+  connector "mount" (at=[0,0,0], dir=[0,-1,0])
+  spline_tube "door_outline" (
+    points=[[0,0,0],[0.014,-0.070,0.010],[0.020,-0.275,0.080],[0.005,-0.340,0.250],[0.005,-0.340,0.930],[0.020,-0.270,1.070],[0.004,-0.025,1.085]],
+    radius=0.0018, segments=6, samples=14, mat="rosso_recess"
+  ) {
+    connector "handle_mount" (at=[0.012,-0.044,0.895], dir=[1,0,0])
+    connector "belt_mount" (at=[0,0,0], dir=[0,1,0])
+  }
+  rounded_box "flush_handle" (size=[0.009,0.025,0.137], radius=0.004, segments=3, mat="rosso_wheel_dark") {
+    connector "mount" (at=[-0.0045,0,0], dir=[-1,0,0])
+  }
+  attach (parent="door_outline", child="flush_handle", socket="handle_mount", plug="mount")
+  spline_tube "door_belt_seam" (
+    points=[[0,0,0],[-0.003,0.006,0.34],[-0.008,0.009,0.73],[0.004,-0.025,1.085]],
+    radius=0.0016, segments=6, samples=14, mat="rosso_recess"
+  ) {
+    connector "mount" (at=[0,0,0], dir=[0,-1,0])
+  }
+  attach (parent="door_outline", child="door_belt_seam", socket="belt_mount", plug="mount")
+}
+
+module "s1_mirror_l" () {
+  connector "mount" (at=[0,0,0], dir=[0,-1,0])
+  spline_tube "mirror_arm" (
+    points=[[0,0,0],[-0.055,0.024,-0.018],[-0.145,0.031,-0.024]],
+    radii=[0.016,0.014,0.017], segments=12, samples=12, mat="rosso_aero"
+  ) {
+    connector "housing_mount" (at=[-0.145,0.031,-0.024], dir=[0,1,0])
+  }
+  rounded_box "mirror_housing" (size=[0.185,0.069,0.133], radius=0.028, segments=6, mat="rosso_paint")
+  attach (parent="mirror_arm", child="mirror_housing", socket="housing_mount", plug="bottom")
+  rounded_box "mirror_gasket" (size=[0.157,0.049,0.010], radius=0.018, segments=5, mat="rosso_aero")
+  rounded_box "mirror_surface" (size=[0.141,0.036,0.004], radius=0.014, segments=5, mat="rosso_reflector")
+  attach (parent="mirror_housing", child="mirror_gasket", socket="back", plug="front", offset=-0.005)
+  attach (parent="mirror_gasket", child="mirror_surface", socket="back", plug="front")
+}
+
+module "s1_mirror_r" () {
+  connector "mount" (at=[0,0,0], dir=[0,-1,0])
+  spline_tube "mirror_arm" (
+    points=[[0,0,0],[0.055,0.024,-0.018],[0.145,0.031,-0.024]],
+    radii=[0.016,0.014,0.017], segments=12, samples=12, mat="rosso_aero"
+  ) {
+    connector "housing_mount" (at=[0.145,0.031,-0.024], dir=[0,1,0])
+  }
+  rounded_box "mirror_housing" (size=[0.185,0.069,0.133], radius=0.028, segments=6, mat="rosso_paint")
+  attach (parent="mirror_arm", child="mirror_housing", socket="housing_mount", plug="bottom")
+  rounded_box "mirror_gasket" (size=[0.157,0.049,0.010], radius=0.018, segments=5, mat="rosso_aero")
+  rounded_box "mirror_surface" (size=[0.141,0.036,0.004], radius=0.014, segments=5, mat="rosso_reflector")
+  attach (parent="mirror_housing", child="mirror_gasket", socket="back", plug="front", offset=-0.005)
+  attach (parent="mirror_gasket", child="mirror_surface", socket="back", plug="front")
+}
+
+module "s1_exhaust" () {
+  connector "mount" (at=[0,-0.07,0], dir=[0,-1,0])
+  tube "exhaust_tip" (outer=0.047, inner=0.038, height=0.14, segments=40, mat="rosso_alloy")
+  cylinder "exhaust_darkness" (radius=0.038, height=0.005, segments=32, mat="rosso_recess")
+}
+
+scene {
+  rounded_box "undertray" (size=[1.45,0.10,3.52], radius=0.04, segments=4, anchor=bottom, y=0.20, mat="rosso_aero") {
+    connector "body_mount" (at=[0,0.10,0], dir=[0,1,0])
+    connector "axle_fl" (at=[-0.725,0.14,-1.325], dir=[-1,0,0])
+    connector "axle_fr" (at=[0.725,0.14,-1.325], dir=[1,0,0])
+    connector "axle_rl" (at=[-0.725,0.14,1.325], dir=[-1,0,0])
+    connector "axle_rr" (at=[0.725,0.14,1.325], dir=[1,0,0])
+  }
+
+  // Body construction frame: local Y is longitudinal, local Z is height.
+  group "body" {
+    connector "underbody" (at=[0,0,0], dir=[0,0,-1])
+    connector "cabin_mount" (at=[0,-0.08,0.40], dir=[0,0,1])
+    connector "lamp_l" (at=[-0.64,2.135,0.322], dir=[0,1,0])
+    connector "lamp_r" (at=[0.64,2.135,0.322], dir=[0,1,0])
+    connector "intake" (at=[0,2.19,0.112], dir=[0,1,0])
+    connector "splitter_mount" (at=[0,1.96,-0.054], dir=[0,0,-1])
+    connector "rear_diffuser" (at=[0,-2.13,0.025], dir=[0,-1,0])
+    connector "tail_l" (at=[-0.47,-2.18,0.290], dir=[0,-1,0])
+    connector "tail_r" (at=[0.47,-2.18,0.290], dir=[0,-1,0])
+    connector "exhaust_l" (at=[-0.63,-2.13,0.050], dir=[0,-1,0])
+    connector "exhaust_r" (at=[0.63,-2.13,0.050], dir=[0,-1,0])
+    connector "door_l" (at=[-0.913,0.73,0.365], dir=[0,0,1])
+    connector "door_r" (at=[0.913,0.73,0.365], dir=[0,0,1])
+    connector "sill_l" (at=[-0.855,0,-0.028], dir=[0,0,-1])
+    connector "sill_r" (at=[0.855,0,-0.028], dir=[0,0,-1])
+    connector "badge_mount" (at=[0,2.18,0.254], dir=[0,1,0])
+
+    difference "body_shell" (mat="rosso_paint") {
+      loft "sculpted_envelope" (
+        points=[
+          [0,-0.045],[0.52,-0.045],[0.72,0.015],[0.74,0.16],[0.70,0.29],[0.46,0.345],
+          [0,0.36],[-0.46,0.345],[-0.70,0.29],[-0.74,0.16],[-0.72,0.015],[-0.52,-0.045],
+          [0,-0.060],[0.65,-0.060],[0.86,0.005],[0.90,0.20],[0.85,0.34],[0.55,0.385],
+          [0,0.40],[-0.55,0.385],[-0.85,0.34],[-0.90,0.20],[-0.86,0.005],[-0.65,-0.060],
+          [0,-0.060],[0.69,-0.060],[0.92,0.005],[0.96,0.23],[0.91,0.405],[0.60,0.45],
+          [0,0.435],[-0.60,0.45],[-0.91,0.405],[-0.96,0.23],[-0.92,0.005],[-0.69,-0.060],
+          [0,-0.060],[0.66,-0.060],[0.88,0.005],[0.925,0.22],[0.88,0.37],[0.58,0.405],
+          [0,0.42],[-0.58,0.405],[-0.88,0.37],[-0.925,0.22],[-0.88,0.005],[-0.66,-0.060],
+          [0,-0.060],[0.66,-0.060],[0.885,0.005],[0.925,0.20],[0.88,0.36],[0.58,0.405],
+          [0,0.425],[-0.58,0.405],[-0.88,0.36],[-0.925,0.20],[-0.885,0.005],[-0.66,-0.060],
+          [0,-0.060],[0.69,-0.060],[0.92,0.005],[0.95,0.21],[0.90,0.385],[0.59,0.405],
+          [0,0.375],[-0.59,0.405],[-0.90,0.385],[-0.95,0.21],[-0.92,0.005],[-0.69,-0.060],
+          [0,-0.060],[0.64,-0.060],[0.84,0.005],[0.885,0.18],[0.83,0.32],[0.55,0.335],
+          [0,0.35],[-0.55,0.335],[-0.83,0.32],[-0.885,0.18],[-0.84,0.005],[-0.64,-0.060],
+          [0,-0.045],[0.49,-0.045],[0.67,0.015],[0.73,0.13],[0.68,0.255],[0.45,0.28],
+          [0,0.295],[-0.45,0.28],[-0.68,0.255],[-0.73,0.13],[-0.67,0.015],[-0.49,-0.045]
+        ],
+        heights=[-2.225,-2.02,-1.325,-0.55,0.40,1.325,1.87,2.225], samples=10, caps=1
+      )
+      cylinder "arch_fl_cut" (radius=0.382, height=0.78, segments=80, pos=[-0.93,1.325,0.04], rot=[0,0,90])
+      cylinder "arch_fr_cut" (radius=0.382, height=0.78, segments=80, pos=[0.93,1.325,0.04], rot=[0,0,90])
+      cylinder "arch_rl_cut" (radius=0.388, height=0.78, segments=80, pos=[-0.93,-1.325,0.04], rot=[0,0,90])
+      cylinder "arch_rr_cut" (radius=0.388, height=0.78, segments=80, pos=[0.93,-1.325,0.04], rot=[0,0,90])
+      rounded_box "central_intake_cut" (size=[1.20,0.34,0.185], radius=0.040, segments=5, pos=[0,2.20,0.112])
+      rounded_box "headlamp_l_cut" (size=[0.49,0.38,0.082], radius=0.025, segments=5, pos=[-0.64,2.15,0.322])
+      rounded_box "headlamp_r_cut" (size=[0.49,0.38,0.082], radius=0.025, segments=5, pos=[0.64,2.15,0.322])
+    }
+  }
+  attach (parent="undertray", child="body", socket="body_mount", plug="underbody")
+
+  cylinder "stub_fl" (radius=0.055, height=0.020, segments=24, mat="rosso_brake")
+  cylinder "stub_fr" (radius=0.055, height=0.020, segments=24, mat="rosso_brake")
+  cylinder "stub_rl" (radius=0.055, height=0.020, segments=24, mat="rosso_brake")
+  cylinder "stub_rr" (radius=0.055, height=0.020, segments=24, mat="rosso_brake")
+  attach (parent="undertray", child="stub_fl", socket="axle_fl", plug="bottom")
+  attach (parent="undertray", child="stub_fr", socket="axle_fr", plug="bottom")
+  attach (parent="undertray", child="stub_rl", socket="axle_rl", plug="bottom")
+  attach (parent="undertray", child="stub_rr", socket="axle_rr", plug="bottom")
+  group "wheel_fl" { use "s1_wheel" () }
+  group "wheel_fr" { use "s1_wheel" () }
+  group "wheel_rl" { use "s1_wheel" () }
+  group "wheel_rr" { use "s1_wheel" () }
+  attach (parent="stub_fl", child="wheel_fl", socket="top", plug="axle")
+  attach (parent="stub_fr", child="wheel_fr", socket="top", plug="axle")
+  attach (parent="stub_rl", child="wheel_rl", socket="top", plug="axle")
+  attach (parent="stub_rr", child="wheel_rr", socket="top", plug="axle")
+
+  group "cabin" {
+    connector "base" (at=[0,0,0], dir=[0,-1,0])
+    connector "mirror_l" (at=[-0.756,0.065,-0.79], dir=[0,1,0])
+    connector "mirror_r" (at=[0.756,0.065,-0.79], dir=[0,1,0])
+    bezier_patch "roof" (
+      points=[
+        [-0.62,0.445,-0.30],[-0.207,0.485,-0.30],[0.207,0.485,-0.30],[0.62,0.445,-0.30],
+        [-0.64,0.474,-0.04],[-0.213,0.528,-0.04],[0.213,0.528,-0.04],[0.64,0.474,-0.04],
+        [-0.64,0.467,0.25],[-0.213,0.520,0.25],[0.213,0.520,0.25],[0.64,0.467,0.25],
+        [-0.62,0.430,0.50],[-0.207,0.470,0.50],[0.207,0.470,0.50],[0.62,0.430,0.50]
+      ], segments_u=28, segments_v=24, mat="rosso_paint"
+    ) {
+      connector "windshield_edge" (at=[0,0.475,-0.30], dir=[0,0,-1])
+      connector "rear_glass_edge" (at=[0,0.460,0.50], dir=[0,0,1])
+      connector "side_l_edge" (at=[-0.62,0.445,-0.30], dir=[-1,0,0])
+      connector "side_r_edge" (at=[0.62,0.445,-0.30], dir=[1,0,0])
+      connector "pillar_l" (at=[-0.62,0.445,-0.30], dir=[0,1,0])
+      connector "pillar_r" (at=[0.62,0.445,-0.30], dir=[0,1,0])
+      connector "rear_pillar_l" (at=[-0.62,0.43,0.50], dir=[0,1,0])
+      connector "rear_pillar_r" (at=[0.62,0.43,0.50], dir=[0,1,0])
+    }
+    bezier_patch "windscreen" (
+      points=[
+        [-0.76,0,-0.98],[-0.253,0.025,-1.03],[0.253,0.025,-1.03],[0.76,0,-0.98],
+        [-0.716,0.140,-0.77],[-0.239,0.180,-0.80],[0.239,0.180,-0.80],[0.716,0.140,-0.77],
+        [-0.662,0.330,-0.49],[-0.221,0.370,-0.51],[0.221,0.370,-0.51],[0.662,0.330,-0.49],
+        [-0.62,0.445,-0.30],[-0.207,0.485,-0.30],[0.207,0.485,-0.30],[0.62,0.445,-0.30]
+      ], segments_u=32, segments_v=24, mat="rosso_glass"
+    ) {
+      connector "roof_edge" (at=[0,0.475,-0.30], dir=[0,0,1])
+    }
+    attach (parent="roof", child="windscreen", socket="windshield_edge", plug="roof_edge")
+    bezier_patch "rear_glass" (
+      points=[
+        [-0.62,0.430,0.50],[-0.207,0.470,0.50],[0.207,0.470,0.50],[0.62,0.430,0.50],
+        [-0.665,0.330,0.73],[-0.222,0.370,0.76],[0.222,0.370,0.76],[0.665,0.330,0.73],
+        [-0.718,0.140,1.02],[-0.239,0.165,1.06],[0.239,0.165,1.06],[0.718,0.140,1.02],
+        [-0.76,0.020,1.20],[-0.253,0.042,1.24],[0.253,0.042,1.24],[0.76,0.020,1.20]
+      ], segments_u=28, segments_v=24, mat="rosso_glass"
+    ) {
+      connector "roof_edge" (at=[0,0.460,0.50], dir=[0,0,-1])
+    }
+    attach (parent="roof", child="rear_glass", socket="rear_glass_edge", plug="roof_edge")
+
+    bezier_patch "side_window_0" (
+      points=[
+        [-0.76,0,-0.98],[-0.79,0.015,-0.27],[-0.79,0.025,0.46],[-0.76,0.020,1.20],
+        [-0.716,0.140,-0.77],[-0.746,0.170,-0.18],[-0.746,0.175,0.40],[-0.718,0.140,1.02],
+        [-0.662,0.330,-0.49],[-0.690,0.360,-0.10],[-0.690,0.352,0.33],[-0.665,0.330,0.73],
+        [-0.62,0.445,-0.30],[-0.64,0.474,-0.04],[-0.64,0.467,0.25],[-0.62,0.430,0.50]
+      ], segments_u=32, segments_v=20, mat="rosso_glass"
+    ) {
+      connector "roof_edge" (at=[-0.62,0.445,-0.30], dir=[1,0,0])
+    }
+    spline_tube "a_pillar_0" (
+      points=[[-0.76,0,-0.98],[-0.716,0.140,-0.77],[-0.662,0.330,-0.49],[-0.62,0.445,-0.30]],
+      radii=[0.027,0.023,0.021,0.022], segments=12, samples=20, mat="rosso_paint"
+    ) {
+      connector "roof_mount" (at=[-0.62,0.445,-0.30], dir=[0,-1,0])
+      connector "rail_mount" (at=[-0.62,0.445,-0.30], dir=[0,1,0])
+    }
+    spline_tube "roof_rail_0" (
+      points=[[-0.62,0.445,-0.30],[-0.634,0.464,-0.04],[-0.634,0.457,0.25],[-0.62,0.430,0.50]],
+      radius=0.018, segments=12, samples=20, mat="rosso_paint"
+    ) {
+      connector "mount" (at=[-0.62,0.445,-0.30], dir=[0,-1,0])
+    }
+    attach (parent="a_pillar_0", child="roof_rail_0", socket="rail_mount", plug="mount")
+    spline_tube "c_pillar_0" (
+      points=[[-0.62,0.430,0.50],[-0.665,0.330,0.73],[-0.718,0.140,1.02],[-0.76,0.020,1.20]],
+      radii=[0.024,0.031,0.044,0.058], segments=16, samples=20, mat="rosso_paint"
+    ) {
+      connector "roof_mount" (at=[-0.62,0.430,0.50], dir=[0,-1,0])
+    }
+
+    bezier_patch "side_window_1" (
+      points=[
+        [0.76,0,-0.98],[0.79,0.015,-0.27],[0.79,0.025,0.46],[0.76,0.020,1.20],
+        [0.716,0.140,-0.77],[0.746,0.170,-0.18],[0.746,0.175,0.40],[0.718,0.140,1.02],
+        [0.662,0.330,-0.49],[0.690,0.360,-0.10],[0.690,0.352,0.33],[0.665,0.330,0.73],
+        [0.62,0.445,-0.30],[0.64,0.474,-0.04],[0.64,0.467,0.25],[0.62,0.430,0.50]
+      ], segments_u=32, segments_v=20, mat="rosso_glass"
+    ) {
+      connector "roof_edge" (at=[0.62,0.445,-0.30], dir=[-1,0,0])
+    }
+    spline_tube "a_pillar_1" (
+      points=[[0.76,0,-0.98],[0.716,0.140,-0.77],[0.662,0.330,-0.49],[0.62,0.445,-0.30]],
+      radii=[0.027,0.023,0.021,0.022], segments=12, samples=20, mat="rosso_paint"
+    ) {
+      connector "roof_mount" (at=[0.62,0.445,-0.30], dir=[0,-1,0])
+      connector "rail_mount" (at=[0.62,0.445,-0.30], dir=[0,1,0])
+    }
+    spline_tube "roof_rail_1" (
+      points=[[0.62,0.445,-0.30],[0.634,0.464,-0.04],[0.634,0.457,0.25],[0.62,0.430,0.50]],
+      radius=0.018, segments=12, samples=20, mat="rosso_paint"
+    ) {
+      connector "mount" (at=[0.62,0.445,-0.30], dir=[0,-1,0])
+    }
+    attach (parent="a_pillar_1", child="roof_rail_1", socket="rail_mount", plug="mount")
+    spline_tube "c_pillar_1" (
+      points=[[0.62,0.430,0.50],[0.665,0.330,0.73],[0.718,0.140,1.02],[0.76,0.020,1.20]],
+      radii=[0.024,0.031,0.044,0.058], segments=16, samples=20, mat="rosso_paint"
+    ) {
+      connector "roof_mount" (at=[0.62,0.430,0.50], dir=[0,-1,0])
+    }
+    attach (parent="roof", child="side_window_0", socket="side_l_edge", plug="roof_edge")
+    attach (parent="roof", child="side_window_1", socket="side_r_edge", plug="roof_edge")
+    attach (parent="roof", child="a_pillar_0", socket="pillar_l", plug="roof_mount")
+    attach (parent="roof", child="a_pillar_1", socket="pillar_r", plug="roof_mount")
+    attach (parent="roof", child="c_pillar_0", socket="rear_pillar_l", plug="roof_mount")
+    attach (parent="roof", child="c_pillar_1", socket="rear_pillar_r", plug="roof_mount")
+  }
+  attach (parent="body", child="cabin", socket="cabin_mount", plug="base")
+
+  group "mirror_l" { use "s1_mirror_l" () }
+  group "mirror_r" { use "s1_mirror_r" () }
+  attach (parent="cabin", child="mirror_l", socket="mirror_l", plug="mount")
+  attach (parent="cabin", child="mirror_r", socket="mirror_r", plug="mount")
+  group "door_l" { use "s1_door_l" () }
+  group "door_r" { use "s1_door_r" () }
+  attach (parent="body", child="door_l", socket="door_l", plug="mount")
+  attach (parent="body", child="door_r", socket="door_r", plug="mount")
+
+  group "headlamp_l" { use "s1_headlamp" () }
+  group "headlamp_r" { use "s1_headlamp" () }
+  attach (parent="body", child="headlamp_l", socket="lamp_l", plug="mount", offset=-0.075)
+  attach (parent="body", child="headlamp_r", socket="lamp_r", plug="mount", offset=-0.075)
+  rounded_box "front_intake" (size=[1.18,0.181,0.11], radius=0.037, segments=6, mat="rosso_recess") {
+    connector "grille_mount" (at=[0,0,-0.055], dir=[0,0,-1])
+  }
+  attach (parent="body", child="front_intake", socket="intake", plug="back", offset=-0.12)
+  group "front_grille" (mat="rosso_aero") {
+    connector "mount" (at=[0,0,0.025], dir=[0,0,1])
+    use "vent_strip" (count=4, length=1.08, slat_thickness=0.009, slat_height=0.05, gap=0.022)
+  }
+  attach (parent="front_intake", child="front_grille", socket="grille_mount", plug="mount", offset=-0.018)
+  sweep "front_splitter" (
+    profile=[[-0.095,-0.013],[0.095,-0.013],[0.088,0.013],[-0.083,0.013]],
+    path=[[-0.82,0,0.13],[-0.68,0,-0.12],[0,0,-0.255],[0.68,0,-0.12],[0.82,0,0.13]],
+    frame_up=[0,1,0], samples=18, caps=1, mat="rosso_aero"
+  ) {
+    connector "body_mount" (at=[0,0.013,0], dir=[0,1,0])
+  }
+  attach (parent="body", child="front_splitter", socket="splitter_mount", plug="body_mount", offset=-0.01)
+
+  for (var="i", from=0, to=2) {
+    sweep "side_sill_$i" (
+      profile=[[-0.047,-0.013],[0.047,-0.013],[0.053,0.009],[-0.038,0.019]],
+      path=[[0,0,-0.91],[0.017,0,-0.56],[0.017,0,0.52],[0,0,0.91]],
+      frame_up=[0,1,0], samples=16, caps=1, mat="rosso_aero"
+    ) {
+      connector "body_mount" (at=[0,0.019,0], dir=[0,1,0])
+    }
+  }
+  attach (parent="body", child="side_sill_0", socket="sill_l", plug="body_mount", offset=-0.01)
+  attach (parent="body", child="side_sill_1", socket="sill_r", plug="body_mount", offset=-0.01)
+
+  rounded_box "rear_diffuser" (size=[1.44,0.15,0.26], radius=0.045, segments=5, mat="rosso_aero") {
+    connector "fin_0" (at=[-0.48,-0.070,0], dir=[0,-1,0])
+    connector "fin_1" (at=[-0.24,-0.070,0], dir=[0,-1,0])
+    connector "fin_2" (at=[0,-0.070,0], dir=[0,-1,0])
+    connector "fin_3" (at=[0.24,-0.070,0], dir=[0,-1,0])
+    connector "fin_4" (at=[0.48,-0.070,0], dir=[0,-1,0])
+  }
+  attach (parent="body", child="rear_diffuser", socket="rear_diffuser", plug="front", offset=-0.12)
+  // Explicit plugs avoid relying on missing chamfered_box defaults.
+  for (var="i", from=0, to=5) {
+    chamfered_box "diffuser_fin_$i" (size=[0.012,0.063,0.25], radius=0.004, mat="rosso_aero") {
+      connector "fin_mount" (at=[0,0.0315,0], dir=[0,1,0])
+    }
+    attach (parent="rear_diffuser", child="diffuser_fin_$i", socket="fin_$i", plug="fin_mount", offset=-0.016)
+  }
+
+  rounded_box "tail_housing_l" (size=[0.62,0.069,0.055], radius=0.023, segments=5, mat="rosso_recess")
+  rounded_box "tail_housing_r" (size=[0.62,0.069,0.055], radius=0.023, segments=5, mat="rosso_recess")
+  attach (parent="body", child="tail_housing_l", socket="tail_l", plug="front", offset=-0.028)
+  attach (parent="body", child="tail_housing_r", socket="tail_r", plug="front", offset=-0.028)
+  rounded_box "tail_signature_l" (size=[0.565,0.017,0.008], radius=0.007, segments=4, mat="rosso_tail_led")
+  rounded_box "tail_signature_r" (size=[0.565,0.017,0.008], radius=0.007, segments=4, mat="rosso_tail_led")
+  attach (parent="tail_housing_l", child="tail_signature_l", socket="back", plug="front")
+  attach (parent="tail_housing_r", child="tail_signature_r", socket="back", plug="front")
+  group "exhaust_l" { use "s1_exhaust" () }
+  group "exhaust_r" { use "s1_exhaust" () }
+  attach (parent="body", child="exhaust_l", socket="exhaust_l", plug="mount", offset=-0.045)
+  attach (parent="body", child="exhaust_r", socket="exhaust_r", plug="mount", offset=-0.045)
+  chamfered_box "rosso_emblem" (size=[0.040,0.022,0.006], radius=0.008, mat="rosso_alloy") {
+    connector "badge_plug" (at=[0,0,0.003], dir=[0,0,1])
+  }
+  attach (parent="body", child="rosso_emblem", socket="badge_mount", plug="badge_plug", offset=-0.006)
+}

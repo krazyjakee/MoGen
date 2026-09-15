@@ -2,7 +2,7 @@
 use anyhow::{bail, Context, Result};
 use clap::Parser;
 use mogen_llm::session::*;
-use mogen_llm::{GenerateConfig, ImageInput, LlmClient, Provider};
+use mogen_llm::{GenerateConfig, LlmClient, Provider};
 use serde::Deserialize;
 use serde_json::json;
 use std::path::{Path, PathBuf};
@@ -45,6 +45,9 @@ struct Manifest {
 struct Task {
     id: String,
     source: PathBuf,
+    /// Optional deterministic candidate compared against the source reference.
+    #[serde(default)]
+    candidate_source: Option<PathBuf>,
     prompt: String,
     required: Vec<String>,
     max_extent: [f32; 3],
@@ -52,103 +55,9 @@ struct Task {
     #[serde(default)]
     measure_pairs: Vec<[String; 2]>,
 }
-struct Renderer {
-    base: PathBuf,
-    framing: Option<([f32; 3], f32)>,
-    front_yaw: Option<f32>,
-    last_capture: Option<mogen_core::views::CaptureInfo>,
-    fit_image: Option<ImageInput>,
-    capture_part: Option<String>,
-}
-impl SessionRenderer for Renderer {
-    fn capture_info(&self) -> Option<mogen_core::views::CaptureInfo> {
-        self.last_capture.clone()
-    }
-    fn diagnostic_fit(&self) -> Option<ImageInput> {
-        self.fit_image.clone()
-    }
-    fn render_part(
-        &mut self,
-        source: &str,
-        revision: &str,
-        view: View,
-        name: &str,
-    ) -> Result<ImageInput> {
-        let scene = compile(source, Some(&self.base))?;
-        let framing = part_framing(&scene, name)?;
-        let old = self.framing.replace(framing);
-        let old_front = self.front_yaw;
-        let old_part = self.capture_part.replace(name.into());
-        let result = self.render(source, revision, view);
-        self.framing = old;
-        self.front_yaw = old_front;
-        self.capture_part = old_part;
-        result
-    }
-    fn render(&mut self, source: &str, revision: &str, view: View) -> Result<ImageInput> {
-        if capture_revision(source, &self.base)? != revision {
-            bail!("Stale capture revision");
-        }
-        let scene = inspection_scene(compile(source, Some(&self.base))?, view);
-        let mesh = mogen_render::flatten(&scene, Some(&self.base));
-        let framing = *self
-            .framing
-            .get_or_insert((mesh.center.to_array(), mesh.radius));
-        let front = mogen_core::asset_front_yaw(&scene).map_err(anyhow::Error::msg)?;
-        let (yaw, pitch) = view.camera_from_front(*self.front_yaw.get_or_insert(front));
-        let opts = mogen_render::headless::ThumbnailOptions {
-            yaw,
-            pitch,
-            base_dir: Some(self.base.clone()),
-            ..Default::default()
-        };
-        let camera = mogen_render::OrbitCamera {
-            yaw,
-            pitch,
-            target: framing.0.into(),
-            fit_distance: framing.1.max(0.001) * 2.8,
-            zoom: 1.0,
-        };
-        let info = mogen_render::capture_info(
-            &scene,
-            &camera,
-            revision,
-            view.label(),
-            self.capture_part.as_deref(),
-        );
-        let image = render_png(&scene, &opts, Some(framing))?;
-        self.fit_image = if info.out_of_frame_vertices != 0 {
-            Some(render_png(&scene, &opts, None)?)
-        } else {
-            None
-        };
-        if capture_revision(source, &self.base)? != revision {
-            bail!("Dependencies changed during capture");
-        }
-        self.last_capture = Some(info);
-        Ok(image)
-    }
-}
-fn render_png(
-    scene: &mogen_core::SceneGraph,
-    opts: &mogen_render::headless::ThumbnailOptions,
-    framing: Option<([f32; 3], f32)>,
-) -> Result<ImageInput> {
-    let pixels = mogen_render::headless::render_thumbnail_framed(scene, opts, framing)?;
-    let mut png = std::io::Cursor::new(vec![]);
-    image::write_buffer_with_format(
-        &mut png,
-        &pixels,
-        opts.size,
-        opts.size,
-        image::ExtendedColorType::Rgba8,
-        image::ImageFormat::Png,
-    )?;
-    Ok(ImageInput {
-        mime_type: "image/png".into(),
-        data: png.into_inner(),
-    })
-}
+#[path = "../src/session_render.rs"]
+mod session_render;
+use session_render::Renderer;
 
 fn asset_checks(source: &str, base: &Path, task: &Task) -> Result<serde_json::Value> {
     let snapshot = dependencies(source, Some(base))?;
@@ -191,19 +100,35 @@ fn asset_checks(source: &str, base: &Path, task: &Task) -> Result<serde_json::Va
     let finite = extent.iter().all(|v| v.is_finite());
     let dimensions_ok = finite && extent.iter().zip(task.max_extent).all(|(a, b)| *a <= b);
     let relationship_checks = mogen_core::relationship_measurements(&scene);
-    let constraints_ok = relationship_checks.iter().all(|r|r.satisfied);
+    let constraints_ok = relationship_checks.iter().all(|r| r.satisfied);
     let mut surface_measurements = Vec::new();
-    if task.measure_pairs.len() > 16 { bail!("quality task permits at most 16 requested measurement pairs"); }
+    if task.measure_pairs.len() > 16 {
+        bail!("quality task permits at most 16 requested measurement pairs");
+    }
     for [first, second] in &task.measure_pairs {
         let find = |name: &str| -> Result<mogen_core::NodeId> {
-            let matches: Vec<_> = scene.nodes.iter().enumerate().filter(|(_,n)|n.name==name).collect();
-            if matches.len()!=1 { bail!("Measurement part {name:?} is missing or ambiguous"); }
+            let matches: Vec<_> = scene
+                .nodes
+                .iter()
+                .enumerate()
+                .filter(|(_, n)| n.name == name)
+                .collect();
+            if matches.len() != 1 {
+                bail!("Measurement part {name:?} is missing or ambiguous");
+            }
             Ok(mogen_core::NodeId(matches[0].0 as u32))
         };
-        let result = mogen_geom::measure::measure_surfaces(&scene, find(first)?, find(second)?, Default::default())?;
+        let result = mogen_geom::measure::measure_surfaces(
+            &scene,
+            find(first)?,
+            find(second)?,
+            Default::default(),
+        )?;
         surface_measurements.push(json!({"first":first,"second":second,"surface":result}));
     }
-    if dependencies(source, Some(base))? != snapshot { bail!("Dependencies changed during measurement; retry evaluation"); }
+    if dependencies(source, Some(base))? != snapshot {
+        bail!("Dependencies changed during measurement; retry evaluation");
+    }
     Ok(
         json!({"compiles":true,"mesh_contract":{"pass":true,"diagnostics":contract},"finite":finite,"missing_parts":missing,"extent":extent,"dimensions_ok":dimensions_ok,
         "asset_pass":missing.is_empty()&&dimensions_ok&&constraints_ok,
@@ -322,7 +247,11 @@ fn main() -> Result<()> {
             let started = std::time::Instant::now();
             let result = (|| -> Result<String> {
                 let Some(client) = &client else {
-                    return Ok(source.clone());
+                    return if let Some(path) = &task.candidate_source {
+                        Ok(std::fs::read_to_string(base.join(path))?)
+                    } else {
+                        Ok(source.clone())
+                    };
                 };
                 let generated =
                     mogen_llm::generate_with_repair(client, cfg.clone(), &Default::default())?;
@@ -427,6 +356,7 @@ fn main() -> Result<()> {
     let negative_task = Task {
         id: "negative".into(),
         source: PathBuf::new(),
+        candidate_source: None,
         prompt: String::new(),
         required: vec!["seat".into(), "back".into()],
         max_extent: [1.0; 3],
