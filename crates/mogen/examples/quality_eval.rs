@@ -98,7 +98,18 @@ impl SessionRenderer for Renderer {
     }
 }
 fn asset_checks(source: &str, base: &Path, task: &Task) -> Result<serde_json::Value> {
-    let scene = compile(source, Some(base))?;
+    let scene = match compile(source, Some(base)) {
+        Ok(scene) => scene,
+        Err(error) => {
+            if let Some(contract) = error.downcast_ref::<mogen_core::MeshContractError>() {
+                return Ok(json!({"compiles":false,"asset_pass":false,
+                    "mesh_contract":{"pass":false,"diagnostics":contract.diagnostics},
+                    "visual_quality":"not evaluated: mesh contract failed"}));
+            }
+            return Err(error);
+        }
+    };
+    let contract = mogen_core::validate_renderable_scene(&scene);
     let missing: Vec<_> = task
         .required
         .iter()
@@ -125,7 +136,7 @@ fn asset_checks(source: &str, base: &Path, task: &Task) -> Result<serde_json::Va
     let finite = extent.iter().all(|v| v.is_finite());
     let dimensions_ok = finite && extent.iter().zip(task.max_extent).all(|(a, b)| *a <= b);
     Ok(
-        json!({"compiles":true,"finite":finite,"missing_parts":missing,"extent":extent,"dimensions_ok":dimensions_ok,
+        json!({"compiles":true,"mesh_contract":{"pass":true,"diagnostics":contract},"finite":finite,"missing_parts":missing,"extent":extent,"dimensions_ok":dimensions_ok,
         "asset_pass":missing.is_empty()&&dimensions_ok,"framing_radius":mesh.radius,"visual_quality":"requires blinded human review"}),
     )
 }
@@ -273,10 +284,19 @@ fn main() -> Result<()> {
                         Err(e) => json!({"asset_pass":false,"error":format!("{e:#}")}),
                     };
                     if let Ok(scene) = compile(&candidate, Some(&base)) {
-                        row["export_ok"] =
-                            json!(
-                                mogen_export::write_glb(&scene, &dir.join("candidate.glb")).is_ok()
-                            );
+                        match mogen_export::write_glb(&scene, &dir.join("candidate.glb")) {
+                            Ok(()) => row["export_ok"] = json!(true),
+                            Err(error) => {
+                                row["export_ok"] = json!(false);
+                                row["export_error"] = json!(format!("{error:#}"));
+                                if let Some(contract) =
+                                    error.downcast_ref::<mogen_core::MeshContractError>()
+                                {
+                                    row["checks"]["asset_pass"] = json!(false);
+                                    row["checks"]["mesh_contract"] = json!({"pass":false,"stage":"export","diagnostics":contract.diagnostics});
+                                }
+                            }
+                        }
                         if !args.no_render {
                             for view in View::ALL {
                                 let image = renderer.render(&candidate, &rev(&candidate), view)?;
@@ -324,10 +344,15 @@ fn main() -> Result<()> {
         args.out.join("negative-control.json"),
         serde_json::to_vec_pretty(&negative_check)?,
     )?;
+    let contract_controls = mesh_contract_controls()?;
+    std::fs::write(
+        args.out.join("mesh-contract-controls.json"),
+        serde_json::to_vec_pretty(&contract_controls)?,
+    )?;
     std::fs::write(
         args.out.join("report.json"),
         serde_json::to_vec_pretty(
-            &json!({"version":1,"provenance":manifest.provenance,"runs":rows,"human_review_status":"pending","renderer_caveats":["#105 UV seams","#107 water shader"]}),
+            &json!({"version":1,"provenance":manifest.provenance,"runs":rows,"mesh_contract_controls":contract_controls,"human_review_status":"pending","renderer_caveats":["#105 UV seams","#107 water shader"]}),
         )?,
     )?;
     std::fs::write(args.out.join("review.html"), html)?;
@@ -342,4 +367,45 @@ fn escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
+}
+
+// Malformed compiled geometry cannot be expressed reliably as valid DSL. Mutate
+// a known-good compiled control, retaining the source revision and mutation id.
+fn mesh_contract_controls() -> Result<serde_json::Value> {
+    let source = "scene { box \"contract_control\" (size=[1,1,1]) }";
+    let original = compile(source, None)?;
+    let mut rows = vec![];
+    for (mutation, expected) in [
+        ("zero_normals", "E1204"),
+        ("nan_position", "E1202"),
+        ("missing_normals", "E1200"),
+        ("invalid_index", "E1203"),
+        ("nan_uv", "E1205"),
+    ] {
+        let mut scene = original.clone();
+        let mesh = scene
+            .nodes
+            .iter_mut()
+            .find_map(|n| n.mesh.as_mut())
+            .unwrap();
+        match mutation {
+            "zero_normals" => mesh.normals.fill([0.0; 3]),
+            "nan_position" => mesh.positions[0][0] = f32::NAN,
+            "missing_normals" => mesh.normals.clear(),
+            "invalid_index" => mesh.indices[0] = u32::MAX,
+            _ => mesh.uvs = vec![[f32::NAN, 0.0]; mesh.positions.len()],
+        }
+        let diagnostics = mogen_core::validate_renderable_scene(&scene);
+        let export = mogen_export::build_glb_with_options(&scene, &Default::default(), |_| {});
+        let detected = diagnostics.iter().any(|d| d.code == expected) && export.is_err();
+        if !detected {
+            bail!("Mesh-contract control {mutation} was not rejected");
+        }
+        rows.push(
+            json!({"mutation":mutation,"source":source,"source_revision":rev(source),
+            "expected_code":expected,"detected":detected,"diagnostics":diagnostics,
+            "visual_quality":"not applicable: malformed geometry control"}),
+        );
+    }
+    Ok(json!(rows))
 }

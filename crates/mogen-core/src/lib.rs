@@ -9,6 +9,7 @@ pub mod material;
 pub mod mesh;
 pub mod meta;
 pub mod physics;
+pub mod renderable;
 pub mod shader;
 pub mod skin;
 pub mod transform;
@@ -27,6 +28,10 @@ pub use material::{
     AlphaMode, Material, MaterialId, TextureRef, UvMode, DEFAULT_SVG_SIZE,
 };
 pub use mesh::Mesh;
+pub use renderable::{
+    ensure_renderable_scene, has_mesh_contract_errors, validate_renderable_mesh,
+    validate_renderable_scene, MeshContractError,
+};
 pub use physics::{PhysicsBody, PhysicsId, PhysicsMaterial};
 pub use shader::{ShaderDecl, ShaderParamDef, ShaderParamType, ShaderParamValue};
 pub use skin::{Skin, SkinId};

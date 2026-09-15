@@ -35,7 +35,7 @@ pub(super) fn emit_models(
         // attribute it expects.
         let subclass: &'static str = if n.light.is_some() {
             "Light"
-        } else if n.mesh.is_some() {
+        } else if n.mesh.as_ref().is_some_and(|m| !m.indices.is_empty()) {
             "Mesh"
         } else {
             "Null"

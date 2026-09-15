@@ -104,6 +104,7 @@ pub fn bake_yaw_atlas(
     scene: &SceneGraph,
     opts: &ImposterOptions,
 ) -> anyhow::Result<ImposterAtlas> {
+    mogen_core::ensure_renderable_scene(scene)?;
     let mesh = flatten(scene, opts.base_dir.as_deref());
     let cell = opts.cell_size.max(1);
     let views = opts.view_count.max(1);
@@ -125,6 +126,7 @@ pub fn bake_yaw_atlas_on_gl(
     scene: &SceneGraph,
     opts: &ImposterOptions,
 ) -> anyhow::Result<ImposterAtlas> {
+    mogen_core::ensure_renderable_scene(scene)?;
     let mesh = flatten(scene, opts.base_dir.as_deref());
     let cell = opts.cell_size.max(1);
     let views = opts.view_count.max(1);

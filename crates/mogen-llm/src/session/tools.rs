@@ -95,19 +95,14 @@ pub fn compile(source: &str, base: Option<&Path>) -> Result<SceneGraph> {
     }
     let scene = mogen_dsl::lower_with_source(&ast, base)?;
     let diagnostics = mogen_validate::validate_graph(&scene);
+    if mogen_core::has_mesh_contract_errors(&diagnostics) {
+        return Err(mogen_core::MeshContractError { diagnostics }.into());
+    }
     if mogen_core::has_errors(&diagnostics) {
         bail!(
             "{}",
             mogen_validate::render_json("session.mog", &diagnostics)
         );
-    }
-    if scene
-        .nodes
-        .iter()
-        .filter_map(|n| n.mesh.as_ref())
-        .any(|m| m.positions.iter().flatten().any(|x| !x.is_finite()))
-    {
-        bail!("Non-finite geometry");
     }
     Ok(scene)
 }
@@ -358,4 +353,16 @@ pub fn part_framing(scene: &SceneGraph, name: &str) -> Result<([f32; 3], f32)> {
         bounds.center().to_array(),
         (bounds.max - bounds.min).length().max(0.002) * 0.5,
     ))
+}
+
+#[cfg(test)]
+mod mesh_contract_tests {
+    #[test]
+    fn session_preserves_mesh_contract_diagnostics() {
+        let error = super::compile("scene { box \"collapsed\" (size=[1,1,1],scale=[0,1,1]) }", None).unwrap_err();
+        let contract = error.downcast_ref::<mogen_core::MeshContractError>().unwrap();
+        assert!(contract.diagnostics.iter().any(|d| d.code == "E1201" && d.message.contains("collapsed")));
+        let serialized: serde_json::Value = serde_json::from_str(&contract.to_string()).unwrap();
+        assert_eq!(serialized["mesh_contract"], "failed");
+    }
 }
