@@ -5,6 +5,7 @@ pub mod conform;
 pub mod lower;
 pub mod meta;
 pub mod module;
+pub mod numeric_arrays;
 pub mod parser;
 pub mod proc_schema;
 pub mod skin_lower;

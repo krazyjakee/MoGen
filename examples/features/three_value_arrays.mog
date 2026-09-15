@@ -1,0 +1,5 @@
+module "leg" (r=0.018) {
+  spline_tube "tapered_leg" (points=[[0,0,0],[0,0.2,0],[0,0.4,0]],
+    radii=[$r,0.025,0.032],segments=24,samples=12)
+}
+scene { use "leg" () }

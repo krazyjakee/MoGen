@@ -284,6 +284,7 @@ fn walk(
     diags: &mut Vec<Diagnostic>,
 ) {
     check_kind(n, diags);
+    diags.extend(mogen_dsl::numeric_arrays::validate(n));
 
     match n.kind.as_str() {
         // `module` and `use` carry user-defined attr names (params/args); skip the
