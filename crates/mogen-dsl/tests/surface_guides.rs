@@ -60,3 +60,29 @@ fn curved_frame_trim_compiles_and_invalid_guides_fail() {
             .contains("E0160"));
     }
 }
+
+#[test]
+fn boxy_cushion_guide_bounds_geometric_error_within_its_sample_budget() {
+    let source = include_str!("../../../examples/furniture/guided_cushion.mog");
+    let scene = mogen_dsl::lower(&mogen_dsl::parse(source).unwrap()).unwrap();
+    let guide = &scene.guides[0];
+    assert!(guide.points.len() <= 4097);
+    let points: Vec<_> = guide.points.iter().map(|p| Vec3::from_array(*p)).collect();
+    for i in 0..4096 {
+        let angle = i as f64 * std::f64::consts::TAU / 4096.0;
+        let (s, c) = angle.sin_cos();
+        let p = Vec3::new(
+            (0.4 * c.signum() * c.abs().powf(1.0 / 3.0)) as f32,
+            0.0,
+            (0.325 * s.signum() * s.abs().powf(1.0 / 3.0)) as f32,
+        );
+        let distance = points
+            .windows(2)
+            .map(|w| {
+                let q = mogen_geom::measure::closest_segment_points(p, p, w[0], w[1]).1;
+                p.distance(q)
+            })
+            .fold(f32::INFINITY, f32::min);
+        assert!(distance <= guide.tolerance, "sample {i}: {distance}");
+    }
+}
