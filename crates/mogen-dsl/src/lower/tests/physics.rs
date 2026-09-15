@@ -186,3 +186,32 @@ fn unknown_phys_reference_is_an_error() {
     let err = crate::lower::lower(&ast).expect_err("unknown phys should fail");
     assert!(err.to_string().contains("unknown physics material"));
 }
+
+#[test]
+fn compound_weight_override_keeps_geometry_derived_local_cog() {
+    for weight in [0.0, 5.0] {
+        let g = lower_src(&format!(
+            r#"
+            physics "oak" (weight=700kg/m3)
+            scene {{
+                group "assembly" (phys="oak", weight={weight}, pos=[10,20,30], rot=[0,0,90], scale=2) {{
+                    group "nested" {{
+                        box "a" (x=-1, weight=1kg)
+                        box "b" (x=3, weight=3kg)
+                    }}
+                }}
+            }}
+        "#
+        ));
+        let body = find_mesh_node(&g, "assembly").physics.as_ref().unwrap();
+        assert_eq!(body.mass, Some(weight));
+        let cog = Vec3::from_array(body.center_of_gravity.unwrap());
+        assert!(cog.abs_diff_eq(Vec3::new(2.0, 0.0, 0.0), 1e-4), "{cog:?}");
+        let nested = find_mesh_node(&g, "nested").physics.as_ref().unwrap();
+        assert_eq!(
+            nested.mass,
+            Some(4.0),
+            "group overrides must not flow to children"
+        );
+    }
+}

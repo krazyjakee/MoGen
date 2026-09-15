@@ -154,3 +154,51 @@ fn a_declining_loader_falls_back_to_the_disk_read() {
     let verts: usize = graph.nodes.iter().filter_map(|n| n.mesh.as_ref()).map(|m| m.positions.len()).sum();
     assert!(verts > 0, "the fallback did not load the mesh");
 }
+
+#[test]
+fn expanded_mesh_instances_load_once_and_keep_independent_geometry() {
+    let ast = parse(&format!(
+        r#"
+        module "unused" {{ mesh (src="unused.glb") }}
+        module "part" {{ mesh (src="{ABSENT}") }}
+        scene {{
+            use "part"
+            mesh "anchored" (src="{ABSENT}", anchor=bottom)
+            use "part"
+        }}
+    "#
+    ))
+    .unwrap();
+    let mut loader = MemoryLoader {
+        spec: ABSENT.into(),
+        bytes: glb_bytes(),
+        calls: 0,
+    };
+    let graph = lower_with_loader(&ast, None, &mut loader).unwrap();
+    assert_eq!(
+        loader.calls, 1,
+        "deduplicate after expansion and unused module removal"
+    );
+    let meshes: Vec<_> = graph.nodes.iter().filter_map(|n| n.mesh.as_ref()).collect();
+    assert_eq!(meshes.len(), 3);
+    assert_eq!(meshes[0].positions, meshes[2].positions);
+    let min_y = meshes[1]
+        .positions
+        .iter()
+        .map(|p| p[1])
+        .fold(f32::INFINITY, f32::min);
+    assert!(min_y.abs() < 1e-5, "anchor should affect only its own mesh");
+}
+
+#[test]
+fn mesh_bytes_do_not_leak_between_lowerings() {
+    let mut loader = MemoryLoader {
+        spec: ABSENT.into(),
+        bytes: glb_bytes(),
+        calls: 0,
+    };
+    lower_with_loader(&scene(), None, &mut loader).unwrap();
+    loader.spec = "a-different-asset.glb".into();
+    assert!(lower_with_loader(&scene(), None, &mut loader).is_err());
+    assert_eq!(loader.calls, 2);
+}

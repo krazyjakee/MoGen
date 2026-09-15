@@ -256,3 +256,57 @@ fn per_node_lod_compounds_with_global_lod_scale() {
         "lod=2 should cancel a global lod_scale=0.5 (base={base_verts}, compound={compound_verts})"
     );
 }
+
+#[test]
+fn non_finite_authored_lod_values_are_ignored() {
+    use crate::ast::Value;
+    use crate::lower::lod::{collect_origin_lods, extract_lod_scale};
+
+    let baseline = lower_src(r#"sphere "s""#);
+    for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+        let mut ast = crate::parse(r#"lod_scale (value=1) sphere "s" (lod=1)"#).unwrap();
+        ast[0].attrs[0].1 = Value::Number(value);
+        ast[1].attrs[0].1 = Value::Number(value);
+        assert_eq!(extract_lod_scale(&ast), 1.0);
+        let graph = lower(&ast).unwrap();
+        assert_eq!(
+            find_mesh_node(&graph, "s").mesh.as_ref().unwrap().positions,
+            find_mesh_node(&baseline, "s")
+                .mesh
+                .as_ref()
+                .unwrap()
+                .positions,
+        );
+
+        let _origins = LodByOriginGuard::fresh();
+        let _scale = LodScaleGuard::set(2.0);
+        let origin = std::path::Path::new("parts.mog");
+        ast[0].origin = Some(origin.into());
+        collect_origin_lods(&ast);
+        let _origin = crate::lower::lod::LodOriginScaleGuard::for_origin(Some(origin));
+        assert_eq!(LOD_SCALE.with(|scale| scale.get()), 1.0);
+    }
+}
+
+#[test]
+fn nested_lowering_resets_lod_and_restores_it_even_after_failure() {
+    use crate::lower::lod::{current_lod_scale, LodMultiplierGuard};
+
+    let node = crate::parse("group (lod=2)").unwrap().remove(0);
+    let _scale = LodScaleGuard::set(0.5);
+    let _mult = LodMultiplierGuard::for_node(&node);
+    assert_eq!(current_lod_scale(), 1.0);
+
+    let nested = lower_src(r#"sphere "s""#);
+    assert_eq!(
+        find_mesh_node(&nested, "s")
+            .mesh
+            .as_ref()
+            .unwrap()
+            .positions
+            .len(),
+        425
+    );
+    assert!(lower(&crate::parse("group (lod=3) { unknown_primitive }").unwrap()).is_err());
+    assert_eq!(current_lod_scale(), 1.0);
+}

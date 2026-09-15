@@ -7,6 +7,10 @@ use crate::ast::Node;
 use super::LOD_SCALE;
 
 thread_local! {
+    // Subtree multipliers are independent of file defaults: switching origin
+    // must not erase a containing group's `lod=` (even within the same file).
+    static LOD_MULTIPLIER: Cell<f32> = const { Cell::new(1.0) };
+
     /// Per-origin LOD multiplier collected from imported files'
     /// top-level `lod_scale (value=N)` directives. Keyed by the
     /// canonical path stamped onto every imported `Node.origin`.
@@ -17,21 +21,9 @@ thread_local! {
     static LOD_BY_ORIGIN: RefCell<HashMap<PathBuf, f32>> =
         RefCell::new(HashMap::new());
 
-    /// The **caller's** tessellation density for this lowering, set by
-    /// [`crate::lower::lower_with_loader_lod`]. 1.0 = exactly what the source
-    /// asked for, which is what every other entry point passes.
-    ///
-    /// Deliberately a *second* thread-local rather than a different starting
-    /// value for `LOD_SCALE`, and that is the load-bearing part. `LOD_SCALE` is
-    /// **replaced** — not multiplied — by [`LodOriginScaleGuard`] on entry to
-    /// every imported subtree, precisely so one file's `lod_scale` cannot leak
-    /// across an `import`. A caller's request folded into `LOD_SCALE` would be
-    /// erased by that replacement, so asking for a coarse bake would coarsen the
-    /// root file and silently leave every imported subtree at full density.
-    ///
-    /// Kept separate it multiplies through *all* of it — the file's own
-    /// `lod_scale`, each import's, and every per-node `lod=` — which is what
-    /// "give me this whole scene at a quarter density" has to mean.
+    /// Caller density for the current lowering. Stored separately from the
+    /// file scale and subtree multiplier so origin changes cannot erase it.
+    /// `current_lod_scale` multiplies all three factors; 1.0 is the default.
     static LOD_REQUEST: Cell<f32> = const { Cell::new(1.0) };
 }
 
@@ -58,14 +50,13 @@ impl Drop for LodRequestGuard {
     }
 }
 
-/// Find a top-level `lod_scale (value=N)` declaration and return its multiplier.
-/// Defaults to 1.0 when absent. Values <= 0 fall back to 1.0 so a malformed
-/// setting can't silently destroy every mesh.
+/// Return the first positive, finite top-level `lod_scale (value=N)`.
+/// Invalid declarations are skipped; defaults to 1.0 if none is valid.
 pub(super) fn extract_lod_scale(ast: &[Node]) -> f32 {
     for n in ast {
         if n.kind == "lod_scale" {
             if let Some(v) = n.attr_number("value") {
-                if v > 0.0 {
+                if v.is_finite() && v > 0.0 {
                     return v;
                 }
             }
@@ -91,7 +82,7 @@ pub(super) fn collect_origin_lods(imported: &[Node]) {
             let Some(v) = n.attr_number("value") else {
                 continue;
             };
-            if v > 0.0 {
+            if v.is_finite() && v > 0.0 {
                 // First decl per origin wins, matching `extract_lod_scale`.
                 map.entry(origin).or_insert(v);
             }
@@ -100,15 +91,14 @@ pub(super) fn collect_origin_lods(imported: &[Node]) {
 }
 
 /// The density every primitive tessellates at right now: the source's own
-/// scale (file-global, per-origin, per-node — all folded into `LOD_SCALE`)
-/// **times** the caller's request.
+/// file scale, multiplied by enclosing per-node overrides and the caller's request.
 ///
 /// A product rather than a choice between the two: an author who marked a hero
 /// prop `lod=2` means "twice whatever else is going on", and that stays true at
 /// every density a baker asks for. Overriding instead would flatten a scene's
 /// authored detail hierarchy the moment anything requested a LOD.
 pub(super) fn current_lod_scale() -> f32 {
-    LOD_SCALE.with(|s| s.get()) * LOD_REQUEST.with(|s| s.get())
+    LOD_SCALE.with(|s| s.get()) * LOD_MULTIPLIER.with(|s| s.get()) * LOD_REQUEST.with(|s| s.get())
 }
 
 /// RAII guard that resets the per-origin LOD map at the start of a
@@ -139,9 +129,9 @@ impl Drop for LodByOriginGuard {
 /// importing file's scale. Mirrors the `meta` block isolation already
 /// in place — a file's top-level directives don't leak across imports.
 ///
-/// Nodes with no origin (the user's own file, stdlib expansions) leave
-/// `LOD_SCALE` alone so the user's top-level `lod_scale` continues to
-/// apply.
+/// Nodes with no origin (local or stdlib expansions) retain the active file
+/// scale. Subtree multipliers and caller density are stored separately and
+/// survive every origin change.
 pub(super) enum LodOriginScaleGuard {
     /// LOD_SCALE was swapped; the previous value is restored on drop.
     Active(f32),
@@ -170,7 +160,7 @@ impl Drop for LodOriginScaleGuard {
     }
 }
 
-/// RAII guard that multiplies `LOD_SCALE` by a per-node `lod=N` attribute for
+/// RAII guard that accumulates a per-node `lod=N` attribute for
 /// the duration of one `lower_into` call. Lets authors mark hero parts
 /// (`lod=2.0`) and background parts (`lod=0.5`) without touching the
 /// file-global `lod_scale (value=N)`.
@@ -178,25 +168,29 @@ impl Drop for LodOriginScaleGuard {
 /// The multiplier compounds with the active scale — a `lod=2.0` on a
 /// subtree inside a file with a top-level `lod_scale (value=0.5)` ends up
 /// at an effective scale of `1.0`, matching what an author would expect
-/// from a "double the detail of this part" override. Non-positive values
-/// are ignored (treated as no-op) so a malformed override can't silently
-/// destroy every mesh in the subtree.
+/// from a "double the detail of this part" override. The accumulated multiplier
+/// is independent of the active file's scale and survives imported children.
+/// Non-finite and non-positive values are ignored.
 pub(super) enum LodMultiplierGuard {
-    /// Active multiplier applied; the previous LOD_SCALE is restored on drop.
+    /// Active multiplier applied; the previous subtree multiplier is restored on drop.
     Active(f32),
-    /// Either no `lod` attr present or its value was non-positive — no swap.
+    /// No `lod` attribute, or a non-positive/non-finite value; no swap.
     Inert,
 }
 
 impl LodMultiplierGuard {
+    pub(super) fn fresh() -> Self {
+        Self::Active(LOD_MULTIPLIER.with(|s| s.replace(1.0)))
+    }
+
     pub(super) fn for_node(node: &Node) -> Self {
         let Some(mult) = node.attr_number("lod") else {
             return Self::Inert;
         };
-        if !(mult > 0.0) {
+        if !mult.is_finite() || mult <= 0.0 {
             return Self::Inert;
         }
-        let prev = LOD_SCALE.with(|s| {
+        let prev = LOD_MULTIPLIER.with(|s| {
             let cur = s.get();
             s.replace(cur * mult)
         });
@@ -207,7 +201,7 @@ impl LodMultiplierGuard {
 impl Drop for LodMultiplierGuard {
     fn drop(&mut self) {
         if let Self::Active(prev) = *self {
-            LOD_SCALE.with(|s| s.set(prev));
+            LOD_MULTIPLIER.with(|s| s.set(prev));
         }
     }
 }
