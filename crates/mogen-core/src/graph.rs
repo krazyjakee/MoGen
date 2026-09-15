@@ -173,6 +173,10 @@ pub struct SceneNode {
     /// back to hashing the mesh bytes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub geometry_identity: Option<[u8; 32]>,
+    /// Sweep construction frame before deformation/anchoring, in authored
+    /// local space. Kept separate from user extras and compiled mesh locks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path_frame: Option<serde_json::Value>,
     pub material: Option<MaterialId>,
     /// Resolved physics body for this node — the substance it's made of plus
     /// its computed weight + centre of gravity. Set when the DSL node carries
@@ -326,6 +330,7 @@ impl Default for SceneNode {
             transform: Transform::default(),
             mesh: None,
             geometry_identity: None,
+            path_frame: None,
             material: None,
             physics: None,
             skin: None,

@@ -2130,3 +2130,8 @@ supply an explicit constant or matching array.
 Scalar expressions and module parameters inside arrays are resolved before
 lowering applies the same checks. See
 [three_value_arrays.mog](../examples/features/three_value_arrays.mog).
+
+
+## Explicit sweep frames
+
+Use `frame_up=[0,1,0]` for local profile height toward +Y; width is height × tangent. `closed=1` uses a periodic path and matching seam frames. Omitting `frame_up` preserves the legacy orientation. See [sweep-frames.md](sweep-frames.md) for roll, closure, parent-transform and migration rules.

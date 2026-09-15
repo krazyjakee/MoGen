@@ -6,6 +6,7 @@ pub mod csg;
 pub mod csg_smooth;
 pub mod deform;
 pub mod isosurface;
+pub mod path_frames;
 pub mod primitives;
 pub mod sdf;
 pub mod subdivide;
@@ -29,6 +30,7 @@ pub use csg::{
 pub use csg_smooth::union_smooth;
 pub use deform::{bend, droop, jitter, noise, split_for_facets, taper, twist_y, wave};
 pub use isosurface::blob_to_mesh;
+pub use path_frames::{frame_from_up, transport_path_frames};
 pub use sdf::{blob_aabb, evaluate_field, smax, smin, BlobChild, SdfOp, SdfPrim};
 pub use subdivide::loop_subdivide;
 pub use surface_query::{SurfaceIndex, SurfacePoint};
@@ -40,7 +42,7 @@ pub use primitives::{
     bezier_patch_mesh, metaball_mesh,
     mesh_from_glb_bytes, plane_mesh, poly_mesh, prism_mesh, pyramid_mesh, quad_mesh, read_glb_bytes,
     rounded_box_mesh, sphere_mesh, spline_ribbon_mesh, spline_tube_mesh, superellipsoid_mesh,
-    sweep_mesh, torus_arc_mesh, torus_mesh, tube_mesh, wedge_mesh, CoilHandedness, Contour,
+    sweep_mesh, sweep_mesh_oriented, sweep_path_frames, torus_arc_mesh, torus_mesh, tube_mesh, wedge_mesh, CoilHandedness, Contour,
     FaceUvXform, InsetFace, Section, SweepModulation, SweepProfile,
 };
 pub use xform::transform_mesh;

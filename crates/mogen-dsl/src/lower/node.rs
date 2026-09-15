@@ -177,6 +177,20 @@ pub(super) fn lower_into(
         let subdivisions = resolved_subdivisions(node)?;
         let mesh = apply_subdivide(node, mesh)?;
         graph.set_mesh(id, mesh);
+        if node.kind == "sweep" {
+            let info = if let Some(up) = node.attr_vec3("frame_up").map(|v| v.to_array()) {
+                let points = node.attr_list_vec3("path").unwrap_or_else(|| vec![[-0.5,0.0,0.0],[0.5,0.0,0.0]]);
+                let closed = node.attr_number("closed").unwrap_or(0.0) != 0.0;
+                let (_, frames) = mogen_geom::sweep_path_frames(&points,
+                    node.attr_number("samples").unwrap_or(8.0).max(2.0) as u32, up, closed)?;
+                let f = frames[0];
+                serde_json::json!({"version":1,"space":"authored local, before deformation and anchoring",
+                    "frame_up":up,"closed":closed,"center":f.center.to_array(),
+                    "width":(-f.binormal).to_array(),"height":f.normal.to_array(),"tangent":f.tangent.to_array(),
+                    "roll":"degrees, positive width toward height around tangent"})
+            } else { serde_json::json!({"version":0,"space":"authored local","convention":"legacy transported profile X; use frame_up to select explicit height"}) };
+            graph.nodes[id.0 as usize].path_frame = Some(info);
+        }
         if let Some(base) = primitive.base_identity {
             graph.nodes[id.0 as usize].geometry_identity = Some(final_identity(
                 base,

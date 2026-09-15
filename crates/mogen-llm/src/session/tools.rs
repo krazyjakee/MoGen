@@ -261,7 +261,7 @@ impl ModelingWorkspace {
             "name":n.name,"kind":n.kind,"parent":n.parent.map(|id|scene.get(id).name.clone()),
             "children":n.children.iter().map(|id|scene.get(*id).name.clone()).collect::<Vec<_>>(),
             "transform":n.transform,"world":world[i],"bounds":n.mesh.as_ref().map(mogen_core::Aabb::from_mesh),
-            "material":n.material.map(|id|&scene.materials[id.0 as usize])
+            "material":n.material.map(|id|&scene.materials[id.0 as usize]),"path_frame":n.path_frame
         })).collect();
         Ok(
             json!({"revision":self.revision()?,"parts":parts,"locks":self.locks,"selected":self.selected}),

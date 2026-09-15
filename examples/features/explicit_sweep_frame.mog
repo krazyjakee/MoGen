@@ -1,0 +1,5 @@
+material "wood" (color=[0.24,0.105,0.045],roughness=0.32)
+scene {
+  sweep "flat_armrest" (profile=[[-0.10,-0.02],[0.10,-0.02],[0.10,0.02],[-0.10,0.02]],
+    path=[[0,0,0],[0,0.05,0.5],[0,0,1]],frame_up=[0,1,0],roll=[0,0,0],mat="wood")
+}
