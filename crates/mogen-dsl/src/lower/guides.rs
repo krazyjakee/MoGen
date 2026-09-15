@@ -254,8 +254,11 @@ fn latitude(source: &Node, spec: &Node, tolerance: f32) -> Result<(Vec<Vec3>, Ve
     // level is normalized Y, so invert the source's latitude parameter.
     let eta = (level.signum() * level.abs().powf(ns)).asin();
     let evaluate = |u: f32| {
-        let angle = u * std::f32::consts::TAU;
+        // Evaluate cardinal angles accurately: tiny trig residuals become
+        // visible offsets when raised to fractional superellipse powers.
+        let angle = f64::from(u) * std::f64::consts::TAU;
         let (sin, cos) = angle.sin_cos();
+        let (sin, cos) = (sin as f32, cos as f32);
         let p = Vec3::new(
             size.x * 0.5 * spow(eta.cos(), eps_ns) * spow(cos, eps_ew),
             size.y * 0.5 * level,
@@ -279,7 +282,13 @@ fn latitude(source: &Node, spec: &Node, tolerance: f32) -> Result<(Vec<Vec3>, Ve
             let b = evaluate((i + 1) as f32 / count as f32);
             for fraction in [0.25, 0.5, 0.75] {
                 let actual = evaluate((i as f32 + fraction) / count as f32).0;
-                error_bound = error_bound.max(actual.distance(a.0.lerp(b.0, fraction)));
+                // Bound geometric chord error. Fractional-power curves have
+                // highly nonuniform speed near their axes; comparing equal
+                // parameter fractions falsely treats tangential travel as error.
+                let nearest = mogen_geom::measure::closest_segment_points(
+                    actual, actual, a.0, b.0,
+                ).1;
+                error_bound = error_bound.max(actual.distance(nearest));
             }
             points.push(a.0);
             normals.push(a.1);
