@@ -668,3 +668,11 @@ fn relational_driver_changes_cannot_bypass_dependent_geometry_locks() {
     let error = enforce_locks(source,&changed,&locks,None).unwrap_err();
     assert!(error.to_string().contains("locked"));
 }
+
+#[test]
+fn guided_details_respect_dependent_geometry_locks() {
+    let source = include_str!("../../../../examples/furniture/guided_cushion.mog");
+    let changed = source.replace("use \"cushion\" ()", "use \"cushion\" (w=1.2)");
+    let locks = vec![PartLock { name: "welt".into(), kind: LockKind::Geometry }];
+    assert!(enforce_locks(source, &changed, &locks, None).unwrap_err().to_string().contains("locked"));
+}

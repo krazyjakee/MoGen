@@ -2140,3 +2140,8 @@ Use `frame_up=[0,1,0]` for local profile height toward +Y; width is height × ta
 ## Relational modeling
 
 `relate` adds endpoint anchoring, connector-plane grounding and translation-only connector alignment to existing `attach`/`conform`. See [relational-modeling.md](relational-modeling.md) and [relational_chair.mog](../examples/furniture/relational_chair.mog) for supported syntax, dependency order, module coordinates, diagnostics and compiled-lock behavior.
+
+
+## Surface-derived details
+
+Declare `guide "welt" (target="cushion",section="latitude",level=0,tolerance=0.001)` and reuse it in `sweep (guide="welt",profile=[...],lift=0.002)`. Curved-frame trim uses `section="profile_edge",edge=...`. See [surface-guides.md](surface-guides.md) for the shared conform offset model and supported semantic references.

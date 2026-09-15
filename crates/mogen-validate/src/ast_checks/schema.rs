@@ -6,7 +6,7 @@
 use mogen_dsl::ast::Value;
 
 pub const KNOWN_KINDS: &[&str] = &[
-    "scene", "group", "solid", "material", "physics", "shader", "param", "shader_params", "connector", "attach", "conform", "relate", "mirror", "array",
+    "scene", "group", "solid", "material", "physics", "shader", "param", "shader_params", "connector", "attach", "conform", "relate", "guide", "mirror", "array",
     "stack", "grid",
     "meta",
     "box", "plane", "quad", "cylinder", "cone", "sphere", "capsule", "torus",
@@ -148,6 +148,7 @@ pub fn common_attrs_for_kind(kind: &str) -> &'static [&'static str] {
 
 pub fn attrs_for_kind(kind: &str) -> &'static [&'static str] {
     match kind {
+        "guide" => &["target","section","level","edge","tolerance"],
         "relate" => &["child","target","mode","socket","plug","endpoint","offset","insertion","clearance","tolerance"],
         "meta" => &[
             "name", "version", "mogen_version", "description", "tags",
@@ -208,7 +209,7 @@ pub fn attrs_for_kind(kind: &str) -> &'static [&'static str] {
         "leaf_card" => &["size", "cards"],
         "extrude" => &["points", "hole", "height", "taper", "twist", "caps"],
         "sweep" => &[
-            "profile", "path", "samples", "twist", "roll", "scale_along", "caps", "frame_up", "closed",
+            "profile", "path", "samples", "twist", "roll", "scale_along", "caps", "frame_up", "closed", "guide", "lift", "reparent",
         ],
         "loft" => &["points", "heights", "samples", "caps"],
         "hull" => &["points"],
@@ -433,6 +434,8 @@ pub(super) fn attr_type(kind: &str, attr: &str) -> Option<&'static str> {
         ("extrude", "hole") => "list",
         ("extrude", "height") | ("extrude", "twist") => "number",
         ("extrude", "caps") => "number",
+        ("guide", "target") | ("guide", "section") | ("sweep", "guide") => "string",
+        ("guide", "level") | ("guide", "edge") | ("guide", "tolerance") | ("sweep", "lift") | ("sweep", "reparent") => "number",
         ("sweep", "frame_up") => "vec3",
         ("sweep", "closed") => "number",
         ("sweep", "profile") => "list",

@@ -230,11 +230,18 @@ impl ModelingWorkspace {
             "material":n.material.map(|id|&scene.materials[id.0 as usize]),"path_frame":n.path_frame
         })).collect();
         Ok(
-            json!({"revision":self.revision()?,"parts":parts,"relationships":scene.relationships,"locks":self.locks,"selected":self.selected}),
+            json!({"revision":self.revision()?,"parts":parts,"relationships":scene.relationships,"guides":scene.guides.iter().map(|g|json!({"name":g.name,"target":scene.get(g.target).name,"section":g.section,"closed":g.closed,"tolerance":g.tolerance,"samples":g.points.len()})).collect::<Vec<_>>(),"locks":self.locks,"selected":self.selected}),
         )
     }
 }
 pub fn documentation(topic: &str) -> Result<String> {
+    match topic.to_ascii_lowercase().as_str() {
+        "guide" | "welt" | "surface details" => return Ok(include_str!("../../../../docs/surface-guides.md").into()),
+        "relate" | "relationships" => return Ok(include_str!("../../../../docs/relational-modeling.md").into()),
+        "frame_up" | "path frames" => return Ok(include_str!("../../../../docs/sweep-frames.md").into()),
+        _ => {}
+    }
+
     let topic = topic.trim().to_lowercase();
     if topic.len() < 3 || topic.len() > 80 {
         bail!("Use a specific DSL operation or technique (3–80 characters)");

@@ -33,7 +33,7 @@ pub use cuboid::{box_faces_mesh, box_faces_mesh_authored, box_mesh, FaceUvXform}
 pub use cylinder::{cylinder_mesh, half_cylinder_mesh, tube_mesh};
 pub use disc::disc_mesh;
 pub use extrude::{extrude_mesh, Contour};
-pub use sweep::{sweep_mesh, sweep_mesh_oriented, sweep_path_frames, SweepModulation, SweepProfile};
+pub use sweep::{sweep_mesh, sweep_mesh_oriented, sweep_path_frames, sweep_surface_curve, SweepModulation, SweepProfile};
 pub use loft::{loft_mesh, Section};
 pub use icosphere::icosphere_mesh;
 pub use lathe::{lathe_mesh, spline_tube_mesh};

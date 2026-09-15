@@ -518,3 +518,24 @@ mod tests {
         (min, max)
     }
 }
+
+/// Sweep directly along surface-derived frames, without resampling away from
+/// their attachment surface. `lift` follows conform's target-local normal.
+pub fn sweep_surface_curve(profile: &[[f32; 2]], path: &[crate::PathFrame], lift: f32, closed: bool, mode: UvMode) -> anyhow::Result<Mesh> {
+    if profile.len()<3 || path.len()<2 || !lift.is_finite() {
+        anyhow::bail!("E0160: surface sweep needs a valid profile, curve and finite lift");
+    }
+    let frames: Vec<_> = path.iter().map(|f| Frame { center:f.center+f.normal*lift,
+        tangent:f.tangent,normal:-f.binormal,binormal:f.normal }).collect();
+    let samples: Vec<_> = frames.iter().map(|f|f.center).collect();
+    let mut mesh=sweep_samples(profile,&samples,&frames,0.0,&SweepModulation::default(),!closed,mode);
+    if closed {
+        let row=profile.len()+1;
+        let end=(frames.len()-1)*row;
+        for j in 0..row {
+            let n=(Vec3::from_array(mesh.normals[j])+Vec3::from_array(mesh.normals[end+j])).normalize_or_zero().to_array();
+            mesh.normals[j]=n; mesh.normals[end+j]=n;
+        }
+    }
+    Ok(mesh)
+}

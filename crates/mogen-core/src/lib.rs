@@ -3,6 +3,7 @@ pub mod anim;
 pub mod connector;
 pub mod diagnostic;
 pub mod graph;
+pub mod guide;
 pub mod gradient;
 pub mod light;
 pub mod material;
@@ -30,6 +31,7 @@ pub use material::{
     AlphaMode, Material, MaterialId, TextureRef, UvMode, DEFAULT_SVG_SIZE,
 };
 pub use mesh::Mesh;
+pub use guide::GuideCurve;
 pub use relationship::Relationship;
 pub use renderable::{
     ensure_renderable_scene, has_mesh_contract_errors, validate_renderable_mesh,

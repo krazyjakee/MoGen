@@ -6,6 +6,7 @@ pub mod csg;
 pub mod csg_smooth;
 pub mod deform;
 pub mod isosurface;
+pub mod measure;
 pub mod path_frames;
 pub mod primitives;
 pub mod sdf;
@@ -42,7 +43,7 @@ pub use primitives::{
     bezier_patch_mesh, metaball_mesh,
     mesh_from_glb_bytes, plane_mesh, poly_mesh, prism_mesh, pyramid_mesh, quad_mesh, read_glb_bytes,
     rounded_box_mesh, sphere_mesh, spline_ribbon_mesh, spline_tube_mesh, superellipsoid_mesh,
-    sweep_mesh, sweep_mesh_oriented, sweep_path_frames, torus_arc_mesh, torus_mesh, tube_mesh, wedge_mesh, CoilHandedness, Contour,
+    sweep_mesh, sweep_mesh_oriented, sweep_path_frames, sweep_surface_curve, torus_arc_mesh, torus_mesh, tube_mesh, wedge_mesh, CoilHandedness, Contour,
     FaceUvXform, InsetFace, Section, SweepModulation, SweepProfile,
 };
 pub use xform::transform_mesh;

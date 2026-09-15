@@ -177,7 +177,7 @@ pub(super) fn lower_into(
         let subdivisions = resolved_subdivisions(node)?;
         let mesh = apply_subdivide(node, mesh)?;
         graph.set_mesh(id, mesh);
-        if node.kind == "sweep" {
+        if node.kind == "sweep" && node.attr("guide").is_none() {
             let info = if let Some(up) = node.attr_vec3("frame_up").map(|v| v.to_array()) {
                 let points = node.attr_list_vec3("path").unwrap_or_else(|| vec![[-0.5,0.0,0.0],[0.5,0.0,0.0]]);
                 let closed = node.attr_number("closed").unwrap_or(0.0) != 0.0;
@@ -248,7 +248,7 @@ pub(super) fn lower_into(
             // nesting. Skipping it here matters when an imported scene-as-
             // module body (e.g. `sports_bag.mog`) carrying conform directives
             // is expanded inside a `group` wrapper.
-            "material" | "attach" | "conform" | "relate" => continue,
+            "material" | "attach" | "conform" | "relate" | "guide" => continue,
             // Animation and clip-track decls are processed by their own pass
             // (see lower_animations). They get here when an imported scene-as-
             // module body — which can carry animations alongside geometry — is
