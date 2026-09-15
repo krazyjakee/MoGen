@@ -118,8 +118,7 @@ pub fn extrude_mesh(
         }
     }
 
-    recompute_normals(&mut mesh);
-    mesh
+    recompute_normals(&mesh)
 }
 
 /// Push a quad strip between the bottom and top loops of one contour.

@@ -1,0 +1,13 @@
+// Lighting regression: sweep, loft and extrusion must retain computed normals.
+material "walnut" (color=[0.24,0.105,0.045],roughness=0.32)
+scene {
+  sweep "arm" (pos=[-0.7,0,0],
+    profile=[[-0.1,-0.1],[0.1,-0.1],[0.1,0.1],[-0.1,0.1]],
+    path=[[0,0,0],[0,0.1,0.5],[0,0,1]],samples=12,mat="walnut",tags="floating")
+  loft "rail" (points=[[-0.1,-0.1],[0.1,-0.1],[0.1,0.1],[-0.1,0.1],
+                        [-0.08,-0.08],[0.08,-0.08],[0.08,0.08],[-0.08,0.08]],
+    heights=[0,1],samples=4,mat="walnut",tags="floating")
+  extrude "post" (pos=[0.7,0.5,0],
+    points=[[-0.1,-0.1],[0.1,-0.1],[0.1,0.1],[-0.1,0.1]],
+    height=1,taper=0.8,mat="walnut",tags="floating")
+}
