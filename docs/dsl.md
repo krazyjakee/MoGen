@@ -1,19 +1,20 @@
 # MoGen DSL reference
 
-`mogen` reads `.mog` source files, lowers them to an intermediate scene graph,
-and exports glTF 2.0 GLB. This document is the authoritative reference for
-the surface language: every node kind, every attribute, and the little bits of
-grammar that sit between them. For a conceptual overview of the whole
-pipeline, see [`ROADMAP.md`](./ROADMAP.md); for a worked catalog of reusable
-modules, see [`modules.md`](./modules.md).
+`mogen` compiles `.mog` source into glTF 2.0 GLB. This is the authoritative
+reference for every node kind, attribute, and grammar form. Reusable modules
+are catalogued in [`modules.md`](./modules.md).
 
 - [Grammar at a glance](#grammar-at-a-glance)
+- [File metadata: `meta`](#file-metadata-meta)
+- [Global settings](#global-settings)
 - [Values and expressions](#values-and-expressions)
 - [Common attributes](#common-attributes)
 - [Placement shortcuts](#placement-shortcuts)
+- [Deformation modifiers](#deformation-modifiers)
 - [Scene structure](#scene-structure-scene-group)
 - [Primitives](#primitives)
 - [Materials](#materials)
+- [Shaders](#shaders)
 - [Physics](#physics)
 - [Decals](#decals)
 - [Connectors](#connectors)
@@ -25,37 +26,43 @@ modules, see [`modules.md`](./modules.md).
 - [Mesh subdivision: `subdivide`](#mesh-subdivision-subdivide)
 - [Solid groups: `solid`](#solid-groups-solid)
 - [Modules: `module` and `use`](#modules-module-and-use)
+- [Control flow: `if`, `else`, `for`, string interpolation](#control-flow-if-else-for-string-interpolation)
 - [Imports: `import`](#imports-import)
 - [Animation: `joint`, `clip`, templates](#animation-joint-clip-templates)
 - [Skeletons and skinning: `skeleton`, `bone`, `skin=`, `bind=`](#skeletons-and-skinning-skeleton-bone-skin-bind)
 - [Lights: `light`](#lights-light)
+- [Colliders](#colliders)
+- [Shadow casting](#shadow-casting)
+- [Diagnostics and tooling](#diagnostics-and-tooling)
+- [Scalar arrays and coordinate lists](#scalar-arrays-and-coordinate-lists)
+- [Explicit sweep frames](#explicit-sweep-frames)
+- [Relational modeling](#relational-modeling)
+- [Surface-derived details](#surface-derived-details)
 
 ---
 
 ## Grammar at a glance
 
-A `.mog` file is a sequence of nodes. Every node shares the same shape:
+Every node has the same shape:
 
 ```
 kind ["optional name"] [(attr=value, ...)] [{ child_nodes... }]
 ```
 
-- `kind` is an identifier like `box`, `cylinder`, `group`, `scene`, `material`, `joint`, …
-- `name` is a quoted string. Some kinds require it (`material`, `module`, `joint`, `clip`, `connector`); most geometry kinds treat it as optional — when omitted the node's name defaults to its kind.
-- `attr_list` is a comma-separated `key=value` sequence in parentheses.
-- `block` is a brace-delimited list of child nodes.
+- `kind` — identifier: `box`, `group`, `scene`, `material`, `joint`, …
+- `name` — quoted string. Required for `material`, `module`, `joint`, `clip`, `connector`; optional on geometry, where it defaults to the kind.
+- `(…)` — comma-separated `key=value` attributes.
+- `{…}` — child nodes.
 
-Comments run from `//` to the end of the line. Whitespace between tokens is
-insignificant. The top of the file may contain `import`, `material`,
-`module`, `joint`, and `clip` declarations; `scene { ... }` holds the
-geometry itself.
+`//` comments run to end of line; whitespace is insignificant. The top of the
+file may hold `import`, `material`, `module`, `joint`, and `clip` declarations;
+`scene { ... }` holds the geometry.
 
 ---
 
 ## File metadata: `meta`
 
-An optional top-of-file block recording author-facing metadata about the
-asset. Place at most once, before `material` / `scene` / `module`.
+Optional, at most once, before `material` / `scene` / `module`.
 
 ```
 meta (
@@ -69,253 +76,209 @@ meta (
 | attr | type | source | notes |
 |---|---|---|---|
 | `name` | string | author | human-readable asset name |
-| `version` | string | author | semver-style is conventional but not enforced |
-| `mogen_version` | string | **toolchain** | auto-stamped on every save. Don't write it yourself. |
+| `version` | string | author | semver conventional, not enforced |
+| `mogen_version` | string | **toolchain** | auto-stamped on every save; don't write it |
 | `description` | string | author | one-line summary |
 | `tags` | list of string | author | free-form labels |
-| `style` | string | toolchain | visual-style hint from `mogen generate --style …`. Suggested values: `ps1`, `n64`, `low_poly`, `high_detail`, `arcade`, `voxel`, `cel_shaded`, `stylized_fantasy`, `cyberpunk`, `pixel_art`. Validator accepts any string; survives `modify`/`animate`/`repair` |
-| `seed` | string | toolchain | random seed from `mogen generate`/`modify`; round-trips through edits |
-| `thinking` | string | toolchain | per-file Gemini thinking budget stamped with `seed`; survives `modify` |
-| `prompt` | string | toolchain | original NL prompt; round-trips through `modify` so the LLM can revise against original intent |
-| `moghub_model_id` | string | toolchain | stamped by Studio's Publish after a successful MoGHub upload |
+| `style` | string | toolchain | style hint from `mogen generate --style …` (e.g. `ps1`, `n64`, `low_poly`, `high_detail`, `arcade`, `voxel`, `cel_shaded`, `stylized_fantasy`, `cyberpunk`, `pixel_art`). Any string accepted; survives `modify`/`animate`/`repair` |
+| `seed` | string | toolchain | random seed from `generate`/`modify`; round-trips through edits |
+| `thinking` | string | toolchain | per-file thinking budget; survives `modify` |
+| `prompt` | string | toolchain | original prompt; round-trips through `modify` |
+| `moghub_model_id` | string | toolchain | stamped by Studio's Publish after a MoGHub upload |
 | `moghub_slug` | string | toolchain | MoGHub slug, paired with `moghub_model_id` |
-| `moghub_version` | string | toolchain | last-published MoGHub version, paired with `moghub_model_id` |
+| `moghub_version` | string | toolchain | last-published MoGHub version |
 
-The block is informational — not consumed by the geometry pipeline. It
-survives lowering on `SceneGraph::meta` for downstream tooling. Old files
-without `meta` keep building; the toolchain inserts a fresh
-`meta (mogen_version = "...")` line on next save.
+Informational only — not consumed by geometry. Files without `meta` still
+build; the toolchain inserts `meta (mogen_version = "...")` on next save.
 
-Diagnostics: `E0310` (no body block), `E0311` (no quoted name — use
-`name=`), `E0312` (duplicate), `E0313` (must be top level), `W0107`
-(`mogen_version` mismatch).
+Diagnostics: `E0310` (no body block), `E0311` (quoted name — use `name=`),
+`E0312` (duplicate), `E0313` (must be top level), `W0107` (`mogen_version`
+mismatch).
 
 ---
 
 ## Global settings
 
-Top-level directives that tune the build itself.
-
 | directive | value | effect |
 |---|---|---|
-| `lod_scale (value=N)` | number, default `1.0` | multiplies every primitive `segments`/`rings`/`samples` (implicit defaults *and* explicit values like `segments_u=64`) and `blob` `resolution`. `icosphere` `subdivisions` and any `subdivide=` post-pass step by `round(log2(N))` instead. Counts clamp to a per-primitive minimum |
+| `lod_scale (value=N)` | number, default `1.0` | multiplies every primitive `segments`/`rings`/`samples` (implicit defaults *and* explicit values) and `blob` `resolution`. `icosphere` `subdivisions` and `subdivide=` step by `round(log2(N))` instead. Counts clamp to a per-primitive minimum |
 
 ```
 lod_scale (value=0.5)
 
 scene {
-  sphere "head" (radius=0.5)         // 8 rings, 12 segments (default 16/24 halved)
-  sphere "lod0" (radius=0.5, segments=48, rings=32)  // 16 rings, 24 segments (48/32 halved)
+  sphere "head" (radius=0.5)                         // 8 rings, 12 segments
+  sphere "lod0" (radius=0.5, segments=48, rings=32)  // 16 rings, 24 segments
 }
 ```
 
-Studio's "LOD scale" slider edits this directive in place; it clears the
-directive at `1.0` so saved files stay clean.
+Studio's "LOD scale" slider edits this directive and removes it at `1.0`.
 
 ### Per-node `lod=` overrides
 
-Any geometry/group node accepts `lod=N`, which **multiplies** the active
-LOD scale for that node's subtree. RAII-scoped (doesn't leak into siblings)
-and compounds with the global setting. Per-primitive minimums still apply
-(`lod=0.1` won't collapse a cylinder below three sides).
-Imported geometry uses its defining file's `lod_scale` (default `1.0`), while
-all enclosing per-node `lod=` multipliers still apply across import boundaries.
-The first positive, finite top-level `lod_scale` in each file sets that file's
-default; if none is present, it uses `1.0`. Invalid per-node `lod=` values are
-ignored. Nested overrides multiply and do not affect siblings outside their
-subtree.
+Any geometry/group node accepts `lod=N`, which **multiplies** the active LOD
+scale for its subtree only (siblings unaffected); nested overrides multiply.
+Invalid values are ignored. Per-primitive minimums still apply.
+
+Each file's first positive, finite top-level `lod_scale` is its default (else
+`1.0`). Imported geometry uses its *defining* file's scale in place of the
+importer's, while enclosing `lod=` multipliers still apply across the import.
+Library callers can add a further multiplier with `lower_with_loader_lod`
+(invalid requests use `1.0`).
 
 ```
-scene {
-  group "hero" (lod=2) {                  // boosted detail
-    sphere "face" (radius=0.12)
-  }
-  sphere "background_rock" (radius=0.4, lod=0.5)  // halved detail
-}
+group "hero" (lod=2) { sphere "face" (radius=0.12) }
+sphere "background_rock" (radius=0.4, lod=0.5)
 ```
-
-For example, save this module as `parts.mog`:
 
 ```mog
+// parts.mog
 lod_scale (value=0.5)
 module "part" {
-  group (lod=2) { sphere "detail" (radius=0.5) }
-  sphere "plain" (radius=0.5)
+  group (lod=2) { sphere "detail" (radius=0.5) }   // 0.5 × 2 × 2 = 2.0 when used below
+  sphere "plain" (radius=0.5)                     // 0.5 × 2 = 1.0
 }
-```
 
-Then import it from a file in the same directory:
-
-```mog
+// main.mog
 import "parts.mog"
 lod_scale (value=0.25)
 scene {
   group (lod=2) { use "part" }
-  sphere "local" (radius=0.5)
+  sphere "local" (radius=0.5)                     // 0.25
 }
 ```
-
-`detail` uses `0.5 × 2 × 2 = 2.0`; `plain` uses `0.5 × 2 = 1.0`.
-`local` uses the importing file's `0.25`. The import's file scale replaces the
-importer's file scale, while the enclosing groups' multipliers remain active.
-
-Library callers can apply another multiplier with `lower_with_loader_lod`.
-A request of `0.5` halves each of those effective scales, including imported
-geometry; invalid requests use `1.0`. Counts still round and clamp to each
-primitive's minimum, and subdivision levels use the logarithmic rule above.
 
 ---
 
 ## Values and expressions
 
-Every `value` on the right side of an attribute is one of:
-
 | form | example | notes |
 |---|---|---|
-| number | `0.5`, `-90`, `1` | parsed as `f32` |
-| length | `1.5m`, `90cm`, `18in`, `2ft` | a number with a unit suffix; normalised to metres (see [Length units](#length-units)) |
-| vec3 | `[1.0, 0.5, 0.0]` | three expressions, comma-separated |
-| list | `[0, 90]`, `[1, 2, 3, 4]` | arbitrary arity |
-| string | `"wood"` | used for names and references |
-| ident | `wood`, `y` | no quotes; used for axes and enum-like values |
-| expression | `$height * 0.5`, `$r + 0.1`, `($a - $b) / 2` | arithmetic over `$param` refs |
-| comparison | `$h > 0`, `$count == 4`, `$a != $b` | `<`, `<=`, `>`, `>=`, `==`, `!=` — used in `if` conditions and `for` ranges |
+| number | `0.5`, `-90`, `1` | `f32` |
+| length | `1.5m`, `90cm`, `18in`, `2ft` | normalised to metres (see [Length units](#length-units)) |
+| vec3 | `[1.0, 0.5, 0.0]` | three expressions |
+| list | `[0, 90]`, `[1, 2, 3, 4]` | any arity |
+| string | `"wood"` | names and references |
+| ident | `wood`, `y` | axes and enum-like values |
+| expression | `$height * 0.5`, `($a - $b) / 2` | arithmetic over `$param` refs |
+| comparison | `$h > 0`, `$count == 4` | `<`, `<=`, `>`, `>=`, `==`, `!=` — for `if`/`for` |
 
-Inside `module` bodies, expressions reference parameters as `$name`.
-Operators: `+ - * /` (conventional precedence + parentheses) and the six
-comparisons. Evaluated at module-expansion time; the scene graph never
-sees `$name`.
+Operators `+ - * /` use conventional precedence with parentheses. Expressions
+are evaluated at module-expansion time.
 
 ### Length units
 
-mogen's base unit is the **metre** — the glTF/Godot convention — so a bare
-number is a length in metres (`size=[0.45, 0.04, 0.45]` is a 45 cm seat).
-To write real-world dimensions directly — handy for accurate blueprints —
-append a unit suffix to any number:
+The base unit is the **metre**; a bare number is metres. Append a suffix to
+any number:
 
-| suffix | unit | metres |
-|---|---|---|
-| `mm` | millimetre | `0.001` |
-| `cm` | centimetre | `0.01` |
-| `m` | metre | `1.0` |
-| `km` | kilometre | `1000.0` |
-| `in` | inch | `0.0254` |
-| `ft` | foot | `0.3048` |
-| `yd` | yard | `0.9144` |
+| suffix | metres |
+|---|---|
+| `mm` | `0.001` |
+| `cm` | `0.01` |
+| `m` | `1.0` |
+| `km` | `1000.0` |
+| `in` | `0.0254` |
+| `ft` | `0.3048` |
+| `yd` | `0.9144` |
 
 ```
 box "wall"  (size=[2m, 100cm, 8in], pos=[3ft, 0, 0])
 box "joist" (height=5ft + 6in)        // units compose through arithmetic
 ```
 
-The suffix is resolved to metres at **parse time**, so units flow through
-every numeric position: scalars, `vec3` components, list items, and
-`$param` arithmetic. Each component carries its own unit, so metric and
-imperial can be mixed freely within one literal or expression.
-
-Length units are for **lengths only** — sizes, positions, radii, heights,
-offsets. Rotations stay in degrees, `scale` stays a unit-less multiplier, and
-counts / colours stay plain numbers; don't put a length suffix on those.
-Because everything normalises to metres, a unit literal and its metre
-equivalent lower to byte-identical geometry.
+Suffixes resolve at parse time in every numeric position (scalars, vec3
+components, list items, `$param` arithmetic), and units may be mixed. A unit
+literal lowers identically to its metre equivalent. Use them for lengths only —
+rotations stay degrees, `scale` unit-less, counts/colours plain.
 
 ### Weight units
 
-Weights follow the same scheme, normalising to the **kilogram**. A bare number
-is kilograms. Used by [`physics`](#physics) (`weight=`) and the per-node
-`weight=` override.
+Weights normalise to the **kilogram**; a bare number is kilograms.
 
-| suffix | unit | metres → kg |
-|---|---|---|
-| `g` | gram | 0.001 |
-| `kg` | kilogram | 1.0 |
-| `t` | tonne | 1000 |
-| `lb` | pound | 0.4536 |
-| `oz` | ounce | 0.02835 |
-| `st` | stone | 6.350 |
+| suffix | kg |
+|---|---|
+| `g` | 0.001 |
+| `kg` | 1.0 |
+| `t` | 1000 |
+| `lb` | 0.4536 |
+| `oz` | 0.02835 |
+| `st` | 6.350 |
 
-A `physics` block's `weight=` is a weight **per cubic metre** — append `/m3`
-(or `/m³`): `700kg/m3`, `0.7t/m3`. A bare `weight=` on a geometry node is a flat
-mass (`5kg`). Mass and length suffixes are disjoint, so a literal's dimension is
-never ambiguous.
+A `physics` block's `weight=` is **per cubic metre**: append `/m3` (or `/m³`),
+e.g. `700kg/m3`, `0.7t/m3`, `62lb/m3`. A node's `weight=` is a flat mass
+(`5kg`). Mass literals are only valid on `weight=`; `size=[5kg,1,1]` is a parse
+error.
 
 ---
 
 ## Common attributes
 
-These apply to every geometry node (`box`, `cylinder`, …) and to `group`:
+Apply to every geometry node and to `group`:
 
 | attribute | value | effect |
 |---|---|---|
-| `pos` | `vec3` | translation in the parent's frame; default `[0, 0, 0]` |
-| `rot` | `vec3` (Euler XYZ in **degrees**) or a list | rotation applied after translation; default identity |
-| `scale` | scalar or `vec3` | uniform/per-axis scale; default `1` |
-| `mat` | string or ident | references a declared `material` by name |
-| `phys` | string or ident | references a declared `physics` substance by name; drives auto-computed weight + centre of gravity (see [Physics](#physics)) |
-| `weight` | mass (`5kg`) | optional flat per-node weight override (a mass), for props whose weight shouldn't follow from their volume |
-| `role` | string or ident | semantic label; written into the GLB `extras` block |
-| `tags` | comma-separated string | free-form labels; also in `extras` |
+| `pos` | `vec3` | translation in the parent frame; default `[0, 0, 0]` |
+| `rot` | `vec3` Euler XYZ **degrees**, or list | default identity |
+| `scale` | scalar or `vec3` | default `1` |
+| `mat` | string/ident | declared `material` name |
+| `phys` | string/ident | declared `physics` substance; see [Physics](#physics) |
+| `weight` | mass (`5kg`) | flat per-node weight override |
+| `role` | string/ident | semantic label, exported to glTF `extras` |
+| `tags` | comma-separated string | free-form labels, exported to `extras` |
 
-Transforms compose from child → parent along the scene hierarchy, exactly as
-in glTF.
+Transforms compose child → parent, as in glTF.
 
 ---
 
 ## Placement shortcuts
 
-Every node accepts ergonomic shortcuts on top of `pos`/`rot`/`size`.
-Mix and match freely — the DSL does the arithmetic.
-
 ### Per-component shortcuts
 
-| shortcut | replaces / overrides | notes |
+| shortcut | overrides | notes |
 |---|---|---|
-| `x=`, `y=`, `z=` | individual components of `pos` | missing axes default to `pos`'s value, or `0` |
-| `rx=`, `ry=`, `rz=` | individual components of `rot` (degrees) | same fallback; great for single-axis spins |
-| `w=`, `h=`, `d=` | individual components of `size` (X, Y, Z) | for 2D primitives, `w`/`d` are used on `plane`/`curved_plane` (XZ) and `w`/`h` on `quad` (XY) |
+| `x=`, `y=`, `z=` | components of `pos` | other axes fall back to `pos`, else `0` |
+| `rx=`, `ry=`, `rz=` | components of `rot` (degrees) | same fallback |
+| `w=`, `h=`, `d=` | components of `size` (X, Y, Z) | `plane`/`curved_plane` use `w`/`d` (XZ); `quad` uses `w`/`h` (XY) |
 
 ```
-box (y=1.5, size=1)            // equivalent to pos=[0, 1.5, 0], size=[1,1,1]
-box (size=[2, 2, 0.1], h=3)    // h overrides the middle component — width=2, height=3, depth=0.1
-cylinder (rx=90, radius=0.2, height=1)   // lay a cylinder on its side
+box (y=1.5, size=1)            // pos=[0, 1.5, 0], size=[1,1,1]
+box (size=[2, 2, 0.1], h=3)    // size=[2, 3, 0.1]
+cylinder (rx=90, radius=0.2, height=1)
 ```
 
 ### Scalar `size` (cube shorthand)
 
-Any primitive that takes `size=[…]` also accepts `size=<number>`, which
-expands to a uniform vec3. `box (size=0.5)` is a half-metre cube.
+`size=<number>` expands to a uniform vec3 on any primitive taking `size=[…]`.
 
 ### `from` / `to` — axis-aligned box by corners
 
-On any primitive that uses `size`, `from=[x1,y1,z1]` + `to=[x2,y2,z2]` sets
-`size` to `|to − from|` and `pos` to their midpoint. No "shift by half" math:
+On any `size` primitive, `from=[x1,y1,z1]` + `to=[x2,y2,z2]` sets `size` to
+`|to − from|` and `pos` to the midpoint:
 
 ```
 box (from=[-2, 0, -1.5], to=[2, 2.8, -1.4], mat="wall")
-// equivalent to: box (pos=[0, 1.4, -1.45], size=[4.0, 2.8, 0.1])
+// = box (pos=[0, 1.4, -1.45], size=[4.0, 2.8, 0.1])
 ```
 
 ### `anchor` — place by face, not centre
 
-Every primitive's `pos` controls where its **anchor point** lands, not where
-its centre lands. The default anchor is `center`; `anchor=bottom` puts the
-primitive's bottom face at `pos`, which is usually what "sit on the ground"
-means. Values are underscore-joined tokens drawn from
-`center`, `top`, `bottom`, `left`, `right`, `front`, `back`:
+`pos` places the primitive's **anchor point** (default `center`).
+Values are underscore-joined tokens from `center`, `top`, `bottom`, `left`,
+`right`, `front`, `back`:
 
 ```
-box (y=0,  size=[1, 2, 1], anchor=bottom)           // bottom face on y=0
-box (xyz, size=2,           anchor=bottom_left_front) // corner at the origin
+box (y=0, size=[1, 2, 1], anchor=bottom)             // bottom face on y=0
+box (size=2, anchor=bottom_left_front)               // corner at the origin
 ```
 
-The anchor shifts mesh vertices so the chosen point lands at the local
-origin; default face connectors (`top`, `bottom`, …) move with it.
+The anchor shifts mesh vertices; default face connectors (`top`, `bottom`, …)
+move with it.
 
 ### Relative placement: `above`, `below`, `left_of`, `right_of`, `in_front_of`, `behind`
 
-Set one of these to the name of a **prior sibling** in the same parent; the
-node is translated so its matching face is flush against the sibling's
-opposite face, optionally plus `gap`. At most one may be set per node.
+Set one (at most one per node) to the name of a **prior sibling** in the same
+parent; the node moves so its face is flush with the sibling's opposite face,
+plus optional `gap`. Uses the sibling's fully lowered subtree AABB.
 
 ```
 group "chests" {
@@ -324,33 +287,28 @@ group "chests" {
 }
 ```
 
-Resolution happens after the target's subtree is fully lowered (nested
-geometry is in the AABB). Lookup is scoped to siblings in the same parent.
-
 ---
 
 ## Deformation modifiers
 
-Every primitive accepts a small set of common modifier attrs that perturb the
-generated mesh between primitive construction and anchor placement. The point
-is variety without authoring extra geometry — bent beams, weathered rocks,
-melted candles, jelly blobs — using one or two extra attrs.
+Every primitive accepts these, applied after mesh construction and before
+anchor placement:
 
 | attribute | value | effect |
 |---|---|---|
-| `bend_x`, `bend_y`, `bend_z` | degrees | arc-length-preserving bend around the named axis. Length axis is the perpendicular one (Y for `bend_x`/`bend_z`, X for `bend_y`). |
-| `twist_y` | degrees | helical twist around Y, from 0 at `y_min` to the full angle at `y_max`. |
-| `taper` | ratio (1.0 = unchanged, 0.5 = half-width at top) | linear shrink along Y. |
-| `droop` | amount (0..1 of length) | quadratic gravity-style sag along -Y; the base stays put, the top sinks by `amount * height`. |
-| `noise` | 0..1 | coherent value-noise displacement along the vertex normal. Yields blobby "rock" texture. |
-| `jitter` | 0..1 | per-vertex random displacement along the normal. Higher-frequency than `noise`, looks "jagged". |
-| `faceted` | 0/1 | rebuild the mesh with three unique vertices per triangle and face-flat normals; reads as low-poly. |
-| `seed` | integer | RNG seed for the stochastic modifiers (`noise`, `jitter`); same seed always reproduces the same shape. |
-| `wave` | peak displacement (m) | sinusoidal displacement along the vertex normal — periodic ripples for water, jelly, ribbed metal, fabric. Pair with `wave_frequency`, `wave_axis`, `wave_phase`, `wave_range`. |
-| `wave_frequency` | cycles/unit, default `1.0` | spatial frequency along `wave_axis`. `0.5` puts a crest every 2 m. |
-| `wave_axis` | `"x"`/`"y"`/`"z"`, default `"x"` | axis the wave propagates along. |
-| `wave_phase` | radians, default `0.0` | phase offset; lets sibling waves desync without animation. |
-| `wave_range` | `[a, b]` | gates the wave to a normalised slice along `wave_axis` via smoothstep, matching `*_range` convention. |
+| `bend_x`, `bend_y`, `bend_z` | degrees | arc-length-preserving bend around the axis. Length axis: Y for `bend_x`/`bend_z`, X for `bend_y` |
+| `twist_y` | degrees | helical twist around Y, 0 at `y_min` → full at `y_max` |
+| `taper` | ratio (1 = unchanged, 0.5 = half-width at top) | linear shrink along Y |
+| `droop` | 0..1 of length | quadratic sag along -Y; base fixed, top sinks `amount * height` |
+| `noise` | 0..1 | coherent value-noise displacement along normals (rocky) |
+| `jitter` | 0..1 | per-vertex random displacement along normals (jagged) |
+| `faceted` | 0/1 | unshared vertices + flat normals (low-poly look) |
+| `seed` | integer, default `1` | seed for `noise`/`jitter` |
+| `wave` | peak displacement (m) | sinusoidal displacement along normals |
+| `wave_frequency` | cycles/unit, default `1.0` | `0.5` = crest every 2 m |
+| `wave_axis` | `"x"`/`"y"`/`"z"`, default `"x"` | propagation axis |
+| `wave_phase` | radians, default `0.0` | phase offset |
+| `wave_range` | `[a, b]` | gates the wave along `wave_axis` like `*_range` below |
 
 ```
 icosphere "rock"   (radius=0.4, noise=0.30, jitter=0.15, faceted=1, seed=7)
@@ -358,36 +316,26 @@ cylinder  "candle" (radius=0.18, height=0.7, droop=0.4, noise=0.05)
 box       "beam"   (size=[0.2, 0.2, 3], twist_y=20, taper=0.7)
 ```
 
-Stochastic modifiers are deterministic for a given `seed`. Two unnamed
-primitives with `noise=0.3` share the default seed (1) and produce
-identical surfaces — set distinct seeds for sibling variety.
+Same seed ⇒ same surface; unseeded siblings with equal `noise` are identical,
+so give them distinct seeds.
 
-Each modifier accepts `*_range=[a, b]` (`bend_x_range`, `bend_y_range`,
-`bend_z_range`, `twist_y_range`, `taper_range`, `droop_range`,
-`noise_range`, `jitter_range`) that gates the deformation along its length
-axis: vertices below `a` are unchanged, `[a, b]` ramps in via smoothstep,
-above `b` is full effect. Endpoints auto-normalise (`[1.0, 0.5]` →
-`[0.5, 1.0]`).
+`bend_x_range`, `bend_y_range`, `bend_z_range`, `twist_y_range`,
+`taper_range`, `droop_range`, `noise_range`, `jitter_range` take `[a, b]`
+(normalised along the length axis; endpoints auto-sorted): unchanged below
+`a`, smoothstep ramp across `[a, b]`, full above `b`.
 
 ```
 box "blade" (size=[0.06, 1.4, 0.01], bend_z=18, bend_z_range=[0.55, 1.0])
-cylinder "spire" (radius=0.4, height=4.0, twist_y=70, twist_y_range=[0.6, 1.0])
 ```
 
-Default tessellation auto-bumps (×2 segments / +1 icosphere subdivision)
-when a smooth deformer is present; explicit `segments=`/`rings=`/
-`subdivisions=` always override. Modifiers don't apply to `mesh` (loaded
-glb) primitives. See `examples/nature/asteroid_field.mog`.
+Default tessellation doubles segments (+1 icosphere subdivision) when a smooth
+deformer is present; explicit `segments=`/`rings=`/`subdivisions=` override.
+Modifiers don't apply to `mesh` primitives.
 
-Implicit tessellation on curved primitives is also size-aware in authored
-local units. Counts scale with the cube root of radius (or the primitive's
-equivalent local extent), relative to the default-sized primitive: tiny rivets
-and dimples no longer pay the same triangle count as a dome, while large props
-gain detail without triangle count growing linearly with size. Explicit
-`segments=`/`rings=` remains the exact author override. Placement `scale=` is
-not part of this calculation because multiple placements may share one lowered
-mesh; use explicit counts when an unusually scaled placement needs a different
-mesh.
+Implicit tessellation on curved primitives also scales with the cube root of
+the primitive's local extent (radius etc.) relative to its default size.
+Placement `scale=` is not considered; set explicit counts for an unusually
+scaled placement.
 
 ---
 
@@ -401,80 +349,68 @@ scene {
 }
 ```
 
-- `scene` is the root container. Exactly one per file is expected in practice; top-level nodes outside any `scene` are also lowered and become extra roots.
-- `group` is a transform-only container — no geometry of its own, used to compose children and receive `pos`/`rot`/`scale`.
-- `solid` behaves like `group` in the scene tree, but its same-material leaf children are CSG-unioned into a single mesh at export time. See [Solid groups](#solid-groups-solid) below.
+- `scene` — root container. Top-level nodes outside it become extra roots.
+- `group` — transform-only container.
+- `solid` — like `group`, but same-material leaf children are CSG-unioned at export. See [Solid groups](#solid-groups-solid).
 
 ---
 
 ## Primitives
 
-All primitives accept the common attributes above (`pos`, `rot`, `scale`,
-`mat`, `role`, `tags`) plus the kind-specific attributes below.
+All primitives take the common attributes plus:
 
 | kind | required attrs | other attrs |
 |---|---|---|
-| `box` | `size=[x,y,z]` | `faces=[…]` — six entries in `+X,-X,+Y,-Y,+Z,-Z` order for [per-face materials](#per-face-box-materials-faces); each is a material name or a `face("mat", uv_scale=…, uv_offset=…, uv_swap=…)` struct with an [authored UV transform](#authored-per-face-uv-transforms-face) |
-| `plane` | `size=[x,_,z]` (Y ignored) | — |
-| `quad` | `size=[w,h]` or `vec3` (w,h,_) | — |
-| `cylinder` | `radius`, `height` | `segments` (default 24) |
-| `cone` | `radius`, `height` | `segments` (default 24) |
+| `box` | `size=[x,y,z]` | `faces=[…]` — six entries, `+X,-X,+Y,-Y,+Z,-Z`; see [per-face materials](#per-face-box-materials-faces) |
+| `plane` | `size=[x,_,z]` (Y ignored) | XZ-aligned |
+| `quad` | `size=[w,h]` or vec3 | XY-aligned |
+| `cylinder` | `radius`, `height` | `segments` (24) |
+| `cone` | `radius`, `height` | `segments` (24) |
 | `sphere` | `radius` | `rings` (16), `segments` (24) |
 | `capsule` | `radius`, `height` | `rings` (8), `segments` (24) |
 | `torus` | `major`, `minor` | `major_segments` (24), `minor_segments` (12) |
 | `prism` | `size=[x,y,z]` | triangular prism along +Z |
-| `pyramid` | `radius`, `height`, `sides` | N-sided pyramid base |
+| `pyramid` | `radius`, `height`, `sides` | N-sided base |
 | `disc` | `radius` | `segments` (24) |
 | `icosphere` | `radius` | `subdivisions` (2) |
-| `rounded_box` | `size=[x,y,z]`, `radius` | `segments` per corner (4) |
-| `chamfered_box` | `size=[x,y,z]` | `radius` (bevel offset, 0.1) — sharp 45° bevels on all 12 edges + 8 corner triangles |
-| `inset_box` | `size=[x,y,z]` | `face` (`"+y"`/`"-y"`/`"+x"`/`"-x"`/`"+z"`/`"-z"` or `"top"`/`"bottom"`/`"left"`/`"right"`/`"front"`/`"back"`, default `"+y"`), `amount` (inset, 0.1), `depth` (sink, 0.05) — five plain faces + one sunken panel |
-| `wedge` | `size=[x,y,z]` | right-triangle prism — flat bottom on -Y, hypotenuse climbing toward +Y/+Z |
-| `frustum` | `bottom=[w,d]`, `top=[w,d]`, `height` | truncated rectangular pyramid (defaults `bottom=[1,1]`, `top=[0.5,0.5]`, `height=1`) |
-| `tube` | `outer`, `inner`, `height` | hollow cylinder (pipe / ring); `segments` (24) |
-| `hemisphere` | `radius` | half-sphere, flat side on -Y; `rings` (8), `segments` (24) |
-| `half_cylinder` | `radius`, `height` | D-profile half-cylinder, flat side facing -Z; `segments` (24) |
-| `torus_arc` | `major`, `minor` | partial torus; `arc` (degrees, default 90) sweeps around +Y; `major_segments` (24), `minor_segments` (12) |
-| `ellipsoid` | `size=[x,y,z]` | `rings` (16), `segments` (24); independent radii per axis |
-| `superellipsoid` | `size=[x,y,z]` | `ew`, `ns` (1 = sphere, > 1 boxy, < 1 pinched), `rings` (16), `segments` (24) |
-| `curved_plane` | `size=[x,z]` or `vec3` | `bend_u`, `bend_v` (degrees; arc angle along X/Z), `segments_u`/`segments_v` (12) |
-| `lathe` | `profile=[[r,y], …]` | `segments` (24), `cap_ends` (1 = capped); profile authored bottom-to-top in `(radius, y)` pairs |
-| `spline_tube` | `points=[[x,y,z], …]` | `radius` (scalar) or `radii=[…]` (per-point), `segments` (12), `samples` (8), `cap_ends` (1) |
-| `spline_ribbon` | `points=[[x,y,z], …]` | `width` (scalar) or `widths=[…]` (per-point), `samples` (8), `twist` (degrees, default `0`); flat strip along a Catmull–Rom curve |
-| `coil` | — | helical sweep. `radius` (0.5), `height` (1.0), `turns` (3), `profile_radius` (0.05), `segments` (12), `samples` per turn (16), `cap_ends` (1), `handedness` (`"right"`/`"left"`) |
-| `heightfield` | — | XZ grid with fBm displacement. `size=[w,d]` (`[1, 1]`), `segments_u`/`segments_v` (32), `amplitude` (0.5), `octaves` (1..=8, default 3), `frequency` (1.0), `persistence` (0.5), `seed` (1). Layer `wave` on top for water |
-| `bezier_patch` | `points=[…]` (exactly 16 control points, row-major u × v) | `segments_u`/`segments_v` (12). Bicubic Bézier surface — corners are `[0]`/`[3]`/`[12]`/`[15]`, inner four `[5]/[6]/[9]/[10]` shape the bulge |
-| `metaball` | `points=[…]` (≥1) plus `radius=` or `radii=[…]` | `blend` (smooth-union radius, 0), `rings` (12), `segments` (16). Sugar over `union (smooth=k) { sphere … }` |
-| `blob` | container with implicit-field children | true SDF + surface-nets mesh of any mix of `sphere` / `ellipsoid` / `box` / `rounded_box` / `capsule` / `cylinder` / `torus` children, smoothly blended. Each child may carry `op="subtract"` to carve a smooth cavity. See [Implicit-field blob](#implicit-field-blob-blob) |
-| `extrude` | `points=[[x,z], …]` (closed CCW) | `hole=[[x,z], …]` (one CW inner contour), `height` (1.0), `taper` (1.0), `twist` (0), `caps` (1). Multi-hole: chain `extrude` + `difference` |
-| `sweep` | `profile=[[x,y], …]` (closed CCW), `path=[[x,y,z], …]` | `samples` per segment (8), `twist` (uniform deg), `roll=[deg, …]`, `scale_along=[s, …]`, `caps` (1). Generalises `spline_tube`/`spline_ribbon` |
-| `loft` | `points=[[x,z], …]`, `heights=[y, …]` | sections flat-packed in `points` (vertex counts must match); `samples` (4), `caps` (1) |
-| `hull` | `points=[[x,y,z], …]` (≥4) | convex hull of the point cloud — the tightest closed manifold enclosing them. Interior points are ignored. Lossless sink for any convex polyhedron (sheared boxes, wedges, ramps) when no parametric primitive fits |
-| `poly` | `points=[[x,y,z], …]`, `indices=[i0,i1,i2, …]` (triangles), `uvs=[[u,v], …]` (optional, one per point) | raw triangle mesh with **author-supplied per-vertex UVs** — the escape hatch for geometry whose texture mapping must be carried through verbatim (atlas sub-rectangles, engine-native faces a converter re-emits). Ignores the inherited UV mode; the `uvs=` list is the UV channel. Flat vs. smooth shading is decided by how you share vertices (own corners per face → flat; shared corners → smooth). One `mat=` per node |
-| `leaf_card` | `size=[w,h]` | `cards` (2). Alpha-cutout foliage cluster — one quad + `cards-1` rotated copies sharing an XY plane. Pair with `alpha_mode="mask"` + `double_sided=1` |
-| `mesh` | `src="path.glb"` | embed an external glTF binary as a single mesh. Path relative to the calling `.mog`. Source materials/skinning/animations are dropped — set them in the DSL |
-| `branch` | — | procedural tree / vine / antler. See [Branch](#branch) below |
-| `slab` | `size=[x,y,z]` | box alias; default anchor `bottom` (sits on ground) |
-| `post` | `size=[x,y,z]` | box alias; default anchor `bottom` (pillar/leg) |
-| `panel` | `size=[x,y,z]` | box alias; default anchor `back` (flat panel flush to a surface) |
-| `wall` | `size=[x,y,z]` | `holes=[[x,y,w,h], …]` — rectangular cutouts through the Z axis |
+| `rounded_box` | `size`, `radius` | `segments` per corner (4) |
+| `chamfered_box` | `size` | `radius` (bevel, 0.1) — 45° bevels on all edges |
+| `inset_box` | `size` | `face` (`"+y"`/`"-y"`/`"+x"`/`"-x"`/`"+z"`/`"-z"` or `"top"`/`"bottom"`/`"left"`/`"right"`/`"front"`/`"back"`, default `"+y"`), `amount` (inset, 0.1), `depth` (sink, 0.05) — one sunken panel |
+| `wedge` | `size` | right-triangle prism: flat bottom on -Y, slope rising toward +Y/+Z |
+| `frustum` | `bottom=[w,d]`, `top=[w,d]`, `height` | truncated rectangular pyramid (defaults `[1,1]`, `[0.5,0.5]`, `1`) |
+| `tube` | `outer`, `inner`, `height` | hollow cylinder; `segments` (24) |
+| `hemisphere` | `radius` | flat side on -Y; `rings` (8), `segments` (24) |
+| `half_cylinder` | `radius`, `height` | flat side facing -Z; `segments` (24) |
+| `torus_arc` | `major`, `minor` | `arc` (degrees, 90) around +Y; `major_segments` (24), `minor_segments` (12) |
+| `ellipsoid` | `size` | `rings` (16), `segments` (24) |
+| `superellipsoid` | `size` | `ew`, `ns` (1 = sphere, >1 boxy, <1 pinched), `rings` (16), `segments` (24) |
+| `curved_plane` | `size=[x,z]` or vec3 | `bend_u`, `bend_v` (degrees along X/Z), `segments_u`/`segments_v` (12) |
+| `lathe` | `profile=[[r,y], …]` | bottom-to-top; `segments` (24), `cap_ends` (1) |
+| `spline_tube` | `points=[[x,y,z], …]` | `radius` or per-point `radii=[…]`, `segments` (12), `samples` (8), `cap_ends` (1) |
+| `spline_ribbon` | `points=[[x,y,z], …]` | `width` or `widths=[…]`, `samples` (8), `twist` (degrees, 0); flat strip |
+| `coil` | — | helix. `radius` (0.5), `height` (1.0), `turns` (3), `profile_radius` (0.05), `segments` (12), `samples` per turn (16), `cap_ends` (1), `handedness` (`"right"`/`"left"`) |
+| `heightfield` | — | fBm-displaced XZ grid. `size=[w,d]` (`[1,1]`), `segments_u`/`segments_v` (32), `amplitude` (0.5), `octaves` (1..=8, 3), `frequency` (1.0), `persistence` (0.5), `seed` (1) |
+| `bezier_patch` | `points=[…]` (16, row-major u × v) | `segments_u`/`segments_v` (12). Corners `[0]/[3]/[12]/[15]`; `[5]/[6]/[9]/[10]` shape the bulge |
+| `metaball` | `points=[…]` (≥1) + `radius=` or `radii=[…]` | `blend` (smooth-union radius, 0), `rings` (12), `segments` (16). Sugar for `union (smooth=k) { sphere … }` |
+| `blob` | implicit-field children | true SDF blend; see [Implicit-field blob](#implicit-field-blob-blob) |
+| `extrude` | `points=[[x,z], …]` (closed CCW) | `hole=[[x,z], …]` (one CW contour), `height` (1.0), `taper` (1.0), `twist` (0), `caps` (1). Multiple holes: `extrude` + `difference` |
+| `sweep` | `profile=[[x,y], …]` (closed CCW), `path=[[x,y,z], …]` | `samples` per segment (8), `twist` (deg), `roll=[deg, …]`, `scale_along=[s, …]`, `caps` (1) |
+| `loft` | `points=[[x,z], …]`, `heights=[y, …]` | sections flat-packed in `points` (equal vertex counts); `samples` (4), `caps` (1) |
+| `hull` | `points=[[x,y,z], …]` (≥4) | convex hull; interior points ignored |
+| `poly` | `points=[[x,y,z], …]`, `indices=[i0,i1,i2, …]` | optional `uvs=[[u,v], …]` (one per point, used verbatim; ignores material UV mode). Shared vertices shade smooth, unshared flat. One `mat=` |
+| `leaf_card` | `size=[w,h]` | `cards` (2) crossed quads. Pair with `alpha_mode="mask"`, `double_sided=1` |
+| `mesh` | `src="path.glb"` | external GLB as one mesh, path relative to the `.mog`. Its materials/skins/animations are dropped |
+| `branch` | — | procedural tree; see [Branch](#branch) |
+| `slab` | `size` | `box` with default anchor `bottom` |
+| `post` | `size` | `box` with default anchor `bottom` |
+| `panel` | `size` | `box` with default anchor `back` |
+| `wall` | `size` | `holes=[[cx,cy,w,h], …]` rectangular cutouts through Z |
 
-`plane` is XZ-aligned, `quad` is XY-aligned (UI-style panels).
+Nested list attributes (`points`, `profile`, …) must be constant (no `$param`);
+parameterise via a module wrapper. `spline_tube`/`spline_ribbon` follow a
+Catmull–Rom curve with a parallel-transport frame.
 
-`curved_plane`, `lathe`, `spline_tube`, and `spline_ribbon` accept nested
-list literals: `points=[[0, 0, 0], [1, 0.5, 0]]`. Inner lists must be
-constant (no `$param`) — parameterise the whole node via a module wrapper.
-`spline_tube`/`spline_ribbon` run Catmull–Rom with a parallel-transport
-frame; `spline_ribbon` adds a `twist` that ramps roll around the path
-tangent.
-
-`slab`, `post`, and `panel` are `box` aliases that only change the default
-anchor (`bottom`/`bottom`/`back`). Override with `anchor=` if needed.
-
-`wall` is a box with rectangular cutouts along Z. Each hole is
-`[cx, cy, w, h]` in the wall's local frame (X/Y are the face plane; Z is
-cut through). Cutouts are CSG-differenced and welded at lowering, so a
-single `wall` becomes one watertight mesh:
+`wall` holes are in local X/Y, cut through Z, and produce one watertight mesh:
 
 ```
 wall "barracks" (size=[3, 3, 0.1], holes=[
@@ -483,47 +419,28 @@ wall "barracks" (size=[3, 3, 0.1], holes=[
 ])
 ```
 
+Defaults make a bare `cylinder "leg"` a 1 m, unit-radius cylinder at the origin.
+
 ### Per-face box materials (`faces=`)
 
-A `box` can carry a different material on each face via `faces=[…]` — exactly
-six material names in the fixed order **`+X, -X, +Y, -Y, +Z, -Z`**:
+`faces=[…]` gives a `box` exactly six materials in order **`+X, -X, +Y, -Y, +Z, -Z`**:
 
 ```
-material "wood"  (color=[0.6, 0.4, 0.2])
-material "metal" (color=[0.7, 0.7, 0.75], metallic=0.9)
-
 box "crate" (size=[2, 1, 1], faces=[
   "wood", "wood",   // +X, -X
   "metal",          // +Y (lid)
-  "wood", "wood", "wood"  // -Y, +Z, -Z
+  "wood", "wood", "wood"
 ])
 ```
 
-The box lowers to an editable wrapper (keeping its transform, anchor, and
-connectors) plus one **frozen** child per distinct material — each a quad group
-of just that material's faces. Faces sharing a material collapse into one child,
-so the crate above becomes two children (`wood` ×5, `metal` ×1), not six. The
-children have no AST of their own, so the Studio inspector redirects clicks to
-the wrapper.
-
-An empty entry `""` falls back to the box's own `mat=` (or inherited material),
-so you can override just the faces you care about:
-
-```
-box "panel" (mat="body", faces=["", "", "label", "", "", ""])  // only +Y differs
-```
-
-This is the migration sink for engine map blocks whose six faces each reference
-a different tile texture.
+An empty entry `""` uses the box's own/inherited `mat=`. The box lowers to an
+editable wrapper (transform, anchor, connectors) plus one frozen child per
+distinct material (the crate above has two children).
 
 #### Authored per-face UV transforms (`face(...)`)
 
-By default each face's texture coordinates follow the material's UV mode
-(`fit` = one copy per face, `tile` = 1 unit per metre). When a converter carries
-its own per-face UV mapping (atlas sub-rectangles, engine-native tile offsets),
-any entry in the `faces=` list may be a `face(...)` struct instead of a bare
-string. It sets the material **and** an explicit UV transform baked verbatim
-onto that face, bypassing the procedural projection:
+Any `faces=` entry may be `face("mat", …)` to bake an explicit UV transform,
+bypassing the material's `fit`/`tile` projection:
 
 ```
 box "wall_seg" (size=[4, 3, 1], faces=[
@@ -533,106 +450,104 @@ box "wall_seg" (size=[4, 3, 1], faces=[
 ])
 ```
 
-- **First argument** — the material name (same rules as the bare string; `""`
-  falls back to the box's own material).
-- `uv_scale=[sx, sy]` — per-axis scale; may be **negative** to mirror. Default `[1, 1]`.
-- `uv_offset=[ox, oy]` — per-axis constant added after scaling. Default `[0, 0]`.
-- `uv_swap=<bool>` — swap the two in-plane axes before scale/offset. Default `false`.
+- first argument — material name (`""` falls back as above).
+- `uv_scale=[sx, sy]` — may be negative to mirror. Default `[1, 1]`.
+- `uv_offset=[ox, oy]` — added after scaling. Default `[0, 0]`.
+- `uv_swap=<bool>` — swap the in-plane axes first. Default `false`.
 
-All UV fields are optional; **`face("mat")` is identical to the bare `"mat"`**
-(no authored transform → keep the default Fit/Tile UVs). Authored and bare
-entries may be freely mixed in one list, and faces still group into frozen
-children by material as above.
-
-The baked coordinate is face-local. For a face whose outward normal is on axis
-*A*, the two in-plane axes are the other two in ascending index order
-(`X→(Y,Z)`, `Y→(X,Z)`, `Z→(X,Y)`); the local coordinate on each is the vertex
-offset from the box's minimum corner on that axis (`vertex + size/2`). The final
-UV is `offset + scale * (swap ? swapped : local)`. Values are emitted **exactly
-as computed** — never clamped or wrapped, so repeat/tile behaviour is left to the
-sampler.
+`face("mat")` with no UV fields equals `"mat"`. For a face normal to axis *A*,
+the in-plane axes are the other two in ascending order (`X→(Y,Z)`, `Y→(X,Z)`,
+`Z→(X,Y)`), with local coordinate `vertex + size/2`. UV =
+`offset + scale * (swap ? swapped : local)`, emitted unclamped.
 
 ### Branch
 
-`branch` is a procedural tree builder. One node expands into a recursive
-cluster of `spline_tube` segments tapering from trunk to twigs, with
-optional `leaf_card` clusters at the tips. Inner segments are
-non-editable (deterministic function of `seed=`).
+`branch` expands into a recursive cluster of `spline_tube` segments from trunk
+to twigs, with optional `leaf_card` clusters at tips. Output is frozen
+(a function of `seed=`).
 
 | attribute | default | effect |
 |---|---|---|
-| `form` | `"decurrent"` | growth habit preset — see below. Sets sensible defaults for all attrs in this table; user attrs still win |
+| `form` | `"decurrent"` | habit preset (below); sets defaults for this table, explicit attrs win |
 | `length` | `1.0` | trunk length (m) |
 | `radius` | `0.05` | trunk base radius (m) |
-| `depth` | `4` | recursion depth (number of branching levels) |
-| `splits` | `2` | child branches per parent at each split |
+| `depth` | `4` | branching levels |
+| `splits` | `2` | children per split |
 | `length_falloff` | `0.7` | per-level length multiplier |
 | `radius_falloff` | `0.6` | per-level radius multiplier |
-| `branch_angle` | `35` | angle (degrees) child branches lean off the parent tangent |
-| `roll` | `137.5` | roll (degrees) between successive children — the golden angle by default, breaks bilateral symmetry |
-| `tropism` | `0.0` | bias toward +Y per segment (positive = upright trees, negative = drooping) |
-| `bend` | `10` | random bend (degrees) added to each segment frame |
-| `leader_bias` | `0.0` | `0.0`–`1.0` strength of central-leader behaviour. At `1.0` child 0 of every fork continues straight up at full length/radius (pine-like silhouette); at `0.0` all forks are equal (default broadleaf habit) |
-| `multi_stem` | `1` | number of trunks emerging from the base. Only honoured by `form="shrub"`; ignored otherwise |
-| `segments` | `8` | radial segments per spline_tube |
+| `branch_angle` | `35` | child lean off parent tangent (deg) |
+| `roll` | `137.5` | roll between successive children (deg) |
+| `tropism` | `0.0` | per-segment bias toward +Y (negative droops) |
+| `bend` | `10` | random bend per segment (deg) |
+| `leader_bias` | `0.0` | `0`–`1`; at `1` child 0 continues straight at full size (pine-like) |
+| `multi_stem` | `1` | trunks from the base; `form="shrub"` only |
+| `segments` | `8` | radial segments per tube |
 | `samples` | `4` | samples per spline segment |
-| `seed` | `1` | RNG seed; same seed = identical tree |
-| `jitter` | `0.2` | `0.0`–`1.0` random perturbation amount on lengths/angles |
-| `leaves` | `1` | emit `leaf_card` clusters at terminal tips (`0` to disable) |
+| `seed` | `1` | RNG seed |
+| `jitter` | `0.2` | `0`–`1` random perturbation of lengths/angles |
+| `leaves` | `1` | `0` disables leaf cards |
 | `leaf_size` | `0.35` | leaf-card height (m) |
-| `leaf_aspect` | `1.0` | leaf width / height ratio. `<1` for needle/willow leaves, `>1` for wide flat leaves |
-| `leaf_cards` | `2` | crossed cards per leaf cluster (or fronds in the palm rosette) |
-| `leaf_mat` | — | material name for leaves; defaults to inherited `mat=` |
+| `leaf_aspect` | `1.0` | width/height; `<1` needles, `>1` broad |
+| `leaf_cards` | `2` | cards per cluster (fronds for palm) |
+| `leaf_mat` | inherited `mat=` | leaf material |
 
-`form` values:
-
-| value | habit | distinctive defaults |
+| `form` | habit | distinctive defaults |
 |---|---|---|
-| `"decurrent"` | broadleaf tree (default — oak, maple) | equal forks, square leaves |
-| `"excurrent"` | conifer (pine, spruce) | strong central leader, near-horizontal side branches, narrow needle leaves |
-| `"weeping"` | willow | long branches with strong negative tropism (drooping), long narrow leaves |
-| `"shrub"` | bush | several short trunks at the base (`multi_stem=4` by default), no leader |
-| `"palm"` | palm | single straight trunk with a fan of frond-shaped cards at the tip; no recursive branching |
-
-Wrap a `branch` in a `group` with `scale=`/`rot=` for forests, antlers,
-vines, root systems. Pair with stdlib `branch`/`leaf` for hand-tuned shapes.
+| `"decurrent"` | broadleaf (oak, maple) | equal forks, square leaves |
+| `"excurrent"` | conifer | strong leader, near-horizontal branches, needle leaves |
+| `"weeping"` | willow | strong negative tropism, long narrow leaves |
+| `"shrub"` | bush | `multi_stem=4`, no leader |
+| `"palm"` | palm | straight trunk, frond fan at tip, no recursion |
 
 ### Building
 
-`building` is a procedural building-interior generator. One node expands
-into floor/ceiling slabs, perimeter walls with windows and entrance
-cutouts, interior walls with door cutouts, and stamped door/window/skylight
-modules. The generated subtree is stamped non-editable (pure function of
-`seed=` plus the declared attrs). See `docs/building.md` for the full
-spec, supported styles/roof shapes, and tranche status.
+`building` expands into a multi-storey interior: floor/ceiling slabs, perimeter
+walls with window and entrance cutouts, interior walls with doors, stamped
+door/window/skylight modules, stairs, elevators, and a roof. The subtree is
+frozen (a function of `seed=` and attrs). It emits no furniture geometry — only
+POI markers.
 
 | attribute | default | effect |
 |---|---|---|
-| `seed` | `1` | RNG seed; same seed = identical layout + geometry. |
-| `style` | `"grid"` | Layout algorithm. T1-T2: `grid`, `apartment-block`. |
-| `mat_style` | `""` | Free-text style hint forwarded to material/texture generation. |
-| `floor_area` | `120` | Target floorplate area in m² (per floor). |
-| `rooms` | `4` | Total rooms across all floors; distributed proportionally. |
-| `floors_above` | `1` | Storeys above ground (incl. ground floor). |
+| `seed` | `1` | RNG seed. |
+| `style` | `"grid"` | Layout: `grid`, `apartment-block` (BSP, aspect ≤ 2.5), `office-core` (central corridor, ~3 m offices both sides), `hotel-corridor` (central corridor, ≥ 2.4 m rooms both sides), `radial` (concentric bands), `organic` (jittered grid), `maze` (spanning-tree corridor + small rooms). All rooms are axis-aligned rectangles; corridor styles fall back to `grid` on plates too small for them and synthesise a `corridor` room type if undeclared. |
+| `mat_style` | `""` | Style hint for texture generation; no geometric effect. |
+| `floor_area` | `120` | Target area per floor (m²). Aspect ratio near √2. |
+| `cellar_area` | _unset_ | Smaller basement footprint (m²), east-aligned with the above-ground plate. Clamped to ≤ `floor_area` (`W1116`); too small for the circulation column → `W1115`. |
+| `rooms` | `4` | Total rooms (≥ 1) across all floors, distributed by floor area. |
+| `floors_above` | `1` | Storeys above ground incl. ground (≥ 1). |
 | `floors_below` | `0` | Basement storeys. |
-| `windows` | `0` | Total above-ground window count; distributed across above-ground storeys. Basements get none. |
-| `skylights` | `0` | Top-storey ceiling cutouts. |
-| `roof` | `"flat"` | Roof shape: `flat`, `pitched`, `gabled`, `hipped`, `mansard`, `shed`. |
-| `roof_overhang` | _unset_ | Eaves projection past the walls (m) for `gabled`/`pitched`. Unset → `gabled` flush, `pitched` modest default. |
+| `windows` | `0` | Total above-ground windows, spread across storeys (remainder to lower floors). Basements get none. |
+| `skylights` | `0` | Top-storey ceiling cutouts. Flat roof only; otherwise skipped with `W1114`. |
+| `roof` | `"flat"` | `flat`, `pitched`, `gabled`, `hipped`, `mansard`, `shed` (see below). |
+| `roof_overhang` | _unset_ | Eaves projection (m) for `gabled`/`pitched`. Unset: `gabled` flush, `pitched` modest default. |
 | `ceiling_height` | `2.6` | Clear height per storey (m). |
-| `door_w`, `door_h` | `0.9, 2.1` | Door opening dimensions (m). |
-| `window_w`, `window_h` | `1.2, 1.4` | Window opening dimensions (m, medium class). Small = ×0.6, large = ×1.4. |
-| `wall_thickness` | `0.12` | Exterior / interior wall thickness (m). |
-| `ceiling_thickness` | `0.2` | Slab thickness (m). |
-| `entrances` | `1` | Ground-floor external door count. |
-| `external_door` | `"door_simple"` | Stdlib / user module ref. Stamped at each entrance. |
-| `internal_door` | `"door_simple"` | Stamped at each interior opening. |
-| `window_small`, `window_medium`, `window_large` | `"window_simple"` | Per-class window module refs. |
-| `skylight` | `"skylight_simple"` | Skylight module ref; carves the top ceiling slab. |
-| `elevators` | `0` | Vertical shafts on the east side, stamped with `elevator_shaft_simple`. |
-| `staircases` | `0` | One straight flight per storey transition, stamped with `stair_simple`. `W1113` warns if missing on multi-storey. |
+| `door_w`, `door_h` | `0.9, 2.1` | Door opening (m); used for internal and external doors. |
+| `window_w`, `window_h` | `1.2, 1.4` | Medium window opening (m). Small ×0.6, large ×1.4. |
+| `wall_thickness` | `0.12` | Exterior and interior walls (m). |
+| `ceiling_thickness` | `0.2` | Slab thickness (m); a storey's floor is the ceiling below. |
+| `entrances` | `1` | Ground-floor external doors (≥ 1). |
+| `external_door` | `"door_simple"` | Module stamped at each entrance. |
+| `internal_door` | `"door_simple"` | Module stamped at each interior door. |
+| `window_small`, `window_medium`, `window_large` | `"window_simple"` | Per-size-class window modules. |
+| `skylight` | `"skylight_simple"` | Skylight module. |
+| `elevators` | `0` | Full-height shafts in the east circulation column (`elevator_shaft_simple`). |
+| `staircases` | `0` | One flight per storey transition (`stair_simple`). Multi-storey with `0` → `W1113`. |
+| `furnish` | `1` | Emit furniture POI markers per room; `0` = bare shells. |
+| `debug_show_poi` | `0` | Give every POI a small emissive sphere (`building_poi_<role>`), colour-coded. Turn off for production. |
+| `debug_hide_roof` | `0` | Drop the top ceiling slab (and skylights) to view from above. |
+| `debug_render_floor` | _unset_ | Render only this storey (`0` ground, `1..` upper, `-1..` basement), without ceiling or circulation. |
 
-`building` accepts only `room_type` and `adjacency` children.
+Numeric sizes/areas must be > 0 and counts ≥ 0 (`E1104`/`E1105`); unknown
+`style`/`roof` → `E1102`/`E1103`.
+
+Roofs: non-flat roofs replace the top ceiling slab, base at `ceiling_height`,
+fixed 30° pitch. `shed` slopes south→north; `gabled` ridges along the longer
+axis with flush triangular end-walls (`role="gable_wall"`); `pitched` is a gable
+whose slopes overhang all sides; `hipped` has four slopes to an apex or ridge;
+`mansard` has a steep ~60° lower tier and shallow upper tier.
+
+Children: only `room_type` and `adjacency` (`E1101` otherwise).
 
 ```
 room_type "<name>" (kind=public|private|service|utility|secure|staff_only,
@@ -641,11 +556,14 @@ room_type "<name>" (kind=public|private|service|utility|secure|staff_only,
 adjacency "<room_type>" (adjacent_to=["a", "b"], away_from=["c"])
 ```
 
-`kind` is required on `room_type`; `density` weights sampling (0 disables
-the type); `mat` overrides per-room floor/wall material. Adjacency rules
-are **soft** — the solver runs 10 sub-seeded layouts and keeps the
-highest-scoring (`+1`/m of shared wall for `adjacent_to`, `-1`/m for
-`away_from`). Referencing an undeclared room-type is a validation error.
+`kind` is required. `density` (default `1`) weights sampling; `0` disables the
+type. `mat` sets that room's floor/wall material. `min_area`/`max_area` (m²) are
+soft bounds. Adjacency is **soft**: 10 sub-seeded layouts are scored and the
+best kept (ties → lowest attempt). Score: `+1`/m shared wall for `adjacent_to`,
+`-1`/m for `away_from`, plus built-in priors (same-kind cells cluster;
+public↔private and public↔secure repel; public near the south entrance,
+private/secure away, service mid-plate) and a ~0.2/m² penalty outside the area
+band. An undeclared room type is a validation error.
 
 ```
 building "house" (seed=4, style="apartment-block",
@@ -657,77 +575,139 @@ building "house" (seed=4, style="apartment-block",
 }
 ```
 
-Beyond geometry, `building` embeds **points of interest** as empty marker
-nodes (`role`/`tags` in glTF extras) so an engine can place its own content:
-`entrance` / `door` / `window` opening slots, per-room furniture markers when
-`furnish=1` (`bed`, `desk`, …), and per-floor **vertical-circulation** anchors
-— `stair_access` (one per storey, at each floor's stair entry platform) and
-`elevator_stop` (one per served storey, anchored at the shaft centre on the
-floor surface where the cab stops). Each circulation marker faces its shaft
-door and carries a `floor=<n>` tag, so you can drop your own stairwell /
-elevator models knowing exactly where each floor connects. `debug_show_poi=1`
-gives every marker a small bright `building_poi_<role>` sphere so the
-otherwise geometry-free anchors show in a preview.
+Output structure (basement storeys are `floor_b1`, …):
+
+```
+house (building)                     editable wrapper
+├── floor_0 (group)                  one per storey
+│   ├── shell: slab_floor, slab_ceiling, wall_N/E/S/W
+│   ├── rooms/room_<n>: interior_wall_<i>, connector "centre", furniture/<prop>_<i> (poi)
+│   ├── openings: door_<i>, ext_door_<j>, window_<k>, skylight_<m>   (module instances)
+│   ├── opening_pois: entrance_<i>, door_<i>, window_<i>             (poi)
+│   └── circulation
+│       ├── staircase_<n>/…, stair_access_pois/stair_access_<i>     (poi)
+│       └── elevator_<n>/…,  elevator_stops/elevator_stop_<i>       (poi)
+└── roof (group)
+```
+
+Geometry nodes carry `tags` (`building`, storey e.g. `floor_0`, kind such as
+`exterior_wall`/`interior_wall`/`entrance`/`window`, `room_type=<name>` on rooms)
+and `role` (`floor`, `ceiling`, `wall`, `door`, `roof`, …). Opening module
+groups carry width/height in `extras.slot`.
+
+POI markers (`kind="poi"`, no mesh, no collider; LOD-invariant):
+
+| role | tags | pose |
+|---|---|---|
+| furniture prop (`bed`, `stove`, `server_rack`, …) | `building, poi, furniture, <prop>` | room-local position + yaw: wall props face in, corner props face centre, ceiling fixtures at `ceiling_height` |
+| `entrance` | `building, poi, door, entrance` | threshold, local +Z = wall outward normal (same pose as the module instance) |
+| `door` | `building, poi, door` | as above |
+| `window` | `building, poi, window` | sill, +Z outward |
+| `stair_access` | `building, poi, staircase, stair_access, floor=<n>` | one per storey at the stair entry platform, +Z toward shaft door |
+| `elevator_stop` | `building, poi, elevator, elevator_stop, floor=<n>` | one per served storey at shaft centre on the floor, +Z toward shaft door |
+
+`floor=<n>` is the signed storey index. Opening and circulation POIs are always
+emitted; skylights get none. Furniture markers only when `furnish=1`; the
+`furniture` group carries `cat=<category>`. Prop count scales with room area
+(capped); rooms under ~0.5 m² usable floor get none.
+
+Category is keyword-matched from the `room_type` name (fallback: `kind`):
+
+| category | name contains | sample props |
+|---|---|---|
+| bedroom | `bed`, `dorm`, `master`, `cabin`, `nursery` | bed, wardrobe, nightstand, dresser, desk |
+| bathroom | `bath`, `toilet`, `shower`, `ensuite`, `wc` | toilet, sink, bathtub, shower, vanity |
+| kitchen | `kitchen`, `galley`, `kitchenette` | counter, stove, oven, fridge, dishwasher, island |
+| pantry | `pantry`, `larder` | shelving, dry-goods rack |
+| dining | `dining`, `mess`, `canteen` | dining table, chairs, sideboard, chandelier |
+| living | `living`, `lounge`, `den`, `family room` | sofa, armchair, tv, coffee table, fireplace |
+| office | `office`, `study`, `cubicle`, `workspace` | desk, office chair, filing cabinet, whiteboard |
+| meeting | `meeting`, `conference`, `boardroom` | conference table, chairs, projector screen |
+| reception | `reception`, `waiting`, `concierge` | reception desk, waiting sofa, magazine rack |
+| lobby | `lobby`, `foyer`, `atrium`, `entrance` | bench, planters, info board, directory sign |
+| corridor | `corridor`, `hallway`, `landing`, `stair` | bench, wall art, fire extinguisher |
+| storage | `storage`, `store`, `stock`, `supply` | shelving, storage boxes, pallets |
+| closet | `closet`, `cloak`, `cupboard` | clothes rail, shelves, shoe rack |
+| garage | `garage`, `carport`, `parking` | car, workbench, tool cabinet, pegboard |
+| workshop | `workshop`, `maker`, `machine shop` | workbench, machine tool, material rack |
+| laundry | `laundry`, `washing` | washing machine, dryer, ironing board |
+| utility | `mechanical`, `boiler`, `hvac`, `electrical` | boiler, electrical panel, hvac unit |
+| server room | `server`, `data centre`, `comms`, `rack room` | server racks, network cabinet, ups, crac |
+| retail | `retail`, `shop`, `showroom`, `sales floor` | display shelves, checkout, clothing racks |
+| warehouse | `warehouse`, `depot`, `loading`, `freight` | pallet racks, forklift, packing station |
+| classroom | `classroom`, `lecture`, `seminar` | student desks, teacher desk, whiteboard |
+| library | `library`, `archive`, `reading` | bookshelves, study tables, librarian desk |
+| lab | `lab`, `research`, `cleanroom` | lab benches, fume hood, biosafety cabinet |
+| medical | `clinic`, `exam`, `surgery`, `dental` | exam table, supply cabinet, exam light |
+| ward | `ward`, `patient`, `recovery`, `icu` | hospital beds, iv stands, vitals monitors |
+| gym | `gym`, `fitness`, `workout` | treadmills, weight benches, racks, mirror wall |
+| restaurant | `restaurant`, `diner`, `cafe`, `coffee` | tables, chairs, booths, host stand |
+| bar | `bar`, `pub`, `tavern`, `saloon` | bar counter, stools, back-bar shelf, beer tap |
+| cell | `cell`, `holding`, `prison` | bunk, toilet, sink, stool |
+| generic | anything else | table, chairs, shelving, plant |
 
 ### Cave
 
-`cave` is a procedural cave generator. One node expands into a single
-watertight rock shell — a bounding block hollowed by a smooth-blended field of
-chamber and passage carvers (surface-nets meshed) — plus optional scattered
-features. Chambers are organised into `levels` stacked horizontal layers
-(separated by `level_gap` rock, joined by `level_links` vertical ramps); within
-a layer they mix `spacing`-separated rooms with `overlap`-merged caverns.
-Passages steeper than `max_slope` are rebuilt as switchback ramps so no walkable
-surface exceeds the angle cap; and
-`entrances` punch horizontal mouths out through the nearest side face so the
-cave is enterable. The generated subtree is stamped non-editable (pure function
-of `seed=` plus the declared attrs). See `docs/caves.md` for the full spec.
+`cave` expands into one watertight rock shell — a bounding block minus a
+smooth-blended union of chamber and passage carvers, surface-nets meshed — plus
+optional decorations and POIs. The subtree is frozen (a function of `seed=` and
+attrs). Props, lights and creatures are not generated; place them with `use`.
+
+Layout: chambers (oblate ellipsoids) sit in `levels` stacked layers separated
+by `level_gap` rock and joined by `level_links` vertical passages. Within a
+layer, chambers are kept `spacing` apart, except that with probability
+`overlap` one merges with a neighbour into a larger cavern. Each layer is
+connected by a spanning tree plus `loops`; every chamber is reachable. Passages
+steeper than `max_slope` become switchback ramps, so no walkable surface exceeds
+it. Chamber radius is silently capped to fit a layer's height (more `levels` ⇒
+smaller rooms). Entrances punch horizontal mouths through the nearest side face;
+the shell is otherwise closed.
 
 | attribute | default | effect |
 |---|---|---|
-| `seed` | `1` | RNG seed; same seed = identical cave. |
-| `size` | `[24, 10, 24]` | Outer rock-block dimensions `[width, height, depth]` (m); base sits on `y=0`. |
-| `chambers` | `6` | Number of chambers carved. |
-| `levels` | `2` | Stacked horizontal layers (floors). Each is its own chamber+passage network. |
-| `level_gap` | `1.5` | Solid rock kept between layers (m). |
-| `level_links` | `1` | Vertical ramps carved between each adjacent layer pair (clamped ≥ 1 when `levels > 1`). |
-| `chamber_min`, `chamber_max` | `2.5, 5.0` | Chamber radius range (m). Auto-capped to fit a layer's height. |
-| `spacing` | `2.0` | Minimum rock gap between same-layer chambers (m); keeps rooms distinct. |
-| `overlap` | `0.35` | Probability a chamber merges with a same-layer neighbour into a larger cavern. `0` = all separate, `1` = all clustered. |
-| `chamber_flatten` | `0.6` | Vertical squash (height = radius × this); < 1 keeps floors gentle. |
+| `seed` | `1` | RNG seed. |
+| `size` | `[24, 10, 24]` | Rock block `[width, height, depth]` (m); base on `y=0`. |
+| `chambers` | `6` | Chambers carved. |
+| `levels` | `2` | Stacked layers. |
+| `level_gap` | `1.5` | Rock between layers (m). |
+| `level_links` | `1` | Vertical ramps per adjacent layer pair (≥ 1 when `levels > 1`). |
+| `chamber_min`, `chamber_max` | `2.5, 5.0` | Chamber radius range (m); swapped if reversed (`W1205`). |
+| `spacing` | `2.0` | Min rock gap between same-layer chambers (m); crowded layers shrink chambers. |
+| `overlap` | `0.35` | `[0, 1]` probability of merging with a neighbour. |
+| `chamber_flatten` | `0.6` | `height = radius × this`, clamped `[0.2, 1.0]`. |
 | `passage_radius` | `1.1` | Tunnel radius (m). |
-| `loops` | `1` | Extra connections beyond the spanning tree, for looping layouts. |
-| `max_slope` | `45` | Maximum walkable slope (degrees); steeper passages switchback. |
-| `roughness` | `0.35` | Wall-noise amount `[0, 1]` for a natural stone finish. |
-| `blend` | `1.5` | Smooth-union radius blending chambers + passages. |
-| `margin` | `2.0` | Rock thickness kept around the void on every face (m). |
-| `resolution` | `96` | Voxel-grid resolution (32–224). Higher = finer + slower. |
-| `lod_scale` | `1.0` | Mesh-quality scale `[0.1, 1.0]`; scales rock voxel grid + decoration tessellation. Lower = fewer triangles. Layout / counts / POIs unaffected. |
-| `entrances` | `1` | Horizontal mouths punched to a side face. A scalar `N` opens `N` on the surface (top) band; an array `[b0, b1, …]` opens them per band from the bottom up (index `0` = lowest), so e.g. `entrances=[1, 0, 1]` connects a chosen storey to an adjacent dungeon. Bands past the array end get none; mouths prefer chambers nearest a wall. |
-| `mat` | `cave_rock` | Rock material; defaults to an auto-stamped grey stone. |
-| `water_mat` | `cave_water` | Material for pools / lakes. |
-| `rock_piles`, `pools`, `lakes`, `stalagmites`, `stalactites`, `columns` | `0` | Decoration counts scattered on chamber floors / ceilings (`columns` span floor→ceiling). |
-| `mushrooms` | `0` | Mushroom-spot POI markers on chamber floors (empty nodes, no geometry). |
-| `debug_hide_shell` | `0` | Debug: slice the front (+Z) half of the rock away to see the chambers in cross-section (like `building`'s `debug_hide_roof`). |
-| `debug_show_poi` | `0` | Debug: give every point-of-interest marker a small bright per-kind `cave_poi_<kind>` sphere (colour-coded by group) so the empty markers are visible in a preview. |
+| `loops` | `1` | Extra connections beyond the spanning tree. |
+| `max_slope` | `45` | Max walkable slope (deg), clamped `[5, 89]`. |
+| `roughness` | `0.35` | Wall noise `[0, 1]` (displacement capped ~0.35 m). |
+| `blend` | `1.5` | Smooth-union radius (m). |
+| `margin` | `2.0` | Rock thickness around the void (m). |
+| `resolution` | `96` | Voxel grid, clamped `[32, 224]`. A 26 m cave at 112 is ~75k tris. |
+| `lod_scale` | `1.0` | `[0.1, 1.0]`; scales voxel grid + decoration tessellation only. Layout/counts/POIs unchanged. |
+| `entrances` | `1` | Scalar `N`: mouths on the top (surface) band. Array `[b0, b1, …]`: per band from the bottom (e.g. `[1, 0, 1]`); bands past the end get none. Prefers chambers nearest a wall. |
+| `mat` | `cave_rock` | Rock material (auto-stamped grey stone if undeclared). |
+| `mat_style` | `""` | Style hint for texture generation. |
+| `water_mat` | `cave_water` | Pool/lake material. |
+| `colliders` | `all` | Trimesh colliders on rock: `all` (shell + solid decorations), `shell`, `none`. |
+| `water_collider` | `0` | `1` = pools/lakes get a collider (stand on water). |
+| `rock_piles`, `pools`, `lakes`, `stalagmites`, `stalactites`, `columns` | `0` | Decoration counts (`columns` span floor→ceiling). |
+| `mushrooms` | `0` | `mushroom_spot` POI count. |
+| `debug_hide_shell` | `0` | Cut away the front (+Z) half of the rock (and decorations there) for a cross-section. |
+| `debug_show_poi` | `0` | Give each POI a bright `cave_poi_<kind>` sphere (dead-end magenta, column blue, ladder lime, mushroom amber). |
 
-Beyond geometry, `cave` embeds **points of interest** as empty marker nodes
-(`role`/`tags` in glTF extras) under a `points_of_interest` group:
-`dead_end_chamber` (single-connection rooms), `column_base`, `ladder_anchor`
-(passages steeper than `max_slope`) and `mushroom_spot`. See `docs/caves.md`.
+`collider="aabb"` is ignored on `cave`; use `colliders=`. Decorations are placed
+on the real carved floor/ceiling (sunk slightly to sit flush) but not
+collision-tested against each other; re-seed if one reads badly.
 
-Decorations are placed by querying the **real carved floor / ceiling** under
-each feature, so drips and boulders sit flush on the surface rather than the
-geometric chamber bound. `cave` accepts only `feature` children, which tune one
-decoration kind:
+Children: only `feature` (`E1201`), each tuning one decoration kind:
 
 ```
 feature "<name>" (kind=stalagmite|stalactite|column|rock_pile|pool|lake,
                   count=…, min_size=…, max_size=…, mat="<material>")
 ```
 
-`kind` is required. `count` overrides the matching top-level count knob;
-`min_size`/`max_size` set the size range (m); `mat` overrides the material.
+`kind` is required. `count` overrides the top-level count; `min_size`/`max_size`
+set the size range (m; radius for spikes/piles, surface radius for water); `mat`
+overrides the material.
 
 ```
 cave "hollow" (seed=12, size=[26, 12, 26], chambers=7, levels=2,
@@ -737,172 +717,149 @@ cave "hollow" (seed=12, size=[26, 12, 26], chambers=7, levels=2,
 }
 ```
 
-Every primitive is authored in its local frame and positioned via
-`pos`/`rot`/`scale`. Defaults make bare `cylinder "leg"` a 1 m unit-radius
-cylinder at the origin.
+Output (all nodes tagged `cave`):
+
+```
+hollow (cave wrapper)
+├── rock                 mesh, role="cave_rock"
+├── decorations          rock_piles/, pools/, lakes/, stalagmites/, stalactites/, columns/  (<kind>_<i>)
+└── points_of_interest
+```
+
+POIs (`role=<kind>`, `tags=["cave", "poi", <kind>]`, no mesh/collider):
+
+| role | placed at |
+|---|---|
+| `dead_end_chamber` | floor centre of each chamber with exactly one connection |
+| `column_base` | floor anchor of each column |
+| `ladder_anchor` | foot of each passage steeper than `max_slope` |
+| `mushroom_spot` | random chamber-floor points (`mushrooms=`) |
+
+Validation: negative counts/`loops`/`entrances`/`level_gap`/`level_links`
+`E1202`; non-positive `size` component `E1203`; `max_slope` outside `(0, 90)`
+`E1204`; non-positive `chambers`/`levels`/`chamber_min`/`chamber_max`/
+`passage_radius`/`margin`/`resolution` `E1207`/`E1208`; `roughness`/
+`chamber_flatten`/`overlap` outside `[0, 1]` `W1206` (clamped); `lod_scale`
+outside `(0, 1]` `W1210`. On `feature`: body block `E1210`, missing/unknown
+`kind` `E1211`/`E1212`, negative `count` `E1213`, non-positive sizes `E1214`.
 
 ### Terrain
 
-`terrain` is a procedural heightfield generator. One node expands into a grid of
-independently cullable **chunk meshes** sampled from a coherent noise field, then
-refined by an ordered chain of retouch passes (smoothing → terracing). The field
-is normalised `0..1` and scaled by the height component of `size`; adjacent
-chunks share boundary grid lines so seams are crack-free. `sea_level` does not
-reshape the land — the terrain keeps its real shape underwater and the sea is a
-flat plane laid on top. The generated subtree is stamped non-editable (a pure
-function of `seed=` plus the declared attrs).
+`terrain` expands into a grid of cullable **chunk meshes** sampled from a noise
+field normalised `0..1` and scaled by `size`'s height, then smoothed and
+terraced. Chunk seams are crack-free. `sea_level` adds a flat water plane
+without reshaping land. The subtree is frozen.
 
 | attribute | default | effect |
 |---|---|---|
-| `seed` | `1` | RNG seed; same seed = identical terrain. |
-| `size` | `[40, 6, 40]` | Patch dimensions `[width, max_height, depth]` (m). `max_height` scales the normalised field; the patch is centred on the origin. |
-| `source` | `fbm` | Noise shape: `fbm` (rolling hills), `ridged` (sharp mountain ridges), `billow` (rounded mounds), `island` (central landmass falling off to water at the edges — pair with `sea_level`), `voronoi` (cellular crater rims and cracked basins). |
-| `octaves` | `4` | Noise octaves summed; more = finer detail. |
-| `frequency` | `0.06` | Base noise frequency; higher = more, smaller features. |
-| `persistence` | `0.5` | Per-octave amplitude falloff `[0, 1]`; higher = rougher. |
-| `resolution` | `128` | Grid divisions across the patch (4–1024); rounded up to a multiple of `chunks`. |
-| `chunks` | `4` | Splits the patch into a `chunks × chunks` grid of separately cullable meshes (1–16). |
-| `lod_levels` | `3` | Baked render-LOD meshes per chunk (1–4). Level 0 is full detail; each higher level halves the sampling stride and takes over at a greater camera distance. `1` = full detail only, no distance swapping. |
-| `smooth` | `0` | Box-blur passes (0–32) applied to soften the raw noise. |
-| `terrace` | `0` | Quantise heights into this many stepped bands (0 = off, 0–64). |
-| `sea_level` | `0.0` | Normalised waterline height `[0, 1]`; adds a flat water plane at this height and enables shoreline POIs. Land keeps its real shape underwater (basins are not flattened). |
-| `peaks` | `0` | Number of summit POI markers placed on local maxima. |
-| `flat_spots` | `0` | Number of buildable-flat-area POI markers (flattest neighbourhoods above sea level). |
-| `shore_points` | `0` | Number of shoreline POI markers at the water's edge (requires `sea_level > 0`). |
-| `colliders` | `none` | `all` adds a trimesh collider to every chunk; `none` is visual-only. |
-| `lod_scale` | `1.0` | Mesh-quality scale `[0.1, 1.0]`; scales effective resolution. Lower = fewer triangles. POIs / sea level unaffected. |
-| `mat` | `terrain_ground` | Ground material; defaults to an auto-stamped **white** PBR finish (the surface colour comes from the per-vertex bake below, which multiplies the base colour). A custom `mat=` tints the whole bake. |
-| `debug_show_poi` | `0` | Debug: give every POI marker a small bright per-kind `terrain_poi_<kind>` sphere so the empty markers are visible in a preview. |
+| `seed` | `1` | RNG seed. |
+| `size` | `[40, 6, 40]` | `[width, max_height, depth]` (m), centred on origin. |
+| `source` | `fbm` | `fbm` (hills), `ridged` (ridges), `billow` (mounds), `island` (land falling to water at edges), `voronoi` (craters, cracked basins). |
+| `octaves` | `4` | Noise octaves. |
+| `frequency` | `0.06` | Base frequency. |
+| `persistence` | `0.5` | Per-octave falloff `[0, 1]`. |
+| `resolution` | `128` | Grid divisions (4–1024), rounded up to a multiple of `chunks`. |
+| `chunks` | `4` | `chunks × chunks` meshes (1–16). |
+| `lod_levels` | `3` | Render LODs per chunk (1–4); each level halves sampling. |
+| `smooth` | `0` | Box-blur passes (0–32). |
+| `terrace` | `0` | Stepped height bands (0 = off, max 64). |
+| `sea_level` | `0.0` | Normalised waterline `[0, 1]`; adds water plane, enables shoreline POIs. |
+| `peaks` | `0` | `peak` POIs on local maxima. |
+| `flat_spots` | `0` | `flat_spot` POIs (flattest areas above sea level). |
+| `shore_points` | `0` | `shoreline` POIs (needs `sea_level > 0`). |
+| `colliders` | `none` | `all` = trimesh collider per chunk. |
+| `lod_scale` | `1.0` | `[0.1, 1.0]`; scales resolution. POIs/sea level unchanged. |
+| `mat` | `terrain_ground` | Ground material; default is white so the vertex colours show. A custom `mat=` tints them. |
+| `debug_show_poi` | `0` | Bright `terrain_poi_<kind>` sphere per POI. |
 
-Every chunk vertex carries a **baked surface colour** in `COLOR_0` (glTF
-per-vertex colour, which multiplies the white ground material): a grass→rock
-blend driven by slope (steep faces turn to bare rock) plus, when `sea_level > 0`,
-sand hugging the waterline that fades to dark mud on the submerged floor. The
-look therefore travels as plain glTF — no engine shader is required — and an
-engine is still free to layer a runtime slope/height shader on top.
+Vertices carry baked `COLOR_0`: grass→rock by slope, plus (with `sea_level > 0`)
+sand at the waterline fading to mud underwater. No engine shader needed.
 
-Beyond geometry, `terrain` embeds **points of interest** as empty marker nodes
-(`role`/`tags` in glTF extras) under a `points_of_interest` group: `peak`
-(summit local maxima), `flat_spot` (buildable flat areas above sea level), and
-`shoreline` (cells at the water's edge). Markers spread out so no two land on the
-same feature.
+POIs (under `points_of_interest`, `role`/`tags` in extras, spread apart):
+`peak`, `flat_spot`, `shoreline`.
+
+Each chunk emits `lod_levels` meshes `chunk_<i>_<j>_lod<n>` with
+`extras.lod = { level, min_distance, max_distance }`; bands partition `[0, ∞)`
+(maps to Godot `VisibilityRange`). Only level 0 has the collider and casts
+shadows; coarser levels have a downward skirt to hide LOD cracks.
 
 #### Carving children: `hole` and `road`
 
-A `terrain` body accepts only `hole` and `road` declarations (any other child is
-an error — geometry parented here would be dropped). Both carve the same shared
-height field, so chunk seams, skirts and POIs stay consistent with the result.
+Only `hole` and `road` children are allowed. Both edit the shared height field,
+so seams, skirts and POIs stay consistent.
 
-**`hole`** drops the surface inside a footprint and walls the rim, punching a real
-void into the baked mesh that a basement or cave mouth can slot into.
+**`hole`** — drops the surface inside a footprint with rim walls.
 
 | attribute | default | effect |
 |---|---|---|
-| `at` | `[0, 0]` | Footprint centre `[x, z]` in patch-local metres. |
-| `radius` | — | Circular footprint radius (m). Give **either** `radius` **or** `size`, not both. |
+| `at` | `[0, 0]` | Centre `[x, z]` (m, patch-local). |
+| `radius` | — | Circular footprint (m). Give `radius` **or** `size`, not both. |
 | `size` | — | Rectangular footprint `[w, d]` (m). |
-| `depth` | `4` | How far below the rim the floor sits (m). |
-| `cap` | `open` | `open` = vertical rim walls drop to the floor depth, bottom left open (plug it with a basement/cave). `floor` = walls plus a flat floor quad = a fully sealed, watertight pit. |
+| `depth` | `4` | Floor depth below rim (m). |
+| `cap` | `open` | `open` = walls only, bottom open (for a basement/cave); `floor` = sealed watertight pit. |
 
-**`road`** flattens a corridor along a polyline to a smoothed longitudinal
-profile (staying at the terrain's own height — no trench), and tints the corridor
-toward a dirt/gravel colour baked into `COLOR_0`.
+**`road`** — flattens a corridor along a polyline to a smoothed profile at
+terrain height (no trench) and tints it dirt/gravel in `COLOR_0`.
 
 | attribute | default | effect |
 |---|---|---|
-| `path` | — | Required centreline `[[x, z], [x, z], …]` (≥ 2 waypoints), patch-local metres. |
-| `width` | `3` | Flattened corridor width (m). |
-| `shoulder` | `= width/2` | Extra blend distance (m) outside the flat corridor where the road eases back into the surrounding terrain. |
+| `path` | — | Required `[[x, z], …]` (≥ 2 points). |
+| `width` | `3` | Flat corridor width (m). |
+| `shoulder` | `width/2` | Blend distance outside the corridor (m). |
 
 ```
-terrain "valley" (seed=2, size=[200, 12, 200], source="island", chunks=6) {
-  hole ( at=[-30, -20], radius=14, depth=6, cap="floor" )  // sealed pit
-  hole ( at=[40, 30], radius=10, depth=8, cap="open" )     // open shaft
+terrain "valley" (seed=2, size=[200, 12, 200], source="island", chunks=6,
+                  sea_level=0.28, peaks=8, colliders="all") {
+  hole ( at=[-30, -20], radius=14, depth=6, cap="floor" )
   road ( path=[[-90, -60], [-20, -10], [30, 20], [90, 70]], width=8, shoulder=5 )
 }
-```
-
-Each chunk emits `lod_levels` overlapping mesh variants named
-`chunk_<i>_<j>_lod<n>`, every variant tagged with a camera-distance band in glTF
-`extras.lod` (`{ level, min_distance, max_distance }`). The bands partition
-`[0, ∞)`, so exactly one variant is the active one at any distance: MoGen Studio's
-viewer shows it (and frustum-culls per chunk), and an engine importer can wire the
-same ranges into Godot `VisibilityRange`. Only the finest variant (level 0) carries
-the trimesh collider and casts shadows; coarser variants are visual stand-ins, ringed
-by a downward skirt so a neighbouring chunk at a different LOD can't open a crack in
-the surface.
-
-```
-terrain "valley" (seed=7, size=[80, 14, 80], source="fbm",
-                  octaves=5, frequency=0.04, resolution=192, chunks=6,
-                  lod_levels=3, smooth=2, sea_level=0.28,
-                  peaks=8, flat_spots=12, shore_points=16,
-                  colliders="all", mat="grassland")
 ```
 
 ---
 
 ### Dungeon
 
-`dungeon` is a procedural layout generator for dungeon-crawler levels. Where
-`cave` carves an organic void from a smooth field, a dungeon is a **tile grid**:
-axis-aligned rectangular rooms placed on a `cell`-metre lattice, joined by
-straight/L-shaped corridors, stacked into `levels` floors that real staircase
-geometry connects. Walls, floors and ceilings are clean **box meshes** and
-doorways are gaps in the walls — the whole layout is watertight by construction.
-The node takes no body block; the generated subtree is stamped non-editable (a
-pure function of `seed=` plus the declared attrs).
+`dungeon` builds a **tile-grid** level: axis-aligned rooms on a `cell`-metre
+lattice, straight/L-shaped corridors, `levels` floors linked by staircases.
+Walls, floors and ceilings are box meshes; doorways are wall gaps; watertight by
+construction. No body block. The subtree is frozen.
 
 | attribute | default | effect |
 |---|---|---|
-| `seed` | `1` | RNG seed; same seed = identical layout. `0` is coerced to `1`. |
-| `size` | `[48, 4, 48]` | Footprint + clearance `[width(x), room_height(y), depth(z)]` (m). `width`/`depth` set the grid footprint (÷ `cell`); `room_height` is one level's floor-to-ceiling clearance. |
-| `cell` | `4` | Grid cell edge length (m). Rooms and corridors quantise to this lattice so walls always meet flush. |
-| `levels` | `1` | Stacked floors. `1` is single-storey; higher values stack independent room layouts linked by staircases. |
-| `stairs` | `1` | Staircases between each pair of adjacent levels. |
-| `entrances` | `1` | Exterior doorways through the perimeter wall. A scalar `N` puts `N` on the ground floor; an array `[g, f1, f2, …]` sets each floor independently (index `0` = ground), so e.g. `entrances=[1, 0, 2]` opens a chosen storey onto an adjacent cave mouth or ledge. Floors past the array end get none; doors prefer dead-end rooms and the shortest border stub. |
-| `rooms` | `6` | Target room count per level (placement is best-effort within the grid). |
-| `room_min` | `2` | Room side length range in cells (inclusive). `room_min > room_max` is swapped. |
-| `room_max` | `5` | — |
-| `spacing` | `1` | Minimum rock gap kept between rooms of the same level, in cells. |
-| `corridor_width` | `1` | Corridor width in cells. |
-| `loops` | `1` | Extra corridor connections beyond the spanning tree, per level (creates loops). |
-| `wall_thickness` | `0.4` | Wall thickness (m). |
-| `floor_thickness` | `0.4` | Floor / ceiling deck thickness (m). |
-| `ceilings` | `1` | Emit ceiling decks (each deck doubles as the next level's floor). `0` = open-topped levels. |
-| `prop_spots` | `0` | Number of `prop_spot` POI markers scattered on room floors. |
-| `colliders` | `all` | `all` adds a trimesh collider to every solid surface (decks, walls, steps); `none` is visual-only. |
-| `lod_scale` | `1.0` | Mesh-quality scale `[0.1, 1.0]`; compounds with the file-global `lod_scale`. Layout, counts and POIs are unaffected. |
-| `debug_hide_roof` | `0` | Debug: omit the topmost deck (roof) so rooms are visible from above in a preview. |
-| `debug_render_floor` | _(unset)_ | Debug: render only this level index (`0` = ground), with no ceiling and only the staircases that touch it, to peek inside one floor. Out-of-range values render every level. |
-| `debug_show_poi` | `0` | Debug: give every POI marker a small bright per-kind `dungeon_poi_<kind>` sphere so the empty markers show in a preview. |
+| `seed` | `1` | RNG seed (`0` → `1`). |
+| `size` | `[48, 4, 48]` | `[width, room_height, depth]` (m); width/depth ÷ `cell` = grid. |
+| `cell` | `4` | Cell edge (m). |
+| `levels` | `1` | Stacked floors. |
+| `stairs` | `1` | Staircases per adjacent level pair. |
+| `entrances` | `1` | Exterior doorways. Scalar = ground floor; array `[g, f1, …]` per floor (floors past the end get none). Prefers dead-end rooms and short border stubs. |
+| `rooms` | `6` | Target rooms per level (best-effort). |
+| `room_min`, `room_max` | `2`, `5` | Room side range in cells (swapped if reversed). |
+| `spacing` | `1` | Min gap between rooms (cells). |
+| `corridor_width` | `1` | Cells. |
+| `loops` | `1` | Extra corridors per level beyond the spanning tree. |
+| `wall_thickness` | `0.4` | m. |
+| `floor_thickness` | `0.4` | Deck thickness (m). |
+| `ceilings` | `1` | `0` = open-topped levels. |
+| `prop_spots` | `0` | `prop_spot` POIs on room floors. |
+| `colliders` | `all` | Trimesh on decks, walls, steps; `none` = visual only. |
+| `lod_scale` | `1.0` | `[0.1, 1.0]`, compounds with global `lod_scale`; layout/POIs unchanged. |
+| `debug_hide_roof` | `0` | Omit the top deck. |
+| `debug_render_floor` | _unset_ | Render only this level (`0` = ground) without ceiling; out-of-range renders all. |
+| `debug_show_poi` | `0` | Bright `dungeon_poi_<kind>` sphere per POI. |
 
-Geometry is built from **decks**: deck `k` is simultaneously the floor of level
-`k` and the ceiling of level `k-1`, so there are no duplicate slabs. Every
-walkable cell — including staircase landings — is covered, so the top level is
-fully roofed and stairwells are enclosed. Staircases punch an opening through
-the upper deck and fill it with a flight of small (~0.18 m riser) steps sized
-for in-game use. Each **exterior doorway** is a one-cell floor stub run out to
-the grid border with the perimeter wall there left open, so the dungeon has a
-clear way in; `entrances` controls how many per floor (a scalar for the ground
-floor, or a per-floor array) so a raised storey can open onto an adjacent cave
-mouth or ledge. Walls are extended by `wall_thickness`
-at their ends so corners always close — no holes. A single material pair
-(`dungeon_floor`, `dungeon_stone`) is auto-stamped if you don't supply `mat=`.
+Deck `k` is both floor of level `k` and ceiling of level `k-1`; every walkable
+cell including stair landings is covered. Staircases cut the upper deck and fill
+it with ~0.18 m risers. Each exterior doorway is a one-cell stub to the grid
+border. Walls extend by `wall_thickness` at ends so corners close. Materials
+`dungeon_floor`/`dungeon_stone` are auto-stamped when `mat=` is absent.
 
-Beyond geometry, `dungeon` embeds **points of interest** as empty marker nodes
-(`role`/`tags` in glTF extras) under a `points_of_interest` group: `entrance`
-(the exterior doorway, oriented facing out), `spawn` (the room the entrance
-leads into), `treasure_room` (other dead-end rooms), `stair_top` /
-`stair_bottom` (staircase landings), and `prop_spot` (scattered room-floor
-slots). An engine reads these to place the player, loot, transitions and props.
+POIs (under `points_of_interest`): `entrance` (facing out), `spawn` (room behind
+the entrance), `treasure_room` (other dead ends), `stair_top`/`stair_bottom`,
+`prop_spot`.
 
 ```
-dungeon "keep" (seed=7, size=[56, 4, 56], cell=4,
-                levels=3, stairs=1,
-                rooms=7, room_min=2, room_max=5, spacing=1,
-                corridor_width=1, loops=1,
-                prop_spots=8, colliders="all")
+dungeon "keep" (seed=7, size=[56, 4, 56], cell=4, levels=3, stairs=1,
+                rooms=7, room_min=2, room_max=5, prop_spots=8)
 ```
 
 ---
@@ -916,180 +873,80 @@ material "neon"  (color=[1, 0.2, 1], emissive=[1, 0.2, 1], emissive_strength=8.0
 material "leaf"  (color=[0.25, 0.6, 0.2], alpha_mode="mask", alpha_cutoff=0.5)
 ```
 
-Declared at the top of the file or inside `scene { ... }`. Attributes:
+Declared at top level or inside `scene`. Referenced via `mat="wood"`; unknown
+names are an error.
 
-- `color` — vec3 `[r, g, b]` in linear space; alpha defaults to `1.0`.
-- `alpha` — optional alpha override for transparency. Setting `alpha < 1`
-  without an explicit `alpha_mode` auto-selects `"blend"`.
-- `metallic` — `0.0`–`1.0`, default `0.0`.
-- `roughness` — `0.0`–`1.0`, default `0.9`.
-- `normal_strength` — slope multiplier baked into the *derived* normal
-  map by `mogen textures`. `~0..8`, default `1.5`. No effect when
-  `normal_texture` is authored directly.
-- `occlusion_strength` — `0.0`–`1.0` ceiling on the *derived* AO darkness
-  (`0` flat white, `1` cavities reach black). Default `0.7`. No effect
-  when `occlusion_texture` is authored directly.
-- `alpha_mode` — `"opaque"` (default), `"blend"` (translucent), or `"mask"`
-  (1-bit cutout, e.g. foliage).
-- `alpha_cutoff` — threshold for `alpha_mode="mask"`, default `0.5`.
-- `emissive` — vec3 glow added on top of PBR. Screens, embers, lava.
-  Default `[0, 0, 0]`.
-- `emissive_strength` — HDR multiplier on `emissive`
-  (`KHR_materials_emissive_strength`); `> 1.0` drives bloom. Default `1.0`.
-- `transmission` — `0.0`–`1.0` light through the surface
-  (`KHR_materials_transmission`); `1` is clear glass. Orthogonal to
-  `alpha_mode` — glass/water use this, gels/tints/smoke use `alpha`.
-- `double_sided` — `0` (default) or `1`. When `1`, draws both triangle
-  faces (glTF `doubleSided`). Use for leaves, fins, flags, cloth, and thin
-  `curved_plane`/`plane`/`disc`/`quad` whose underside is visible.
-- `uv_mode` — `"tile"` (default) or `"fit"`. `"tile"` emits world-space
-  UVs (1 unit = 1 tile, scaled by `uv_scale`) — repeating surfaces like
-  walls, planks, fabric. `"fit"` uses per-face `[0, 1]²` UVs so each face
-  shows the full image once — image-as-texture (signs, paintings, decals).
-- `uv_scale` — scalar or vec2; default `1.0`. In `tile` mode: tiles per
-  world unit (`2` = denser, `0.5` = bigger). In `fit` mode: multiplies
-  `[0, 1]` coords. Vec2 stretches asymmetrically.
-- `base_color_texture` — string path to a `.png`/`.jpg`/`.svg` file on disk,
-  resolved relative to the `.mog` file. Multiplied against `color`. sRGB.
-  See [SVG textures](#svg-textures) for how `.svg` is handled.
-- `metallic_roughness_texture` — packed metal/rough map (glTF convention:
-  green = roughness, blue = metallic). Linear.
-- `normal_texture` — tangent-space normal map. Linear.
-- `occlusion_texture` — ambient occlusion (red channel). Linear.
-- `emissive_texture` — emissive colour map, multiplied against `emissive`.
-  sRGB.
-- `texture_size` — positive whole number; default `1024`. Pixel edge length
-  that `.svg` texture slots on this material rasterize to. Ignored by
-  `.png`/`.jpg` slots, which embed at their authored size.
-- `texture_wrap` — `0` (default) or `1`. Rasterize `.svg` slots with
-  wrap-around so artwork crossing the tile boundary reappears on the opposite
-  edge instead of being clipped. No effect on art that stays inside the
-  viewBox, so it is always safe to enable on a tile.
-- `prompt` — free-form subject hint for `mogen textures` when generating
-  albedo (e.g. `prompt="navy nylon ripstop weave"`). Steers Gemini away
-  from the default "material name + colour" framing; auto-rephrased on
-  recitation rejection.
-- `shader` — `"standard"`/`"pbr"` (default, the regular PBR path), the
-  built-in `"water"` preset, or the name of a user-declared `shader "<name>"`
-  (see [Shaders](#shaders) below). Studio-preview only — the exported `.glb`
-  always uses standard PBR scalars; the shader name + `shader_params` ride
-  along as `node.extras.shader` metadata for downstream consumers. `"water"`
-  reinterprets the standard knobs as a procedural water shader: `color` is
-  the body tint, `uv_scale` is ripple density, `roughness` controls
-  chop/foam (`0.05` glassy → `1.0` whitecaps), `metallic` lerps toward
-  liquid-metal Fresnel, `transmission` + `alpha_mode="blend"` lets the floor
-  show through, and `normal_texture`/`base_color_texture` blend into the
-  procedural waves. It also declares one parameter of its own,
-  `absorption` (float, default `1.5`) — the depth in world units over which
-  transmitted radiance falls to `1/e`, set via `shader_params (absorption=…)`
-  like any other. `0` is clear glass, so the default is deliberately not zero.
-- `gradient` — optional ramp baked into per-vertex `COLOR_0` at export
-  time. Four surface forms, all colours are vec3 in sRGB `[0..1]`:
-  - `linear(from=[…], to=[…], axis=x|y|z)` — interpolates between two
-    colours along the named local axis (default `y`).
-  - `vertical(from=[…], to=[…])` — sugar for `linear(axis=y)`. No `axis=`.
-  - `radial(center=[…], edge=[…])` — centre-to-corner falloff in the
-    mesh's local AABB. No `axis=`.
-  - `stops(colors=[[…], …], positions=[…], axis=…, kind=linear|radial)` —
-    multi-stop ramp. `positions` defaults to even spacing across `[0, 1]`
-    if omitted; `kind` defaults to `linear`.
+- `color` — linear RGB vec3; alpha `1.0` unless `alpha` is set.
+- `alpha` — transparency; `< 1` without `alpha_mode` selects `"blend"`.
+- `metallic` — `0`–`1`, default `0.0`.
+- `roughness` — `0`–`1`, default `0.9`.
+- `alpha_mode` — `"opaque"` (default), `"blend"`, `"mask"` (cutout).
+- `alpha_cutoff` — mask threshold, default `0.5`.
+- `emissive` — vec3 glow, default `[0, 0, 0]`.
+- `emissive_strength` — HDR multiplier (`KHR_materials_emissive_strength`), default `1.0`; `> 1` drives bloom.
+- `transmission` — `0`–`1` (`KHR_materials_transmission`); `1` = clear glass. For glass/water; use `alpha` for tints/smoke.
+- `double_sided` — `0` (default) / `1`. For leaves, cloth, thin planes seen from both sides.
+- `uv_mode` — `"tile"` (default; world-space UVs, 1 unit = 1 tile) or `"fit"` (each face `[0,1]²`, image shown once).
+- `uv_scale` — scalar or vec2, default `1.0`. Tile: tiles per unit. Fit: multiplies coords.
+- `base_color_texture` — `.png`/`.jpg`/`.svg` path relative to the `.mog`; multiplies `color`; sRGB. See [SVG textures](#svg-textures).
+- `metallic_roughness_texture` — green = roughness, blue = metallic; linear.
+- `normal_texture` — tangent-space; linear.
+- `occlusion_texture` — red channel; linear.
+- `emissive_texture` — multiplies `emissive`; sRGB.
+- `normal_strength` — slope multiplier for the normal map *derived* by `mogen textures`; `~0..8`, default `1.5`. Ignored if `normal_texture` is set.
+- `occlusion_strength` — `0`–`1` max darkness of the *derived* AO, default `0.7`. Ignored if `occlusion_texture` is set.
+- `texture_size` — `.svg` raster edge length in px, default `1024`.
+- `texture_wrap` — `0` (default) / `1`: rasterize `.svg` as a seamless tile.
+- `prompt` — subject hint for `mogen textures` albedo generation (e.g. `"navy nylon ripstop weave"`).
+- `shader` — `"standard"`/`"pbr"` (default), built-in `"water"`, or a declared `shader` name (see [Shaders](#shaders)). Affects Studio preview only; GLB keeps standard PBR and carries the shader name + params in `node.extras.shader`. `"water"` reinterprets: `color` = body tint, `uv_scale` = ripple density, `roughness` = chop/foam (`0.05` glassy → `1.0` whitecaps), `metallic` → liquid-metal Fresnel, `transmission` + `alpha_mode="blend"` shows the floor, textures blend into the waves. Its param `absorption` (float, default `1.5`) is the depth over which transmitted light falls to `1/e`; `0` = clear.
+- `gradient` — ramp baked into `COLOR_0`; colours are sRGB vec3:
+  - `linear(from=[…], to=[…], axis=x|y|z)` — along a local axis (default `y`).
+  - `vertical(from=[…], to=[…])` — `linear` on Y.
+  - `radial(center=[…], edge=[…])` — centre-to-corner over the local AABB.
+  - `stops(colors=[[…], …], positions=[…], axis=…, kind=linear|radial)` — `positions` default evenly spaced; `kind` default `linear`.
 
-  `COLOR_0` multiplies `baseColorFactor` per the glTF spec, so pair the
-  gradient with `color=[1, 1, 1]` to get the ramp unaltered, or with a
-  tinted `color=` to tint the whole ramp. Vertex colours need vertices to
-  interpolate between — bump primitive `segments`/`rings`/`segments_u/v`
-  for smoother ramps; a default 6-vert box reads as a hard step, not a
-  gradient.
-
-Example:
+  `COLOR_0` multiplies `color`; use `color=[1, 1, 1]` for the raw ramp. Needs
+  vertices to interpolate — raise tessellation (a default box shows a hard step).
 
 ```
-material "oak" (
-  color=[1, 1, 1],
-  roughness=0.8,
+material "oak" (color=[1, 1, 1], roughness=0.8,
   base_color_texture="textures/oak_albedo.png",
-  normal_texture="textures/oak_normal.png"
-)
-
+  normal_texture="textures/oak_normal.png")
 material "lake" (color=[0.05, 0.32, 0.45], shader="water")
 ```
 
-Texture files are embedded in the output GLB (self-contained, movable
-without sources); missing files are a hard error at export. Reference a
-material via `mat="wood"`; unknown names are a hard error at lowering.
+Textures are embedded in the GLB; a missing file is an export error.
 
 ### SVG textures
 
-Any texture slot accepts a `.svg` path. glTF 2.0 has no vector image type —
-its core spec defines only `image/png` and `image/jpeg` — so mogen rasterizes
-SVG to PNG at build time and embeds that. This happens before anything else
-inspects the scene, so the GLB, the FBX exporter, Studio's preview, and the
-derived-PBR pipeline all see raster only; nothing downstream ever encounters a
-`.svg` path.
+Any texture slot accepts `.svg`; it is rasterized to PNG at build time (glTF
+has no vector image type), before export, FBX, preview, or derived-PBR steps.
 
 ```
-material "tiles" (
-  color=[1, 1, 1],
-  uv_mode="fit",
-  base_color_texture="textures/hex.svg",
-  texture_size=2048,
-  texture_wrap=1
-)
+material "tiles" (color=[1, 1, 1], uv_mode="fit",
+  base_color_texture="textures/hex.svg", texture_size=2048, texture_wrap=1)
 ```
 
-Notes:
+- `texture_size` (default `1024`) sets the square output; the viewBox is stretched to fill it (adjust aspect with `uv_scale`).
+- Text is not supported — convert to paths. (No fonts, so output is identical on every machine.)
+- Output is deterministic; the same SVG at two sizes embeds twice.
+- `texture_wrap=1` draws the art on a 3×3 lattice and keeps the centre, so overhanging shapes reappear on the opposite edge. A translucent shape wider than the whole tile overlaps itself and darkens at the edges (still seamless).
 
-- **Size is yours to choose.** SVG carries no intrinsic pixel size, so
-  `texture_size` (default `1024`) decides it. The viewBox is scaled to fill
-  the square exactly — a non-square viewBox is stretched rather than
-  letterboxed, since these are UV-space tiles where aspect correction belongs
-  to `uv_scale`.
-- **Text must be converted to paths first.** The rasterizer is built without
-  font support on purpose: resolving font names would make output depend on
-  which fonts the build machine happens to have installed, and identical
-  sources must produce identical bytes.
-- **Rasterization is deterministic and uncached.** The same SVG at the same
-  size yields byte-identical output every build, so there is nothing to
-  invalidate. One SVG used at two `texture_size` values embeds twice, as it
-  must.
-- **`texture_wrap=1` synthesises a seamless tile.** The art is drawn on a 3×3
-  lattice and the centre cell kept, so shapes overhanging the viewBox reappear
-  on the opposite edge instead of being clipped. This is the one thing a
-  vector source buys that a supplied PNG cannot — the renderer is ours, so the
-  wrap can be manufactured rather than hand-authored. The nine draws composite
-  normally, which makes the result exactly what painting the art across an
-  endless field of adjacent tiles would give. Art contained by the viewBox is
-  untouched, and overhang narrower than the tile only lands where the centre
-  drew nothing — but a *translucent* shape wider than the whole tile overlaps
-  itself, and reads darker in a band at each edge. The bands match across the
-  join, so the tiling stays seamless; split such a shape if the frame shows.
+A seamless tile doesn't fix seams from UV layout: sphere UVs pinch at the poles
+and `uv_mode="tile"` wraps mid-tile for most radii. On spheres use a wrap tile
+with `uv_mode="fit"`.
 
-Seamlessness on a **curved** surface is a separate matter, and `.svg` does not
-by itself fix it: it is a property of the UV layout, not the image format. A
-sphere's equirectangular mapping pinches at the poles no matter what feeds it,
-and `uv_mode="tile"` scales U by world arc length, which lands mid-tile at the
-wrap for most radii. For a seamless sphere, pair a wrap-authored tile with
-`uv_mode="fit"`.
-
-**Not yet compatible with `bundle_lods_and_imposter`.** That export option's
-imposter bake reads texture files straight off disk through its own headless
-GL renderer, independent of the rasterization pass described above, and can't
-decode `.svg` either. Combining the two is a hard error at export time.
-Pre-rasterize the texture to `.png` if you need both.
+`.svg` textures combined with the `bundle_lods_and_imposter` export option are
+an export error; pre-rasterize to `.png`.
 
 ---
 
 ## Shaders
 
-A `shader "<name>" { ... }` declaration names an on-disk GLSL fragment
-snippet and the parameters materials may feed it. mogen never compiles or
-runs the GLSL — it only carries the path + resolved parameter values as
-`node.extras.shader` metadata on the glTF nodes bound to a referencing
-material. MoGen Studio is the one component that actually compiles a
-declared shader, for live preview. The built-in `water` preset (see
-`shader=` above) is just the first client of this system — it declares an
-`absorption` param and resolves it through the same path a user shader's
-params take, and declaring your own `shader "water" { ... }` shadows it.
+`shader "<name>"` names a GLSL fragment snippet and its parameters. mogen never
+compiles it; it writes path + resolved params to `node.extras.shader` on nodes
+using the material. Studio compiles it for preview. Declaring
+`shader "water"` shadows the built-in preset.
 
 ```
 shader "ripple" (source="shaders/ripple.glsl") {
@@ -1102,80 +959,88 @@ material "pond" (color=[0.1, 0.2, 0.3], shader="ripple") {
 }
 ```
 
-`shader` attributes:
+- `source` — GLSL path relative to the `.mog`.
+- `param` `type` — `float`, `vec2`, `vec3`, `vec4`, or `color` (RGB vec3).
+- `param` `default` — used when `shader_params` doesn't override; must match `type`.
 
-- `source` — path to the GLSL fragment snippet, resolved relative to the
-  `.mog` file the same way texture paths are.
-
-Each `param "<name>" { ... }` child declares one uniform the snippet may
-use:
-
-- `type` — `float`, `vec2`, `vec3`, `vec4`, or `color` (an RGB `vec3`
-  authored as `[r, g, b]`).
-- `default` — value used when a referencing material supplies no override
-  via `shader_params`. Must match the declared `type`.
-
-A material opts in with `shader="<name>"` (built-in `water`, or a declared
-name) and overrides individual parameter values with a `shader_params (...)`
-child block — any attribute name matching a declared `param` name; names
-that don't match warn (`W0108`) but don't fail the build. Referencing an
-undeclared, non-built-in shader name is a hard error (`E0106`) at
-validation time. Shaders declared in an imported file aren't currently
-visible to the importing file's materials — declare shaders in the file
-that uses them.
+Unknown `shader_params` names warn `W0108`. An undeclared, non-built-in shader
+name is `E0106`. Shaders from imported files are not visible to the importer —
+declare them where used.
 
 ---
 
 ## Physics
 
-A `physics` substance is the *feel* of an object, the counterpart to
-`material`'s *look*. Declared once and referenced with `phys=`, it lets an
-engine reconstruct a rigid body — and because mogen builds real watertight
-geometry, it **computes the weight and centre of gravity for you** from the
-mesh. mogen runs no simulation; this is metadata written to `node.extras`.
+A `physics` substance is an object's *feel* (as `material` is its look). mogen
+runs no simulation; it computes weight and centre of gravity from the mesh and
+writes them to `node.extras.physics` for an engine to build a rigid body.
 
 ```
-material "wood" (color=[0.55, 0.35, 0.18])            // look
-physics  "oak"  (weight=700kg/m3, friction=0.55, bounce=0.15)  // feel
+material "wood" (color=[0.55, 0.35, 0.18])
+physics  "oak"  (weight=700kg/m3, friction=0.55, bounce=0.15)
 
 scene {
-  box "crate" (size=[1, 1, 1], mat="wood", phys="oak")   // → weighs 700 kg
+  box "crate" (size=[1, 1, 1], mat="wood", phys="oak")   // → 700 kg
+  box "prop"  (size=[1, 1, 1], phys="oak", weight=5kg)   // → exactly 5 kg
 }
 ```
 
-Attributes: `weight` (a weight **per cubic metre**, e.g. `700kg/m3` — density in
-human words, not the jargon "density"), `friction` (`0` ice … `1` rubber), and
-`bounce` (`0` dead thud … `1` superball). A geometry node references a substance
-with `phys="oak"`; the object's weight is `weight_per_m3 × volume` and its
-centre of gravity is the mesh centroid, both auto-computed and written into
-`node.extras.physics`. A flat per-node `weight=5kg` overrides the computed value
-for props whose weight shouldn't follow from their size.
+| attribute | value | default | meaning |
+|---|---|---|---|
+| `weight` | per cubic metre (`700kg/m3`) | `1000kg/m3` | density; `density=` is not accepted |
+| `friction` | `0` (ice) … `1` (rubber), some engines allow `>1` | `0.5` | grip |
+| `bounce` | `0` (dead) … `1` (superball) | `0.0` | restitution |
 
-`phys=` **inherits** down the hierarchy like `mat=`: set it on a `group` and
-every child without its own `phys=` inherits it and weighs itself. A group that
-carries a substance but no mesh of its own reports the **compound** weight and
-mass-weighted centre of gravity of its whole subtree, so an engine can treat the
-assembly as one rigid body. An explicit group `weight=` overrides that group's
-computed mass while retaining the geometry-derived centre of gravity. The
-weight override does not propagate to children; enclosing compounds sum the
-mesh-bearing descendants without double-counting nested groups. See the
-[physics guide](./physics.md#compound-bodies) for a worked example and export
-rules for empty groups.
+Substance names carry no built-in constants and are scoped to the declaring
+file. `mat=` and `phys=` are independent.
 
-Weight units carry a dimension — a mass literal (`5kg`) is only valid on
-`weight=`; using one elsewhere (`size=[5kg,1,1]`) is a parse error.
+- **weight** = `weight_per_m3 × enclosed mesh volume`, including world scale (`scale=2` ⇒ 8×). Node `weight=` overrides it.
+- **centre of gravity** = volume centroid, node-local; always geometry-derived, even when `weight=` is overridden.
+- Both are computed after attach, conform and skin binding, from final geometry and transforms.
+- `phys=` **inherits** like `mat=`; a descendant's own `phys=` overrides.
+- A node with a substance but no own mesh (e.g. `group`) reports the **total** weight and mass-weighted centre of gravity of its mesh descendants, so it can be one rigid body. A group `weight=` (even `0`) overrides its total but keeps the descendant-derived centre of gravity; it doesn't propagate to children, and enclosing compounds sum mesh-bearing descendants, not nested groups' overrides.
 
-See [`physics.md`](./physics.md) for the full spec: weight units, the `extras`
-shape engines read, validation codes, and current limitations.
+```mog
+physics "oak" (weight=700kg/m3)
+scene {
+  group "assembly" (phys="oak", weight=5kg, pos=[10,20,30], rot=[0,0,90], scale=2) {
+    group "parts" {                                  // 4 kg
+      box "light" (size=[4,1,1], x=-1, weight=1kg)
+      box "heavy" (size=[4,1,1], x=3, weight=3kg)
+    }
+  }
+}
+```
+
+`assembly` weighs 5 kg with local centre of gravity `[2, 0, 0]`
+(`(-1×1 + 3×3) / 4`); its own transform doesn't change that local point.
+- Export mesh-merge keeps a combined body when all merged leaves share a substance; mixed substances drop physics.
+- No inertia tensor is emitted. Collision shape comes from `collider=` or generator colliders.
+
+```json
+"extras": { "physics": {
+  "material": "oak", "weight_per_m3": 700.0, "friction": 0.55, "bounce": 0.15,
+  "weight": 700.0, "center_of_gravity": [0.0, 0.0, 0.0]
+} }
+```
+
+`weight` is emitted when a computed mass or explicit override exists;
+`center_of_gravity` only when a centroid was computed (meshless compound groups
+included). An empty group with `phys="oak", weight=5kg` exports `weight: 5`
+and no `center_of_gravity`.
+
+Validation: `E0105` unknown substance; `E0214` unnamed `physics`;
+`W0211`/`W0212`/`W0213` non-positive `weight`, negative `friction`, `bounce`
+outside `[0, 1]`; `W0102` unknown attribute (including `density=`); `W0215`
+node `weight=` without `phys=` on or inherited by the node (value would be
+dropped).
 
 ---
 
 ## Decals
 
-A `decal` is a transparent image (logo, label, sticker, seal) projected
-onto a surface. It lowers to a thin double-sided quad floating slightly
-off the parent, with an auto-synthesised `alpha_mode="blend"` material
-whose albedo is an RGBA PNG.
+A `decal` is a transparent image projected onto a surface: a thin double-sided
+quad with an auto-generated `alpha_mode="blend"` material using an RGBA PNG.
 
 ```
 decal "logo" (
@@ -1185,72 +1050,43 @@ decal "logo" (
 )
 ```
 
-Attributes:
+- `size` — `[w, h]`, default `[0.5, 0.5]`. XY quad facing local +Z; orient with `rot=`/`rx`/`ry`/`rz`.
+- `prompt` — image description for `mogen textures` (transparent-background RGBA, no chroma key). The result path is written back as `image="…"`. Defaults to the decal's name when neither `prompt` nor `image` is set.
+- `image` — existing RGBA PNG path; wins over `prompt`.
+- `tint` — vec3 multiplier, default `[1, 1, 1]`.
+- `roughness` — default `0.6`.
+- `offset` — +Z gap from the surface, default `0.001`.
 
-- `size` — `[w, h]` in local units. Default `[0.5, 0.5]`. The decal is a
-  flat XY quad whose normal points along its local +Z; rotate the decal
-  with `rot=` / `rx`/`ry`/`rz` to point its face wherever you need.
-- `prompt` — image description handed to Gemini when running
-  `mogen textures`. Asks for an RGBA PNG with a fully transparent
-  background; the resolved file path is spliced back into the source as
-  `image="…"` for reproducibility.
-- `image` — explicit path to an existing RGBA PNG (relative to the `.mog`
-  file). Wins over `prompt=`; skips the LLM call entirely.
-- `tint` — vec3 `[r, g, b]` multiplied against the decal's albedo.
-  Default `[1, 1, 1]` (no tint).
-- `roughness` — `0.0`–`1.0`. Default `0.6`.
-- `offset` — `+Z` gap from the surface (avoids z-fighting); default
-  `0.001`. Raise on coarse geometry.
+`mat=` is rejected. Each decal gets its own material `__decal_<name>` and is
+never merged by the export merge pass.
 
 ### Curved surfaces: `on=` / `at=`
 
-For flat surfaces, parent the decal under the surface and use `pos=`. For
-curved surfaces, `on=`/`at=` synthesise a `conform` patch so the decal
-hugs the curvature.
+On flat surfaces, parent the decal and use `pos=`. On curved ones, `on=`/`at=`
+generate a `conform` patch:
 
 ```
 ellipsoid "bag" (size=[1.0, 0.5, 0.5], mat="leather") {
   connector "front_spot" (at=[0.0, 0.0, 0.25], dir=[0, 0, 1])
 }
-decal "bag_logo" (
-  size = [0.18, 0.10],
-  on   = "bag",
-  at   = "front_spot",
-  prompt = "embroidered MoGen wordmark, cream thread on dark leather"
-)
+decal "bag_logo" (size=[0.18, 0.10], on="bag", at="front_spot",
+                  prompt="embroidered MoGen wordmark, cream thread on dark leather")
 ```
 
-- `on` — name of the target node to conform onto. Triggers the shortcut.
-- `at` — required when `on=` is set; names the connector on the target that
-  acts as the patch anchor.
-- `up` — optional `x|y|z`; which local axis points along the surface normal.
-  Defaults to `z` (the decal quad's face direction).
-- `lift` — optional outward offset along the surface normal, applied during
-  conform. Layered on top of the per-mesh `offset=` value, so use `lift=`
-  on coarse target geometry where you need extra separation. Defaults to 0.
+- `on` — target node.
+- `at` — required with `on`; anchor connector on the target.
+- `up` — `x|y|z` axis along the surface normal, default `z`.
+- `lift` — extra outward offset on top of `offset=`, default `0`.
 
-When `on=` is set the decal is reparented under the target. Its `pos=` is
-dropped (positioning comes from `at=`), but `rot=` and `scale=` are baked
-into the artwork before projection — so `rz=90` spins the logo in the
-tangent plane, `scale=[2, 1, 1]` widens it. Off-plane rotations work but
-rarely produce what authors want; reach for `rz=` for "spin the logo."
-
-If neither `prompt=` nor `image=` is set, the decal's name is used as the
-prompt. Rules:
-
-- `mat=` is rejected — decals own their material. Use `tint`/`roughness`.
-- Each decal gets its own auto-named material (`__decal_<name>`) and is
-  never merged into same-material siblings by the export merge pass.
-- `mogen textures` asks Gemini for transparent-background RGBA directly;
-  there is no chroma-key step.
-- `at=`, `up=`, `lift=` are validation errors without `on=`.
+`at=`/`up=`/`lift=` without `on=` are errors. With `on=`, the decal is
+reparented under the target and `pos=` ignored; `rot=`/`scale=` apply in the
+tangent plane (`rz=90` spins the logo, `scale=[2,1,1]` widens it).
 
 ---
 
 ## Connectors
 
-Connectors are oriented frames that a node exposes so other nodes can attach
-to it. They do not produce geometry.
+Oriented frames a node exposes for attachment; no geometry.
 
 ```
 box "seat" (pos=[0, 0.5, 0], size=[1.0, 0.1, 1.0]) {
@@ -1259,36 +1095,29 @@ box "seat" (pos=[0, 0.5, 0], size=[1.0, 0.1, 1.0]) {
 }
 ```
 
-Attributes:
-
 | attribute | value | default |
 |---|---|---|
 | `at` | `vec3` | `[0, 0, 0]` |
-| `dir` | `vec3` (any nonzero) | `[0, 1, 0]` |
-| `tag` | string or ident | empty |
-| `radius` | number | — (unset) |
+| `dir` | nonzero `vec3` | `[0, 1, 0]` |
+| `tag` | string/ident | empty |
+| `radius` | number | unset |
 
-Stored as a position + quaternion (rotates `+Y` onto `dir`). `tag` groups
-compatible attach points (e.g. every leg top shares `tag=leg_top`) so
-fitting logic can pair them. When a node is the `child` of an `attach`,
-its `pos`/`rot` apply as a local offset on top of the alignment (so
-Studio gizmo drags persist).
+Stored as position + quaternion rotating `+Y` onto `dir`. `tag` groups
+compatible attach points.
 
 ---
 
 ## Attach: rigid alignment of two connector frames
 
-`attach` aligns a child's `plug` connector with a parent's `socket`,
-then reparents the child under the parent. Rigid alignment with optional
-offset + roll.
+Aligns the child's `plug` with the parent's `socket` and reparents the child.
 
 ```
 scene {
   cylinder "trunk"  (radius=0.2, height=1.0) {
-    connector "top" (at=[0, 0.5, 0], dir=[0, 1, 0], tag=trunk_top)
+    connector "top" (at=[0, 0.5, 0], dir=[0, 1, 0])
   }
   sphere   "canopy" (radius=0.5) {
-    connector "stem" (at=[0, -0.5, 0], dir=[0, -1, 0], tag=canopy_stem)
+    connector "stem" (at=[0, -0.5, 0], dir=[0, -1, 0])
   }
   attach (parent="trunk", child="canopy", socket="top", plug="stem")
 }
@@ -1296,167 +1125,115 @@ scene {
 
 | attribute | required | default | effect |
 |---|---|---|---|
-| `parent` | yes | — | name of the node carrying the `socket` connector |
-| `child`  | yes | — | name of the node carrying the `plug` connector |
-| `socket` | no  | `"top"` | connector name on `parent` |
-| `plug`   | no  | `"bottom"` | connector name on `child` |
-| `offset` | no  | `0.0` | gap (m) along the socket's outward direction; positive lifts the child away from the parent |
-| `twist`  | no  | `0.0` | roll (degrees) around the socket's axis after alignment |
+| `parent` | yes | — | node with the `socket` |
+| `child` | yes | — | node with the `plug` |
+| `socket` | no | `"top"` | connector on `parent` |
+| `plug` | no | `"bottom"` | connector on `child` |
+| `offset` | no | `0.0` | gap (m) along the socket direction |
+| `twist` | no | `0.0` | roll (deg) around the socket axis |
 
-The child is reparented under the parent and its local TRS recomputed so
-the two connector frames coincide (`+offset` along the socket normal,
-`twist` around it). Author `pos=`/`rot=` on the child remain additive
-offsets on top of the alignment (so Studio gizmo drags survive rebuilds).
-
-`attach` runs per-instance inside `array`/`mirror` — one declaration glues
-every replicated copy.
+The child's own `pos=`/`rot=` are applied as an additional offset after
+alignment. Inside `array`/`mirror`, `attach` applies to every copy.
 
 ---
 
 ## Conform: moulding a primitive onto a target surface
 
-`conform` deforms a child primitive's *vertex positions* so it lies on a
-target mesh's surface. It has two modes:
+`conform` deforms a child's vertices onto a target mesh surface (where `attach`
+only aligns rigidly). Mode is chosen by attrs; mixing or omitting both is an
+error.
 
-- **Path mode (`from=`/`to=`)** — stretches a strip or tube between two
-  connectors. Zips, labels, trim, hoses, ribbons, seams.
-- **Patch mode (`at=`)** — bends a flat/disc child onto the local surface
-  curvature at one anchor connector. Pockets, decals, plates, eye spots.
-
-Conform deforms vertices where `attach` would only align rigidly. The mode
-is picked by the attrs supplied; mixing or omitting both is an error.
-
-```
-// Path mode — strip stretched along a curve.
-conform (target="bag", child="zip", from="zip_a", to="zip_b",
-         along=x, lift=0.005)
-
-// Patch mode — disc anchored at a single point.
-conform (target="bag", child="pocket", at="pocket_spot", lift=0.002)
-```
+- **Path mode (`from=`/`to=`)** — strip or tube stretched between two connectors (zips, trim, hoses).
+- **Patch mode (`at=`)** — flat child bent onto the surface around one connector (pockets, decals, plates).
 
 ### Shared attributes
 
 | attribute | required | default | effect |
 |---|---|---|---|
-| `target` | yes | — | name of the surface mesh node to mould onto |
-| `child` | yes | — | name of the primitive whose vertices get deformed |
-| `lift` | no | `0.0` | outward offset along the surface normal (m) — typically a fraction of a millimetre to avoid z-fighting |
-| `reparent` | no | `1` | reparent child under target after conform; pass `0` to keep its original parent |
+| `target` | yes | — | surface mesh node |
+| `child` | yes | — | primitive to deform |
+| `lift` | no | `0.0` | outward offset along the normal (m) |
+| `reparent` | no | `1` | `1`: child moves under target with identity transform (its `pos=`/`rot=` discarded). `0`: keeps its parent; mesh is transformed back into its frame |
 
 ### Path mode — `from=` / `to=`
 
-Each child vertex's coordinate on the `along` axis becomes a position along
-the surface path; the perpendicular axes lie tangent / normal to the surface
-at each sample.
+Each vertex's `along` coordinate maps to a position on the path; the other
+axes lie tangent/normal to the surface. The path is chord-interpolated then
+snapped to the surface (not a true geodesic), so raise `samples` on
+high-curvature targets.
 
 | attribute | required | default | effect |
 |---|---|---|---|
-| `from` | yes | — | connector name on `target` — start of the path |
-| `to` | yes | — | connector name on `target` — end of the path |
-| `along` | no | `x` (flat strips) / `y` (tubes) | which child-local axis is the path axis |
-| `width` | no | inferred from `along` | child-local axis perpendicular to path, tangent to surface |
-| `height` | no | inferred from `along` | child-local "thickness" axis (along surface normal) |
-| `samples` | no | `64` | path subdivisions (clamped to ≥ 2). Increase for high-curvature surfaces |
-| `twist` | no | `0` | total roll (degrees) around the path tangent across the strip |
+| `from` | yes | — | start connector on `target` |
+| `to` | yes | — | end connector on `target` |
+| `along` | no | `x` (strips) / `y` (tubes) | child path axis |
+| `width` | no | inferred | child axis tangent to surface |
+| `height` | no | inferred | child axis along the normal |
+| `samples` | no | `64` | path subdivisions (≥ 2) |
+| `twist` | no | `0` | roll (deg) ramped from start to end |
 
-**Compatible primitives** (path mode):
-
-- **Flat strips**: `box`, `plane`, `quad`, `curved_plane`, `slab`, `post`, `panel`, `wall`, `spline_ribbon`
-- **Tubes**: `cylinder`, `capsule`, `tube`, `spline_tube` (cross-section ring rotates with the surface frame)
-- **Imported meshes** via `mesh "..." (src="...")`: accepted, but `along=` is required
-
-### Patch mode — `at=`
-
-Each child vertex is independently snapped to its closest point on the target
-surface; the child's `up` axis becomes the surface-outward direction at every
-vertex. This makes flat decals (a disc, a quad) bend to follow curvature
-locally without forcing the author to pick a path or supply two endpoints.
-
-| attribute | required | default | effect |
-|---|---|---|---|
-| `at` | yes | — | connector name on `target` — patch centre |
-| `up` | no | `y` (most flat primitives) / `z` (`quad`, `leaf_card`) | which child-local axis aligns with the surface outward normal |
-
-**Compatible primitives** (patch mode):
-
-- **Flat decals**: `disc`, `plane`, `quad`, `curved_plane`, `leaf_card`
-- **Box-likes used as thin patches**: `box`, `slab`, `panel`, `wall` — give them a small extent on the `up` axis
-- **Round primitives with a flat side**: `cylinder`, `hemisphere`, `half_cylinder` (a thin cylinder makes a perfect round disc)
-- **Imported meshes**: accepted, but `up=` is required
-
-### Rejected primitives
-
-Closed shapes with no canonical surface axis (`sphere`, `ellipsoid`,
-`icosphere`, `torus`, `torus_arc`, `superellipsoid`, `pyramid`, `cone`,
-`frustum`, `lathe`, `prism`, `rounded_box`, `wedge`) and CSG result nodes
-are rejected in both modes. The error message suggests the other mode if
-it would have worked.
-
-### Tessellation
-
-The deformation reads each child vertex's `along`-axis coordinate as its
-path position, so a bare `box` (only two distinct values per axis) can't
-bend. `conform` auto-inserts planar cuts perpendicular to `along` when the
-child is coarser than `samples / 4` segments (clamped 8–64). Author
-subdivision (`curved_plane (segments_u=48)`, etc.) overrides.
-
-### Examples
+Compatible: strips `box`, `plane`, `quad`, `curved_plane`, `slab`, `post`,
+`panel`, `wall`, `spline_ribbon`; tubes `cylinder`, `capsule`, `tube`,
+`spline_tube`; `mesh` (requires `along=`).
 
 ```
-// Path mode — zip stretched between two connectors on a curved bag.
 scene {
   ellipsoid "bag" (size=[1.0, 0.5, 0.5], mat="leather") {
     connector "zip_a" (at=[-0.4, 0.20, 0.22], dir=[0, 0, 1])
     connector "zip_b" (at=[ 0.4, 0.20, 0.22], dir=[0, 0, 1])
   }
   box "zip" (size=[0.8, 0.012, 0.04], mat="rubber")
-  conform (target="bag", child="zip", from="zip_a", to="zip_b",
-           along=x, lift=0.005)
+  conform (target="bag", child="zip", from="zip_a", to="zip_b", along=x, lift=0.005)
 }
 ```
 
+Tubes use `along=y`; wrap-around labels use `along=x` on a `curved_plane`.
+
+### Patch mode — `at=`
+
+Each vertex snaps to its closest surface point; the child's `up` axis follows
+the surface normal.
+
+| attribute | required | default | effect |
+|---|---|---|---|
+| `at` | yes | — | patch-centre connector on `target` |
+| `up` | no | `y` / `z` for `quad`, `leaf_card` | child axis aligned with the normal |
+
+Compatible: `disc`, `plane`, `quad`, `curved_plane`, `leaf_card`; thin `box`,
+`slab`, `panel`, `wall`; `cylinder`, `hemisphere`, `half_cylinder`; `mesh`
+(requires `up=`).
+
 ```
-// Patch mode — round pocket bent onto the bag's side.
-scene {
-  superellipsoid "body" (size=[0.6, 0.3, 0.3], ew=1.5, ns=1.2, mat="fabric") {
-    connector "spot" (at=[0.3, 0, 0], dir=[1, 0, 0])
-  }
-  disc "pocket" (radius=0.08, segments=32, mat="accent")
-  conform (target="body", child="pocket", at="spot", lift=0.002)
-}
+conform (target="body", child="pocket", at="spot", lift=0.002)
 ```
 
-Tube children use `along=y` (the cylinder's long axis). Wrap-around paths
-(e.g. a label around a bottle) use `along=x` on a `curved_plane`.
+### Rejected primitives
+
+`sphere`, `ellipsoid`, `icosphere`, `torus`, `torus_arc`, `superellipsoid`,
+`pyramid`, `cone`, `frustum`, `lathe`, `prism`, `rounded_box`, `wedge`, and CSG
+results are rejected in both modes (the error suggests the other mode when it
+would work).
+
+### Tessellation
+
+Children coarser than `samples / 4` segments along `along` get planar cuts
+inserted automatically (clamped 8–64), so a bare `box` can bend. Explicit
+subdivision (`segments_u=48`, …) overrides.
 
 ### Pass ordering and reparenting
 
-Conform runs after `attach` and before skin binding. With `reparent=1`
-(default) the child is moved under the target with identity local
-transform; the child's user `pos=`/`rot=` is discarded. `reparent=0` keeps
-the original parent and transforms the deformed mesh back into the child's
-local frame.
-
-### Path generation
-
-Built by chord-and-snap: each sample's chord-interpolated point is
-projected onto the target via closest-point query. Not a true geodesic;
-crank `samples=` for high-curvature paths. `twist` ramps roll around the
-path tangent from 0 at the start to `twist°` at the end.
+Conform runs after `attach` and before skin binding.
 
 ### Reserved (not yet implemented)
 
-Lowering rejects with a clear message: `direction` (projection-mode decal
-splat), `curve` (only `"geodesic_lerp"` in v1), `via` (multi-segment paths).
+Rejected with an error: `direction` (projection splat), `curve` (only
+`"geodesic_lerp"`), `via` (multi-segment paths).
 
 ---
 
 ## Replicators: `mirror`, `array`, `stack`, `grid`
 
-Wrapper nodes that create one parent group and either replicate or lay out
-their children. All four accept the usual transform attributes so the whole
-cluster can be positioned as a unit.
+Wrapper nodes that replicate or lay out children; all accept transform attrs.
 
 ### `mirror`
 
@@ -1466,33 +1243,21 @@ mirror "pair" (axis=x) {
 }
 ```
 
-`axis` is `x`, `y`, or `z` (ident or string). The body is emitted twice —
-once unchanged and once with the named axis negated. Use it for left/right
-symmetry where only one side is authored by hand.
-
-Both copies share the body's node names, and both bind when the mesh
-carries `skin="…"`.
+`axis` = `x`/`y`/`z`. Emits the body unchanged plus a copy negated on the axis.
+Both copies keep the body's names and both bind when skinned.
 
 #### `flip_bind=1`: rebind the mirrored copy to the symmetric bone
 
-Module parameters are numeric-only, so skin-bound limb pairs that differ
-**only** in their bone suffix (`shoulder_l` ↔ `shoulder_r`) can't be
-DRY'd via a module. `flip_bind=1` solves it on `mirror`:
-
 ```
 mirror "sleeves" (axis=x, flip_bind=1) {
-  chamfered_box "sleeve" (
-    pos=[0.135, 0.695, 0], size=[0.052, 0.158, 0.052],
-    skin="rig", bind="shoulder_l", faceted=1
-  )
+  chamfered_box "sleeve" (pos=[0.135, 0.695, 0], size=[0.052, 0.158, 0.052],
+                          skin="rig", bind="shoulder_l")
 }
 ```
 
-emits the authored copy bound to `shoulder_l` AND a mirrored copy bound
-to `shoulder_r`. The flip swaps a trailing `_l`/`_r` on the AST-resolved
-`bind=` of every mesh-bearing descendant (authored locally or inherited
-from a wrapping `group (bind=…)`). Binds without an `_l`/`_r` suffix pass
-through unchanged. Defaults to `0`; ignored on `array`/`stack`/`grid`.
+The mirrored copy swaps a trailing `_l`/`_r` on the resolved `bind=` of every
+mesh descendant (local or inherited). Binds without the suffix are unchanged.
+Default `0`. Useful because module parameters can't be strings.
 
 ### `array`
 
@@ -1504,44 +1269,35 @@ array "legs" (count=4, around=y) {
 }
 ```
 
-Attributes:
+- `count` — copies, default `1`.
+- `around` — `x`/`y`/`z`, default `y`.
+- `start_angle` — degrees, default `0`.
 
-- `count` — number of copies (integer); default `1`.
-- `around` — `x` / `y` / `z` ident; the rotation axis. Default `y`.
-- `start_angle` — degrees offset of the first copy; default `0`.
-
-Children are cloned `count` times; the i-th copy is rotated by
-`start_angle + 360° * i / count` around `around`. Wrap in an offset
-`group` to place the first copy off-axis.
+Copy *i* is rotated `start_angle + 360° * i / count`. Offset with a `group`.
 
 ### `stack`
 
-Lays children out along one axis using each child's computed AABB as its
-slot — no manual half-size math.
+Lays children along an axis using each child's AABB.
 
 ```
 stack "cake" (axis=y, gap=0.02) {
   slab "tier_a" (size=[1.4, 0.25, 1.4])
   slab "tier_b" (size=[1.0, 0.20, 1.0])
-  slab "tier_c" (size=[0.6, 0.15, 0.6])
 }
 ```
 
-Attributes:
-
 | attribute | value | default | effect |
 |---|---|---|---|
-| `axis` | `x`, `y`, `z` | `y` | stacking direction |
-| `gap` | number | `0` | spacing between consecutive children |
-| `align` | `center`, `start`, `end` | `center` | alignment on the two perpendicular axes |
-| `pack` | `start`, `center`, `end` | `start` | where the whole stack sits along `axis`: `start` keeps the first child at origin; `center` centres the stack; `end` puts the last child's far face at origin |
+| `axis` | `x`/`y`/`z` | `y` | direction |
+| `gap` | number | `0` | spacing |
+| `align` | `center`/`start`/`end` | `center` | on perpendicular axes |
+| `pack` | `start`/`center`/`end` | `start` | `start`: first child at origin; `center`: stack centred; `end`: last child's far face at origin |
 
-Each child's `pos`/`x`/`y`/`z` is **additive** inside its slot.
+Children's `pos`/`x`/`y`/`z` are added within their slot.
 
 ### `grid`
 
-N-dimensional replicator. Creates `count[0] × count[1] × count[2]` copies of
-the body, each offset by `step[0..3] * [i, j, k]`:
+`count[0] × count[1] × count[2]` copies offset by `step * [i, j, k]`.
 
 ```
 grid "tiles" (count=[5, 1, 3], step=[0.6, 0, 0.6], center=1) {
@@ -1549,23 +1305,19 @@ grid "tiles" (count=[5, 1, 3], step=[0.6, 0, 0.6], center=1) {
 }
 ```
 
-Attributes:
-
 | attribute | value | default |
 |---|---|---|
 | `count` | vec3, list, or scalar | `[1, 1, 1]` |
 | `step` | vec3, list, or scalar | `[0, 0, 0]` |
-| `center` | `0` / `1` | `0` — when `1`, the grid is centred on the wrapper origin |
+| `center` | `0`/`1` | `0`; `1` centres on the origin |
 
-A scalar `count`/`step` applies to X (1D rows); a 2-element list to X/Z
-(floor patterns); a vec3 for 3D.
+Scalar = X; 2-element list = X/Z; vec3 = XYZ.
 
 ---
 
 ## CSG: `union` / `difference` / `intersect`
 
-CSG ops fold their children into a single mesh that hangs off the op node
-itself — the operand children do not become separate scene nodes.
+Fold children into one mesh on the op node; operands don't become scene nodes.
 
 ```
 difference "wall_with_door" (mat="concrete") {
@@ -1574,100 +1326,66 @@ difference "wall_with_door" (mat="concrete") {
 }
 ```
 
-- `union` — N ≥ 1 operands. Optional `smooth=<radius>` swaps boolean union
-  for an `smin` blend (used by humanoid stdlib for limb-to-torso fillets;
-  a few cm at human scale). `smooth=0` (default) is the hard boolean.
-- `difference` — first operand minus every subsequent operand.
-- `intersect` — N ≥ 2 operands; the shared volume.
+- `union` — N ≥ 1. `smooth=<radius>` blends instead of hard union (a few cm at human scale); default `0`.
+- `difference` — first operand minus the rest.
+- `intersect` — N ≥ 2; shared volume.
 
-Operand transforms bake into vertices at eval time. Connectors / `material`
-children on the CSG node apply; those on operands are ignored. Output is
-cleaned (weld, degen-tri cull, normal recompute) for a watertight mesh.
+Operand transforms are baked in. Connectors/materials on the CSG node apply;
+those on operands are ignored. Output is watertight.
 
 ---
 
 ## Implicit-field blob: `blob`
 
-`blob { … }` meshes its children as a true SDF field via surface nets —
-distinct from both `metaball` (sphere-cluster on a vertex-fillet approximate
-union) and `union(smooth=k)` (vertex-fillet pull applied to a sharp mesh
-CSG). Use `blob` whenever you want **smooth concave junctions** —
-eye sockets melted into a cranium, the cleft of a heart, a nostril dipping
-into a snout. The vertex-fillet path breaks down on concave junctions and
-large blend radii; `blob` does not.
+Meshes children as a blended SDF. Unlike `metaball`/`union(smooth=)`, it
+handles **concave junctions** and large blend radii (eye sockets, a heart's
+cleft, nostrils).
 
 ```
 blob "heart" (blend=0.22, resolution=80, subdivide=1, mat="heart") {
-  sphere    (radius=0.45, pos=[-0.30, 0.32, 0])      // left lobe
-  sphere    (radius=0.45, pos=[ 0.30, 0.32, 0])      // right lobe
-  ellipsoid (size=[0.85, 1.00, 0.85], pos=[0, -0.25, 0])   // apex
+  sphere    (radius=0.45, pos=[-0.30, 0.32, 0])
+  sphere    (radius=0.45, pos=[ 0.30, 0.32, 0])
+  ellipsoid (size=[0.85, 1.00, 0.85], pos=[0, -0.25, 0])
   sphere    (radius=0.20, pos=[0, 0.58, 0], op=subtract)   // cleft
 }
 ```
 
 ### Attributes
 
-- `blend` — smooth-min radius in scene units. `0` collapses to a sharp
-  union. Typical organic values: `0.05–0.25`. Higher = more melt.
-- `resolution` — voxels along the longest world-space axis of the AABB
-  enclosing every additive child (plus padding). Default `96`; clamped to
-  `[16, 256]`. Cost scales O(N³); `128` is usually plenty. Scales with the
-  active `lod_scale` (linear) and per-node `lod=`.
-- `subdivide` — optional Loop subdivision count applied to the surface-nets
-  output. Default `0` (surface nets is already clean enough for most uses);
-  bump to `1` only when you need extra shading smoothness. Stepped by
-  `round(log2(lod_scale))`, capped at 3. See
-  [Mesh subdivision](#mesh-subdivision-subdivide).
-- `mat`, `pos`, `rot`, `scale`, `role`, `tags` — same as any other mesh node.
+- `blend` — smooth-min radius; `0` = sharp. Typical `0.05–0.25`.
+- `resolution` — voxels along the longest axis, default `96`, clamped `[16, 256]`; cost O(N³). Scales with `lod_scale`/`lod=`.
+- `subdivide` — Loop subdivision rounds, default `0`; `1` removes voxel stairstepping, `2` is glassy (4× tris). Steps by `round(log2(lod_scale))`, max 3.
+- `mat`, `pos`, `rot`, `scale`, `role`, `tags` — as usual.
 
 ### Children
-
-Only implicit-field primitives are allowed inside a `blob`:
 
 | kind | attrs | SDF |
 |---|---|---|
 | `sphere` | `radius` | sphere |
-| `ellipsoid` | `size=[x,y,z]` | axis-aligned ellipsoid (radii are `size/2`) |
-| `box` | `size=[x,y,z]` | axis-aligned box |
-| `rounded_box` | `size`, `radius` | box with rounded edges |
-| `capsule` | `radius`, `height` | Y-axis capsule (caps at `±height/2 + radius`) |
-| `cylinder` | `radius`, `height` | Y-axis closed cylinder |
-| `torus` | `major`, `minor` | torus in XZ plane |
+| `ellipsoid` | `size` | radii `size/2` |
+| `box` | `size` | box |
+| `rounded_box` | `size`, `radius` | rounded box |
+| `capsule` | `radius`, `height` | Y-axis, caps at `±height/2 + radius` |
+| `cylinder` | `radius`, `height` | Y-axis, closed |
+| `torus` | `major`, `minor` | XZ plane |
 
-Each child accepts `pos` / `rot` / `scale`, which set the local-to-blob
-transform applied before SDF evaluation. Non-uniform `scale` is allowed
-(distances are compressed by the smallest scale axis as a conservative
-Lipschitz fix); for elongated shapes prefer `ellipsoid` over a scaled
-`sphere`.
-
-The optional `op="subtract"` (synonyms: `"sub"`, `"carve"`) makes the child
-a smooth carver instead of an additive mass. At least one additive child
-is required — a blob of only subtracts has nothing to carve into.
+Children take `pos`/`rot`/`scale` (non-uniform scale allowed but conservative;
+prefer `ellipsoid`). `op="subtract"` (or `"sub"`, `"carve"`) makes a smooth
+carver; at least one additive child is required.
 
 ### Notes
 
-- Output is one mesh, one node. Children do not become separate scene nodes.
-- The mesh is always watertight (surface nets closes any iso it extracts).
-- UVs are bbox-projected (XZ planar). Pair with `uv_mode="tile"` for
-  tileable surface textures; fitted image textures will project from above.
-- A `blob` without `subdivide` shows mild stairstepping from the voxel
-  grid; one round of Loop subdivision polishes it. Two rounds is glassy
-  but quadruples tri count.
-
-See [`examples/nature/skull.mog`](../examples/nature/skull.mog) and
-[`examples/nature/heart.mog`](../examples/nature/heart.mog) for full
-worked examples.
+- One mesh, one node, always watertight.
+- UVs are XZ planar projection — use `uv_mode="tile"`.
+- Examples: `examples/nature/skull.mog`, `examples/nature/heart.mog`.
 
 ---
 
 ## Mesh subdivision: `subdivide`
 
-Add `subdivide = N` to any mesh-producing node — primitives (`sphere`,
-`box`, `lathe`, …), CSG ops (`union` / `difference` / `intersect`), or
-`blob` — to run `N` rounds of Loop subdivision on the resulting mesh
-before it is attached to the scene graph. Each round splits every
-triangle into four; `N` is clamped to `[0, 3]` so the cap is `64×` the
-input triangles.
+`subdivide = N` on any mesh-producing node (primitive, CSG op, `blob`) applies
+N rounds of Loop subdivision (each ×4 triangles), clamped `[0, 3]`. No-op on
+`group`, `scene`, `mirror`, `array`, `stack`, `grid`.
 
 ```
 union (subdivide=1, mat="bone") {
@@ -1676,51 +1394,37 @@ union (subdivide=1, mat="bone") {
 }
 ```
 
-Use `subdivide` to polish staircased blob outputs, smooth a low-poly
-primitive without re-tessellating it (`icosphere(radius=1, subdivide=2)`
-is often nicer than `icosphere(subdivisions=4)` because Loop smooths
-existing topology), or refine a CSG output for shading. It is a no-op on
-container kinds with no own mesh (`group`, `scene`, `mirror`, `array`,
-`stack`, `grid`).
+`icosphere(radius=1, subdivide=2)` is often smoother than `subdivisions=4`.
 
 ---
 
 ## Solid groups: `solid`
 
-`solid { … }` is a group-like container that defers CSG union to export time.
-Its same-material, non-skinned leaf children are merged into a single mesh,
-so overlapping or touching primitives of the same material read as one hollow
-shape — interior faces where pieces meet get eliminated.
+A group whose same-material, non-skinned leaf children are CSG-unioned into one
+mesh at export, removing interior faces.
 
 ```
 solid "shell" (mat="stone", cleanup="coplanar") {
-  box "floor"   (pos=[0, 0.1, 0],   size=[6.2, 0.2, 4.2])
-  box "north"   (pos=[0, 1.7, 2.0], size=[6.0, 3.0, 0.2])
-  box "south"   (pos=[0, 1.7,-2.0], size=[6.0, 3.0, 0.2])
-  box "east"    (pos=[ 3.0, 1.7, 0], size=[0.2, 3.0, 4.0])
-  box "west"    (pos=[-3.0, 1.7, 0], size=[0.2, 3.0, 4.0])
+  box "floor" (pos=[0, 0.1, 0],   size=[6.2, 0.2, 4.2])
+  box "north" (pos=[0, 1.7, 2.0], size=[6.0, 3.0, 0.2])
+  box "east"  (pos=[3.0, 1.7, 0], size=[0.2, 3.0, 4.0])
 }
 ```
 
-- Children lower as normal scene nodes (still `attach`-able, still
-  editable); the merge is export-time only.
-- Only same-material leaf siblings merge. Different-material children stay
-  separate so textures/PBR factors are preserved.
-- Skinned meshes, joint-referenced nodes, and groups pass through unchanged.
+- Children remain normal, editable, `attach`-able nodes until export.
+- Different-material children stay separate.
+- Skinned meshes, joint-referenced nodes, and groups pass through.
 
 ### `cleanup="coplanar"`
 
-Drops triangle pairs that share a plane with opposite normals — fixes the
-"two boxes touch but don't overlap" case (perpendicular walls at a corner)
-that CSG union alone can't resolve. Values: `"coplanar"` or `"none"`
-(default).
+Removes coplanar opposite-facing triangle pairs — fixes boxes that touch without
+overlapping, which union can't. Values `"coplanar"` / `"none"` (default).
 
 ---
 
 ## Modules: `module` and `use`
 
-Modules are parametric sub-graphs. A declaration lives at the top level of
-the file:
+Parametric sub-graphs declared at top level:
 
 ```
 module "leg" (height=0.5, radius=0.05) {
@@ -1729,43 +1433,27 @@ module "leg" (height=0.5, radius=0.05) {
     connector "top" (at=[0, $height * 0.5, 0], dir=[0, 1, 0], tag=leg_top)
   }
 }
-```
 
-Parameters:
-
-- Defaults are either scalars (number or `$param`-expression) or constant
-  `vec3`s. vec3 defaults must be fully constant (no cross-param refs).
-  `list`/string/ident defaults are rejected.
-- Reference inside the body as `$name`, including nested vec3 expressions
-  like `[0, $h * 0.5, 0]`.
-
-Invoke with `use`:
-
-```
 scene {
-  array "legs" (count=4, around=y) {
-    group "offset" (pos=[0.45, 0, 0.45]) {
-      use "leg" (height=0.5, radius=0.05)
-    }
-  }
+  use "leg" (height=0.6)
 }
 ```
 
-Rules: `use` takes the **declared** name (unknowns error); omitted args
-fall back to defaults (unknown arg names error); modules can call modules
-(recursion rejected); `$param` outside a module body is rejected.
+- Parameter defaults: scalars (number or `$param` expression) or fully constant vec3s. List/string/ident defaults are rejected.
+- Reference as `$name`, including inside vec3s.
+- `use` takes the declared name; unknown module or arg names error; omitted args use defaults.
+- Modules may call modules; recursion is rejected. `$param` outside a module is rejected.
+
+---
 
 ## Control flow: `if`, `else`, `for`, string interpolation
 
-Inside any `{ … }` body, three control-flow constructs branch/repeat at
-module-expansion time. They run before lowering, so the resulting scene
-graph never sees `if` or `for`; only the geometry they emit.
+Evaluated at expansion time inside any `{ … }` body.
 
 ### `if (cond=…)` and `else`
 
-`cond=` accepts any expression; comparisons evaluate to `1.0`/`0.0`. An
-immediately-following sibling `else { … }` covers the false branch; a
-standalone `else` is rejected.
+`cond` is any expression (comparisons yield `1.0`/`0.0`). `else { … }` must
+immediately follow an `if` sibling.
 
 ```
 if (cond=$is_glass) {
@@ -1779,43 +1467,32 @@ else {
 ### `for (var=…, from=…, to=…[, step=…])`
 
 ```
-for (var="i", from=0, to=4) {
-  box "fence_post_$i" (size=[0.04, 0.6, 0.04],
-                       pos=[$i * 0.30, 0, 0], mat="oak")
-}
-```
-
-- `var` is a string or bare ident; `$<var>` resolves to the loop value.
-- Iteration covers `[from, to)` (Python-style); `from == to` is empty.
-- `step` defaults to `1.0`, must be non-zero; negative walks downward.
-- Module parameters and the loop var coexist; nested `for`s compose.
-
-### String interpolation
-
-Inside any string literal (including node names), `$name`/`${name}` are
-replaced with the binding's value at expansion time. Integer bindings
-render without a decimal (`leg_$i` → `leg_3`, not `leg_3.0`). `${name}`
-disambiguates when followed by `_` etc. A `$` with no identifier or
-unbound name is left literal.
-
-```
 for (var="i", from=0, to=3) {
   cylinder "leg_$i" (radius=0.05, height=0.6, pos=[$i * 0.4, 0, 0])
 }
-// Names: leg_0, leg_1, leg_2
+// leg_0, leg_1, leg_2
 ```
 
-Limitations: no chained comparisons (use `*` for AND, `+` for OR), no
-boolean `&&`/`||`/`!`, no string concat beyond interpolation.
+- `var` — string or ident; read as `$<var>`.
+- Range `[from, to)`; `from == to` is empty.
+- `step` — default `1.0`, non-zero; negative counts down.
+- Nests, and coexists with module parameters.
+
+### String interpolation
+
+`$name`/`${name}` in any string (including node names) is substituted. Integers
+render without decimals (`leg_3`). Use `${name}` before `_` etc. Unbound or bare
+`$` stays literal.
+
+No chained comparisons, `&&`/`||`/`!` (use `*` for AND, `+` for OR), or string
+concatenation.
 
 ---
 
 ## Imports: `import`
 
-Pull `module` declarations, `material` declarations, and the top-level
-`scene { … }` of another `.mog` file into the current file. The imported
-scene becomes an implicit module named after the file stem, so
-`import "chair.mog"` lets you `use "chair" ()`.
+Imports `module` and `material` declarations and the top-level `scene` of
+another file. The scene becomes a module named after the file stem.
 
 ```
 import "shared/legs.mog"
@@ -1828,58 +1505,24 @@ scene {
 }
 ```
 
-`use` accepts the standard transform shortcuts (`pos`, `rot`, `scale`,
-`x`/`y`/`z`, `rx`/`ry`/`rz`, `from`/`to`) and applies them as an implicit
-wrapping group. If the module declares a parameter with one of those
-names, the caller's value binds to the parameter instead.
-
-`import` is a top-level directive. Takes a quoted file path and an
-optional `(as=<ident>)` to override the synthesised module name.
-
-Path resolution: relative paths join onto the importing file's directory;
-absolute paths are used verbatim; paths are canonicalised before
-deduplication (so `"lib.mog"` and `"./lib.mog"` load once).
-
-How imported content is handled:
-
-- **`module` declarations** — added to the importer's module registry.
-- **`material` declarations** (top-level or inside the imported scene) —
-  added to the material registry. Texture paths are rooted at the
-  *defining* file's directory.
-- **Top-level `scene { … }`** — synthesised as `module "<stem>" () { … }`.
-  Top-level animation and skeleton declarations join that module and take
-  effect when it is instantiated; they require a scene in the imported file.
-- **`lod_scale`** — retained as that file's tessellation default. Enclosing
-  `lod=` overrides still apply; see [Per-node LOD](#per-node-lod-overrides).
-- **`meta`** — stays with its source file and does not replace the importer's
-  scene metadata.
-
-Rules:
-
-- Imports are transitive; cycles are rejected with the chain in the error;
-  double-import is a no-op.
-- Module shadowing: **stdlib < imports < user declarations**.
-- Synthesised scene-as-module name collisions across imports are a hard
-  error — rename one with `(as=chair_a)`.
-- Materials with the same name in different files remain distinct. Geometry
-  first resolves materials in its defining file, then falls back to a name
-  lookup when that file has no matching declaration.
-- Imported files support `import`, `module`, `material`, `lod_scale`, `meta`,
-  at most one top-level `scene`, and animation/skeleton declarations as above.
+- Top-level directive; `(as=<ident>)` overrides the module name.
+- Paths are relative to the importing file (absolute used as-is) and canonicalised, so each file loads once.
+- Material texture paths resolve relative to the defining file.
+- `use` accepts `pos`, `rot`, `scale`, `x`/`y`/`z`, `rx`/`ry`/`rz`, `from`/`to` as a wrapping group — unless the module declares a parameter of that name.
+- Imports are transitive; cycles error with the chain; re-imports are no-ops.
+- Shadowing: **stdlib < imports < user declarations**.
+- Scene-module name collisions error (rename with `as=`).
+- Same-named materials in different files stay distinct: geometry resolves materials in its defining file first, then falls back to a name lookup.
+- Imported files may contain `import`, `module`, `material`, `lod_scale` (kept as that file's default, see [Per-node LOD](#per-node-lod-overrides)), `meta` (stays with its file), at most one `scene`, and animation/skeleton declarations (these need a scene; they join its module and apply when instantiated).
 
 ---
 
 ## Animation: `joint`, `clip`, templates
 
-Animation lowers to glTF node-transform tracks. Every clip animates scene
-nodes (or joints — scene-node aliases with a typed DOF). Clips are
-top-level alongside `material`/`module`/`joint`. Skinning is additive
-(see [Skeletons](#skeletons-and-skinning-skeleton-bone-skin-bind)).
+Clips become glTF node-transform tracks. `joint`s and clips are top-level
+declarations. Skinning is separate (see [Skeletons](#skeletons-and-skinning-skeleton-bone-skin-bind)).
 
 ### Joints
-
-A `joint` names an articulation, picks a DOF type, and points at the scene
-node it drives.
 
 ```
 joint "door_hinge" (type=hinge, axis=[0, 1, 0], limits=[0, 100], pivot="door")
@@ -1888,9 +1531,9 @@ joint "door_hinge" (type=hinge, axis=[0, 1, 0], limits=[0, 100], pivot="door")
 | attribute | value | notes |
 |---|---|---|
 | `type` | `hinge`, `slider`, `ball`, `rotor` | DOF kind |
-| `pivot` | string — a node name | required |
+| `pivot` | node name | required |
 | `axis` | vec3 | default `[0, 1, 0]` |
-| `limits` | `[lo, hi]` list | optional; degrees (rotary) or meters (slider) |
+| `limits` | `[lo, hi]` | optional; degrees (rotary) or metres (slider) |
 
 ### Authored clips
 
@@ -1900,22 +1543,15 @@ clip "open" (seconds=1.0) {
 }
 ```
 
-- `clip` holds a single `seconds=` duration and an ordered list of `track`s.
-- `track` targets a joint (by name) or a scene node. For nodes, set
-  `prop="translation"|"rotation"|"scale"` (`pos`/`rot` aliases accepted).
-- `from`/`to` are scalars: degrees for rotation (around the joint's `axis`
-  or the track's `axis=`), distance for translation, factor for scale.
-  Emits two keyframes at `0` and `seconds`, linearly interpolated.
-- For multi-keyframe curves, pass `keys=[[t, v], …]` (strictly ascending
-  times in `[0, seconds]`). One glTF keyframe per pair, linear between.
+- `seconds` — duration.
+- `track` targets a joint or scene node; for nodes set `prop="translation"|"rotation"|"scale"` (`pos`/`rot` aliases).
+- `from`/`to` — degrees (around the joint `axis` or track `axis=`), distance, or scale factor; keys at `0` and `seconds`.
+- `keys=[[t, v], …]` — multiple keys, strictly ascending in `[0, seconds]`, linear between.
 
 ### Easing
 
-`track` and procedural templates accept `easing=` for non-linear curves.
-glTF samplers only support LINEAR/STEP/CUBICSPLINE, so MoGen bakes the
-easing into dense LINEAR samples at lower time. For authored tracks,
-easing applies between consecutive keys; for templates, it warps the
-procedural phase.
+`easing=` on tracks (between keys) and templates (warps phase). Baked into
+dense LINEAR samples.
 
 | name | shape |
 |---|---|
@@ -1923,32 +1559,27 @@ procedural phase.
 | `ease_in` / `ease_out` / `ease_in_out` | quadratic |
 | `ease_in_cubic` / `ease_out_cubic` / `ease_in_out_cubic` | cubic |
 | `ease_in_sine` / `ease_out_sine` / `ease_in_out_sine` | half-cosine |
-| `ease_in_back` / `ease_out_back` / `ease_in_out_back` | overshoots the endpoint |
-| `ease_in_bounce` / `ease_out_bounce` / `ease_in_out_bounce` | multi-stage bounce |
+| `ease_in_back` / `ease_out_back` / `ease_in_out_back` | overshoot |
+| `ease_in_bounce` / `ease_out_bounce` / `ease_in_out_bounce` | bounce |
 
 ```
 clip "hop" (seconds=0.6) {
-  track "body" (prop=translation, axis=[0, 1, 0],
-                easing=ease_out_bounce, from=0, to=0.4)
+  track "body" (prop=translation, axis=[0, 1, 0], easing=ease_out_bounce, from=0, to=0.4)
 }
-spin "fan" (target="rotor", rpm=120, easing=ease_in_out_sine)
 ```
 
 ### Procedural templates
 
-One-line declarations that expand into a full clip. They all take a
-`target="name"` pointing at a joint or a scene node.
+One-line clips; `target="name"` is a joint or node. Joint targets default to the
+joint's `axis`; node targets need `axis`.
 
 | template | extra attrs | effect |
 |---|---|---|
 | `spin` | `axis`, `rpm` (60), `easing` | continuous rotation |
-| `open_close` | `axis`, `angle` (90), `seconds` (1.0), `easing` | 0° → angle → 0° swing |
+| `open_close` | `axis`, `angle` (90), `seconds` (1.0), `easing` | 0° → angle → 0° |
 | `wave` | `axis`, `amplitude` (15°), `hz` (1.0), `easing` | sinusoidal wobble |
-| `flap` | `axis`, `amplitude` (30°), `hz` (2.0), `easing` | faster wobble, bigger amplitude |
-| `idle` | `amplitude` (0.02 m), `hz` (0.5), `easing` | tiny translation breathe |
-
-When the target is a joint, its `axis` is used by default; when it's a node,
-pass `axis` explicitly.
+| `flap` | `axis`, `amplitude` (30°), `hz` (2.0), `easing` | faster, bigger wobble |
+| `idle` | `amplitude` (0.02 m), `hz` (0.5), `easing` | small translation breathe |
 
 ```
 spin "rotor_spin" (target="rotor", axis=[0, 0, 1], rpm=30)
@@ -1959,12 +1590,8 @@ open_close "door_swing" (target="door_hinge", angle=90, seconds=1.2)
 
 ## Skeletons and skinning: `skeleton`, `bone`, `skin=`, `bind=`
 
-A `skeleton` is a hierarchy of named `bone` nodes that drives skinning
-weights on procedural meshes. Bones are ordinary scene nodes (`kind="bone"`);
-the skeleton block produces a `Skin` whose `joints` list captures every
-descendant bone in depth-first order. Bind-pose inverse matrices are
-computed automatically from the bones' world transforms at lower time, so
-the author never writes a `Mat4`.
+A `skeleton` of nested `bone` nodes produces a glTF skin (joints in depth-first
+order). Inverse bind matrices are computed from bone world transforms.
 
 ```
 scene {
@@ -1977,62 +1604,47 @@ scene {
       bone "thigh_r" (pos=[-0.10, -0.05, 0], envelope=0.25)
     }
   }
-
-  capsule "torso" (pos=[0, 1.25, 0], radius=0.18, height=0.6,
-                   mat="cloth", skin="rig")
-  sphere  "head"  (pos=[0, 1.7,  0], radius=0.12, mat="skin",
-                   skin="rig", bind="neck")
+  capsule "torso" (pos=[0, 1.25, 0], radius=0.18, height=0.6, mat="cloth", skin="rig")
+  sphere  "head"  (pos=[0, 1.7, 0], radius=0.12, mat="skin", skin="rig", bind="neck")
 }
 ```
 
 ### `skeleton` and `bone`
 
-- `skeleton "name" { … }` — declares the rig. Every child must be a
-  `bone`. Bones nest arbitrarily; `pos`/`rot`/`scale` are parent-relative.
-- `bone "name" (pos, rot, scale, envelope)` — declares a joint.
-  `envelope=` (default `0.75`) is the auto-skinner's influence radius;
-  smaller = tighter, larger = blends across more joints. Adjacent bones
-  should overlap in envelope.
-
-Skeletons are top-level or scene-level; they place themselves in the
-scene tree but carry no geometry.
+- `skeleton "name" { … }` — children must be `bone`; top-level or in `scene`; no geometry.
+- `bone "name" (pos, rot, scale, envelope)` — parent-relative transform. `envelope` (default `0.75`) is the auto-weight influence radius; neighbouring envelopes should overlap.
 
 ### Binding meshes: `skin="rig"`
 
-Any mesh-bearing node with `skin="<skel name>"` becomes skinned: lowering
-walks the skeleton, computes weights against the four nearest bones
-(capped by `envelope`), and writes `JOINTS_0`/`WEIGHTS_0` accessors.
-Group-like containers (`group`, `solid`, `stack`, `grid`, `array`,
-`mirror`, `module`, `use`) propagate `skin=` to every mesh descendant.
+A mesh node with `skin="<skeleton>"` gets automatic weights from the four
+nearest bones within their envelopes (`JOINTS_0`/`WEIGHTS_0`). `group`, `solid`,
+`stack`, `grid`, `array`, `mirror`, `module`, `use` pass `skin=` to mesh
+descendants. `skin=` on a CSG operand is lost; put it on the CSG node or a
+wrapper.
 
 ### Rigid pinning: `bind="bone_name"`
 
-`bind="bone"` alongside `skin=` pins every vertex rigidly to a single
-bone (weight 1.0, no envelope blend) — accessories that track a joint
-without deforming: heads, helmets, backpacks, hand-held props. Propagates
-through groups like `skin=`. For `_l`/`_r` pairs, wrap one side in
-`mirror (axis=x, flip_bind=1)` (see [`mirror`](#mirror)).
+With `skin=`, `bind="bone"` weights every vertex 1.0 to that bone (heads,
+helmets, props). Propagates like `skin=`. For `_l`/`_r` pairs see
+[`mirror`](#mirror) `flip_bind=1`.
 
 ### Animating bones
 
-Bones are scene nodes — drive them with regular `clip { track … }`:
+Bones are scene nodes; animate with `clip`/`track`, e.g.
 `track "thigh_l" (prop=rotation, axis=[1, 0, 0], keys=[…])`. Stdlib
-`humanoid_walk`/`humanoid_run`/`humanoid_idle`/`humanoid_jump` expand
-into this shape against `humanoid_full`'s bones.
-
-`skin=` on a CSG operand is lost (operands are fused into the parent's
-mesh); put it on the CSG node or a wrapping group.
+`humanoid_walk`/`humanoid_run`/`humanoid_idle`/`humanoid_jump` target
+`humanoid_full`'s bones.
 
 ---
 
 ## Lights: `light`
 
-Exported via glTF `KHR_lights_punctual`. A `light` is a transform-only
-scene node — no mesh, no children. Direction is implicit (along local `-Z`).
+Exported via `KHR_lights_punctual`. Transform-only, no children; shines along
+local `-Z`.
 
 ```
 light "sun"  (kind=directional, dir=[-0.4, -1, -0.3], color=[1, 0.95, 0.85], intensity=3)
-light "lamp" (kind=point, pos=[0, 2, 0], color=[1, 0.9, 0.7], intensity=10, range=8)
+light "lamp" (kind=point, pos=[0, 2, 0], intensity=10, range=8)
 light "spot" (kind=spot,  pos=[0, 3, 0], dir=[0, -1, 0], intensity=20,
               range=10, inner_cone=20, outer_cone=35)
 ```
@@ -2040,116 +1652,84 @@ light "spot" (kind=spot,  pos=[0, 3, 0], dir=[0, -1, 0], intensity=20,
 | attribute | value | notes |
 |---|---|---|
 | `kind` | `directional`, `point`, `spot` | required |
-| `color` | vec3 | linear-space RGB; default `[1, 1, 1]` |
-| `intensity` | number | **candela** for point/spot, **lux** for directional; default `1.0` |
-| `range` | number | distance cutoff for point/spot; rejected on directional |
-| `dir` | vec3 | optional shortcut: rotates the node so `-Z` points along `dir` (overrides `rot=`) |
-| `inner_cone` | number | spot only; degrees, default `0` |
-| `outer_cone` | number | spot only; degrees, default `45` |
+| `color` | vec3 | linear RGB, default `[1, 1, 1]` |
+| `intensity` | number | **candela** (point/spot), **lux** (directional); default `1.0` |
+| `range` | number | point/spot cutoff; rejected on directional |
+| `dir` | vec3 | aims `-Z` along `dir` (overrides `rot=`) |
+| `inner_cone` | degrees | spot only, default `0` |
+| `outer_cone` | degrees | spot only, default `45` |
 
-Lights ignore `mat`, `anchor`, `from`/`to`, and relative-placement
-shortcuts — only transforms, `role`, and `tags` apply.
-
-No ambient term is emitted (glTF core has none; Godot derives ambient
-from `WorldEnvironment`). For fill, use a dim directional light.
+Only transforms, `role`, `tags` apply (no `mat`, `anchor`, `from`/`to`, relative
+placement). No ambient light is exported; use a dim directional fill.
 
 ---
 
 ## Colliders
 
-Annotate any geometry, `group`, `solid`, or `use` with `collider="aabb"` to
-mark it as a collision volume:
+`collider="aabb"` on any geometry, `group`, `solid`, or `use` marks a collision
+box from the node's subtree mesh extents (node-local, after
+attach/conform/skinning). `"aabb"` is the only value; mesh-less subtrees get
+none.
 
 ```
-slab "floor"     (size=[18.4, 0.1, 10.4], mat="wood", collider="aabb")
-slab "wall_back" (size=[18.4, 3, 0.2], z=-5.1, mat="plaster", collider="aabb")
-use  "desk"      (pos=[0, 0, 0.4], collider="aabb")
+slab "floor" (size=[18.4, 0.1, 10.4], mat="wood", collider="aabb")
+use  "desk"  (pos=[0, 0, 0.4], collider="aabb")
 ```
 
-The bounding box is computed from the node's **subtree mesh extents** in
-node-local space, after attach/conform/skin binding — so a collider on
-`use "desk"` encloses the whole desk, and one on a `conform`-deformed
-plank reflects the bent vertices. `"aabb"` is the only accepted value in
-v1; mesh-less subtrees silently drop the box.
-
-The export writes `node.extras.collider = { type, min, max }`. No physics
-sim runs — this is metadata for downstream `CollisionShape3D` conversion.
-Studio renders an off-by-default wireframe gizmo (**View → Show Colliders**).
+Exported as `node.extras.collider = { type, min, max }`. Studio shows them via
+**View → Show Colliders**.
 
 ---
 
 ## Shadow casting
 
-Every node casts shadows by default. Add `cast_shadow=0` to opt a node — and
-its entire subtree — out of the realtime shadow pre-pass and the exported
-shadow hint:
+Nodes cast shadows by default. `cast_shadow=0` opts a node and its whole
+subtree out (descendants can't re-enable). Exported as `extras.cast_shadow=false`
+on opted-out nodes only.
 
 ```
 plane "ground" (size=20, mat="grass", cast_shadow=0)
-group "filler" (cast_shadow=0) {
-  box (size=[1, 1, 1])     # inherits cast_shadow=0
-  use  "rocks"             # inherits too
-}
 ```
-
-The flag propagates monotonically: an ancestor's `cast_shadow=0` wins over
-a descendant default. The export writes `extras.cast_shadow=false` only on
-opted-out nodes; the default-on case omits the key entirely. Studio's
-right inspector exposes the toggle under **Shadow**.
 
 ---
 
 ## Diagnostics and tooling
 
-- `mogen check <file>.mog` validates without building. Pass `--json` for machine-readable diagnostics (the format the LLM repair loop consumes).
-- `mogen dump-scene <file>.mog --json` prints the lowered graph for debugging.
-- `mogen inspect <file>.glb` reads back a GLB and prints its top-level structure.
+- `mogen check <file>.mog [--json]` — validate without building; JSON is the format the LLM repair loop consumes.
+- `mogen dump-scene <file>.mog --json` — print the lowered scene graph.
+- `mogen inspect <file>.glb` — summarise a GLB.
 
-See [`ROADMAP.md`](./ROADMAP.md) §8 for the full diagnostic catalog.
-
+---
 
 ## Scalar arrays and coordinate lists
 
 `radii`, `widths`, sweep `roll`/`scale_along`, and loft `heights` accept numeric
-arrays of any legitimate length, including exactly three values. Three-number
-literals retain their vector parser representation; the attribute's semantic
-type decides whether they are a vector or a scalar array. `pos`, `rot`, `size`
-and nested coordinate/profile lists retain their dimensional rules.
+arrays of any length, including exactly three (the attribute decides whether a
+three-number literal is a vector or a scalar array). `pos`, `rot`, `size` and
+coordinate/profile lists keep their dimensional rules.
 
-For radii, widths, roll and scale, supply one constant value or exactly one
-value per control point. Values interpolate linearly between control points
-along the existing spline parameter (not physical arc length). Loft heights
-supply at least two finite section heights; section points are flat-packed
-in the same order. Radii, widths and scale must be finite and nonnegative;
-zero permits an intentional tapered endpoint. Roll is in degrees and can be
-negative. Empty/mismatched arrays report expected and actual counts (E0112);
-invalid values report E0113; malformed coordinate dimensions report E0114.
-Previous files relying on silently truncated/repeated mismatched values must
-supply an explicit constant or matching array.
+- `radii`, `widths`, `roll`, `scale_along`: one constant or exactly one value per control point, interpolated linearly along the spline parameter (not arc length). Radii/widths/scale are finite and ≥ 0 (zero tapers an endpoint); roll is degrees, may be negative.
+- Loft `heights`: at least two finite section heights; section points are flat-packed in the same order.
+- Expressions and module params inside arrays resolve before these checks.
+- Errors: `E0112` empty/mismatched count (reports expected vs actual), `E0113` invalid value, `E0114` malformed coordinate dimensions. Mismatched arrays are no longer silently truncated/repeated.
 
-Scalar expressions and module parameters inside arrays are resolved before
-lowering applies the same checks. See
-[three_value_arrays.mog](../examples/features/three_value_arrays.mog).
-
+Example: [three_value_arrays.mog](../examples/features/three_value_arrays.mog).
 
 ## Explicit sweep frames
 
-Use `frame_up=[0,1,0]` for local profile height toward +Y; width is height × tangent. `closed=1` uses a periodic path and matching seam frames. Omitting `frame_up` preserves the legacy orientation. See [sweep-frames.md](sweep-frames.md) for roll, closure, parent-transform and migration rules.
-
+`frame_up=[0,1,0]` points local profile height toward +Y; width is height × tangent. `closed=1` uses a periodic path with matching seam frames. Omitting `frame_up` keeps the legacy orientation. See [sweep-frames.md](sweep-frames.md).
 
 ## Relational modeling
 
-`relate` adds endpoint anchoring, connector-plane grounding and translation-only connector alignment to existing `attach`/`conform`. See [relational-modeling.md](relational-modeling.md) and [relational_chair.mog](../examples/furniture/relational_chair.mog) for supported syntax, dependency order, module coordinates, diagnostics and compiled-lock behavior.
-
+`relate` adds endpoint anchoring, connector-plane grounding and translation-only connector alignment on top of `attach`/`conform`. See [relational-modeling.md](relational-modeling.md) and [relational_chair.mog](../examples/furniture/relational_chair.mog).
 
 ## Surface-derived details
 
-Declare `guide "welt" (target="cushion",section="latitude",level=0,tolerance=0.001)` and reuse it in `sweep (guide="welt",profile=[...],lift=0.002)`. Curved-frame trim uses `section="profile_edge",edge=...`. See [surface-guides.md](surface-guides.md) for the shared conform offset model and supported semantic references.
+Declare `guide "welt" (target="cushion", section="latitude", level=0, tolerance=0.001)` and reuse it with `sweep (guide="welt", profile=[...], lift=0.002)`. Curved-frame trim uses `section="profile_edge", edge=...`. See [surface-guides.md](surface-guides.md).
 
 ### Measuring dimensions and fit
 
 `mogen inspect model.mog` reports world bounds, dimensions, ground clearance and
 resolved relationship checks. `mogen measure model.mog --first foot --second leg`
-reports bounded triangle-surface distance, closest points and evidence in metres.
-See [world-space fit measurements](fit-measurements.md) for tool JSON, tolerance,
-intentional overlap policy, revision handling and approximation limits.
+reports bounded surface distance, closest points and evidence in metres. See
+[fit-measurements.md](fit-measurements.md).

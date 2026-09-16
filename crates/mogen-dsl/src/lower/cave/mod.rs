@@ -7,8 +7,8 @@
 //!
 //! The pipeline is config → layout (chamber placement + slope-capped passages
 //! + entrances) → emit (one surface-nets rock shell) → decorate (stalagmites,
-//! stalactites, rock piles, pools, lakes). See `docs/caves.md` for the full
-//! attribute surface.
+//! stalactites, rock piles, pools, lakes). See the `cave` section of
+//! `docs/dsl.md` for the full attribute surface.
 
 mod config;
 mod decorate;

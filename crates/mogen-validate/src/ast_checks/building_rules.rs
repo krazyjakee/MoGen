@@ -75,8 +75,8 @@ pub(super) fn check_building(n: &Node, diags: &mut Vec<Diagnostic>) {
                 Diagnostic::error(
                     "E1110",
                     format!(
-                        "building style \"{name}\" is reserved for a future tranche \
-                         — see docs/building.md (currently supported: {})",
+                        "building style \"{name}\" is not implemented \
+                         — see docs/dsl.md#building (currently supported: {})",
                         BUILDING_STYLES_IMPLEMENTED.join(", ")
                     ),
                 )

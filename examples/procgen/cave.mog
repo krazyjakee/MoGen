@@ -2,7 +2,7 @@
 // and linked by slope-capped passages, populated with stalagmites, stalactites,
 // a rock pile and a small pool. Everything is a deterministic function of
 // `seed=`, so rebuilds are reproducible. The `entrances` array opens side mouths
-// on the bands you choose (here the lowest and the surface). See docs/caves.md.
+// on the bands you choose (here the lowest and the surface). See docs/dsl.md#cave.
 
 meta (
   name = "cave",

@@ -13,21 +13,17 @@ small parser, a scene graph, a mesh library, and a glTF exporter.
 
 ## Why
 
-LLMs are good at structure and intent, bad at floating-point geometry. A DSL like this
-one lets the model decide *what* to build — the parts, their roles, how they relate —
-while deterministic Rust code handles *how* to build it. Small outputs, cheap iteration,
-no hallucinated triangles.
+LLMs are good at structure and intent, bad at floating-point geometry. The DSL lets the
+model decide *what* to build — parts, roles, relationships — while deterministic Rust
+code decides *how*. Small outputs, cheap iteration, no hallucinated triangles.
 
-## Status
+## Features
 
-Usable but still moving fast. Primitives, CSG, hierarchy/modules, arrays and mirrors,
-connectors, skeletons + skinning + animation templates, full PBR materials with embedded
-textures, validation diagnostics, and LLM-driven generate/modify/animate are all
-working. OpenAI GPT-6 Astra is the default for 3D generation. Other supported
-backends include Gemini (API key or Google OAuth), Anthropic, Ollama (local),
-Codex and Claude Code (subscription),
-Fireworks AI Firepass (Kimi K2 routers), and Z.ai (GLM family, default `glm-5.1`). See
-[`docs/dsl.md`](docs/dsl.md) for the full feature surface.
+Primitives, CSG, hierarchy and modules, arrays and mirrors, connectors, skeletons +
+skinning + animation, PBR materials with embedded textures, procedural generators
+(plants, buildings, caves, terrain, dungeons), validation diagnostics, GLB and FBX
+export, and LLM-driven generate / modify / animate / repair / textures. See
+[`docs/dsl.md`](docs/dsl.md) for the language.
 
 ## Install
 
@@ -71,23 +67,20 @@ Drop `chair.glb` into Godot, Blender, three.js, or anything else that reads glTF
 
 For generation with visual review, scoped corrections and durable resume, see
 [`mogen session` (CLI, MCP and Studio)](docs/modeling-session-cli.md).
+Studio's [Generate and Refine workflow](docs/generate-and-refine.md) adds visual targets,
+multi-view refinement, revision comparison and part locks.
 
 ## Importing Pascal buildings
 
-[pascalorg/editor](https://github.com/pascalorg/editor) is a free web-based
-architectural editor — walls as centrelines, slabs as polygons, roofs as a shape
-plus a pitch. MoGen reads its `.json` scenes and converts them into `.mog`
-source, so you can lay a building out visually and then keep editing it as DSL:
+[pascalorg/editor](https://github.com/pascalorg/editor) is a free web-based architectural
+editor. MoGen converts its `.json` scenes into editable `.mog` source (not a GLB); anything
+it could not use is listed in the file's header comment. Studio has the same flow under
+**File → Import Pascal Scene…**. Details: [`docs/cli.md#import`](docs/cli.md#import).
 
 ```sh
 ./scripts/run-mogen.sh import scene.json --out house.mog
 ./scripts/run-mogen.sh build house.mog --out house.glb
 ```
-
-Unlike `build`, `import` writes **source, not a binary** — the point is to get a
-file you can edit. Anything the importer could not use is reported and written
-into the file's header as a comment, so a partly-understood scene still opens.
-MoGen Studio has the same flow under **File → Import Pascal Scene…**.
 
 New to the Pascal editor? This short video walks through drawing a building in it:
 
@@ -134,29 +127,25 @@ reloading.
 
 ## MoGen Studio
 
-A minimal desktop GUI ships alongside the CLI — **MoGen Studio** combines the DSL
-editor, a live 3D preview, diagnostics, and one-click AI generate/modify/animate
-calls. Build and run it with:
+The desktop GUI: DSL editor, live 3D preview with gizmos, inspector, diagnostics, and the
+AI tools. Run it from a checkout with:
 
 ```sh
 ./scripts/run-studio.sh
 ```
 
-The inspector panel shows a texture roster for the current scene with a ✓/✗ marker
-per texture path, so missing image files are visible before you hit "Build GLB".
+See [`docs/studio.md`](docs/studio.md). The same docs are built into Studio's Help menu.
 
 ## The DSL
 
-Files use the `.mog` extension. Every statement has the same shape — a `kind`, an
-optional name, attributes, and optional children:
+Files use the `.mog` extension. Every statement is a `kind`, an optional name,
+attributes, and optional children:
 
 ```
 kind "optional name" (attr=value, attr=value, ...) {
   // optional children
 }
 ```
-
-A minimal scene:
 
 ```mogen
 scene {
@@ -165,211 +154,45 @@ scene {
 }
 ```
 
-Coordinate system is glTF-standard: right-handed, +Y up, -Z forward. The full grammar,
-every node kind, and worked examples live in [`docs/dsl.md`](docs/dsl.md) and
-[`examples/`](examples/).
+Coordinates are glTF-standard: right-handed, +Y up, -Z forward. Full reference:
+[`docs/dsl.md`](docs/dsl.md), stdlib modules: [`docs/modules.md`](docs/modules.md),
+examples: [`examples/`](examples/).
 
 ## CLI
 
 ```
-mogen build      <file.mog> --out <file.glb>           # compile DSL to GLB
-mogen import     <scene.json> --out <file.mog>         # pascalorg/editor scene → editable DSL source
-mogen generate   "a wooden stool" --out out.glb        # generate DSL via OpenAI Astra, then compile
-mogen modify     <file.mog> "make the legs taller"     # LLM edit of an existing .mog, then recompile
-mogen animate    <file.mog> "spin the rotor at 120 rpm"  # LLM edit limited to animations
-mogen repair     <file.mog>                            # LLM-driven fix for validation errors
-mogen textures   <file.mog>                            # generate albedo + derived PBR maps
-mogen thumbnail  <file.mog> --out preview.png          # headless PNG render of a .mog
-mogen pack       <file.mog> --out <file.mogb>          # encode to the experimental MOGB binary container
-mogen unpack     <file.mogb> --out <file.mog>          # decode a MOGB container back to .mog source
-mogen check      <file.mog>                            # validate a DSL file
-mogen inspect    <file.glb>                            # summarize a GLB
-mogen moghub     discover --query chair                # browse / download / publish to MoGHub
-mogen mcp                                              # run as a stdio MCP server exposing every subcommand as a tool
-mogen auth       gemini-cli login                      # sign in / out for each credential target
-mogen update                                           # self-update from the latest GitHub release
+mogen build      <file.mog> --out <file.glb|fbx>   # compile DSL
+mogen check      <file.mog> [--json]               # validate
+mogen import     <scene.json> --out <file.mog>     # pascalorg/editor scene → DSL source
+mogen generate   "a wooden stool" --out out.glb    # LLM-generate, then compile
+mogen modify     <file.mog> "make the legs taller" # LLM edit
+mogen animate    <file.mog> "spin the rotor"       # LLM edit limited to animations
+mogen repair     <file.mog>                        # LLM fix for validation errors
+mogen textures   <file.mog>                        # generate albedo + derived PBR maps
+mogen thumbnail  <file.mog> --out preview.png      # headless PNG render
+mogen pack|unpack                                  # experimental MOGB binary container
+mogen inspect    <file.glb>                        # summarize a GLB
+mogen moghub     discover --query chair            # MoGHub community
+mogen mcp                                          # stdio MCP server
+mogen auth       status                            # OAuth / MoGHub sign-in
+mogen update                                       # self-update
 ```
 
-`generate`, `modify`, and `animate` need an API key for the chosen provider. By
-default that's OpenAI GPT-6 Astra (`OPENAI_API_KEY` env var, `--api-key` flag,
-or the shared settings file — see below). Pick a different backend with
-`--provider <name>` and the matching env var: `GEMINI_API_KEY`,
-`ANTHROPIC_API_KEY`, `FIREWORKS_API_KEY`, `ZAI_API_KEY`, etc. `animate` is
-scoped to top-level animation declarations only (`joint`, `clip`/`track`, and
-the `spin` / `open_close` / `wave` / `flap` / `idle` templates) — it leaves
-geometry, materials, and hierarchy untouched. There are a few more
-developer-facing subcommands (`parse`, `dump-scene`, `bench`) — run `mogen --help`
-for the full list.
+Every subcommand and flag is documented in [`docs/cli.md`](docs/cli.md).
 
-### Shared settings file
+### AI providers
 
-Both the CLI and Studio read API keys from `~/.mogen/settings.json`
-(`C:\Users\<you>\.mogen\settings.json` on Windows). Studio writes the file as
-part of its larger settings struct whenever you save the Preferences panel; the
-CLI reads only the API-key fields. Keys entered in Studio therefore satisfy
-`mogen generate` etc. on the same machine without also having to export an env
-var.
+The LLM commands default to OpenAI GPT-6 Astra (`OPENAI_API_KEY`). Select another backend
+with `--provider`: Gemini (API key or Google OAuth), Anthropic, Ollama, OpenAI Codex or
+Claude Code subscriptions, Fireworks AI, or Z.ai. Keys can come from `--api-key`, the
+provider's env var, or `~/.mogen/settings.json` (shared with Studio).
 
-For API-key providers, resolution precedence is: `--api-key` flag → env
-var → `~/.mogen/settings.json` → (Gemini only) on-disk OAuth bundle → error.
-Set `MOGEN_SETTINGS=/path/to/file.json` to override the path entirely or
-`MOGEN_CACHE_DIR=/path/to/dir` to override just the parent directory. Older
-installs that wrote settings to `dirs::config_dir()/mogen/settings.json` are
-still read on first launch and migrated forward automatically.
+For Gemini with a paid Google account, `mogen auth gemini-cli login` signs in without an
+API key (and `mogen auth antigravity login` enables OAuth texture generation). If Google
+sign-in fails, set `GEMINI_API_KEY` as a fallback.
 
-The file is plain JSON. A minimal example:
-
-```json
-{
-  "gemini_api_key": "AIza...",
-  "openai_api_key": "sk-...",
-  "anthropic_api_key": "sk-ant-...",
-  "fireworks_api_key": "fw_...",
-  "zai_api_key": "..."
-}
-```
-
-### Providers
-
-| Provider     | `--provider` value | Default model                              | Env var               |
-| ------------ | ------------------ | ------------------------------------------ | --------------------- |
-| OpenAI (default) | `openai`        | `gpt-6-astra`                              | `OPENAI_API_KEY`      |
-| Gemini       | `gemini`           | `gemini-pro-latest`                        | `GEMINI_API_KEY`      |
-| Anthropic    | `anthropic`        | `claude-sonnet-4-5`                        | `ANTHROPIC_API_KEY`   |
-| Ollama       | `ollama`           | `llama3.1`                                 | `OLLAMA_API_KEY` \*   |
-| OpenAI Codex | `codex` | `gpt-6-astra` (via Codex CLI) | — (subscription) |
-| Claude Code  | `claude-code`      | `sonnet` (delegates to `claude` CLI)       | — (subscription)      |
-| Fireworks AI Firepass | `fireworks` | `accounts/fireworks/routers/kimi-k2p6`     | `FIREWORKS_API_KEY`   |
-| Z.ai (GLM)   | `zai`              | `glm-5.1`                                  | `ZAI_API_KEY`         |
-
-\* Ollama is keyless for local installs — the env var is only consulted when
-running behind an authenticating reverse proxy.
-
-Notes:
-
-- **OpenAI GPT-6 Astra** is the default in the CLI and new Studio profiles.
-  Existing Studio provider selections and custom model overrides are preserved.
-  The fast tier for Prompt Enhancer / Ask remains `gpt-5-mini`.
-- **Gemini** remains available with `--provider gemini` (API key),
-  `--provider auto` (automatic Gemini credential resolution),
-  `--provider gemini-oauth`, or `--provider antigravity`. Texture generation
-  keeps its separate image-provider configuration.
-- **Fireworks AI Firepass** ships with the Kimi K2 *Fire Pass* routers
-  (`kimi-k2p6` for the thinking model, `kimi-k2p6-turbo` for the fast tier);
-  any other Fireworks-hosted model id works via `--model`.
-- **Z.ai** uses an OpenAI-compatible Chat Completions endpoint at
-  `api.z.ai/api/paas/v4/chat/completions`. The same `ZAI_API_KEY` also
-  authenticates the `glm-image` image-gen path used by `mogen textures`.
-- **Claude Code** is keyless — it shells out to the `claude` CLI, so auth
-  is whatever `claude login` already set up.
-
-### Use an OpenAI Codex subscription
-
-Install a current [Codex CLI](https://learn.chatgpt.com/docs/cli) with
-`--ignore-user-config` support, then sign in with ChatGPT:
-
-```sh
-codex login
-codex login status
-mogen generate "a wooden stool" --provider codex --out stool.glb
-mogen modify stool.mog "make the legs taller" --provider codex
-```
-
-In Studio, choose **Use Codex subscription** on the welcome screen, or select
-**OpenAI Codex (subscription)** in **Edit → Preferences → LLM**. If Codex is
-outside PATH, set its binary path there. Both model tiers default to
-`gpt-6-astra`; select a model available to your plan with `--model` or the
-Studio model fields. Codex handles login and token refresh; MoGen does not
-store subscription tokens. This provider requires ChatGPT login and uses
-Codex plan limits; it does not fall back to an API key. Token usage is tracked
-with zero per-call API cost. Reference images are supported; texture generation
-uses the separate image provider.
-
-### Sign in with a paid Gemini account
-
-Free-tier `GEMINI_API_KEY`s are locked out of `gemini-3-pro-preview` and other
-Pro tiers (the API returns `limit=0` 429s). If you have a paid Pro plan via
-your Google account, you can sign in with Google instead — no setup required:
-
-```
-mogen auth gemini-cli login         # opens browser, signs in with Google (gemini-cli client)
-mogen auth antigravity login        # signs in with the Antigravity client — required for image gen
-mogen auth status                   # one-line status across every target (gemini-cli, antigravity, moghub)
-mogen auth gemini-cli status        # email + project + token expiry for one target
-mogen auth gemini-cli logout        # delete the gemini-cli token (use `antigravity` / `moghub` to scope)
-mogen generate "a chair" --provider auto  # resolves Gemini credentials, including saved OAuth
-```
-
-Every credential `mogen` knows how to persist lives under `~/.mogen/`. The
-top-level `mogen auth` is target-aware:
-
-| target        | login flow                                              | on-disk file                       |
-|---------------|---------------------------------------------------------|------------------------------------|
-| `gemini-cli`  | Google OAuth (text gen via Cloud Code Assist)           | `~/.mogen/google_auth.json`        |
-| `antigravity` | Google OAuth (image gen via Cloud Code Assist)          | `~/.mogen/antigravity_auth.json`   |
-| `moghub`      | MoGHub session (community publish + browse)             | `~/.mogen/moghub_auth.json`        |
-
-`mogen auth moghub login [--server URL]` runs the same loopback OAuth
-flow Studio uses, so a single sign-in covers both surfaces. `--server`
-defaults to the production server and round-trips into the on-disk
-session so future status calls reach the same host.
-
-`mogen` ships two public OAuth clients: Google's official
-[Gemini CLI](https://github.com/google-gemini/gemini-cli) client (default) and
-the Antigravity desktop client (used by Google's Antigravity IDE). Both produce
-a normal Google sign-in consent screen. Tokens land in
-`~/.mogen/google_auth.json` and `~/.mogen/antigravity_auth.json` respectively
-(`C:\Users\<you>\.mogen\…` on Windows) with mode `0600` on Unix. Older installs
-that wrote to `~/.cache/mogen/` or `%LOCALAPPDATA%\mogen\` still work — those
-paths are read as legacy fallbacks.
-
-Credential precedence on `generate`/`modify`/`animate`/`repair`/`bench` is
-`--api-key` flag > `GEMINI_API_KEY` env > `~/.mogen/settings.json` > stored
-OAuth token > error. Setting the env var temporarily (or passing `--api-key`)
-shadows the OAuth token — `mogen auth status --verbose` flags this when it
-happens.
-
-OAuth-mode requests go to `cloudcode-pa.googleapis.com/v1internal:generateContent`
-on the user's own Cloud project (discovered via `loadCodeAssist`); the public
-`generativelanguage.googleapis.com` API is not used in this mode.
-
-**Caveats.** The bundled OAuth clients are Google's published clients.
-They're stable but Google could rotate them; keep `GEMINI_API_KEY` available as
-a fallback. The `cachedContents` system-instruction cache is disabled in OAuth
-mode (the surface doesn't expose it); the system instruction is sent inline
-instead.
-
-### Texture generation
-
-`mogen textures` walks the materials in a `.mog` file and generates per-material
-PBR maps. Albedo is generated by an image model; normal, metallic-roughness,
-and occlusion maps are derived locally from the albedo (Sobel gradients +
-luminance cavity detection, tileable). The generated PNGs land in the
-project's `textures/<scene-name>/` folder and the matching
-`base_color_texture` / `normal_texture` / etc. attributes are spliced back into
-the source file using span-aware edits — no reformatting.
-
-Three image backends are supported:
-
-- **Antigravity OAuth (default for paid Google accounts).** Routes through
-  `daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent` with
-  endpoint failover, model catalog probe, and capacity-error backoff retries
-  (3s / 6s / 12s). Default model is `gemini-3.1-flash-image` — the only ID
-  observed to route reliably for Antigravity-issued bundles (the `-preview`
-  variants 404 here). The plain `gemini-cli` bundle is *not* accepted by the
-  image surface — run `mogen auth antigravity login` once.
-- **Gemini API key.** When `GEMINI_API_KEY` is set, image gen goes through the
-  public `generativelanguage.googleapis.com` surface. Default model is
-  `gemini-2.5-flash-image` ("Nano Banana") — the cheapest tier that honors
-  `responseModalities: ["IMAGE"]` and produces usable PBR albedo. Pass
-  `--model <id>` to override.
-- **Z.ai `glm-image`.** Selected via Studio's provider dropdown (or the same
-  `ZAI_API_KEY` if you wire it up by hand). Useful when you'd rather not burn
-  Antigravity quota on bulk texture runs.
-
-Repeat `mogen textures` calls reuse PNGs already on disk (the `build_plan`
-step's `UseExisting` action) — only missing slots hit the network. There is no
-in-memory or on-disk cache otherwise.
+Provider table, credential precedence, and auth details:
+[`docs/cli.md#providers-and-credentials`](docs/cli.md#providers-and-credentials).
 
 ## Contributing
 
@@ -396,5 +219,3 @@ Every contribution helps maintain and improve this project. And encourage me to 
 ## License
 
 MIT — see [LICENSE](LICENSE).
-
-Studio’s [Generate and Refine workflow](docs/generate-and-refine.md) adds persistent visual targets, bounded multi-view refinement, revision comparison and enforced part locks.

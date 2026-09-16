@@ -10,7 +10,7 @@
 //! `organic`, `maze`) and every roof shape (`flat`, `pitched`, `gabled`,
 //! `hipped`, `mansard`, `shed`) is implemented, and `cellar_area=` lets
 //! below-ground storeys use a smaller footprint than the above-ground
-//! plate. See `docs/building.md` for the per-tranche schedule.
+//! plate. See the `building` section of `docs/dsl.md` for the attribute surface.
 
 mod circulation;
 mod config;

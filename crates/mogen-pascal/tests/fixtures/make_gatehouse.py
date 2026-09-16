@@ -5,10 +5,9 @@ Run from the repo root:
 
     python3 crates/mogen-pascal/tests/fixtures/make_gatehouse.py
 
-This exists so the importer's main regression case is a building *we* designed,
-rather than someone's project off the community gallery. Keeping the generator
-rather than only its output means the awkward parts below are declared on
-purpose and can be adjusted, instead of being mystery bytes in a fixture.
+The output is generated -- edit this script, not the JSON, then re-run it and
+`cargo test -p mogen-pascal` (tests/real_project.rs). It is our own design in
+pascalorg/editor's MIT-licensed format, so it carries no third-party licence.
 
 The plan is a T: a 14x8 main block with a 6x5 wing off its north face, two
 storeys plus a roof level, cross-gabled so the wing gets its own ridge.
@@ -21,15 +20,20 @@ has to survive and none of them arises from a tidy hand-written scene:
    exporter flattens it. It used to abort the whole load.
 2. The `roof` container sits at a non-zero offset, and its segments are
    positioned relative to it. Reading only the segments leaves the roof
-   floating off the walls.
+   floating off the walls. The offset is negative, sinking the main ridge
+   below its storey; `arch::roof` lifts the eave onto the wall tops and warns.
 3. Levels are numbered 0, 3, 5 rather than 0, 1, 2, and carry no `height`.
-   Their level ordinals are sparse by design, and elevation comes from the
-   prefix sum of the levels below, not from the ordinal.
-4. Three shapes are genuinely malformed: a self-intersecting ring, a hole that
-   hangs outside its slab, and a zero-length wall. Their editor tolerates all
-   three; we must report and drop them rather than emit a hole. A test asserts
-   these are still reported, so the day one silently starts importing is the
-   day that test goes red.
+   Elevation comes from the prefix sum of the levels below, not the ordinal.
+4. Four shapes are genuinely malformed: a self-intersecting ring, a hole that
+   hangs outside its slab, a zero-length wall, and a wall bowed tighter than
+   its own half-thickness (its footprint doubles back on itself; it was once
+   accepted or rejected depending on distance from the origin). Their editor
+   tolerates all four; we must report and drop them rather than emit a hole.
+
+So the fixture must NEVER import cleanly: the import header reports seven
+issues (six from the defects in (4), one for the sunken roof in (2)). Don't
+"fix" them -- real_project.rs asserts they are still reported, so the day one
+silently starts importing is the day that test goes red.
 """
 
 import json
