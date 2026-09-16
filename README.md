@@ -66,9 +66,8 @@ The release binary is at `target/release/mogen`. The `./scripts/run-mogen.sh` wr
 Drop `chair.glb` into Godot, Blender, three.js, or anything else that reads glTF 2.0.
 
 For generation with visual review, scoped corrections and durable resume, see
-[`mogen session` (CLI, MCP and Studio)](docs/modeling-session-cli.md).
-Studio's [Generate and Refine workflow](docs/generate-and-refine.md) adds visual targets,
-multi-view refinement, revision comparison and part locks.
+[`mogen session`](docs/cli.md#session) and Studio's
+[Generate and Refine](docs/studio.md#generate-and-refine).
 
 ## Importing Pascal buildings
 

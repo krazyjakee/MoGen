@@ -1,7 +1,7 @@
-# Surface-derived guide curves and details
+# Surface guide curves and details
 
-A named `guide` samples a semantic location on an authored surface. A `sweep`
-can reuse that curve with an independent profile, material and editable name.
+A `guide` samples a curve on a target surface; a `sweep` with `guide=` runs a
+profile along it.
 
 ```mog
 scene {
@@ -12,53 +12,34 @@ scene {
 }
 ```
 
-## Supported semantic references
+## `guide` sections
 
-- Superellipsoid `latitude`: `level` is normalized target-local Y, strictly
-  between -1 and 1. Zero is the equator. Dimensions and `ew`/`ns` come from the
-  same resolved source that builds the cushion. Version 1 supports finite
-  positive dimensions and boxiness values at least 0.5.
-- Explicit-frame sweep `profile_edge`: `edge` selects an **authored profile
-  edge**, not a generated triangle. The guide follows its midpoint along the
-  curved frame. Path endpoints resolved by `relate` are included. Version 1
-  requires a constant, unrolled profile with explicit `frame_up`.
+- `section="latitude"` on `superellipsoid`: `level` = normalized local Y, strictly
+  in (-1, 1); 0 is the equator. Requires finite positive size and `ew`/`ns` ≥ 0.5.
+  Winds from +X toward +Z around Y.
+- `section="profile_edge"` on an explicit-frame `sweep`: `edge` indexes an
+  authored profile edge; the curve follows its midpoint along the path (including
+  `relate`-resolved endpoints). Requires constant, unrolled profile and `frame_up`.
+- `tolerance` (default 0.001, target-local): chord-deviation bound. Samples the
+  analytic surface, not the mesh — raise target tessellation if the mesh must match.
+- Max 4096 segments. Closed curves repeat the first sample; guided sweeps then
+  have no caps and smooth normals across the seam.
 
-Points and outward normals are target-local. Latitude winding advances from
-+X toward +Z around Y. Profile-edge curves follow the target path's direction.
-Periodic curves duplicate their first sample at the end; guided sweeps emit
-no duplicate cap and share lighting normals across that UV seam.
+## Guided `sweep`
 
-`lift` offsets each sampled center along the analytic surface normal in
-**target-local units**, matching conform's offset model. Parent scaling scales
-that distance; use target dimensions when a fixed world distance is needed.
-The sweep uses the shared conform `PathFrame` representation, with height
-along the surface normal and width chosen for a right-handed profile.
-`reparent=1` (default) follows conform: parent the detail to the target with
-identity transform. `reparent=0` preserves its hierarchy and transforms the
-mesh into the child's local space. Placement is determined by the guide/lift;
-use `lift` instead of child `pos` to specify surface clearance.
+- `lift`: offset along the surface normal in target-local units (parent scale
+  applies). Use `lift`, not `pos`, for clearance.
+- Profile Y = surface normal, X = width (right-handed).
+- `reparent=1` (default): parent to target with identity transform.
+  `reparent=0`: keep hierarchy, mesh converted into the child's local space.
 
-## Tolerance, scope and diagnostics
+## Constraints and errors
 
-Guides sample their authored analytic definition independently of target
-mesh tessellation. `tolerance` (default 0.001 target-local units) bounds the
-sampled chord-deviation checks; latitude checks quarter/mid/three-quarter
-points, and profile-edge sampling compares successive refinement levels.
-At guide samples, the offset is applied directly to the analytic normal;
-between samples the swept strip is piecewise linear. This is an analytic
-surface contract, not a guarantee that a coarse target triangle mesh coincides
-with that surface. Increase target tessellation for rendered comparisons.
+- E0160: degenerate, unresolved or self-contacting path/profile
+  (self-contact tolerance = `tolerance/100`).
+- Rejected: deformed/anchored/subdivided/conformed targets; guides inside
+  array/mirror/grid/stack replicators (use explicit module instances).
+- Resolves after `relate`, before skin/collider/physics.
 
-Sampling is capped at 4096 segments. Degenerate, unresolved and self-contacting
-paths/profiles produce E0160; self-contact tolerance is `tolerance/100`.
-Deformed/anchored/subdivided/conformed targets and guide use inside replicators
-are rejected in v1. Use explicit module instances for repeated details.
-The pass resolves after relationships and before skin, collider and physics
-passes, on a temporary graph. Existing compiled locks compare the resulting
-geometry and transforms, including details reparented under a locked target.
-
-Fixtures: [guided_cushion.mog](../examples/furniture/guided_cushion.mog) and
-[guided_frame_trim.mog](../examples/features/guided_frame_trim.mog). Resize and
-change cushion roundness, then compare front/side/three-quarter views with
-matched cameras. Review: `cargo test -p mogen-dsl --test surface_guides`.
-Test execution and rendered regression captures are deferred to review.
+Examples: `examples/furniture/guided_cushion.mog`,
+`examples/features/guided_frame_trim.mog`.

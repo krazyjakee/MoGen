@@ -1,10 +1,4 @@
-# Sweep orientation and path frames
-
-Use `frame_up=[0,1,0]` to make profile Y (height) point toward local +Y.
-The hint is projected perpendicular to the starting tangent. Profile X
-(width) is height × tangent, so width × height = tangent. All inputs are
-in the primitive's authored local space; module and parent transforms apply
-to the whole resulting mesh. Deformation and anchoring run afterward.
+# Sweep orientation (`frame_up`)
 
 ```mog
 scene {
@@ -13,43 +7,31 @@ scene {
 }
 ```
 
-Positive `roll` rotates width toward height about the tangent using the
-right-hand rule. DSL roll/twist values are degrees; geometry APIs use radians.
-Parallel transport carries height along the path without switching reference
-axes near vertical. A vertical path can use `frame_up=[0,0,1]`.
+- `frame_up`: profile Y (height) points toward this hint, projected
+  perpendicular to the start tangent. Profile X (width) = height × tangent.
+  Transported along the path (stable near vertical). For a vertical path use
+  e.g. `frame_up=[0,0,1]`.
+- All inputs are primitive-local; parent/module transforms, deformation and
+  anchoring apply afterward.
+- `roll`/twist: degrees; positive rotates width toward height (right-hand rule
+  about the tangent).
+- Without `frame_up`, the older default transport is used (different
+  orientation; not migrated).
 
-`closed=1` requires `frame_up`. Supply at least three distinct controls, with
-an optional repeated first point at the end. Periodic Catmull–Rom sampling
-avoids an endpoint tangent break. Residual transported twist is distributed
-by arc length, so the loop's final frame matches its first. Closed sweeps omit
-caps and retain duplicated UV seam vertices with matching lighting normals.
-The endpoint scales must agree and total twist plus endpoint roll difference
-must be a whole number of turns; otherwise E0130 explains the correction.
-For varying closed modulation, repeat the first control and its modulation
-at the end. Constant modulation needs only one value.
+## Closed sweeps (`closed=1`)
 
-Zero/parallel hints, repeated adjacent points, undefined/reversing tangents,
-non-finite input and incompatible seam settings fail with E0130. Round a
-sharp reversal by adding a curved transition. This is a frame contract, not
-a self-intersection solver; profiles that cross themselves still need correction.
+- Requires `frame_up` and ≥ 3 distinct controls (first point may be repeated
+  at the end).
+- Periodic Catmull–Rom; residual twist spread by arc length; no caps.
+- Endpoint scales must match; total twist + endpoint roll difference must be
+  whole turns.
+- Varying modulation: repeat the first control's value at the end. Constant
+  needs one value.
 
-## Legacy compatibility and conform
+## Errors (E0130)
 
-Omitting `frame_up` retains version 0's existing sample transport, profile-X
-orientation and appearance. There is no automatic migration. The explicit
-contract is version 1 and has a distinct geometry-cache identity. Both modes
-are identified by session inspection and Studio's construction-frame panel.
-The displayed basis is before roll, deformation and anchoring, with the
-scene's world transform separately available to inspection.
+Zero/parallel hint, repeated adjacent points, undefined/reversing tangents,
+non-finite input, incompatible closed-seam settings. Round sharp reversals with
+a curved transition. Self-intersecting profiles are not fixed.
 
-The shared `PathFrame` representation comes from `conform`: `normal` is the
-surface-normal/height direction, and `binormal = tangent × normal`. Explicit
-sweeps map width to **minus** that binormal to form a right-handed profile.
-Conform's existing axis-map behavior remains unchanged; this documented mapping
-avoids an implicit axis swap when deriving surface details.
-
-Review: run `cargo test -p mogen-geom --test path_frames` and render
-[`explicit_sweep_frame.mog`](../examples/features/explicit_sweep_frame.mog)
-from front/side/three-quarter using matched lighting. Parent-transform and
-legacy-appearance regressions live in the DSL test target. Test execution and
-render generation are deferred to review.
+Example: `examples/features/explicit_sweep_frame.mog`.

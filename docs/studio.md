@@ -165,6 +165,37 @@ options.
 
 ---
 
+## Generate and Refine
+
+**New from prompt…** and **Modify…** offer two modes: **Draft** (generate + repair; default)
+and **Refined** (also render front/side/back/three-quarter/presentation views and request
+targeted corrections). Headless equivalent: [`mogen session`](./cli.md#session).
+
+- **Modeling session panel** stores target, reference images, dimensions/units, intended use,
+  required details, corrections and constraints; shows stage, saved responses (copyable),
+  reviewed/unreviewed candidates and **Resume saved refinement**. Refined mode needs a
+  vision-capable model; unsupported providers error rather than switching.
+- **Limits**: calls, refinement rounds, elapsed time, optional USD cap. The USD cap is an
+  estimate; unknown/subscription pricing is shown as unknown. Textures stay a separate action.
+- **Stop** (or closing the tab/app) cancels further calls; in-flight HTTP may still bill, but
+  late responses never replace source or overwrite intervening edits.
+- **Focus edits** on a selected, uniquely named part keeps all source outside its subtree.
+  **Locks** (geometry, transforms, materials, whole subtree) are checked on compiled output,
+  so parent/shared-material/module edits can't bypass them. Dependencies are read-only and
+  must stay inside the project directory.
+- **Candidates** keep source, dependency bytes, brief revision, model, usage, views and
+  findings. Later candidates never auto-replace earlier ones. **Compare** shows matched
+  views (with crop counts and a diagnostic-fit image); **Restore / Keep** is undoable;
+  **Restore as copy** writes a snapshot to a new `.modeling-revisions` directory
+  (`restored.mog` or a numbered name) when dependencies changed externally.
+- **Persistence**: saved files get `<file>.mog.modeling.json`; unsaved sessions checkpoint
+  in `~/.mogen/modeling-recovery/` (open the recovered `.mog`). Corrupt sidecars are reported,
+  never overwritten. Scene Wizard objects write the same context.
+- **Experimental shape guidance** retrieves technique recipes (assembly, modules, loft,
+  sweep, lathe, organic) per target instead of injecting every example. Not a default.
+
+---
+
 ## Themes and preview shaders
 
 **UI themes** (Options → Theme), stored by key; unknown keys fall back to Nord:

@@ -1,4 +1,11 @@
 //! Versioned asset-front convention shared by capture hosts.
+//!
+//! Version 1: -Z is asset front, +Y up; yaw places the camera (not the look
+//! direction). Comparison integrity: the first whole-asset capture fixes
+//! centre, distance and front yaw for later candidates, so dimension/meta
+//! changes never silently reframe. Cropped captures keep their image and add a
+//! separate `diagnostic_fit` image. Saved views without camera metadata stay
+//! "legacy, unversioned" and must not be compared with version-1 views.
 use crate::SceneGraph;
 use glam::Vec3;
 use serde::{Deserialize, Serialize};

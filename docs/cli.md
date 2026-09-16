@@ -17,6 +17,7 @@ Every entry point is a subcommand: `mogen <subcommand> …`. `mogen --help` and
 - [`pack` / `unpack`](#pack--unpack) — MOGB binary container
 - [`generate`](#generate) — AI-driven scene generation
 - [`modify`](#modify) — AI-driven edit of an existing `.mog`
+- [`session`](#session) — durable generate/refine session with visual review and resume
 - [`animate`](#animate) — AI edit limited to animation declarations
 - [`repair`](#repair) — auto-fix validation errors with AI
 - [`textures`](#textures) — generate PBR textures
@@ -293,6 +294,9 @@ mogen thumbnail <input.mog> [--out preview.png]
 | `--pitch <RAD>` | Camera pitch. Default `0.5`. |
 | `--bg <HEX>` | Background, e.g. `#2a2d33`. Default slate grey. |
 
+Also writes a `<out>.camera.json` sidecar (convention version, source/dependency revision,
+camera parameters). Asset front follows `meta(front=…)` ([dsl.md](./dsl.md#file-metadata-meta)).
+
 ---
 
 ## `pack` / `unpack`
@@ -361,6 +365,80 @@ The input's seed is preserved unless `--seed` overrides it.
 mogen modify examples/furniture/chair.mog "make the legs taller"
 mogen modify examples/furniture/chair.mog "add armrests" --dsl-out chair_armed.mog --dry-run
 ```
+
+---
+
+## `session`
+
+Durable generate → build → five matched views → typed review → scoped
+Inspect/Measure/Apply/Render corrections, using the same runner as Studio's
+[Generate and Refine](./studio.md#generate-and-refine). Build failures go through the
+same tool loop.
+
+```sh
+mogen session --prompt "<brief>" --out-dir <new-dir> [flags]
+mogen session --brief brief.json --out-dir <new-dir> [flags]
+mogen session --input chair.mog --prompt "Thicken the arms" --lock seat --selected-part arm --out-dir <new-dir>
+mogen session --resume --out-dir <dir> [--provider …] [--glb]
+mogen session --inspect --out-dir <dir>
+```
+
+| flag | meaning |
+|---|---|
+| `--out-dir` | Must be new, except with `--resume` / `--inspect` (which require a saved session). |
+| `--prompt` | Brief for a new asset, or a correction appended to `--input`'s saved brief. |
+| `--brief <json>` | `ModelingBrief` (style, dimensions, intended use, required details, constraints). Replaces the saved brief; conflicts with `--prompt`. |
+| `--input <mog>` | Refine an existing asset into `--out-dir`. Its sidecar supplies brief, references and locks. |
+| `--resume` | Continue with saved limits, brief, references, selection, locks, model and sampling. Rejects `--prompt/--brief/--model/--seed/--temperature/--thinking/--reference/--selected-part/--lock`. |
+| `--inspect` | Print saved state and artifact paths; no calls. |
+| `--provider`, `--model` | Default provider `openai`. Keys are never saved. Refined mode needs an image-capable model. |
+| `--seed`, `--temperature`, `--thinking low\|medium\|high\|xhigh` | Optional sampling. |
+| `--draft` | Generate/build only; no review or GL. Not with `--input`. |
+| `--reference <png>` | Repeatable; embedded in the sidecar with digests. |
+| `--selected-part`, `--lock <part>` | Focus edits on / lock a uniquely named part (locks repeatable, merged with saved locks). |
+| `--calls` / `--iterations` / `--seconds` | Limits; defaults `12` / `3` / `600`. |
+| `--spend-usd` | Spend cap; stops if pricing is unknown. Subscription cost reports as unknown, not $0. |
+| `--output-tokens` | Per-call output cap, default `16384`. |
+| `--glb` | Also export `final.glb`. |
+| `--experimental-guidance` | Technique-retrieval shape guidance (not a default). |
+| `--script <json>` | Credential-free fake provider: JSON array of response strings. |
+
+Rendering: Linux needs EGL/OpenGL 3.3 (headless: `EGL_PLATFORM=surfaceless
+LIBGL_ALWAYS_SOFTWARE=1` with Mesa `libegl1 libegl-mesa0 libgl1-mesa-dri`); macOS/Windows
+need a graphical session. A GL probe runs before any model call. Plain `generate`/`modify`
+(and `--auto-refine`) are unchanged.
+
+**Output.** Stdout is one JSON report (progress on stderr); Ctrl-C cancels. Report fields
+include absolute `final_mog` (null if it doesn't match the selected snapshot), `selected_mog`,
+`latest_mog`, `sidecar`, `report`, selected/latest revisions, `stop_reason`, usage, elapsed
+time. The directory holds `final.mog`, optional `final.glb`, `final.mog.modeling.json`,
+`report.json`, `generation-response.txt`, `candidate-*`, and `revision-N/` full
+source/dependency snapshots. Input dependencies may not use those names. Candidates record
+whether they were reviewed/selected.
+
+| status | meaning |
+|---|---|
+| `completed` | Draft done, reviewer finished, or no useful edit; see `stop_reason`. Not a quality guarantee. |
+| `budget_exhausted` | Call/iteration/time/spend limit hit; work is saved. |
+| `canceled` | Cancelled; late responses may be saved. |
+| `review_format_failed` | Format repair failed; raw responses kept in the journal. |
+| `render_unavailable` | GL or image capability missing. |
+| `stopped` | Other provider/validation/stale-state/protocol error. |
+
+**Resume rules.** Sidecar v2 (loads v1 read-only; v1 has no transcript) saves atomically.
+Provider responses are journalled before parsing; Apply results and captures are saved
+immediately. Resume replays saved responses/captures without re-sending calls or re-applying
+edits, and restores charged usage and elapsed time. Changed source, dependencies, brief,
+model/provider, selection or locks reject resume. A call interrupted in flight is counted as
+one reserved call of unknown cost and may be billed twice. Journal cap: 256 responses or
+32 MiB; responses over 1 MiB are saved but not interpreted.
+
+**Review format.** JSON `{findings: string, complete: bool, improved: bool, correction:
+string}`; a fenced object or an array of findings strings is normalised, missing booleans are
+not defaulted, and one format-only retry must preserve the original judgments. A bare/fenced
+whole `mog` document is accepted as a full-source Apply.
+
+MCP exposes `session` with the same parameters and returns the report as `structuredContent`.
 
 ---
 

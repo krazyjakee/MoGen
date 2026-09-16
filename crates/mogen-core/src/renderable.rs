@@ -1,5 +1,9 @@
 //! Shared, non-mutating contract for geometry sent to renderers and exporters.
 //! Diagnostics are bounded per channel/part, rather than per bad vertex.
+//! Code table: `docs/dsl.md` "Diagnostics and tooling". Policy: never guess
+//! smoothing or repair (missing normals are generated at construction/import);
+//! zero normals are allowed only at unused or zero-area-only vertices;
+//! degeneracy is an exact-zero f64 cross product, with no scene-unit tolerance.
 use std::fmt;
 
 use glam::{DVec3, Mat4, Vec3};

@@ -87,8 +87,14 @@ meta (
 | `moghub_model_id` | string | toolchain | stamped by Studio's Publish after a MoGHub upload |
 | `moghub_slug` | string | toolchain | MoGHub slug, paired with `moghub_model_id` |
 | `moghub_version` | string | toolchain | last-published MoGHub version |
+| `front` | string | author | asset front for canonical camera views: `-z` (default), `+z`, `-x`, `+x` |
+| `front_node` | string | author | with `front`, take that axis in this uniquely named node's world frame (projected horizontal) |
 
-Informational only — not consumed by geometry. Files without `meta` still
+Informational only — not consumed by geometry. `front`/`front_node` only steer
+the canonical views (`front`, `back`, `side`, `three_quarter` = front-right
+quarter, `rear_three_quarter`, `presentation`) used by thumbnails, Studio Frame and
+modeling-session captures; a missing/ambiguous node or vertical front is `E0140`.
+Imported files' `meta` never overrides the root's. Files without `meta` still
 build; the toolchain inserts `meta (mogen_version = "...")` on next save.
 
 Diagnostics: `E0310` (no body block), `E0311` (quoted name — use `name=`),
@@ -1698,6 +1704,24 @@ plane "ground" (size=20, mat="grass", cast_shadow=0)
 - `mogen check <file>.mog [--json]` — validate without building; JSON is the format the LLM repair loop consumes.
 - `mogen dump-scene <file>.mog --json` — print the lowered scene graph.
 - `mogen inspect <file>.glb` — summarise a GLB.
+
+Every consumer (check, Studio, sessions, GLB/FBX export, headless capture) runs the
+same read-only renderable-mesh contract; nothing is repaired silently.
+
+| code | problem |
+|---|---|
+| `E1200` | channel length ≠ position count (triangle meshes need a full normal channel; omit unused optional channels) |
+| `E1201` | non-finite/singular transform or non-unit quaternion |
+| `E1202` | non-finite local or world position |
+| `E1203` | incomplete triangle or out-of-range index |
+| `E1204` | non-finite normal, or zero/non-unit (±0.001) normal on a rendered face |
+| `E1205` / `E1206` | non-finite UV / vertex colour |
+| `E1207` | invalid skin streams, bindings or inverse-bind matrices |
+| `W1208` | zero-area triangles (advisory, kept) |
+| `W1209` | mesh with no triangles (advisory; node exported without surface) |
+| `E1210` | invalid, cyclic, duplicate or unreachable scene links |
+
+Open surfaces, UV seams, split normals, negative scale and disconnected parts are allowed.
 
 ---
 
