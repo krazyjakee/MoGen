@@ -38,8 +38,35 @@ fn golden_glbs() -> Vec<PathBuf> {
         collect(&dir, &mut out);
     }
     out.sort();
-    assert!(!out.is_empty(), "no golden GLBs found");
-    out
+
+    // Some example GLBs are Git LFS pointers rather than real binaries in a
+    // checkout that never ran `git lfs pull` (this repo's LFS-tracked assets
+    // are not all mirrored in plain git the way the compiler's own goldens
+    // are — see the comment in `.gitattributes`). Skip those with a clear
+    // message instead of failing on a confusing "not a valid glTF" error.
+    let (real, pointers): (Vec<_>, Vec<_>) = out.into_iter().partition(|p| !is_lfs_pointer(p));
+    if !pointers.is_empty() {
+        eprintln!(
+            "round_trip: skipping {} GLB(s) that are unresolved Git LFS pointers (run `git lfs pull`): {}",
+            pointers.len(),
+            pointers
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+    assert!(!real.is_empty(), "no golden GLBs found");
+    real
+}
+
+/// A Git LFS pointer file is small, valid UTF-8 text starting with the spec
+/// header — nothing a real (binary) GLB ever starts with.
+fn is_lfs_pointer(path: &Path) -> bool {
+    let Ok(bytes) = fs::read(path) else {
+        return false;
+    };
+    bytes.starts_with(b"version https://git-lfs.github.com/spec/v1")
 }
 
 fn collect(dir: &Path, out: &mut Vec<PathBuf>) {
