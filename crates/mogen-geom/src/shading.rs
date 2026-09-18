@@ -140,13 +140,13 @@ pub fn crease_normals(mesh: &Mesh, degrees: f32) -> Mesh {
             if mesh.has_uvs() {
                 out.uvs.push(mesh.uvs[i]);
             }
-            if !mesh.colors.is_empty() {
+            if mesh.has_colors() {
                 out.colors.push(mesh.colors[i]);
             }
-            if !mesh.joints.is_empty() {
+            if mesh.joints.len() == mesh.positions.len() {
                 out.joints.push(mesh.joints[i]);
             }
-            if !mesh.weights.is_empty() {
+            if mesh.weights.len() == mesh.positions.len() {
                 out.weights.push(mesh.weights[i]);
             }
             id
@@ -217,5 +217,25 @@ mod tests {
         let out = crease_normals(&mesh, 180.);
         assert_eq!(out.normals[0], out.normals[4]);
         assert_ne!(out.uvs[0], out.uvs[4]);
+    }
+    #[test]
+    fn mismatched_length_colors_joints_weights_do_not_panic() {
+        // Nothing in `Mesh` enforces that colors/joints/weights are either
+        // empty or match `positions.len()` (only `has_colors()`/`has_uvs()`
+        // check length; there's no such helper for joints/weights). A
+        // shorter-than-positions array here must be skipped, not indexed.
+        let mesh = Mesh {
+            positions: vec![[0., 0., 0.], [1., 0., 0.], [0., 1., 0.], [0., 0., 1.]],
+            indices: vec![0, 1, 2, 1, 0, 3],
+            normals: vec![[0.; 3]; 4],
+            colors: vec![[1., 1., 1., 1.]],
+            joints: vec![[0, 0, 0, 0]],
+            weights: vec![[1., 0., 0., 0.]],
+            ..Default::default()
+        };
+        let out = crease_normals(&mesh, 40.);
+        assert!(out.colors.is_empty());
+        assert!(out.joints.is_empty());
+        assert!(out.weights.is_empty());
     }
 }

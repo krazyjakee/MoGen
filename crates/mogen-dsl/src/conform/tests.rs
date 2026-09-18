@@ -558,6 +558,22 @@ fn external_instance_binding_is_explicit_and_inspectable() {
     }
 }
 #[test]
+fn conform_rejects_self_target_with_specific_message_not_cyclic() {
+    // A single conform whose target and child resolve to the same node must
+    // report the specific self-conform error, not the generic
+    // cyclic-dependency bail (regression: the topological sort's
+    // blocking-predicate scan used to include the spec itself, so a
+    // self-referencing binding could never be selected as runnable and
+    // always fell through to "cyclic target/child dependency").
+    let err = build_err(r#"scene {box "a" conform(target="a",child="a",at="top")}"#);
+    assert!(
+        err.contains("cannot be conformed onto itself"),
+        "err = {err}"
+    );
+    assert!(!err.contains("cyclic"), "err = {err}");
+}
+
+#[test]
 fn conform_duplicate_and_missing_paths_fail() {
     for (source,expected) in [
         ("scene {plane \"a\" plane \"a\" box \"b\" conform(target=\"a\",child=\"b\",at=\"top\")}","ambiguous"),

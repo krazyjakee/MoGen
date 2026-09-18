@@ -74,7 +74,8 @@ pub(crate) fn run(args: SessionArgs) -> Result<()> {
     }
     if args.inspect {
         let dir = args.out_dir.canonicalize()?;
-        let project = ModelingProject::load(&dir.join("final.mog"))?;
+        let entry = dir.join("final.mog");
+        let project = ModelingProject::load(&entry)?;
         println!(
             "{}",
             serde_json::to_string_pretty(&artifacts(&project, &dir, false)?)?
