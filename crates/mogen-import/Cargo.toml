@@ -1,0 +1,29 @@
+[package]
+name = "mogen-import"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+glam = { workspace = true }
+gltf = { workspace = true, features = [
+    "KHR_lights_punctual",
+    "KHR_materials_emissive_strength",
+    "KHR_materials_transmission",
+    # Node `extras`: MoGen writes `role` and `tags` there, and they are carried
+    # back so a round-tripped scene keeps its semantics (and its `floating`
+    # exemptions from the connectivity check).
+    "extras",
+] }
+serde_json = { workspace = true }
+# Already in the tree through `gltf`; needed here only for `data:` image URIs,
+# which the `gltf` crate decodes internally but does not hand back as bytes.
+base64 = "0.22"
+
+[dev-dependencies]
+# Tests only: the importer emits text and never links the compiler. The tests
+# do, to prove the text builds and that a MoGen GLB survives the round trip.
+mogen-core = { workspace = true }
+mogen-dsl = { workspace = true, features = ["csg"] }
+mogen-export = { workspace = true, features = ["textures"] }
+mogen-validate = { workspace = true }

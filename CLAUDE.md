@@ -30,8 +30,10 @@ Pipeline (keep crate deps one-directional):
 - **mogen-anim** — procedural clip templates. **mogen-export** — GLB/FBX writer, mesh merge,
   SVG pre-pass. **mogen-svg** — SVG → PNG. **mogen-render** — glow PBR renderer/thumbnails.
 - **mogen-llm** — LLM providers, prompt assembly, bounded repair loop, texture generation.
-- **mogen-pascal** — pascalorg/editor JSON importer. **mogen-registry** / **mogen-moghub-client** —
-  `use "@user/slug"` resolution and MoGHub client (web repo lives at `../moghub`).
+- **mogen-pascal** — pascalorg/editor JSON importer. **mogen-import** — mesh importer (glTF/GLB
+  → mesh IR → `poly` source; ingest → normalize → convert passes → emit; emits text only).
+- **mogen-registry** / **mogen-moghub-client** — `use "@user/slug"` resolution and MoGHub client
+  (web repo lives at `../moghub`).
 - **mogen-binary** — experimental MOGB container. **mogen-update** — self-updater.
 - **mogen** — CLI binary. **mogen-studio** — eframe/egui app reusing the CLI pipeline.
   **mogen-wasm** + `web/` — browser preview.

@@ -11,7 +11,7 @@ Every entry point is a subcommand: `mogen <subcommand> …`. `mogen --help` and
 - [`parse`](#parse) — dump the AST
 - [`check`](#check) — validate a DSL file
 - [`dump-scene`](#dump-scene) — print the lowered scene graph
-- [`import`](#import) — pascalorg/editor scene → `.mog` source
+- [`import`](#import) — glTF/GLB mesh or pascalorg/editor scene → `.mog` source
 - [`inspect`](#inspect) — summarise a GLB
 - [`thumbnail`](#thumbnail) — headless PNG render
 - [`pack` / `unpack`](#pack--unpack) — MOGB binary container
@@ -227,25 +227,68 @@ mogen dump-scene <input.mog> [--json]
 
 ## `import`
 
-Convert a [pascalorg/editor](https://github.com/pascalorg/editor) scene into editable
-`.mog` **source** (not a GLB).
+Convert a mesh file or a [pascalorg/editor](https://github.com/pascalorg/editor) scene
+into editable `.mog` **source** (not a GLB). The reader is picked from the extension:
+`.glb` / `.gltf` → mesh import, anything else → pascal JSON. `.obj` and `.fbx` are
+recognised but not read yet (convert to `.glb` first).
 
 ```sh
-mogen import <scene.json> [--out <house.mog>] [--name <scene-name>]
+mogen import <model.glb | model.gltf | scene.json> [--out <out.mog>] [--name <scene-name>]
 ```
 
 | flag | meaning |
 |---|---|
-| `--out` | Output path. Defaults to `<input>.mog` beside the JSON. |
+| `--out` | Output path. Defaults to `<input>.mog` beside the input. |
 | `--name` | Name of the emitted `scene`. Defaults to the output file stem. |
+
+Output is byte-identical across runs. Everything the importer skipped, dropped,
+approximated or corrected is written into the output header as a comment, and
+printed; nothing is dropped silently.
+
+### Mesh files (glTF / GLB)
+
+The conversion is faithful rather than clever:
+
+- each node → `group` with its local `pos` / `rot` / `scale` (a leaf holding a
+  single-material mesh collapses to a bare `poly`); matrix transforms are decomposed;
+- each mesh → one `poly` per material (`poly` takes a single `mat=`), with
+  `TEXCOORD_0` as `uvs=`. Triangle strips and fans are converted; points and lines
+  are skipped. Vertices are kept as the file splits them, so hard and soft edges shade
+  as in the source;
+- a mesh placed by several nodes → a parameterless `module`, placed with `use`;
+- each material → a `material` with every factor written out (base colour, metallic,
+  roughness, alpha mode / cutoff, emissive + strength, transmission, double-sided).
+  PNG / JPEG textures are copied out byte-for-byte into `<name>_textures/` beside the
+  output and referenced from the material;
+- names are sanitised to `[A-Za-z0-9_]` and made unique (`_2`, `_3`, …) in source order;
+- `role` and `tags` stored in node `extras` (as MoGen writes them) are carried back.
+
+Cameras, lights, skins, animations, morph targets, vertex colours, extra UV sets,
+unsupported extensions and nodes with no geometry under them are listed in the header:
+
+```
+// Imported from glTF "robot.glb" as "robot".
+// 14 nodes · 9 meshes · 11 polys · 5820 triangles · 4 materials · 2 textures
+// Skipped: cameras (1), animations (3), skins (1), nodes without geometry (2)
+//
+// 2 item(s) needed attention:
+//   skin weights dropped; the mesh is imported in its bind pose
+//   extension KHR_texture_transform is not supported; its effect is ignored
+```
+
+Output is raw `poly` data and can be large. Every committed MoGen GLB round-trips
+(import → build keeps its triangle count and bounds). A scene whose parts do not touch
+still fails `mogen build`'s connectivity check (E1101); `import` warns when that
+applies — tag intentional gaps `tags="floating"`.
+
+### pascalorg/editor scenes
 
 Walls, slabs, ceilings, roofs and openings become geometry; furniture and fixtures
 become POI markers. Doors and windows become the hole plus a posed group wrapping
 `use "door_simple"` / `use "window_simple"`. Unsupported node kinds (MEP, cabinets,
 sheets, guides) are reported, never fatal.
 
-Everything the importer skipped, dropped, or corrected is written into the output
-header as a comment:
+The header lists what was skipped, dropped or corrected:
 
 ```
 // Imported from a pascalorg/editor scene as "gatehouse".

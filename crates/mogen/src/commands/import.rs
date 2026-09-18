@@ -1,5 +1,9 @@
 //! `mogen import` — read a foreign scene format and write `.mog` source.
 //!
+//! The reader is picked from the input's extension: `.glb` / `.gltf` go to
+//! `mogen-import` (mesh import; `.obj` / `.fbx` are recognised but not yet
+//! read), anything else is treated as a pascalorg/editor JSON scene.
+//!
 //! Note what this does *not* produce: a GLB. Every other command that takes a
 //! scene ends at a binary, but an import that handed back geometry would defeat
 //! the point. The output is source the user owns and can edit, and `mogen
@@ -14,25 +18,46 @@ pub(crate) fn import(input: PathBuf, out: Option<PathBuf>, name: Option<String>)
     let out = out.unwrap_or_else(|| input.with_extension("mog"));
     let scene_name = name.unwrap_or_else(|| stem_of(&out));
 
-    let json = fs::read_to_string(&input)
-        .with_context(|| format!("reading {}", input.display()))?;
-    let result = mogen_pascal::import(&json, &scene_name)
-        .with_context(|| format!("{} is not a pascalorg/editor scene", input.display()))?;
+    let (source, assets, summary) = if mogen_import::Format::from_path(&input).is_some() {
+        let result = mogen_import::import_file(&input, &scene_name, &mogen_import::Options::default())
+            .with_context(|| format!("importing {}", input.display()))?;
+        (result.source, result.assets, result.report.summary())
+    } else {
+        let json = fs::read_to_string(&input)
+            .with_context(|| format!("reading {}", input.display()))?;
+        let result = mogen_pascal::import(&json, &scene_name)
+            .with_context(|| format!("{} is not a pascalorg/editor scene", input.display()))?;
+        (result.source, Vec::new(), result.report.summary())
+    };
 
-    if let Some(dir) = out.parent().filter(|d| !d.as_os_str().is_empty()) {
+    let out_dir = out.parent().filter(|d| !d.as_os_str().is_empty());
+    if let Some(dir) = out_dir {
         fs::create_dir_all(dir)
             .with_context(|| format!("creating {}", dir.display()))?;
     }
-    fs::write(&out, &result.source)
+    // Textures first: the `.mog` references them by relative path, so a
+    // half-written import should never be a source file pointing at nothing.
+    for asset in &assets {
+        let path = out_dir.map(|d| d.join(&asset.path)).unwrap_or_else(|| PathBuf::from(&asset.path));
+        if let Some(dir) = path.parent() {
+            fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+        }
+        fs::write(&path, &asset.bytes)
+            .with_context(|| format!("writing {}", path.display()))?;
+    }
+    fs::write(&out, &source)
         .with_context(|| format!("writing {}", out.display()))?;
 
     // The same summary is already in the file's header, so this is a
     // convenience rather than the record — nothing here is the only copy.
     println!("{} → {}", input.display(), out.display());
-    for line in result.report.summary() {
+    for line in summary {
         println!("  {line}");
     }
-    for line in build_readiness(&result.source) {
+    if !assets.is_empty() {
+        println!("  wrote {} texture file(s) next to it", assets.len());
+    }
+    for line in build_readiness(&source) {
         println!("  {line}");
     }
     println!("  next: mogen build {}", out.display());
@@ -70,7 +95,7 @@ fn build_readiness(source: &str) -> Vec<String> {
                 "this"
             }
         ),
-        "      their editor allows disconnected parts; add `tags=\"floating\"`".into(),
+        "      the source allows disconnected parts; add `tags=\"floating\"`".into(),
         "      to any that are meant to stand alone".into(),
     ]
 }
