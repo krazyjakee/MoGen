@@ -18,6 +18,7 @@ mogen-export = { workspace = true, features = ["textures", "textures-svg", "merg
 mogen-llm = { workspace = true }
 mogen-moghub-client = { workspace = true, features = ["oauth"] }
 mogen-pascal = { workspace = true }
+mogen-import = { workspace = true }
 mogen-render = { workspace = true }
 mogen-update = { workspace = true }
 anyhow = { workspace = true }

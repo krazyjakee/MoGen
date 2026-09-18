@@ -69,6 +69,18 @@ For generation with visual review, scoped corrections and durable resume, see
 [`mogen session`](docs/cli.md#session) and Studio's
 [Generate and Refine](docs/studio.md#generate-and-refine).
 
+## Importing meshes
+
+`mogen import` turns a `.glb` / `.gltf` into editable `.mog` source: nodes become
+groups, meshes become `poly` nodes, materials and textures are carried over, and
+anything it could not use is listed in the file's header comment. Details:
+[`docs/cli.md#import`](docs/cli.md#import).
+
+```sh
+./scripts/run-mogen.sh import robot.glb --out robot.mog
+./scripts/run-mogen.sh build robot.mog --out robot.glb
+```
+
 ## Importing Pascal buildings
 
 [pascalorg/editor](https://github.com/pascalorg/editor) is a free web-based architectural

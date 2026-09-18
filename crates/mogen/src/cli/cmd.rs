@@ -51,15 +51,17 @@ pub(crate) enum Cmd {
         #[arg(long, value_enum)]
         format: Option<BuildFormatArg>,
     },
-    /// Convert a pascalorg/editor scene (`.json`) into DSL source.
+    /// Convert a mesh (`.glb`/`.gltf`) or a pascalorg/editor scene (`.json`)
+    /// into DSL source.
     ///
     /// Unlike `build`, this writes a `.mog` file rather than a binary: the
     /// point of importing is to get source you can edit. Anything the
     /// importer could not use is reported and written into the file's
     /// header as a comment, so a partly-understood scene still opens.
+    /// Textures in a glTF are written to `<name>_textures/` next to the output.
     Import {
         input: PathBuf,
-        /// Output path. Defaults to `<input>.mog` alongside the JSON.
+        /// Output path. Defaults to `<input>.mog` alongside the input.
         #[arg(short, long)]
         out: Option<PathBuf>,
         /// Name for the emitted `scene`. Defaults to the output file stem.

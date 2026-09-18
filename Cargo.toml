@@ -11,6 +11,7 @@ members = [
     "crates/mogen-llm",
     "crates/mogen",
     "crates/mogen-pascal",
+    "crates/mogen-import",
     "crates/mogen-moghub-client",
     "crates/mogen-registry",
     "crates/mogen-render",
@@ -70,6 +71,7 @@ mogen-export = { path = "crates/mogen-export", default-features = false }
 mogen-svg = { path = "crates/mogen-svg" }
 mogen-llm = { path = "crates/mogen-llm" }
 mogen-pascal = { path = "crates/mogen-pascal" }
+mogen-import = { path = "crates/mogen-import" }
 mogen-moghub-client = { path = "crates/mogen-moghub-client" }
 mogen-registry = { path = "crates/mogen-registry" }
 mogen-render = { path = "crates/mogen-render" }

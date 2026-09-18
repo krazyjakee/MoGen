@@ -2737,6 +2737,7 @@ dependencies = [
  "mogen-dsl",
  "mogen-export",
  "mogen-geom",
+ "mogen-import",
  "mogen-llm",
  "mogen-moghub-client",
  "mogen-pascal",
@@ -2825,6 +2826,21 @@ dependencies = [
  "gltf",
  "manifold-csg",
  "mogen-core",
+]
+
+[[package]]
+name = "mogen-import"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "glam 0.30.10",
+ "gltf",
+ "mogen-core",
+ "mogen-dsl",
+ "mogen-export",
+ "mogen-validate",
+ "serde_json",
 ]
 
 [[package]]
