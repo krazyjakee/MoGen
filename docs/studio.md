@@ -72,6 +72,9 @@ The editor and viewer are separated by a draggable splitter.
 - Studio opens and saves `.mogb` (the experimental MOGB container, see
   `mogen pack`/`unpack`) transparently; the editor always shows DSL source. Text `.mog`
   stays canonical.
+- **File → Import…** adds `.mog` module imports or inserts `.glb` assets as
+  `mesh` nodes in the scene. Paths are relative to the current file when possible;
+  unsaved tabs use absolute paths. Windows paths are escaped automatically.
 
 ---
 

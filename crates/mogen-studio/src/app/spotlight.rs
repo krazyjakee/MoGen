@@ -84,7 +84,7 @@ fn command_catalog(ctx: &egui::Context) -> Vec<Command> {
             action: CommandAction::Menu(MenuAction::OpenDialog),
         },
         Command {
-            label: "Import .mog…",
+            label: "Import modules or GLB meshes…",
             hint: String::new(),
             keywords: "include external file",
             action: CommandAction::Menu(MenuAction::ImportDsl),

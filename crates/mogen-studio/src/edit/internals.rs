@@ -4,6 +4,11 @@
 
 use mogen_core::Span;
 
+/// Encode a DSL string without changing Windows path separators or prefixes.
+pub(super) fn quote_string(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
 pub(super) fn clamp_span(src: &str, span: Span) -> (usize, usize) {
     let s = span.start.min(src.len());
     let e = span.end.min(src.len()).max(s);

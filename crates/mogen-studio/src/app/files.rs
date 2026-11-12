@@ -433,8 +433,8 @@ impl MogenStudioApp {
         self.open_picker(super::file_picker::PickerMode::Open);
     }
 
-    /// Pick one or more `.mog` files and splice `import "<path>"` lines into
-    /// the active buffer at the top. Paths are emitted relative to the active
+    /// Pick modules or GLB meshes and insert them into the active buffer.
+    /// Paths are emitted relative to the active
     /// file's directory when one exists and the picked file lives somewhere
     /// reachable; otherwise they fall back to absolute. Already-imported and
     /// self-imports are filtered out.

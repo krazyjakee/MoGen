@@ -45,6 +45,9 @@ jobs:
           packages: libgtk-3-dev libxkbcommon-dev libwayland-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libxcb1-dev libssl-dev pkg-config
           version: 1.0
 
+      - name: Test Studio imports
+        run: cargo test -p mogen-studio --locked --target ${{ matrix.target }} import
+
       - name: Build mogen (CLI)
         run: cargo build -p mogen --release --locked --target ${{ matrix.target }}
 

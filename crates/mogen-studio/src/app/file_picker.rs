@@ -16,7 +16,7 @@
 //! Persists the last-browsed directory to `Settings::last_picker_dir` so
 //! reopening the picker lands the user back where they were. Save As mode
 //! routes through the existing `save_to` plumbing; Open routes through
-//! `open_path`; Import splices `import "…"` lines into the active buffer.
+//! `open_path`; Import adds module declarations or GLB mesh nodes.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -43,8 +43,7 @@ pub(super) enum PickerMode {
     /// Pick a destination path for the active buffer. `default_name` seeds
     /// the filename input.
     SaveAs { default_name: String },
-    /// Pick one or more `.mog` files to splice into the active buffer as
-    /// `import "…"` lines.
+    /// Pick modules or GLB meshes to insert into the active buffer.
     Import,
 }
 
@@ -53,7 +52,7 @@ impl PickerMode {
         match self {
             PickerMode::Open => "Open MoG file",
             PickerMode::SaveAs { .. } => "Save MoG file as",
-            PickerMode::Import => "Import MoG modules",
+            PickerMode::Import => "Import modules or GLB meshes",
         }
     }
 
@@ -254,8 +253,7 @@ impl FilePickerState {
 }
 
 /// Files we offer in the picker grid. `.mog` and its binary sibling `.mogb`
-/// are the primary cases; `.glb` is listed because users frequently want to
-/// cross-reference an exported asset from the same dir. Other extensions are
+/// are the primary cases; `.glb` can be imported as a mesh. Other extensions are
 /// hidden so the list isn't noise.
 fn is_browseable_extension(path: &Path) -> bool {
     path.extension()
@@ -750,7 +748,7 @@ impl MogenStudioApp {
         }
     }
 
-    /// Splice `import "<path>"` lines into the active buffer using the
+    /// Insert modules or GLB meshes into the active buffer using the
     /// same path-resolution rules as the original `apply_import_selection`
     /// (relative when the picked file lives somewhere reachable from the
     /// active file's directory; absolute fallback otherwise; self-imports
@@ -777,13 +775,7 @@ impl MogenStudioApp {
                     }
                 }
             }
-            let rel = active_dir
-                .as_deref()
-                .and_then(|base| relative_path(base, &canonical));
-            let rendered = rel
-                .map(|r| r.to_string_lossy().into_owned())
-                .unwrap_or_else(|| canonical.to_string_lossy().into_owned());
-            paths.push(rendered);
+            paths.push(import_path(&canonical, active_dir.as_deref()));
         }
         if paths.is_empty() {
             self.active_mut().status = if skipped_self > 0 {
@@ -796,14 +788,14 @@ impl MogenStudioApp {
 
         let undo_before = self.files[i].source.clone();
         let path_refs: Vec<&str> = paths.iter().map(|s| s.as_str()).collect();
-        let new_source = edit::insert_imports(&self.files[i].source, &path_refs);
+        let (new_source, added) =
+            edit::insert_import_selection(&self.files[i].source, &path_refs);
         if new_source == self.files[i].source {
             self.active_mut().status =
                 "import: every selected file is already imported".into();
             return;
         }
 
-        let added = paths.len();
         {
             let f = &mut self.files[i];
             f.source = new_source;
@@ -1025,3 +1017,19 @@ fn relative_path(from: &Path, to: &Path) -> Option<PathBuf> {
     }
     Some(rel)
 }
+
+/// Compare canonical paths on both sides so Windows verbatim prefixes don't
+/// force an absolute path when the active file and asset share a directory.
+fn import_path(canonical: &Path, active_dir: Option<&Path>) -> String {
+    let relative = active_dir
+        .and_then(|base| fs::canonicalize(base).ok())
+        .and_then(|base| relative_path(&base, canonical));
+    relative
+        .as_deref()
+        .unwrap_or(canonical)
+        .to_string_lossy()
+        .into_owned()
+}
+
+#[cfg(test)]
+mod tests;

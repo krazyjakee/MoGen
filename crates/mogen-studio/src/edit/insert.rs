@@ -30,14 +30,32 @@ pub fn list_imports(src: &str) -> Vec<ImportEntry> {
             continue;
         }
         let rest = rest.trim_start();
-        let Some(after_quote) = rest.strip_prefix('"') else {
+        if !rest.starts_with('"') {
+            continue;
+        }
+        let mut escaped = false;
+        let end = rest.char_indices().skip(1).find_map(|(i, c)| {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                return Some(i);
+            }
+            None
+        });
+        let Some(end) = end else {
             continue;
         };
-        let Some(end) = after_quote.find('"') else {
+        // Let the DSL parser decode escapes; parse only the path so incomplete
+        // attributes elsewhere on the line don't hide an import mid-edit.
+        let Ok(mut nodes) = mogen_dsl::parse(&format!("import {}", &rest[..=end])) else {
             continue;
         };
-        let path = after_quote[..end].to_string();
-        let trail = &after_quote[end + 1..];
+        let Some(path) = nodes.remove(0).name else {
+            continue;
+        };
+        let trail = &rest[end + 1..];
         let module_name = parse_as_alias(trail).unwrap_or_else(|| stem_of(&path));
         out.push(ImportEntry { module_name, path });
     }
