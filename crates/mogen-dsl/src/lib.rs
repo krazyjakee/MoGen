@@ -10,6 +10,7 @@ pub mod parser;
 pub mod proc_schema;
 pub mod skin_lower;
 pub mod stdlib;
+pub mod syntax;
 
 pub use ast::{BinOp, Expr, Node, Value};
 pub use lower::{lower, lower_with_loader, lower_with_loader_lod, lower_with_source};

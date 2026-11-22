@@ -13,6 +13,7 @@ spec-compliant. Desktop GUI: **MoGen Studio** (`mogen-studio`).
 ./scripts/run-studio.sh                 # Studio
 cargo test -p mogen-dsl                 # one crate
 MOGEN_GOLDENS_UPDATE=1 cargo test -p mogen --test goldens   # regenerate GLB goldens
+./scripts/run-python-tests.sh           # build the Python package (uv + maturin) and run pytest
 ```
 
 ## Architecture
@@ -33,6 +34,9 @@ Pipeline (keep crate deps one-directional):
 - **mogen-pascal** — pascalorg/editor JSON importer. **mogen-registry** / **mogen-moghub-client** —
   `use "@user/slug"` resolution and MoGHub client (web repo lives at `../moghub`).
 - **mogen-binary** — experimental MOGB container. **mogen-update** — self-updater.
+- **mogen-py** — Python package `mogen` (PyO3, `python` feature; Python layer in `python/mogen/`).
+  Edits go through `mogen-dsl::syntax` (lossless parse/print — `print(parse(src)) == src`);
+  `python/mogen/_kinds.py` is generated from the validator schema (`MOGEN_GOLDENS_UPDATE=1`).
 - **mogen** — CLI binary. **mogen-studio** — eframe/egui app reusing the CLI pipeline.
   **mogen-wasm** + `web/` — browser preview.
 
@@ -66,7 +70,8 @@ Pipeline (keep crate deps one-directional):
   on glyph-only buttons.
 - Env vars: `MOGEN_CACHE_DIR` (default `$HOME/.cache/mogen/`), `MOGEN_GOLDENS_UPDATE`,
   `MOGEN_GLTF_VALIDATOR`.
-- Docs: `docs/dsl.md` (language), `docs/modules.md` (stdlib), `docs/cli.md`, `docs/studio.md`.
+- Docs: `docs/dsl.md` (language), `docs/modules.md` (stdlib), `docs/cli.md`, `docs/studio.md`,
+  `docs/python.md` (not embedded in Studio).
   These are embedded in Studio (`mogen-studio/src/docs.rs` links heading slugs — keep them
   in sync). Read only the section you need.
 

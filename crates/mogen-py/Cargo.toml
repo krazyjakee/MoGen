@@ -1,0 +1,28 @@
+[package]
+name = "mogen-py"
+version.workspace = true
+edition.workspace = true
+description = "Python bindings for MoGen: build, load, edit and compile .mog files"
+
+[lib]
+name = "mogen_py"
+# maturin adds `cdylib` itself (`cargo rustc --crate-type cdylib`), so plain
+# workspace builds don't link a second copy of the whole pipeline.
+crate-type = ["rlib"]
+
+[features]
+# The PyO3 module. Off by default so `cargo build/test --workspace` needs no
+# Python toolchain; `pyproject.toml` turns it on for maturin builds.
+python = ["dep:pyo3"]
+
+[dependencies]
+mogen-core = { workspace = true }
+mogen-dsl = { workspace = true, features = ["csg"] }
+mogen-validate = { workspace = true, features = ["csg"] }
+mogen-export = { workspace = true, features = ["textures", "textures-svg", "merge", "fbx"] }
+mogen-binary = { workspace = true }
+anyhow = { workspace = true }
+pyo3 = { version = "0.29", optional = true, features = ["abi3-py310"] }
+
+[dev-dependencies]
+mogen-validate = { workspace = true }
