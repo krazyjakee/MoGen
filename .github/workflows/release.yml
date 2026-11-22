@@ -16,6 +16,20 @@ jobs:
   build:
     name: build (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
+    # Windows Authenticode signing (scripts/sign-windows.ps1). Credentials, in
+    # order of preference:
+    #   SIMPLYSIGN_USER + SIMPLYSIGN_TOTP_SECRET  Certum cloud key, mounted as a
+    #       virtual smart card by scripts/simplysign-login.ps1 (the TOTP secret
+    #       is the account's second factor: anyone with repo secrets can sign)
+    #   WINDOWS_CERT_PFX_BASE64 (+ WINDOWS_CERT_PASSWORD)  exportable .pfx
+    # Optional repo variable WINDOWS_TIMESTAMP_URL (Certum: http://time.certum.pl).
+    # Tag pushes fail closed: no credentials, or any signing/timestamp/trust
+    # failure, stops the Windows leg and therefore the release. Manual
+    # workflow_dispatch runs sign when credentials exist and otherwise warn.
+    env:
+      WINDOWS_SIGN_AVAILABLE: ${{ secrets.WINDOWS_CERT_PFX_BASE64 != '' || (secrets.SIMPLYSIGN_USER != '' && secrets.SIMPLYSIGN_TOTP_SECRET != '') }}
+      SIMPLYSIGN_AVAILABLE: ${{ secrets.WINDOWS_CERT_PFX_BASE64 == '' && secrets.SIMPLYSIGN_USER != '' && secrets.SIMPLYSIGN_TOTP_SECRET != '' }}
+      SIGN_REQUIRED: ${{ startsWith(github.ref, 'refs/tags/') }}
     strategy:
       fail-fast: false
       matrix:
@@ -30,6 +44,13 @@ jobs:
             target: x86_64-pc-windows-msvc
 
     steps:
+      - name: Require Windows signing credentials
+        if: runner.os == 'Windows' && env.SIGN_REQUIRED == 'true' && env.WINDOWS_SIGN_AVAILABLE != 'true'
+        shell: bash
+        run: |
+          echo "::error::Tagged Windows releases must be signed: set SIMPLYSIGN_USER + SIMPLYSIGN_TOTP_SECRET (or WINDOWS_CERT_PFX_BASE64)." >&2
+          exit 1
+
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
@@ -53,6 +74,36 @@ jobs:
 
       - name: Build mogen-studio (GUI)
         run: cargo build -p mogen-studio --release --locked --target ${{ matrix.target }}
+
+      - name: Open SimplySign session (windows)
+        # Certum's cloud key is not exportable; SimplySign Desktop mounts it as
+        # a virtual smart card and the script exports WINDOWS_CERT_SHA1 via
+        # $GITHUB_ENV. The session stays open for the rest of the job, so both
+        # signing steps below use it.
+        if: runner.os == 'Windows' && env.SIMPLYSIGN_AVAILABLE == 'true'
+        shell: pwsh
+        env:
+          SIMPLYSIGN_USER: ${{ secrets.SIMPLYSIGN_USER }}
+          SIMPLYSIGN_TOTP_SECRET: ${{ secrets.SIMPLYSIGN_TOTP_SECRET }}
+        run: |
+          $strict = @{}
+          if ($env:SIGN_REQUIRED -eq 'true') { $strict.Required = $true }
+          ./scripts/simplysign-login.ps1 @strict
+
+      - name: Sign binaries (windows)
+        # Sign before zipping and before cargo-wix packs them, so the zip, the
+        # .msi payload and the itch.io build all ship signed executables.
+        if: runner.os == 'Windows' && env.WINDOWS_SIGN_AVAILABLE == 'true'
+        shell: pwsh
+        env:
+          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+          WINDOWS_TIMESTAMP_URL: ${{ vars.WINDOWS_TIMESTAMP_URL }}
+        run: |
+          $strict = @{}
+          if ($env:SIGN_REQUIRED -eq 'true') { $strict.Required = $true }
+          $bin = "target/${{ matrix.target }}/release"
+          ./scripts/sign-windows.ps1 @strict "$bin/mogen.exe" "$bin/mogen-studio.exe"
 
       - name: Package (unix tarball)
         if: runner.os != 'Windows'
@@ -124,6 +175,20 @@ jobs:
           $target = "${{ matrix.target }}"
           $out = "mogen-$tag-$target.msi"
           cargo wix -p mogen-studio --no-build --nocapture --target $target --output $out
+
+      - name: Sign .msi (windows)
+        # The installer is a new file and is what SmartScreen judges on
+        # download, so it needs its own signature.
+        if: runner.os == 'Windows' && env.WINDOWS_SIGN_AVAILABLE == 'true'
+        shell: pwsh
+        env:
+          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+          WINDOWS_TIMESTAMP_URL: ${{ vars.WINDOWS_TIMESTAMP_URL }}
+        run: |
+          $strict = @{}
+          if ($env:SIGN_REQUIRED -eq 'true') { $strict.Required = $true }
+          ./scripts/sign-windows.ps1 @strict "mogen-$env:GITHUB_REF_NAME-${{ matrix.target }}.msi"
 
       - name: Package .dmg (macos)
         if: runner.os == 'macOS'

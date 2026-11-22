@@ -1,0 +1,47 @@
+name: Windows signing smoke test
+
+# Manual check that the SimplySign credentials still work, without cutting a
+# release: compiles a throwaway .exe, signs it, and verifies the signature.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sign:
+    name: Sign and verify a test executable
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build unsigned test executable
+        shell: pwsh
+        run: |
+          $source = Join-Path $env:RUNNER_TEMP 'mogen-signing-smoke.cs'
+          $target = Join-Path $env:RUNNER_TEMP 'mogen-signing-smoke.exe'
+          'public static class Program { public static void Main() {} }' |
+            Set-Content -Path $source -Encoding ascii
+          & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" `
+            /nologo "/out:$target" $source
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path $target)) {
+            throw 'Failed to compile the signing smoke-test executable.'
+          }
+          "WINDOWS_SIGNING_SMOKE_TARGET=$target" | Out-File `
+            -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Open SimplySign session
+        shell: pwsh
+        env:
+          SIMPLYSIGN_USER: ${{ secrets.SIMPLYSIGN_USER }}
+          SIMPLYSIGN_TOTP_SECRET: ${{ secrets.SIMPLYSIGN_TOTP_SECRET }}
+          SIMPLYSIGN_TIMEOUT_SEC: 60
+        run: ./scripts/simplysign-login.ps1 -Required
+
+      - name: Sign and verify test executable
+        shell: pwsh
+        env:
+          WINDOWS_TIMESTAMP_URL: ${{ vars.WINDOWS_TIMESTAMP_URL }}
+        run: ./scripts/sign-windows.ps1 -Required $env:WINDOWS_SIGNING_SMOKE_TARGET
