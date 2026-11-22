@@ -13,7 +13,7 @@ fn span_of(p: &Pair<Rule>) -> Span {
 
 #[derive(Parser)]
 #[grammar = "grammar.pest"]
-struct DslParser;
+pub(crate) struct DslParser;
 
 pub fn parse(source: &str) -> Result<Vec<Node>> {
     // BOM tolerance lives in the grammar (`bom_? ` in the `file` rule),
@@ -70,7 +70,7 @@ fn build_node(pair: Pair<Rule>) -> Result<Node> {
     Ok(Node { kind, name, attrs, children, span, kind_span, use_id: None, origin: None })
 }
 
-fn build_attr(pair: Pair<Rule>) -> Result<(String, Value)> {
+pub(crate) fn build_attr(pair: Pair<Rule>) -> Result<(String, Value)> {
     let mut it = pair.into_inner();
     let key = it.next().unwrap().as_str().to_string();
     let value_pair = it.next().unwrap();

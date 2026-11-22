@@ -1,0 +1,73 @@
+name: python-wheels
+
+# Builds and tests the `mogen` Python wheels (crates/mogen-py), the PyPI
+# counterpart of Blender's `bpy` module. One abi3 wheel per platform covers
+# CPython >= 3.10. Called by release.yml (which publishes the `wheel-*`
+# artifacts to PyPI) and run on PRs that touch the package or its inputs.
+
+on:
+  workflow_call: {}
+  workflow_dispatch: {}
+  pull_request:
+    paths:
+      - "crates/mogen-py/**"
+      - "crates/mogen-dsl/**"
+      - "crates/mogen-validate/**"
+      - "Cargo.lock"
+      - ".github/workflows/python-wheels.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  wheel:
+    name: wheel (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    env:
+      # maturin defaults to 10.12, too old for Manifold's C++17.
+      MACOSX_DEPLOYMENT_TARGET: "10.15"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Manifold's build script clones its sources and drives cmake, so the
+      # manylinux container needs git + cmake.
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          working-directory: crates/mogen-py
+          target: ${{ matrix.target }}
+          args: --release --locked --out dist
+          manylinux: "2_28"
+          before-script-linux: |
+            command -v git || dnf install -y git
+            command -v cmake || pipx install cmake
+
+      - name: Test wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install crates/mogen-py/dist/*.whl pytest
+          python -m pytest -q crates/mogen-py/tests
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.target }}
+          path: crates/mogen-py/dist/*.whl
+          if-no-files-found: error

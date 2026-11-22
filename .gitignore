@@ -75,3 +75,8 @@ examples/textures
 /test_outputs/
 /target-wasm-check/
 /wizard/
+
+# Python package (crates/mogen-py)
+__pycache__/
+crates/mogen-py/dist/
+crates/mogen-py/python/mogen/_native*

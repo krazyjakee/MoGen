@@ -179,6 +179,24 @@ mogen update                                       # self-update
 
 Every subcommand and flag is documented in [`docs/cli.md`](docs/cli.md).
 
+## Python API
+
+`pip install mogen` lets you build and edit `.mog` files from Python, like
+Blender's `bpy`, and compile them with the same native pipeline as the CLI.
+Loading and saving keeps comments and formatting intact.
+
+```python
+import mogen as mg
+
+doc = mg.load("chair.mog")
+for leg in doc.find_all(kind="cylinder"):
+    leg["radius"] = 0.025
+doc.save()
+doc.build("chair.glb")
+```
+
+See [`docs/python.md`](docs/python.md).
+
 ### AI providers
 
 The LLM commands default to OpenAI GPT-6 Astra (`OPENAI_API_KEY`). Select another backend

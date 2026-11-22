@@ -1,0 +1,26 @@
+[build-system]
+requires = ["maturin>=1.9,<2"]
+build-backend = "maturin"
+
+[project]
+name = "mogen"
+description = "Python API for MoGen: build, load, edit and compile .mog files to glTF"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+dynamic = ["version"]
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Topic :: Multimedia :: Graphics :: 3D Modeling",
+]
+
+[project.urls]
+Repository = "https://github.com/krazyjakee/MoGen"
+
+[tool.maturin]
+python-source = "python"
+module-name = "mogen._native"
+features = ["python"]
+strip = true
+exclude = ["python/**/__pycache__/**"]
