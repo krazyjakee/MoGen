@@ -1,34 +1,54 @@
-"""MoGen Python API: build, load, edit and compile ``.mog`` files.
+"""MoGen Python API: create, load, edit and compile 3D models.
 
-The compiler is native, the same pipeline ``mogen build`` runs, so a script
-and the CLI produce byte-identical GLBs for the same source. Every document
-is a real ``.mog`` file: loading and saving keeps comments, formatting, unit
-literals (``18in``) and ``$param`` expressions intact, and an edit only
-rewrites what it touched.
+A model is ``.mog`` source (MoGen's declarative 3D language) compiled to
+glTF 2.0 ``.glb`` by the same native pipeline as the ``mogen`` CLI.
+``kind "name" (key=value) { children }`` in ``.mog`` is
+``mg.kind("name", key=value)`` here, with ``with`` blocks for children.
 
-Build from scratch::
+Create::
 
     import mogen as mg
 
     doc = mg.Document()
-    oak = doc.material("oak", color=[0.55, 0.38, 0.2], roughness=0.7)
+    oak = doc.material("table_oak_wood", color=[0.55, 0.38, 0.2], roughness=0.7)
+    corners = {"fl": (-0.35, -0.2), "fr": (0.35, -0.2), "bl": (-0.35, 0.2), "br": (0.35, 0.2)}
     with doc.scene():
-        mg.cylinder("seat", radius=0.2, height=mg.units.cm(3), y=0.45, mat=oak)
-        with mg.group("legs"):
-            for i in range(3):
-                mg.cylinder(f"leg{i}", radius=0.015, height=0.45, ry=i * 120)
-    doc.save("stool.mog")
-    doc.build("stool.glb")
+        with mg.box("top", size=[0.8, 0.04, 0.5], mat=oak):
+            for name, (x, z) in corners.items():
+                mg.connector(f"c_{name}", at=[x, -0.02, z], dir=[0, -1, 0])
+        for name in corners:
+            mg.cylinder(f"leg_{name}", radius=0.02, height=0.7, mat=oak)
+            mg.attach(parent="top", child=f"leg_{name}", socket=f"c_{name}", plug="top")
+    for d in doc.check():          # fix every error, then build
+        print(d)
+    doc.save("side_table.mog")
+    doc.build("side_table.glb")
 
-Edit an existing file::
+Edit (lossless: comments, formatting and units survive)::
 
-    doc = mg.load("chair.mog")
-    doc.find("seat")["size"] = [0.5, 0.04, 0.5]
-    for leg in doc.find_all(kind="cylinder"):
-        leg["radius"] = 0.025
+    doc = mg.load("side_table.mog")
+    doc.find("top")["size"] = [1.0, 0.04, 0.6]
     doc.save()
 
-See ``docs/python.md`` for the full reference.
+Rules for models that build:
+
+- Metres; +Y up, -Z forward. Use real sizes (person 1.7 m, chair 0.9 m).
+- Build parts at the origin and join them with ``attach`` (connector to
+  connector; primitives have default ``top``/``bottom`` face connectors).
+  Don't hand-compute ``pos=``.
+- Every part must touch another or the build fails with E1101; mark
+  deliberate gaps with ``tags="floating"``.
+- Declare a material for every ``mat=``; pass the material node itself.
+- ``cylinder``/``cone``/``capsule`` height runs along Y; ``box`` ``size`` is
+  ``[width, height, depth]``.
+- People, animals, trees: ``mg.use("humanoid_full", height=1.7)`` plus
+  ``mg.use("humanoid_walk")``, ``quadruped_*`` modules, ``branch``.
+- Run ``doc.check()``; each Diagnostic has ``code``, ``message``, ``line``
+  and ``node`` (the Node to fix).
+
+``help(mg.<kind>)`` lists a kind's attributes; ``mg.KINDS`` maps every kind.
+Guide: https://github.com/krazyjakee/MoGen/blob/master/docs/python.md
+Language: https://github.com/krazyjakee/MoGen/blob/master/docs/dsl.md
 """
 
 from ._core import (

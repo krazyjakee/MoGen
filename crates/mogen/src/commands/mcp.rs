@@ -1090,7 +1090,10 @@ impl ServerHandler for MogenMcp {
             `animate` / `repair` / `textures` to drive mogen's own LLM pipeline; \
             `moghub_*` for community browse + publish; `update` / `bench` for ops. \
             Every tool spawns the same `mogen` binary as a subprocess and returns its \
-            stdout + stderr. Paths are relative to the server's working directory."
+            stdout + stderr. Paths are relative to the server's working directory. \
+            To create or edit models programmatically, the `mogen` Python package \
+            (`pip install mogen`) builds the same `.mog` files and compiles them in-process: \
+            https://github.com/krazyjakee/MoGen/blob/master/docs/python.md"
                 .to_string(),
         );
         info
